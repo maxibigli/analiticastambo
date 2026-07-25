@@ -18,6 +18,7 @@ Corre como proceso aparte, continuo (no es parte de la app Flask):
 """
 import datetime
 import sqlite3
+import subprocess
 import time
 
 from pymodbus.client import ModbusTcpClient
@@ -31,6 +32,14 @@ ESTADO_INVERTIDO = False
 
 RUTA_DB = "iot_sensores.db"
 CANAL_LAVADO = "lavado_rotativa"
+
+# Aviso por voz cuando ARRANCA el lavado (no al terminar). Usa la síntesis de
+# voz de Windows (System.Speech, vía PowerShell) — no hace falta internet ni
+# paquetes nuevos. Sale por la salida de audio por defecto de esta PC, así
+# que tiene que estar conectada al sistema de parlantes del tambo.
+AUDIO_ACTIVADO = True
+MENSAJE_LAVANDO = "El sistema está lavando"
+VOZ_PREFERIDA = "Microsoft Helena Desktop"  # si no está instalada, usa la voz por defecto
 
 
 def _conectar_db(ruta: str = RUTA_DB) -> sqlite3.Connection:
@@ -73,6 +82,23 @@ def registrar_si_cambio(con: sqlite3.Connection, canal: str, estado: bool, estad
     return estado
 
 
+def _anunciar_voz(texto: str):
+    """Reproduce `texto` por voz (síntesis de Windows). No bloquea el sondeo:
+    se lanza en un proceso aparte, sin esperar a que termine de hablar."""
+    texto_ps = texto.replace("'", "''")  # escapar comillas simples para PowerShell
+    comando = (
+        "Add-Type -AssemblyName System.Speech; "
+        "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+        f"try {{ $s.SelectVoice('{VOZ_PREFERIDA}') }} catch {{}}; "
+        f"$s.Speak('{texto_ps}')"
+    )
+    try:
+        subprocess.Popen(["powershell", "-NoProfile", "-Command", comando],
+                          creationflags=subprocess.CREATE_NO_WINDOW)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def main():
     con = _conectar_db()
     client = ModbusTcpClient(HOST, port=PORT)
@@ -86,7 +112,10 @@ def main():
             if estado is None:
                 time.sleep(INTERVALO_RECONEXION_S)
                 continue
+            arranco_lavado = estado and estado != estado_anterior
             estado_anterior = registrar_si_cambio(con, CANAL_LAVADO, estado, estado_anterior)
+            if arranco_lavado and AUDIO_ACTIVADO:
+                _anunciar_voz(MENSAJE_LAVANDO)
             time.sleep(INTERVALO_POLL_S)
     except KeyboardInterrupt:
         print("Cortado por el usuario.")
