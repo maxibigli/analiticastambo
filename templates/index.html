@@ -491,6 +491,25 @@
     <div id="alarmas-unidades-cuerpo"></div>
   </section>
 
+  <section class="card" id="incidentes-dia-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Incidentes de ordeño</h2>
+      <span class="aviso">% de ordeños de cada día afectados por cada incidencia.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="incid-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="incid-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="incid-aplicar">Aplicar</button>
+      </div>
+    </div>
+    <div class="aviso" id="incid-info" style="margin-top:8px"></div>
+    <div class="kpis" id="incid-kpis" style="margin-top:10px"></div>
+    <div class="chart-box" style="height:300px;margin-top:12px"><canvas id="chart-incidentes-dia"></canvas></div>
+  </section>
+
   <section class="card" id="mantenimiento-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">Mantenimiento preventivo</h2>
@@ -606,6 +625,26 @@
         falsos positivos, <b>todavía no lo supera</b> — se muestra en paralelo, a validar con evidencia de campo.
         Cada tarjeta explica el motivo para que el operario juzgue si la señal es real.</span>
       <div id="salud-atencion2-cuerpo"></div>
+    </section>
+
+    <section class="card" id="salud-bcs-card">
+      <h2 style="margin:0">Condición corporal (BCS)</h2>
+      <span class="aviso">Última lectura de la cámara de score corporal por vaca · DEL (días desde el
+        último parto) en el eje X, score 1-5 en el eje Y. Los umbrales de "fuera de rango" son de manejo
+        general (no es la curva objetivo propia de DelPro) — ajustalos como quieras.</span>
+      <div class="controls" style="margin-top:10px;flex-wrap:wrap">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Score mínimo
+          <input type="number" id="bcs-min" step="0.05" style="width:70px;padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Score máximo
+          <input type="number" id="bcs-max" step="0.05" style="width:70px;padding:6px 8px">
+        </label>
+        <span id="bcs-repro-check" style="display:flex;gap:10px;flex-wrap:wrap"></span>
+        <button class="secundario" id="bcs-aplicar">Aplicar</button>
+      </div>
+      <div class="aviso" id="bcs-info" style="margin-top:8px"></div>
+      <div class="chart-box" style="height:340px;margin-top:10px"><canvas id="chart-bcs"></canvas></div>
+      <div id="bcs-fuera-cuerpo" style="margin-top:12px"></div>
     </section>
 
     <section class="card" id="salud-rcs-grupo-card">
@@ -1072,6 +1111,50 @@ async function cargarCicla() {
   }
 }
 document.getElementById('cicla-aplicar').addEventListener('click', cargarCicla);
+
+let chartIncidDia = null, incidReintento = null;
+
+async function cargarIncidentesDia() {
+  clearTimeout(incidReintento);
+  const info = document.getElementById('incid-info');
+  let desde = document.getElementById('incid-desde').value;
+  let hasta = document.getElementById('incid-hasta').value;
+  if (!hasta) hasta = hoyISO();
+  if (!desde) desde = menosDias(hasta, 6);
+  document.getElementById('incid-desde').value = desde;
+  document.getElementById('incid-hasta').value = hasta;
+  info.textContent = 'Calculando…';
+  const SERIES_INCID = [
+    ['% Bloqueos', 'pct_bloqueos'], ['% Deslizamientos', 'pct_deslizamientos'],
+    ['% Patadas', 'pct_patadas'], ['% Modo manual', 'pct_manual'],
+    ['% Recolocaciones', 'pct_recolocaciones'],
+  ];
+  try {
+    const d = await pedirJSON(`/api/ordeno/incidentes_dia?desde=${desde}&hasta=${hasta}&tambo=${encodeURIComponent(tamboActual)}`);
+    const dias = d.dias || [];
+    const labels = dias.map(x => x.fecha);
+    const datasets = SERIES_INCID.map(([label, campo], k) => ({
+      label, data: dias.map(x => x[campo]),
+      borderColor: SERIES[k % SERIES.length], backgroundColor: SERIES[k % SERIES.length],
+      borderWidth: 2, pointRadius: labels.length > 20 ? 0 : 3, tension: .25, spanGaps: true,
+    }));
+    const opts = baseOpts(true);
+    opts.scales.y.ticks = { callback: v => v + '%' };
+    chartIncidDia = dibujar('chart-incidentes-dia', chartIncidDia, {
+      type: 'line', data: { labels, datasets }, options: opts,
+    });
+    const ultimo = dias[dias.length - 1];
+    document.getElementById('incid-kpis').innerHTML = ultimo ? SERIES_INCID.map(([label, campo]) =>
+      `<div class="tile"><div class="label">${label}</div><div class="value">${ultimo[campo] == null ? '—' : ultimo[campo] + '%'}</div></div>`
+    ).join('') : '';
+    info.textContent = dias.length ? `${dias.length} día(s) entre ${desde} y ${hasta}.`
+      : 'Sin ordeños registrados en este rango.';
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; incidReintento = setTimeout(cargarIncidentesDia, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('incid-aplicar').addEventListener('click', cargarIncidentesDia);
 
 async function cargarCanalesAlertas() {
   const cont = document.getElementById('alertas-canales');
@@ -1833,6 +1916,76 @@ function renderSaludRcsVacas() {
     </tr>`).join('') + `</tbody></table></div>`;
 }
 
+let saludBcs = null, chartBcs = null;
+const BCS_REPRO_ORDEN = ['Vacía', 'Inseminada', 'Preñada', 'En secado', '-'];
+
+function pintarSaludBcs(d) {
+  saludBcs = d;
+  if (!document.getElementById('bcs-min').value) document.getElementById('bcs-min').value = d.bcs_bajo;
+  if (!document.getElementById('bcs-max').value) document.getElementById('bcs-max').value = d.bcs_alto;
+  const presentes = [...new Set((d.vacas || []).map(v => v.reproductivo))];
+  const cont = document.getElementById('bcs-repro-check');
+  if (!cont.dataset.armado) {
+    cont.innerHTML = BCS_REPRO_ORDEN.filter(r => presentes.includes(r)).map(r => `
+      <label class="aviso" style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" data-repro="${r}" checked> ${r === '-' ? 'Sin dato' : r}
+      </label>`).join('');
+    cont.dataset.armado = '1';
+  }
+  renderSaludBcs();
+}
+
+function renderSaludBcs() {
+  const cont = document.getElementById('bcs-fuera-cuerpo');
+  const info = document.getElementById('bcs-info');
+  if (!saludBcs) return;
+  const min = parseFloat(document.getElementById('bcs-min').value);
+  const max = parseFloat(document.getElementById('bcs-max').value);
+  const reproActivos = [...document.querySelectorAll('#bcs-repro-check input:checked')].map(c => c.dataset.repro);
+  const vacas = (saludBcs.vacas || []).filter(v => reproActivos.includes(v.reproductivo));
+  if (!vacas.length) {
+    info.textContent = 'Sin vacas con lectura de BCS para este filtro.';
+    cont.innerHTML = ''; chartBcs = dibujar('chart-bcs', chartBcs, { type: 'scatter', data: { datasets: [] } });
+    return;
+  }
+  const enRango = vacas.filter(v => v.score >= min && v.score <= max);
+  const fuera = vacas.filter(v => v.score < min || v.score > max);
+  chartBcs = dibujar('chart-bcs', chartBcs, {
+    type: 'scatter',
+    data: { datasets: [
+      { label: 'En rango', data: enRango.map(v => ({ x: v.del, y: v.score })),
+        backgroundColor: css('--muted'), pointRadius: 3.5 },
+      { label: 'Fuera de rango', data: fuera.map(v => ({ x: v.del, y: v.score })),
+        backgroundColor: css('--critical'), pointRadius: 4.5 },
+    ] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: true, labels: { boxWidth: 12, boxHeight: 12 } } },
+      scales: {
+        x: { title: { display: true, text: 'Días desde el último parto (DEL)' },
+             grid: { color: css('--grid') }, border: { color: css('--baseline') } },
+        y: { title: { display: true, text: 'Score corporal (BCS)' }, min: 1, max: 5,
+             grid: { color: css('--grid') }, border: { display: false } },
+      },
+    },
+  });
+  info.textContent = `${vacas.length} vaca(s) con lectura de BCS · ${fuera.length} fuera del rango ${min}-${max}.`;
+  if (!fuera.length) {
+    cont.innerHTML = `<div class="aviso">Ninguna vaca fuera del rango elegido. ✔</div>`;
+    return;
+  }
+  fuera.sort((a, b) => Math.min(a.score - min, max - a.score) - Math.min(b.score - min, max - b.score));
+  cont.innerHTML = `<div class="tabla-scroll" style="max-height:360px"><table>
+    <thead><tr><th>Vaca</th><th>Rodeo</th><th>DEL</th><th>L</th><th>Score</th><th>Estado</th><th>Fecha lectura</th></tr></thead>
+    <tbody>` + fuera.map(v => `<tr>
+      <td>${fmt(v.rp)}</td><td>${v.grupo || '—'}</td><td>${fmt(v.del)}</td><td>${fmt(v.lactancia)}</td>
+      <td style="color:var(--critical);font-weight:700">${v.score.toFixed(2)}</td>
+      <td>${v.reproductivo === '-' ? '—' : v.reproductivo}</td>
+      <td>${v.fecha_score || '—'}</td>
+    </tr>`).join('') + `</tbody></table></div>`;
+}
+document.getElementById('bcs-aplicar').addEventListener('click', renderSaludBcs);
+
 function pintarSaludConductividad(d) {
   const idx = { fecha: d.columns.indexOf('fecha'), grupo: d.columns.indexOf('grupo'),
                 cond: d.columns.indexOf('cond_promedio') };
@@ -1944,6 +2097,7 @@ async function cargarSalud() {
       rcsGrupoD = d; pintarSaludRcsGrupo(d);
     }),
     seccionSalud('/api/salud/rcs_vacas', 'salud-rcs-vacas-cuerpo', pintarSaludRcsVacas),
+    seccionSalud('/api/salud/bcs_vacas', 'bcs-fuera-cuerpo', pintarSaludBcs),
     seccionSalud('/api/salud/conductividad', null, pintarSaludConductividad),
     seccionSalud('/api/salud/produccion_rodeo', 'salud-prod-cuerpo', pintarSaludProduccion),
   ]);
@@ -2589,7 +2743,7 @@ function cargarDatosDePagina(id) {
     cargarDashboard(); cargarCicla(); cargarComparar(); cargarLaser(); cargarCanalesAlertas();
     cargarResumenProduccion(); cargarResumenAnimales(); cargarResumenDuraciones(); cargarResumenGrupo();
   }
-  else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); }
+  else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
   else if (id === 'rutina') cargarRutina();
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();

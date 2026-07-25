@@ -31,7 +31,8 @@ import whatsapp
 from consultas import CONSULTAS
 from ordeno import (ORDENO_SQL, ORDENO_VIVO_SQL, ORDENO_INC_SQL,
                     ORDENO_ALARMAS_SQL, VIVO_LIMITE_MIN,
-                    UMBRAL_DESLIZ_PCT, UMBRAL_BLOQ_PCT)
+                    UMBRAL_DESLIZ_PCT, UMBRAL_BLOQ_PCT,
+                    sql_incidentes_diarios)
 from tareas import TAREAS
 
 app = Flask(__name__)
@@ -114,6 +115,7 @@ _SQL["salud_conductividad"] = salud.SQL_CONDUCTIVIDAD_REBANIO
 _SQL["salud_produccion_rodeo"] = salud.SQL_PRODUCCION_POR_RODEO
 _SQL["salud_atencion"] = salud.SQL_ATENCION_DATOS
 _SQL["salud_atencion_v2"] = salud.SQL_ATENCION_V2
+_SQL["salud_bcs_vacas"] = salud.SQL_BCS_VACAS
 _SQL["resumen_produccion_diaria"] = resumen.SQL_PRODUCCION_DIARIA
 _SQL["resumen_animales"] = resumen.SQL_ANIMALES
 _SQL["resumen_altas_bajas"] = resumen.SQL_ALTAS_BAJAS_AYER
@@ -685,6 +687,23 @@ def api_salud_atencion_v2():
     return jsonify({"vacas": fichas, "experimental": True})
 
 
+@app.get("/api/salud/bcs_vacas")
+@auth.requiere_rol("admin")
+def api_salud_bcs_vacas():
+    """Última lectura de condición corporal (BCS, cámara DeLaval) de cada
+    vaca, con su DEL y estado reproductivo — para el gráfico DEL-vs-score y
+    la lista de vacas fuera de rango. El filtrado por score mín/máx y estado
+    reproductivo lo hace el frontend sobre este mismo listado."""
+    tambo = _tambo_del_request()
+    data, espera = _servir_cacheado(tambo, "salud_bcs_vacas", "Calculando condición corporal…")
+    if espera:
+        return espera
+    vacas = [dict(zip(data["columns"], r)) for r in data["rows"]]
+    return jsonify({
+        "vacas": vacas, "bcs_bajo": salud.BCS_BAJO, "bcs_alto": salud.BCS_ALTO,
+    })
+
+
 @app.get("/api/predefinidas")
 def predefinidas():
     return jsonify([
@@ -1087,6 +1106,71 @@ def _refresh_cicla_async(desde, hasta):
                 _refreshing.discard(key)
 
     threading.Thread(target=worker, daemon=True).start()
+
+
+INCIDENTES_CACHE_TTL_S = 900  # 15 min: las incidencias del equipo cambian de a poco
+
+
+def _refresh_incidentes_async(tambo, desde, hasta):
+    key = f"{tambo}:incidentes_dia:{desde.isoformat()}:{hasta.isoformat()}"
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            data = db.run_query(sql_incidentes_diarios(desde.isoformat(), hasta.isoformat()),
+                                 tambo=tambo)
+            _cache_set(key, data)
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+@app.get("/api/ordeno/incidentes_dia")
+@auth.requiere_rol("admin")
+def api_ordeno_incidentes_dia():
+    """Incidencias del equipo de ordeño por día (% de ordeños afectados),
+    para un rango de fechas elegible — bloqueos, deslizamientos, patadas,
+    modo manual y recolocaciones. Base para el gráfico de líneas equivalente
+    al "Incidentes de ordeño" de DelPro (que lo muestra de barras)."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    try:
+        hasta = (datetime.datetime.strptime(request.args["hasta"], "%Y-%m-%d").date()
+                 if request.args.get("hasta") else hoy)
+        desde = (datetime.datetime.strptime(request.args["desde"], "%Y-%m-%d").date()
+                 if request.args.get("desde") else hasta - datetime.timedelta(days=6))
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    if desde > hasta:
+        desde, hasta = hasta, desde
+
+    key = f"{tambo}:incidentes_dia:{desde.isoformat()}:{hasta.isoformat()}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=INCIDENTES_CACHE_TTL_S)
+    if data is None:
+        _refresh_incidentes_async(tambo, desde, hasta)
+        return jsonify({"calentando": True, "mensaje": "Calculando incidencias del equipo…"}), 202
+    if not fresh:
+        _refresh_incidentes_async(tambo, desde, hasta)
+
+    idx = {c: i for i, c in enumerate(data["columns"])}
+    dias = []
+    for r in data["rows"]:
+        n = r[idx["ordenos"]] or 0
+        pct = lambda campo: round(100 * (r[idx[campo]] or 0) / n, 1) if n else None  # noqa: E731
+        dias.append({
+            "fecha": str(r[idx["fecha"]])[:10], "ordenos": n,
+            "pct_bloqueos": pct("con_bloqueo"), "pct_deslizamientos": pct("con_desliz"),
+            "pct_patadas": pct("con_patada"), "pct_manual": pct("con_manual"),
+            "pct_recolocaciones": pct("con_recoloc"),
+        })
+    return jsonify({"desde": desde.isoformat(), "hasta": hasta.isoformat(), "dias": dias})
 
 
 @app.get("/api/cicla/cargas")

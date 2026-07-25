@@ -121,6 +121,46 @@ SQL_RCS_VACAS = f"""
     OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
 """
 
+# --- Condición corporal (BCS) por vaca --------------------------------------
+# Réplica del gráfico de DelPro "Score corporal" (cámara BCS): un punto por
+# vaca (su ÚLTIMA lectura), DEL en el eje X y score 1-5 en el eje Y. Escala
+# real verificada en esta base: 1,6 a 4,6 (promedio ~3,1).
+# BCS_BAJO/BCS_ALTO son umbrales GENERALES de manejo lechero (no un dato propio
+# de DelPro: no tenemos su curva "objetivo" interna) — el usuario los puede
+# mover libremente en la pantalla.
+BCS_BAJO = 2.5   # por debajo: vaca flaca, riesgo de cetosis/fertilidad
+BCS_ALTO = 4.25  # por encima: vaca engrasada, riesgo de parto/metabólico
+
+SQL_BCS_VACAS = f"""
+    WITH bcs AS (
+      SELECT Animal, BcsValue, CAST(DateAndTime AS date) AS fecha,
+             ROW_NUMBER() OVER (PARTITION BY Animal ORDER BY DateAndTime DESC) AS rn
+      FROM BcsDailyData
+      WHERE BcsValue IS NOT NULL
+    ),
+    dia AS (
+      SELECT ad.BasicAnimal, ad.DIM, ad.LactationNumber,
+             ROW_NUMBER() OVER (PARTITION BY ad.BasicAnimal ORDER BY ad.Date DESC) AS rn
+      FROM AnimalDaily ad
+      WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1
+    )
+    SELECT b.Number AS rp, g.Name AS grupo, d.DIM AS del, d.LactationNumber AS lactancia,
+           bc.BcsValue AS score, CONVERT(varchar(10), bc.fecha, 120) AS fecha_score,
+           CASE WHEN r.IsDryingOff = 1 THEN 'En secado' WHEN r.IsPregnant = 1 THEN 'Preñada'
+                WHEN r.IsInseminated = 1 THEN 'Inseminada' WHEN r.Animal IS NULL THEN '-'
+                ELSE 'Vacía' END AS reproductivo
+    FROM bcs bc
+    JOIN BasicAnimal b ON b.OID = bc.Animal
+    JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
+    JOIN CMSGroupMilkSetting c ON c.[Group] = b.[Group] AND c.GCRecord IS NULL
+                              AND c.EnableMilking = 1
+    LEFT JOIN dia d ON d.BasicAnimal = bc.Animal AND d.rn = 1
+    LEFT JOIN AnimalReproductionInfo r ON r.Animal = bc.Animal AND r.GCRecord IS NULL
+    WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0 AND bc.rn = 1
+    OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+"""
+
+
 # --- Sección "Vista del rebaño (conductividad)" -----------------------------
 # Promedio diario de conductividad relativa por grupo. >115 es sospecha de
 # mastitis, así que la curva por rodeo muestra si un lote se está yendo.
