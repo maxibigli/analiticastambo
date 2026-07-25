@@ -158,6 +158,13 @@
   .chip.rojo { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
   .chip.ambar { background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--warning); }
   .chip.violeta { background: color-mix(in srgb, var(--violeta) 20%, transparent); color: var(--violeta); }
+  /* Snapshot en vivo de las cámaras de "Problemas podales" */
+  .podal-cam-box {
+    height: 180px; border: 1px solid var(--border); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--baseline); overflow: hidden;
+  }
+  .podal-cam-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
   /* Vúmetros de Salud del rodeo */
   .gauge-row { display: flex; flex-wrap: wrap; gap: 6px; }
   .gauge { width: 128px; text-align: center; cursor: pointer; padding: 8px 4px 10px; border-radius: 10px; transition: background .15s; }
@@ -645,7 +652,30 @@
           video real de este tambo, no reemplaza el diagnóstico del veterinario.</span>
       </div>
       <div id="podal-camaras" class="aviso" style="margin-top:8px"></div>
-      <div id="podal-cuerpo" style="margin-top:10px"></div>
+
+      <div class="grid2" style="margin-top:12px">
+        <div>
+          <div class="aviso" style="margin-bottom:6px">Cámara de posición</div>
+          <div class="podal-cam-box">
+            <img id="podal-img-posicion" alt="Cámara de posición" hidden>
+            <div id="podal-img-posicion-vacio" class="aviso">Sin imagen</div>
+          </div>
+        </div>
+        <div>
+          <div class="aviso" style="margin-bottom:6px">Cámara de marcha</div>
+          <div class="podal-cam-box">
+            <img id="podal-img-marcha" alt="Cámara de marcha" hidden>
+            <div id="podal-img-marcha-vacio" class="aviso">Sin imagen</div>
+          </div>
+        </div>
+      </div>
+
+      <h3 style="margin:18px 0 6px">Actividad en tiempo real</h3>
+      <span class="aviso">Últimas pasadas detectadas por las cámaras, se actualiza solo cada pocos segundos.</span>
+      <div id="podal-recientes" style="margin-top:8px"></div>
+
+      <h3 style="margin:18px 0 6px">Vacas con alerta</h3>
+      <div id="podal-cuerpo"></div>
       <div class="controls" style="margin-top:14px;align-items:center">
         <input type="text" id="podal-buscar-rp" placeholder="Ver tendencia de una vaca (RP)…" style="width:200px">
         <button class="secundario" id="podal-buscar-btn">Ver tendencia</button>
@@ -1961,6 +1991,7 @@ function pintarPodalCamaras(estado) {
   const punto = ok => `<span style="color:${ok ? 'var(--good)' : 'var(--critical)'}">●</span>`;
   cont.innerHTML = `${punto(estado.camara_marcha_conectada)} Cámara de marcha
     ${punto(estado.camara_posicion_conectada)} Cámara de posición
+    ${estado.activa && estado.detectando ? '<span class="chip ambar" style="margin-left:6px">detectando…</span>' : ''}
     <button class="secundario" id="podal-toggle" style="margin-left:10px">
       ${estado.activa ? 'Detener captura' : 'Iniciar captura'}
     </button>
@@ -1968,8 +1999,40 @@ function pintarPodalCamaras(estado) {
   document.getElementById('podal-toggle').addEventListener('click', async () => {
     await pedirJSON(`/api/podal/${estado.activa ? 'detener' : 'iniciar'}?tambo=${encodeURIComponent(tamboActual)}`,
       { method: 'POST' });
-    cargarPodalEstado();
+    cargarPodalVivo();
   });
+}
+
+function pintarPodalSnapshots(estado) {
+  const cache = Date.now();
+  [['posicion', estado && estado.camara_posicion_conectada],
+   ['marcha', estado && estado.camara_marcha_conectada]].forEach(([cam, conectada]) => {
+    const img = document.getElementById('podal-img-' + cam);
+    const vacio = document.getElementById('podal-img-' + cam + '-vacio');
+    if (estado && estado.activa && conectada) {
+      img.src = `/api/podal/snapshot/${cam}?tambo=${encodeURIComponent(tamboActual)}&_=${cache}`;
+      img.hidden = false; vacio.hidden = true;
+    } else {
+      img.hidden = true; vacio.hidden = false;
+    }
+  });
+}
+
+function pintarPodalRecientes(lecturas) {
+  const cont = document.getElementById('podal-recientes');
+  if (!lecturas.length) {
+    cont.innerHTML = `<div class="aviso">Todavía no se registró ninguna pasada.</div>`;
+    return;
+  }
+  const colorScore = s => s >= 4 ? 'var(--critical)' : (s >= 3 ? 'var(--warning)' : 'var(--good)');
+  cont.innerHTML = `<div class="tabla-scroll" style="max-height:240px"><table>
+    <thead><tr><th>Hora</th><th>Vaca</th><th>Score</th><th>Motivo</th></tr></thead>
+    <tbody>` + lecturas.map(l => `<tr>
+      <td>${l.ts}</td>
+      <td>${l.rp != null ? fmt(l.rp) : '<span class="aviso">sin identificar</span>'}</td>
+      <td style="font-weight:700;color:${colorScore(l.score)}">${l.score}</td>
+      <td>${(l.motivos || []).join(' · ') || '—'}</td>
+    </tr>`).join('') + `</tbody></table></div>`;
 }
 
 function pintarPodal(d) {
@@ -2025,10 +2088,29 @@ document.getElementById('podal-buscar-btn').addEventListener('click', () => {
   if (rp) verTendenciaPodal(rp);
 });
 
-async function cargarPodalEstado() {
+const PODAL_REFRESCO_MS = 4000;
+let podalTimer = null;
+
+async function cargarPodalVivo() {
   try {
-    pintarPodalCamaras(await pedirJSON('/api/podal/estado?tambo=' + encodeURIComponent(tamboActual)));
+    const est = await pedirJSON('/api/podal/estado?tambo=' + encodeURIComponent(tamboActual));
+    pintarPodalCamaras(est);
+    pintarPodalSnapshots(est);
   } catch (e) { /* la tarjeta de salud ya muestra errores generales */ }
+  try {
+    const rec = await pedirJSON('/api/podal/recientes?tambo=' + encodeURIComponent(tamboActual) + '&limite=15');
+    pintarPodalRecientes(rec.lecturas || []);
+  } catch (e) { /* idem */ }
+}
+
+function iniciarPodalVivo() {
+  clearInterval(podalTimer);
+  cargarPodalVivo();
+  podalTimer = setInterval(cargarPodalVivo, PODAL_REFRESCO_MS);
+}
+
+function detenerPodalVivo() {
+  clearInterval(podalTimer);
 }
 
 async function cargarSalud() {
@@ -2725,6 +2807,8 @@ function irAPagina(id) {
   if (id === 'ordeno') reprogramarRefrescoOrdeno(); else clearInterval(ordenoTimer);
   // El reintento de Salud solo tiene sentido con esa página a la vista.
   if (id !== 'salud') clearTimeout(saludReintento);
+  // Cámaras y actividad en vivo de "Problemas podales": solo mientras se ve la página.
+  if (id === 'salud') iniciarPodalVivo(); else detenerPodalVivo();
 }
 
 document.querySelectorAll('.nav-item').forEach(el =>

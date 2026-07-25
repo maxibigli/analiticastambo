@@ -168,8 +168,15 @@ setx PODAL_CAM_MARCHA_PONDEROSA   "rtsp://usuario:clave@192.168.1.31/stream1"
 ```
 
 y agregar el id del tambo a `PODAL_TAMBOS` en `config_podal.py`. Con eso
-configurado, en **Salud del rodeo → Problemas podales** aparece el estado de
-conexión de las cámaras y un botón para iniciar/detener la captura.
+configurado, en **Salud del rodeo → Problemas podales** aparece:
+
+- Estado de conexión de cada cámara y un botón para iniciar/detener la captura.
+- **Snapshot en vivo** de las dos cámaras (se actualiza solo cada 4 s), con
+  un indicador "detectando…" mientras un animal está cruzando.
+- **Actividad en tiempo real**: últimas pasadas detectadas, identificadas o
+  no, con su score y motivo — se actualiza sola sin recargar la página.
+- **Vacas con alerta**: promedio reciente de score vs. el historial propio de
+  cada vaca, con gráfico de tendencia individual (buscar por RP).
 
 ## Tareas pendientes (estilo To-Do de DelPro)
 

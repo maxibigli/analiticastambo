@@ -106,10 +106,17 @@ def curvatura_lomo(mascara_bin, bbox) -> float | None:
 
 
 def procesar_secuencia_marcha(frames: list) -> dict | None:
-    """Recibe los frames capturados mientras el animal cruzó la cámara de
-    "marcha" (ya recortados a la ventana de presencia por quien capturó) y
-    devuelve las métricas agregadas, o None si la pasada no dio suficientes
-    cuadros útiles para puntuar."""
+    """Recibe un clip YA RECORTADO a la pasada completa, con algunos cuadros
+    de fondo vacío ANTES de que entre el animal (p. ej. un video guardado
+    para calibrar/probar el algoritmo offline). La sustracción de fondo
+    necesita ese "calentamiento" para aprender el fondo -- si el clip
+    arranca directo con el animal en cuadro, puede no detectarlo bien.
+
+    En la captura EN VIVO (`podal._CapturaTambo`) no se usa este wrapper: ahí
+    hay un único detector ya "calentado" con el video continuo de la cámara,
+    y las métricas de cada cuadro se acumulan sobre la marcha con
+    `curvatura_lomo` + `agregar_metricas` (rehacer la detección desde cero
+    sobre cuadros ya recortados le hace perder ese calentamiento)."""
     _requiere_cv2()
     detector = DetectorPresencia()
     curvaturas, centros_y = [], []
@@ -121,6 +128,12 @@ def procesar_secuencia_marcha(frames: list) -> dict | None:
         if c is not None:
             curvaturas.append(c)
         centros_y.append(bbox[1] + bbox[3] / 2)
+    return agregar_metricas(curvaturas, centros_y)
+
+
+def agregar_metricas(curvaturas: list, centros_y: list) -> dict | None:
+    """Agrega las métricas ya calculadas cuadro a cuadro de una pasada
+    completa. None si no hubo suficientes cuadros útiles para puntuar."""
     if len(curvaturas) < MIN_FRAMES_UTILES:
         return None
     # Se descartan los extremos (entrada/salida de cuadro, cuerpo parcial):

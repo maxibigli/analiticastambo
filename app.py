@@ -7,7 +7,7 @@ import statistics
 import threading
 import time
 
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 
 import datetime
 
@@ -731,6 +731,30 @@ def api_podal_historial(rp: int):
     tambo = _tambo_del_request()
     dias = request.args.get("dias", type=int) or podal.DIAS_REFERENCIA_DEFECTO
     return jsonify({"rp": rp, "lecturas": podal.historial(tambo, rp=rp, dias=dias)})
+
+
+@app.get("/api/podal/recientes")
+@auth.requiere_rol("admin")
+def api_podal_recientes():
+    """Últimas pasadas registradas (identificadas o no), para el panel de
+    actividad en tiempo real."""
+    tambo = _tambo_del_request()
+    limite = min(request.args.get("limite", type=int) or 20, 100)
+    return jsonify({"lecturas": podal.recientes(tambo, limite=limite)})
+
+
+@app.get("/api/podal/snapshot/<camara>")
+@auth.requiere_rol("admin")
+def api_podal_snapshot(camara: str):
+    """Último cuadro (JPEG) de la cámara "marcha" o "posicion", para mostrar
+    la vista en vivo en la interfaz."""
+    if camara not in ("marcha", "posicion"):
+        return jsonify({"error": "Cámara inválida."}), 400
+    tambo = tambos.resolver(request.args.get("tambo", ""))
+    data = podal.frame_jpeg(tambo, camara)
+    if data is None:
+        return jsonify({"error": "Sin imagen todavía."}), 404
+    return Response(data, mimetype="image/jpeg")
 
 
 @app.get("/api/predefinidas")

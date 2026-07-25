@@ -116,6 +116,22 @@ def historial(tambo: str, rp: int | None = None, dias: int = DIAS_REFERENCIA_DEF
              "motivos": json.loads(f[4] or "[]")} for f in filas]
 
 
+def recientes(tambo: str, limite: int = 20) -> list:
+    """Últimas pasadas registradas (identificadas o no), para el ticker en
+    vivo -- a diferencia de `historial`, no filtra por RP ni por umbral."""
+    with _db_lock:
+        con = _conectar()
+        try:
+            cur = con.execute(
+                "SELECT ts, rp, plaza, score, resuelto, motivos FROM lecturas "
+                "WHERE tambo=? ORDER BY id DESC LIMIT ?", (tambo, limite))
+            filas = cur.fetchall()
+        finally:
+            con.close()
+    return [{"ts": f[0], "rp": f[1], "plaza": f[2], "score": f[3], "resuelto": bool(f[4]),
+             "motivos": json.loads(f[5] or "[]")} for f in filas]
+
+
 def calcular_alertas(tambo: str, dias_reciente: int = DIAS_RECIENTE_DEFECTO,
                       dias_referencia: int = DIAS_REFERENCIA_DEFECTO,
                       umbral: float = UMBRAL_ALERTA, top: int = TOP_ALERTAS) -> list:
@@ -196,6 +212,22 @@ class _CapturaTambo:
         self.conectada_marcha = False
         self.conectada_posicion = False
         self.ultimo_error = None
+        self.detectando = False          # hay una pasada en curso ahora mismo
+        self.ultima_deteccion = None      # última pasada ya puntuada (para el ticker en vivo)
+        self._frame_marcha = None         # último cuadro (JPEG), para el snapshot en vivo
+        self._frame_posicion = None
+
+    def frame_jpeg(self, camara: str) -> bytes | None:
+        return self._frame_marcha if camara == "marcha" else self._frame_posicion
+
+    def _guardar_snapshot(self, camara: str, frame) -> None:
+        ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+        if not ok:
+            return
+        if camara == "marcha":
+            self._frame_marcha = buf.tobytes()
+        else:
+            self._frame_posicion = buf.tobytes()
 
     def iniciar(self):
         if self._hilo and self._hilo.is_alive():
@@ -225,9 +257,18 @@ class _CapturaTambo:
             self.ultimo_error = f"No se pudo abrir la cámara de marcha ({self.cfg['fuente_marcha']})."
             return
 
-        detector = podal_vision.DetectorPresencia()
+        # Un detector POR CÁMARA, y de larga vida (todo el tiempo que dure la
+        # captura): la sustracción de fondo necesita ver bastante fondo
+        # "vacío" para aprenderlo antes de poder distinguir al animal. Por
+        # eso las métricas de cada pasada se acumulan cuadro a cuadro sobre
+        # este mismo detector -- rehacer la detección desde cero sobre un
+        # clip recortado (como hace `podal_vision.procesar_secuencia_marcha`,
+        # pensado para clips grabados) le haría perder ese calentamiento.
+        detector_marcha = podal_vision.DetectorPresencia()
+        detector_posicion = podal_vision.DetectorPresencia() if cap_posicion is not None else None
         intervalo = 1.0 / config_podal.FPS_PROCESAMIENTO
-        buffer_frames: list = []
+        curvaturas: list = []
+        centros_y: list = []
         ausentes_seguidos = 0
         presente_posicion = False
 
@@ -238,24 +279,31 @@ class _CapturaTambo:
                 if not ok:
                     self.conectada_marcha = False
                     break
+                self._guardar_snapshot("marcha", frame)
                 if cap_posicion is not None:
                     ok_p, frame_p = cap_posicion.read()
                     if ok_p:
-                        presente_posicion, _, _ = detector.procesar(frame_p)
+                        self._guardar_snapshot("posicion", frame_p)
+                        presente_posicion, _, _ = detector_posicion.procesar(frame_p)
 
-                presente, _, _ = detector.procesar(frame)
+                presente, bbox, mask = detector_marcha.procesar(frame)
                 # Si hay cámara de posición, se exige que confirme el paso
                 # (reduce falsos positivos de la cámara de marcha, ej. una
                 # persona cruzando el corredor).
                 cuenta = presente and (cap_posicion is None or presente_posicion)
                 if cuenta:
-                    buffer_frames.append(frame)
+                    c = podal_vision.curvatura_lomo(mask, bbox)
+                    if c is not None:
+                        curvaturas.append(c)
+                    centros_y.append(bbox[1] + bbox[3] / 2)
                     ausentes_seguidos = 0
+                    self.detectando = True
                 else:
                     ausentes_seguidos += 1
-                    if buffer_frames and ausentes_seguidos >= config_podal.FRAMES_AUSENCIA_FIN_PASADA:
-                        self._procesar_pasada(buffer_frames)
-                        buffer_frames = []
+                    if centros_y and ausentes_seguidos >= config_podal.FRAMES_AUSENCIA_FIN_PASADA:
+                        self._procesar_pasada(curvaturas, centros_y)
+                        curvaturas, centros_y = [], []
+                        self.detectando = False
 
                 espera = intervalo - (time.time() - t0)
                 if espera > 0:
@@ -265,18 +313,21 @@ class _CapturaTambo:
             if cap_posicion is not None:
                 cap_posicion.release()
 
-    def _procesar_pasada(self, frames: list):
+    def _procesar_pasada(self, curvaturas: list, centros_y: list):
         try:
-            metricas = podal_vision.procesar_secuencia_marcha(frames)
+            metricas = podal_vision.agregar_metricas(curvaturas, centros_y)
             if metricas is None:
                 return
             resultado = podal_vision.score_renguera(metricas)
             ts_evento = datetime.datetime.now()
             resuelto = resolver_rp(self.tambo, ts_evento, self.cfg["tolerancia_seg"])
-            guardar_lectura(
-                self.tambo, ts_evento, resultado,
-                rp=resuelto["rp"] if resuelto else None,
-                plaza=resuelto["plaza"] if resuelto else None)
+            rp = resuelto["rp"] if resuelto else None
+            guardar_lectura(self.tambo, ts_evento, resultado, rp=rp,
+                             plaza=resuelto["plaza"] if resuelto else None)
+            self.ultima_deteccion = {
+                "ts": ts_evento.strftime(_TS_FMT), "rp": rp,
+                "score": resultado["score"], "motivos": resultado.get("motivos") or [],
+            }
         except Exception as exc:  # noqa: BLE001
             self.ultimo_error = str(exc)
 
@@ -313,7 +364,20 @@ def estado(tambo: str) -> dict:
     return {
         "habilitado": cfg["habilitado"],
         "activa": bool(captura and captura.activa()),
+        "detectando": bool(captura and captura.detectando),
         "camara_marcha_conectada": bool(captura and captura.conectada_marcha),
         "camara_posicion_conectada": bool(captura and captura.conectada_posicion),
         "ultimo_error": captura.ultimo_error if captura else None,
+        "ultima_deteccion": captura.ultima_deteccion if captura else None,
     }
+
+
+def frame_jpeg(tambo: str, camara: str) -> bytes | None:
+    """Último cuadro (JPEG) de la cámara indicada ('marcha' o 'posicion'),
+    para el snapshot en vivo de la interfaz. None si no hay captura activa
+    o todavía no llegó ningún cuadro."""
+    with _capturas_lock:
+        captura = _capturas.get(tambo)
+    if not captura:
+        return None
+    return captura.frame_jpeg(camara)
