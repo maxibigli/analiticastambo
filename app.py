@@ -19,6 +19,7 @@ import cicla
 import config_alertas
 import correo
 import db
+import ficha_animal
 import laserenisima
 import mantenimiento
 import resumen
@@ -701,6 +702,43 @@ def api_salud_bcs_vacas():
     vacas = [dict(zip(data["columns"], r)) for r in data["rows"]]
     return jsonify({
         "vacas": vacas, "bcs_bajo": salud.BCS_BAJO, "bcs_alto": salud.BCS_ALTO,
+    })
+
+
+@app.get("/api/animal/ficha")
+@auth.requiere_rol("admin")
+def api_animal_ficha():
+    """Ficha individual de un animal por RP: datos generales, historial de
+    eventos, producción diaria, condición corporal (BCS) y test de leche.
+    Consulta directa (sin caché): es una búsqueda puntual, no un dashboard."""
+    tambo = _tambo_del_request()
+    rp_raw = request.args.get("rp", "").strip()
+    if not rp_raw.isdigit():
+        return jsonify({"error": "Ingresá un número de RP válido."}), 400
+    rp = int(rp_raw)
+
+    def filas(d):
+        return [dict(zip(d["columns"], r)) for r in d["rows"]]
+
+    try:
+        info = db.run_query(ficha_animal.sql_info_general(rp), tambo=tambo)
+        if not info["rows"]:
+            return jsonify({"error": f"No se encontró el animal RP {rp}."}), 404
+        eventos = db.run_query(ficha_animal.sql_eventos(rp), tambo=tambo)
+        produccion = db.run_query(ficha_animal.sql_produccion_diaria(rp), tambo=tambo)
+        bcs = db.run_query(ficha_animal.sql_bcs_individual(rp), tambo=tambo)
+        test_diario = db.run_query(ficha_animal.sql_test_leche_diario(rp), tambo=tambo)
+        test_controles = db.run_query(ficha_animal.sql_test_leche_controles(rp), tambo=tambo)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"No se pudo consultar la base: {exc}"}), 502
+
+    return jsonify({
+        "info": dict(zip(info["columns"], info["rows"][0])),
+        "eventos": filas(eventos),
+        "produccion": filas(produccion),
+        "bcs": filas(bcs),
+        "test_diario": filas(test_diario),
+        "test_controles": filas(test_controles),
     })
 
 
