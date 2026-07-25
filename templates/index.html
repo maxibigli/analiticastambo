@@ -158,6 +158,13 @@
   .chip.rojo { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
   .chip.ambar { background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--warning); }
   .chip.violeta { background: color-mix(in srgb, var(--violeta) 20%, transparent); color: var(--violeta); }
+  /* Snapshot en vivo de las cámaras de "Problemas podales" */
+  .podal-cam-box {
+    height: 180px; border: 1px solid var(--border); border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--baseline); overflow: hidden;
+  }
+  .podal-cam-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
   /* Vúmetros de Salud del rodeo */
   .gauge-row { display: flex; flex-wrap: wrap; gap: 6px; }
   .gauge { width: 128px; text-align: center; cursor: pointer; padding: 8px 4px 10px; border-radius: 10px; transition: background .15s; }
@@ -675,6 +682,47 @@
       <h2 style="margin:0">Estadística de producción de leche</h2>
       <span class="aviso">Kg por ordeño de cada rodeo, con la variación contra el período anterior.</span>
       <div id="salud-prod-cuerpo"></div>
+    </section>
+
+    <section class="card" id="salud-podal-card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">🦶 Problemas podales <span class="chip ambar">EXPERIMENTAL</span></h2>
+        <span class="aviso">Cámaras en la salida de la rotativa: una confirma el instante de paso, la otra mide
+          cómo camina la vaca. Score 1 (normal) a 5 (renguera severa) — heurístico sin calibrar todavía con
+          video real de este tambo, no reemplaza el diagnóstico del veterinario.</span>
+      </div>
+      <div id="podal-camaras" class="aviso" style="margin-top:8px"></div>
+
+      <div class="grid2" style="margin-top:12px">
+        <div>
+          <div class="aviso" style="margin-bottom:6px">Cámara de posición</div>
+          <div class="podal-cam-box">
+            <img id="podal-img-posicion" alt="Cámara de posición" hidden>
+            <div id="podal-img-posicion-vacio" class="aviso">Sin imagen</div>
+          </div>
+        </div>
+        <div>
+          <div class="aviso" style="margin-bottom:6px">Cámara de marcha</div>
+          <div class="podal-cam-box">
+            <img id="podal-img-marcha" alt="Cámara de marcha" hidden>
+            <div id="podal-img-marcha-vacio" class="aviso">Sin imagen</div>
+          </div>
+        </div>
+      </div>
+
+      <h3 style="margin:18px 0 6px">Actividad en tiempo real</h3>
+      <span class="aviso">Últimas pasadas detectadas por las cámaras, se actualiza solo cada pocos segundos.</span>
+      <div id="podal-recientes" style="margin-top:8px"></div>
+
+      <h3 style="margin:18px 0 6px">Vacas con alerta</h3>
+      <div id="podal-cuerpo"></div>
+      <div class="controls" style="margin-top:14px;align-items:center">
+        <input type="text" id="podal-buscar-rp" placeholder="Ver tendencia de una vaca (RP)…" style="width:200px">
+        <button class="secundario" id="podal-buscar-btn">Ver tendencia</button>
+      </div>
+      <div class="chart-box" id="podal-chart-box" style="height:220px;margin-top:10px" hidden>
+        <canvas id="chart-podal"></canvas>
+      </div>
     </section>
   </div>
 
@@ -2225,7 +2273,7 @@ function gaugeSVG({ pct, valor, label, sub, target, disabled, id }) {
   </div>`;
 }
 
-function pintarSaludGauges(atencion, atencion2, rcsGrupo, bcs) {
+function pintarSaludGauges(atencion, atencion2, rcsGrupo, bcs, podalEstado, podalVacas) {
   const cont = document.getElementById('salud-kpis');
   const gauges = [];
   if (atencion) {
@@ -2258,15 +2306,153 @@ function pintarSaludGauges(atencion, atencion2, rcsGrupo, bcs) {
   // Placeholders: sensores todavía no instalados/conectados en este tambo.
   gauges.push(gaugeSVG({ disabled: true, label: 'Rumia', sub: 'collar DeLaval (a conectar)' }));
   gauges.push(gaugeSVG({ disabled: true, label: 'Ingesta', sub: 'collar DeLaval (a conectar)' }));
-  gauges.push(gaugeSVG({ disabled: true, label: 'Problemas podales', sub: 'cámaras rotativa (a instalar)' }));
+  if (podalEstado && podalEstado.habilitado) {
+    const n = (podalVacas || []).length;
+    gauges.push(gaugeSVG({ pct: Math.min(100, n / 10 * 100), valor: n,
+      label: 'Problemas podales', sub: 'vacas con alerta', target: 'salud-podal-card' }));
+  } else {
+    gauges.push(gaugeSVG({ disabled: true, label: 'Problemas podales', sub: 'cámaras rotativa (a instalar)' }));
+  }
   cont.innerHTML = gauges.join('');
+}
+
+function pintarPodalCamaras(estado) {
+  const cont = document.getElementById('podal-camaras');
+  if (!estado || !estado.habilitado) {
+    cont.innerHTML = 'Sin cámaras configuradas para este tambo (ver <code>config_podal.py</code>).';
+    return;
+  }
+  const punto = ok => `<span style="color:${ok ? 'var(--good)' : 'var(--critical)'}">●</span>`;
+  cont.innerHTML = `${punto(estado.camara_marcha_conectada)} Cámara de marcha
+    ${punto(estado.camara_posicion_conectada)} Cámara de posición
+    ${estado.activa && estado.detectando ? '<span class="chip ambar" style="margin-left:6px">detectando…</span>' : ''}
+    <button class="secundario" id="podal-toggle" style="margin-left:10px">
+      ${estado.activa ? 'Detener captura' : 'Iniciar captura'}
+    </button>
+    ${estado.ultimo_error ? `<span style="color:var(--critical)"> — ${estado.ultimo_error}</span>` : ''}`;
+  document.getElementById('podal-toggle').addEventListener('click', async () => {
+    await pedirJSON(`/api/podal/${estado.activa ? 'detener' : 'iniciar'}?tambo=${encodeURIComponent(tamboActual)}`,
+      { method: 'POST' });
+    cargarPodalVivo();
+  });
+}
+
+function pintarPodalSnapshots(estado) {
+  const cache = Date.now();
+  [['posicion', estado && estado.camara_posicion_conectada],
+   ['marcha', estado && estado.camara_marcha_conectada]].forEach(([cam, conectada]) => {
+    const img = document.getElementById('podal-img-' + cam);
+    const vacio = document.getElementById('podal-img-' + cam + '-vacio');
+    if (estado && estado.activa && conectada) {
+      img.src = `/api/podal/snapshot/${cam}?tambo=${encodeURIComponent(tamboActual)}&_=${cache}`;
+      img.hidden = false; vacio.hidden = true;
+    } else {
+      img.hidden = true; vacio.hidden = false;
+    }
+  });
+}
+
+function pintarPodalRecientes(lecturas) {
+  const cont = document.getElementById('podal-recientes');
+  if (!lecturas.length) {
+    cont.innerHTML = `<div class="aviso">Todavía no se registró ninguna pasada.</div>`;
+    return;
+  }
+  const colorScore = s => s >= 4 ? 'var(--critical)' : (s >= 3 ? 'var(--warning)' : 'var(--good)');
+  cont.innerHTML = `<div class="tabla-scroll" style="max-height:240px"><table>
+    <thead><tr><th>Hora</th><th>Vaca</th><th>Score</th><th>Motivo</th></tr></thead>
+    <tbody>` + lecturas.map(l => `<tr>
+      <td>${l.ts}</td>
+      <td>${l.rp != null ? fmt(l.rp) : '<span class="aviso">sin identificar</span>'}</td>
+      <td style="font-weight:700;color:${colorScore(l.score)}">${l.score}</td>
+      <td>${(l.motivos || []).join(' · ') || '—'}</td>
+    </tr>`).join('') + `</tbody></table></div>`;
+}
+
+function pintarPodal(d) {
+  const cont = document.getElementById('podal-cuerpo');
+  const vacas = d.vacas || [];
+  if (!vacas.length) {
+    cont.innerHTML = `<div class="aviso" style="margin-top:6px">Ninguna vaca con alerta de renguera. ✔</div>`;
+    return;
+  }
+  cont.innerHTML = `<div class="tabla-scroll" style="max-height:360px"><table>
+    <thead><tr><th>Vaca</th><th>Score reciente</th><th>Referencia</th><th>Tendencia</th>
+      <th>Lecturas</th><th>Motivo</th></tr></thead>
+    <tbody>` + vacas.map(v => `<tr>
+      <td>${fmt(v.rp)}</td>
+      <td style="font-weight:700;color:${v.score_reciente >= 4 ? 'var(--critical)' : 'var(--warning)'}">${v.score_reciente}</td>
+      <td>${v.score_referencia == null ? '—' : v.score_referencia}</td>
+      <td>${v.tendencia == null ? '—' : (v.tendencia > 0 ? '+' : '') + v.tendencia}</td>
+      <td>${v.n_lecturas}</td>
+      <td>${(v.motivos || []).join(' · ') || '—'}</td>
+    </tr>`).join('') + `</tbody></table></div>`;
+}
+
+let chartPodal = null;
+
+async function verTendenciaPodal(rp) {
+  const box = document.getElementById('podal-chart-box');
+  try {
+    const d = await pedirJSON(`/api/podal/historial/${encodeURIComponent(rp)}?tambo=${encodeURIComponent(tamboActual)}`);
+    const lecturas = (d.lecturas || []).slice().reverse();
+    if (!lecturas.length) {
+      box.hidden = true;
+      alert(`Sin lecturas guardadas para la vaca ${rp}.`);
+      return;
+    }
+    box.hidden = false;
+    chartPodal = dibujar('chart-podal', chartPodal, {
+      type: 'line',
+      data: {
+        labels: lecturas.map(l => l.ts),
+        datasets: [{ label: `Score renguera — vaca ${rp}`, data: lecturas.map(l => l.score),
+          borderColor: css('--accent'), pointRadius: 2 }],
+      },
+      options: baseOpts(true),
+    });
+  } catch (e) {
+    box.hidden = true;
+    alert(e.message || 'No se pudo cargar la tendencia.');
+  }
+}
+
+document.getElementById('podal-buscar-btn').addEventListener('click', () => {
+  const rp = document.getElementById('podal-buscar-rp').value.trim();
+  if (rp) verTendenciaPodal(rp);
+});
+
+const PODAL_REFRESCO_MS = 4000;
+let podalTimer = null;
+
+async function cargarPodalVivo() {
+  try {
+    const est = await pedirJSON('/api/podal/estado?tambo=' + encodeURIComponent(tamboActual));
+    pintarPodalCamaras(est);
+    pintarPodalSnapshots(est);
+  } catch (e) { /* la tarjeta de salud ya muestra errores generales */ }
+  try {
+    const rec = await pedirJSON('/api/podal/recientes?tambo=' + encodeURIComponent(tamboActual) + '&limite=15');
+    pintarPodalRecientes(rec.lecturas || []);
+  } catch (e) { /* idem */ }
+}
+
+function iniciarPodalVivo() {
+  clearInterval(podalTimer);
+  cargarPodalVivo();
+  podalTimer = setInterval(cargarPodalVivo, PODAL_REFRESCO_MS);
+}
+
+function detenerPodalVivo() {
+  clearInterval(podalTimer);
 }
 
 async function cargarSalud() {
   clearTimeout(saludReintento);
   const estado = document.getElementById('salud-estado');
   estado.textContent = 'Cargando…';
-  let atencionD = null, atencion2D = null, rcsGrupoD = null, bcsD = null;
+  let atencionD = null, atencion2D = null, rcsGrupoD = null, bcsD = null,
+      podalEstadoD = null, podalVacasD = null;
   const listos = await Promise.all([
     seccionSalud('/api/salud/atencion', 'salud-atencion-cuerpo', d => {
       atencionD = d; pintarSaludAtencion(d);
@@ -2283,8 +2469,14 @@ async function cargarSalud() {
     }),
     seccionSalud('/api/salud/conductividad', null, pintarSaludConductividad),
     seccionSalud('/api/salud/produccion_rodeo', 'salud-prod-cuerpo', pintarSaludProduccion),
+    seccionSalud('/api/podal/estado', 'podal-camaras', d => {
+      podalEstadoD = d; pintarPodalCamaras(d);
+    }),
+    seccionSalud('/api/podal/vacas', 'podal-cuerpo', d => {
+      podalVacasD = d.vacas || []; pintarPodal(d);
+    }),
   ]);
-  pintarSaludGauges(atencionD, atencion2D, rcsGrupoD, bcsD);
+  pintarSaludGauges(atencionD, atencion2D, rcsGrupoD, bcsD, podalEstadoD, podalVacasD);
   const faltan = listos.filter(x => !x).length;
   estado.textContent = faltan
     ? `Calculando ${faltan} sección(es)… (la base de esta PC es lenta, se reintenta sola)`
@@ -2953,6 +3145,8 @@ function irAPagina(id) {
   if (id === 'ordeno') reprogramarRefrescoOrdeno(); else clearInterval(ordenoTimer);
   // El reintento de Salud solo tiene sentido con esa página a la vista.
   if (id !== 'salud') clearTimeout(saludReintento);
+  // Cámaras y actividad en vivo de "Problemas podales": solo mientras se ve la página.
+  if (id === 'salud') iniciarPodalVivo(); else detenerPodalVivo();
 }
 
 document.querySelectorAll('.nav-item').forEach(el =>

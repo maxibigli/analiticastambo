@@ -7,7 +7,7 @@ import statistics
 import threading
 import time
 
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
 
 import datetime
 
@@ -22,6 +22,7 @@ import db
 import ficha_animal
 import laserenisima
 import mantenimiento
+import podal
 import resumen
 import rutina
 import salud
@@ -686,6 +687,77 @@ def api_salud_atencion_v2():
         return espera
     fichas = salud.calcular_atencion_v2(data["columns"], data["rows"])
     return jsonify({"vacas": fichas, "experimental": True})
+
+
+# --- Problemas podales (renguera por cámaras) -------------------------------
+# Heurístico v1, sin calibrar con video real de este tambo (no hay cámaras
+# instaladas todavía) -- ver la nota completa en podal_vision.py. Las cámaras
+# solo se activan si el tambo tiene configuración en config_podal.py.
+
+@app.get("/api/podal/estado")
+@auth.requiere_rol("admin")
+def api_podal_estado():
+    tambo = _tambo_del_request()
+    return jsonify(podal.estado(tambo))
+
+
+@app.post("/api/podal/iniciar")
+@auth.requiere_rol("admin")
+def api_podal_iniciar():
+    # Se llama sin cuerpo JSON (el tambo va en la URL), a diferencia de
+    # _tambo_del_request() que espera el tambo en el body para POST.
+    tambo = tambos.resolver(request.args.get("tambo", ""))
+    return jsonify(podal.iniciar(tambo))
+
+
+@app.post("/api/podal/detener")
+@auth.requiere_rol("admin")
+def api_podal_detener():
+    tambo = tambos.resolver(request.args.get("tambo", ""))
+    return jsonify(podal.detener(tambo))
+
+
+@app.get("/api/podal/vacas")
+@auth.requiere_rol("admin")
+def api_podal_vacas():
+    """Vacas con alerta de renguera: promedio reciente de score vs. su propio
+    historial previo (ver podal.calcular_alertas)."""
+    tambo = _tambo_del_request()
+    return jsonify({"vacas": podal.calcular_alertas(tambo), "estimacion_propia": True})
+
+
+@app.get("/api/podal/historial/<int:rp>")
+@auth.requiere_rol("admin")
+def api_podal_historial(rp: int):
+    """Serie temporal de scores de una vaca puntual, para el gráfico de
+    tendencia."""
+    tambo = _tambo_del_request()
+    dias = request.args.get("dias", type=int) or podal.DIAS_REFERENCIA_DEFECTO
+    return jsonify({"rp": rp, "lecturas": podal.historial(tambo, rp=rp, dias=dias)})
+
+
+@app.get("/api/podal/recientes")
+@auth.requiere_rol("admin")
+def api_podal_recientes():
+    """Últimas pasadas registradas (identificadas o no), para el panel de
+    actividad en tiempo real."""
+    tambo = _tambo_del_request()
+    limite = min(request.args.get("limite", type=int) or 20, 100)
+    return jsonify({"lecturas": podal.recientes(tambo, limite=limite)})
+
+
+@app.get("/api/podal/snapshot/<camara>")
+@auth.requiere_rol("admin")
+def api_podal_snapshot(camara: str):
+    """Último cuadro (JPEG) de la cámara "marcha" o "posicion", para mostrar
+    la vista en vivo en la interfaz."""
+    if camara not in ("marcha", "posicion"):
+        return jsonify({"error": "Cámara inválida."}), 400
+    tambo = tambos.resolver(request.args.get("tambo", ""))
+    data = podal.frame_jpeg(tambo, camara)
+    if data is None:
+        return jsonify({"error": "Sin imagen todavía."}), 404
+    return Response(data, mimetype="image/jpeg")
 
 
 @app.get("/api/salud/bcs_vacas")

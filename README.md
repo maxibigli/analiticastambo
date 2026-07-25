@@ -135,6 +135,49 @@ ordeño que tenga esa copia. En esta instalación, el dato más reciente es del
 2026-07-17 — es decir, esta base es una copia que no se está actualizando en
 vivo. Ver `ordeno.py` para la ventana de sesión (3 h) y la definición de cada campo.
 
+## Problemas podales — cámaras en la rotativa (EXPERIMENTAL)
+
+Módulo para detectar renguera con dos cámaras que miran el mismo corredor de
+**salida** de la rotativa:
+
+- **Cámara "posición"**: vista amplia del punto de salida. No reconoce a la
+  vaca por imagen — solo confirma el instante en que algo cruza por ahí.
+- **Cámara "marcha"**: vista lateral del mismo corredor, mide cómo camina
+  (curvatura del lomo mientras cruza el cuadro) y da un **score 1 (normal) a
+  5 (renguera severa)**.
+
+La identidad del animal **no** sale de reconocerlo por imagen (caravana,
+RFID visual): sale de cruzar el instante detectado por cámara con
+`CMSMilkYield.MilkConfirmTime` de DelPro, que ya sabe qué vaca terminó de
+ordeñarse y cuándo (`podal.resolver_rp`). Los scores se guardan en una base
+SQLite **local** (`podal.db`, no va al repo — la base DDM de DelPro es de
+solo lectura para esta app, no se le puede escribir nada).
+
+⚠️ **Es un heurístico v1, sin calibrar**: no hay cámaras instaladas todavía
+en ningún tambo, así que los umbrales (`podal_vision.py`) salen de la
+bibliografía de "locomotion scoring" (lomo arqueado al caminar = señal
+clásica de dolor podal), no de casos reales de este rodeo. Antes de confiar
+en los scores hay que validarlos a campo (comparar contra el diagnóstico del
+veterinario), igual que se hizo con el índice experimental de `salud.py`.
+
+**Para activar las cámaras de un tambo** (por defecto están deshabilitadas):
+
+```powershell
+setx PODAL_CAM_POSICION_PONDEROSA "rtsp://usuario:clave@192.168.1.30/stream1"
+setx PODAL_CAM_MARCHA_PONDEROSA   "rtsp://usuario:clave@192.168.1.31/stream1"
+```
+
+y agregar el id del tambo a `PODAL_TAMBOS` en `config_podal.py`. Con eso
+configurado, en **Salud del rodeo → Problemas podales** aparece:
+
+- Estado de conexión de cada cámara y un botón para iniciar/detener la captura.
+- **Snapshot en vivo** de las dos cámaras (se actualiza solo cada 4 s), con
+  un indicador "detectando…" mientras un animal está cruzando.
+- **Actividad en tiempo real**: últimas pasadas detectadas, identificadas o
+  no, con su score y motivo — se actualiza sola sin recargar la página.
+- **Vacas con alerta**: promedio reciente de score vs. el historial propio de
+  cada vaca, con gráfico de tendencia individual (buscar por RP).
+
 ## Tareas pendientes (estilo To-Do de DelPro)
 
 DelPro no guarda las tareas en una tabla (la tabla `Task` está vacía): las
