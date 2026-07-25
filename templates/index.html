@@ -1935,6 +1935,13 @@ function pintarSaludBcs(d) {
   renderSaludBcs();
 }
 
+function actualizarGaugeBcs(n) {
+  const actual = document.getElementById('gauge-bcs');
+  if (!actual) return;   // el vúmetro todavía no se pintó (primera carga)
+  actual.outerHTML = gaugeSVG({ id: 'gauge-bcs', pct: Math.min(100, n / 30 * 100), valor: n,
+    label: 'Fuera de score (BCS)', sub: 'vacas', target: 'salud-bcs-card' });
+}
+
 function renderSaludBcs() {
   const cont = document.getElementById('bcs-fuera-cuerpo');
   const info = document.getElementById('bcs-info');
@@ -1950,6 +1957,7 @@ function renderSaludBcs() {
   }
   const enRango = vacas.filter(v => v.score >= min && v.score <= max);
   const fuera = vacas.filter(v => v.score < min || v.score > max);
+  actualizarGaugeBcs(fuera.length);
   chartBcs = dibujar('chart-bcs', chartBcs, {
     type: 'scatter',
     data: { datasets: [
@@ -2034,11 +2042,12 @@ function pintarSaludProduccion(d) {
 // Vúmetro semicircular: pct 0-100 = qué tan cerca del extremo "malo" (rojo) está.
 // Clic → hace scroll a la tarjeta correspondiente. disabled=true = placeholder
 // sin dato todavía (sensores que no están instalados/conectados).
-function gaugeSVG({ pct, valor, label, sub, target, disabled }) {
+function gaugeSVG({ pct, valor, label, sub, target, disabled, id }) {
   const p = Math.max(0, Math.min(100, pct || 0));
   const rot = (p / 100) * 180 - 90;
   const click = (!disabled && target) ? ` onclick="document.getElementById('${target}').scrollIntoView({behavior:'smooth',block:'start'})"` : '';
-  return `<div class="gauge${disabled ? ' disabled' : ''}"${click}>
+  const idAttr = id ? ` id="${id}"` : '';
+  return `<div class="gauge${disabled ? ' disabled' : ''}"${idAttr}${click}>
     <svg class="gauge-svg" viewBox="0 0 100 58">
       <path d="M8,55 A42,42 0 0 1 29,18.63" fill="none" stroke="var(--good)" stroke-width="9" stroke-linecap="round"/>
       <path d="M29,18.63 A42,42 0 0 1 71,18.63" fill="none" stroke="var(--warning)" stroke-width="9" stroke-linecap="round"/>
@@ -2051,7 +2060,7 @@ function gaugeSVG({ pct, valor, label, sub, target, disabled }) {
   </div>`;
 }
 
-function pintarSaludGauges(atencion, atencion2, rcsGrupo) {
+function pintarSaludGauges(atencion, atencion2, rcsGrupo, bcs) {
   const cont = document.getElementById('salud-kpis');
   const gauges = [];
   if (atencion) {
@@ -2074,6 +2083,13 @@ function pintarSaludGauges(atencion, atencion2, rcsGrupo) {
     gauges.push(gaugeSVG({ pct: Math.min(100, nuevas / 30 * 100), valor: nuevas,
       label: 'Casos nuevos RCS', sub: 'vs. control anterior', target: 'salud-rcs-grupo-card' }));
   }
+  if (bcs && bcs.vacas) {
+    const min = parseFloat(document.getElementById('bcs-min').value) || bcs.bcs_bajo;
+    const max = parseFloat(document.getElementById('bcs-max').value) || bcs.bcs_alto;
+    const n = bcs.vacas.filter(v => v.score < min || v.score > max).length;
+    gauges.push(gaugeSVG({ id: 'gauge-bcs', pct: Math.min(100, n / 30 * 100), valor: n,
+      label: 'Fuera de score (BCS)', sub: 'vacas', target: 'salud-bcs-card' }));
+  }
   // Placeholders: sensores todavía no instalados/conectados en este tambo.
   gauges.push(gaugeSVG({ disabled: true, label: 'Rumia', sub: 'collar DeLaval (a conectar)' }));
   gauges.push(gaugeSVG({ disabled: true, label: 'Ingesta', sub: 'collar DeLaval (a conectar)' }));
@@ -2085,7 +2101,7 @@ async function cargarSalud() {
   clearTimeout(saludReintento);
   const estado = document.getElementById('salud-estado');
   estado.textContent = 'Cargando…';
-  let atencionD = null, atencion2D = null, rcsGrupoD = null;
+  let atencionD = null, atencion2D = null, rcsGrupoD = null, bcsD = null;
   const listos = await Promise.all([
     seccionSalud('/api/salud/atencion', 'salud-atencion-cuerpo', d => {
       atencionD = d; pintarSaludAtencion(d);
@@ -2097,11 +2113,13 @@ async function cargarSalud() {
       rcsGrupoD = d; pintarSaludRcsGrupo(d);
     }),
     seccionSalud('/api/salud/rcs_vacas', 'salud-rcs-vacas-cuerpo', pintarSaludRcsVacas),
-    seccionSalud('/api/salud/bcs_vacas', 'bcs-fuera-cuerpo', pintarSaludBcs),
+    seccionSalud('/api/salud/bcs_vacas', 'bcs-fuera-cuerpo', d => {
+      bcsD = d; pintarSaludBcs(d);
+    }),
     seccionSalud('/api/salud/conductividad', null, pintarSaludConductividad),
     seccionSalud('/api/salud/produccion_rodeo', 'salud-prod-cuerpo', pintarSaludProduccion),
   ]);
-  pintarSaludGauges(atencionD, atencion2D, rcsGrupoD);
+  pintarSaludGauges(atencionD, atencion2D, rcsGrupoD, bcsD);
   const faltan = listos.filter(x => !x).length;
   estado.textContent = faltan
     ? `Calculando ${faltan} sección(es)… (la base de esta PC es lenta, se reintenta sola)`
