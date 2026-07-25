@@ -555,6 +555,38 @@
     <div class="rutina-layout" id="rutina-cuerpo"></div>
   </section>
   <div class="rutina-tooltip" id="rutina-tooltip"></div>
+
+  <section class="card" id="rendimiento-sala-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Rendimiento Sala</h2>
+      <span class="aviso">Rotaciones, producción e identificación por sesión de ordeño.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="rend-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="rend-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="rend-aplicar">Aplicar</button>
+      </div>
+    </div>
+    <div class="aviso" id="rend-info" style="margin-top:8px"></div>
+    <div class="kpis" id="rend-kpis" style="margin-top:10px"></div>
+    <div class="grid2" style="margin-top:14px">
+      <div>
+        <div class="aviso" style="margin-bottom:6px">Producción por sesión (kg)</div>
+        <div class="chart-box" style="height:260px"><canvas id="chart-rend-produccion"></canvas></div>
+      </div>
+      <div>
+        <div class="aviso" style="margin-bottom:6px">Ordeños por hora (throughput)</div>
+        <div class="chart-box" style="height:260px"><canvas id="chart-rend-throughput"></canvas></div>
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Vacas identificadas vs. desconocidas por día</div>
+      <div class="chart-box" style="height:260px"><canvas id="chart-rend-identificacion"></canvas></div>
+    </div>
+  </section>
   </div>
 
   <div class="page" id="page-evolucion" hidden>
@@ -1250,6 +1282,87 @@ async function cargarIncidentesDia() {
   }
 }
 document.getElementById('incid-aplicar').addEventListener('click', cargarIncidentesDia);
+
+// --- Rendimiento Sala: throughput de la rotativa por sesión, rango elegible -
+let chartRendProd = null, chartRendThroughput = null, chartRendIdent = null, rendReintento = null;
+
+function etiquetaSesion(s) {
+  const [, m, d] = s.fecha.split('-');
+  return `${d}/${m} S${s.sesion}`;
+}
+
+async function cargarRendimiento() {
+  clearTimeout(rendReintento);
+  const info = document.getElementById('rend-info');
+  let desde = document.getElementById('rend-desde').value;
+  let hasta = document.getElementById('rend-hasta').value;
+  if (!hasta) hasta = hoyISO();
+  if (!desde) desde = menosDias(hasta, 6);
+  document.getElementById('rend-desde').value = desde;
+  document.getElementById('rend-hasta').value = hasta;
+  info.textContent = 'Calculando…';
+  try {
+    const d = await pedirJSON(`/api/rutina/rendimiento?desde=${desde}&hasta=${hasta}&tambo=${encodeURIComponent(tamboActual)}`);
+    const sesiones = d.sesiones || [];
+    if (!sesiones.length) {
+      info.textContent = 'Sin ordeños registrados en este rango.';
+      document.getElementById('rend-kpis').innerHTML = '';
+      return;
+    }
+    const labels = sesiones.map(etiquetaSesion);
+    const kgTotal = sesiones.reduce((a, s) => a + (s.kg_total || 0), 0);
+    const ordTotal = sesiones.reduce((a, s) => a + (s.n_ordenios || 0), 0);
+    const descTotal = sesiones.reduce((a, s) => a + (s.n_desconocidos || 0), 0);
+    const rotaciones = sesiones.filter(s => s.n_rotaciones != null).map(s => s.n_rotaciones);
+    const rotProm = rotaciones.length ? Math.round(rotaciones.reduce((a, b) => a + b, 0) / rotaciones.length) : null;
+
+    document.getElementById('rend-kpis').innerHTML = [
+      ['Ordeños totales', ordTotal],
+      ['Producción total', kgTotal ? Math.round(kgTotal) + ' kg' : '—'],
+      ['Desconocidos', ordTotal ? Math.round(100 * descTotal / ordTotal) + '%' : '—'],
+      ['Rotaciones promedio/sesión', rotProm],
+    ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
+
+    chartRendProd = dibujar('chart-rend-produccion', chartRendProd, {
+      type: 'bar',
+      data: { labels, datasets: [{ label: 'Kg', data: sesiones.map(s => s.kg_total),
+        backgroundColor: SERIES[0], maxBarThickness: 28, borderRadius: 4 }] },
+      options: baseOpts(false),
+    });
+    chartRendThroughput = dibujar('chart-rend-throughput', chartRendThroughput, {
+      type: 'line',
+      data: { labels, datasets: [{ label: 'Ordeños/hora', data: sesiones.map(s => s.ordenios_por_hora),
+        borderColor: SERIES[1], backgroundColor: SERIES[1], borderWidth: 2, pointRadius: 3, tension: .2 }] },
+      options: baseOpts(false),
+    });
+
+    const porDia = {};
+    sesiones.forEach(s => {
+      const p = porDia[s.fecha] = porDia[s.fecha] || { identificadas: 0, desconocidas: 0 };
+      p.identificadas += s.n_identificadas || 0;
+      p.desconocidas += s.n_desconocidos || 0;
+    });
+    const fechas = Object.keys(porDia).sort();
+    const opts = baseOpts(true);
+    opts.scales.x.stacked = true;
+    opts.scales.y.stacked = true;
+    chartRendIdent = dibujar('chart-rend-identificacion', chartRendIdent, {
+      type: 'bar',
+      data: { labels: fechas, datasets: [
+        { label: 'Identificadas', data: fechas.map(f => porDia[f].identificadas), backgroundColor: SERIES[2] },
+        { label: 'Desconocidas', data: fechas.map(f => porDia[f].desconocidas), backgroundColor: SERIES[5] },
+      ] },
+      options: opts,
+    });
+
+    info.textContent = `${sesiones.length} sesión(es) entre ${desde} y ${hasta}.` +
+      (d.truncated ? ' ⚠ Datos truncados por volumen, probá un rango más corto.' : '');
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; rendReintento = setTimeout(cargarRendimiento, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('rend-aplicar').addEventListener('click', cargarRendimiento);
 
 async function cargarCanalesAlertas() {
   const cont = document.getElementById('alertas-canales');
@@ -3119,7 +3232,7 @@ function cargarDatosDePagina(id) {
     cargarResumenProduccion(); cargarResumenAnimales(); cargarResumenDuraciones(); cargarResumenGrupo();
   }
   else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
-  else if (id === 'rutina') cargarRutina();
+  else if (id === 'rutina') { cargarRutina(); cargarRendimiento(); }
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
   else if (id === 'consultas') cargarPredefinidas();

@@ -1283,6 +1283,66 @@ def api_ordeno_incidentes_dia():
     return jsonify({"desde": desde.isoformat(), "hasta": hasta.isoformat(), "dias": dias})
 
 
+RENDIMIENTO_CACHE_TTL_S = 900  # 15 min
+
+
+def _refresh_rendimiento_async(tambo, desde, hasta):
+    key = f"{tambo}:rendimiento:{desde.isoformat()}:{hasta.isoformat()}"
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            data = db.run_query(rutina.sql_rendimiento(desde.isoformat(), hasta.isoformat()),
+                                 tambo=tambo, max_rows=rutina.MAX_FILAS_DIA * rutina.RANGO_RENDIMIENTO_MAX_DIAS)
+            _cache_set(key, data)
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+@app.get("/api/rutina/rendimiento")
+@auth.requiere_rol("admin")
+def api_rutina_rendimiento():
+    """"Rendimiento Sala": throughput de la rotativa por sesión, para un
+    rango de fechas elegible — rotaciones, ordeños/hora, producción,
+    identificados/desconocidos. Réplica gráfica del reporte denso de DelPro."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    try:
+        hasta = (datetime.datetime.strptime(request.args["hasta"], "%Y-%m-%d").date()
+                 if request.args.get("hasta") else hoy)
+        desde = (datetime.datetime.strptime(request.args["desde"], "%Y-%m-%d").date()
+                 if request.args.get("desde") else hasta - datetime.timedelta(days=6))
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    if desde > hasta:
+        desde, hasta = hasta, desde
+    if (hasta - desde).days > rutina.RANGO_RENDIMIENTO_MAX_DIAS:
+        return jsonify({"error": f"El rango no puede superar {rutina.RANGO_RENDIMIENTO_MAX_DIAS} días "
+                                 "(la consulta escanea todas las visitas)."}), 400
+
+    key = f"{tambo}:rendimiento:{desde.isoformat()}:{hasta.isoformat()}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=RENDIMIENTO_CACHE_TTL_S)
+    if data is None:
+        _refresh_rendimiento_async(tambo, desde, hasta)
+        return jsonify({"calentando": True, "mensaje": "Calculando rendimiento de sala…"}), 202
+    if not fresh:
+        _refresh_rendimiento_async(tambo, desde, hasta)
+
+    sesiones = rutina.analizar_rendimiento(data["columns"], data["rows"],
+                                            desde.isoformat(), hasta.isoformat(),
+                                            max_sesiones=_max_sesiones(tambo))
+    return jsonify({"desde": desde.isoformat(), "hasta": hasta.isoformat(), "sesiones": sesiones,
+                    "truncated": data.get("truncated", False)})
+
+
 @app.get("/api/cicla/cargas")
 @auth.requiere_rol("admin")
 def api_cicla_cargas():

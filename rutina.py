@@ -151,6 +151,132 @@ def sql_rutina(fecha: str) -> str:
     """
 
 
+RANGO_RENDIMIENTO_MAX_DIAS = 31  # tope: consulta pesada, escanea todas las visitas del rango
+
+
+def sql_rendimiento(desde: str, hasta: str) -> str:
+    """Visitas de un RANGO de fechas (con el mismo margen de 6h), + el kg de
+    cada visita — para "Rendimiento de sala" (throughput/producción de la
+    rotativa), a diferencia de sql_rutina que es de calidad de rutina."""
+    desde, hasta = validar_fecha(desde), validar_fecha(hasta)
+    return f"""
+        SELECT
+          m.Place AS puesto, b.Number AS rp, b.[Group] AS grupo,
+          m.IDTime AS hora_id, c.VerifiedTime AS hora_coloc, y.MilkConfirmTime AS hora_fin,
+          s.TotalYield AS kg
+        FROM MilkingDeviceVisit m
+        JOIN BasicAnimal b ON b.OID = m.Animal
+        LEFT JOIN CMSDeviceVisit c ON c.OID = m.OID
+        LEFT JOIN CMSMilkYield y ON y.MilkingDeviceVisit = m.OID
+        LEFT JOIN SessionMilkYield s ON s.OID = y.OID
+        WHERE m.GCRecord IS NULL AND m.IDTime IS NOT NULL
+          AND m.IDTime >= DATEADD(hour, -6, '{desde}')
+          AND m.IDTime < DATEADD(hour, 6, DATEADD(day, 1, '{hasta}'))
+        ORDER BY m.IDTime
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
+    """
+
+
+def _resumen_sesion_rendimiento(visitas: list) -> dict:
+    """Métricas de throughput de UNA sesión: rotaciones, producción, ordeños
+    por hora, identificados/desconocidos. Réplica gráfica del reporte
+    "Rendimiento Sala" de DelPro (el de la tabla densa por sala/fecha/sesión)."""
+    inicio = visitas[0]["hora_id"]
+    fin = max((v["hora_fin"] or v["hora_id"]) for v in visitas)
+    duracion_seg = max((fin - inicio).total_seconds(), 1)
+    duracion_h = duracion_seg / 3600
+
+    n_visitas = len(visitas)
+    ordenios = [v for v in visitas if v["kg"] is not None]
+    n_ordenios = len(ordenios)
+    kg_total = sum(v["kg"] for v in ordenios)
+    desconocidos = [v for v in ordenios if not v["rp"]]
+    n_desconocidos = len(desconocidos)
+    kg_desconocidos = sum(v["kg"] for v in desconocidos)
+    n_identificadas = len({v["rp"] for v in ordenios if v["rp"]})
+
+    tiempos_ordeño = [_seg(v["hora_coloc"], v["hora_fin"]) for v in visitas
+                      if v["hora_coloc"] and v["hora_fin"]]
+    dur_prom_ordeño = statistics.mean(tiempos_ordeño) if tiempos_ordeño else None
+
+    # "Rotaciones": vueltas completas de la plataforma en la sesión, estimadas
+    # con la mediana ID→retiro de cada visita (igual criterio que "ocupación"
+    # en _analizar_sesion: la rotativa es mecánica, todos los puestos giran al
+    # mismo ritmo).
+    totales_vuelta = [_seg(v["hora_id"], v["hora_fin"]) for v in visitas if v["hora_fin"] is not None]
+    t_vuelta = statistics.median(totales_vuelta) if totales_vuelta else None
+    n_rotaciones = round(duracion_seg / t_vuelta) if t_vuelta else None
+
+    return {
+        "inicio": inicio.isoformat(), "fin": fin.isoformat(),
+        "duracion_min": round(duracion_seg / 60),
+        "n_rotaciones": n_rotaciones,
+        "n_visitas": n_visitas, "n_ordenios": n_ordenios,
+        "n_desconocidos": n_desconocidos,
+        "kg_desconocidos": round(kg_desconocidos, 1),
+        "kg_total": round(kg_total, 1),
+        "n_identificadas": n_identificadas,
+        "dur_prom_ordeño_seg": round(dur_prom_ordeño) if dur_prom_ordeño else None,
+        "kg_por_hora": round(kg_total / duracion_h, 1) if duracion_h else None,
+        "kg_por_ordeño": round(kg_total / n_ordenios, 1) if n_ordenios else None,
+        "ordenios_por_hora": round(n_ordenios / duracion_h, 1) if duracion_h else None,
+        "visitas_por_hora": round(n_visitas / duracion_h, 1) if duracion_h else None,
+    }
+
+
+def analizar_rendimiento(columns, rows, desde: str, hasta: str, max_sesiones: int | None = None) -> list:
+    """Versión "Rendimiento Sala" para un RANGO de fechas: separa las visitas
+    en sesiones (mismo criterio de gap + fusión que analizar_dia, pero
+    corriendo sobre el rango entero) y devuelve una fila por sesión con las
+    métricas de throughput. Pensado para graficar la evolución, no para el
+    detalle vaca por vaca de "Rutina de ordeño"."""
+    desde_d = datetime.datetime.strptime(validar_fecha(desde), "%Y-%m-%d").date()
+    hasta_d = datetime.datetime.strptime(validar_fecha(hasta), "%Y-%m-%d").date()
+    idx = {c: i for i, c in enumerate(columns)}
+    visitas = []
+    for r in rows:
+        hora_id = _parse(r[idx["hora_id"]])
+        if hora_id is None:
+            continue
+        visitas.append({
+            "puesto": r[idx["puesto"]], "rp": r[idx["rp"]], "grupo": r[idx["grupo"]],
+            "hora_id": hora_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
+            "hora_fin": _parse(r[idx["hora_fin"]]), "kg": r[idx["kg"]],
+        })
+    visitas.sort(key=lambda v: v["hora_id"])
+
+    bloques, actual, anterior = [], [], None
+    for v in visitas:
+        if anterior is not None and (v["hora_id"] - anterior).total_seconds() > GAP_SESION_MIN * 60:
+            bloques.append(actual)
+            actual = []
+        actual.append(v)
+        anterior = v["hora_id"]
+    if actual:
+        bloques.append(actual)
+
+    por_dia: dict = {}
+    for vs in bloques:
+        if not vs:
+            continue
+        por_dia.setdefault(vs[0]["hora_id"].date(), []).append(vs)
+
+    sesiones = []
+    for dia in sorted(por_dia):
+        if dia < desde_d or dia > hasta_d:
+            continue  # sesión de un día fuera del rango pedido (viene del margen ±6h)
+        bloques_dia = por_dia[dia]
+        if max_sesiones:
+            bloques_dia = _fusionar_hasta(bloques_dia, max_sesiones)
+        bloques_dia.sort(key=lambda vs: vs[0]["hora_id"])
+        for i, vs in enumerate(bloques_dia):
+            resumen = _resumen_sesion_rendimiento(vs)
+            resumen["fecha"] = dia.isoformat()
+            resumen["sesion"] = i + 1
+            sesiones.append(resumen)
+    return sesiones
+
+
 def _grupo_txt(g, nombres: dict | None = None):
     """Cómo se nombra un grupo en los textos de hallazgos. Se prefiere el
     nombre real de DelPro ("Rodeo 1"); si no se pudo cargar, se cae al OID
