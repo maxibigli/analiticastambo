@@ -125,6 +125,30 @@ ORDENO_INC_SQL = f"""
 """
 
 
+# --- Incidencias del equipo por DÍA (todos los puestos juntos), para el
+# gráfico de tendencia con rango de fechas elegible (equivalente al "Incidentes
+# de ordeño" de DelPro, pero de líneas en vez de barras). ManualMode = el
+# operario enganchó la pezonera a mano en vez de que lo haga la rotativa sola.
+def sql_incidentes_diarios(desde: str, hasta: str) -> str:
+    """`desde`/`hasta`: fechas ISO (AAAA-MM-DD) ya validadas — rango inclusive."""
+    return f"""
+        SELECT CAST(v.CreationTime AS date) AS fecha,
+               COUNT(*) AS ordenos,
+               SUM(CASE WHEN y.Slips > 0 THEN 1 ELSE 0 END) AS con_desliz,
+               SUM(CASE WHEN y.Blocks > 0 THEN 1 ELSE 0 END) AS con_bloqueo,
+               SUM(CASE WHEN y.KickOffs > 0 THEN 1 ELSE 0 END) AS con_patada,
+               SUM(CASE WHEN y.NoOfReattaches > 0 THEN 1 ELSE 0 END) AS con_recoloc,
+               SUM(CASE WHEN y.ManualMode = 1 THEN 1 ELSE 0 END) AS con_manual
+        FROM MilkingDeviceVisit v
+        JOIN CMSMilkYield y ON y.MilkingDeviceVisit = v.OID
+        WHERE v.Place BETWEEN 1 AND {PUESTOS}
+          AND v.CreationTime >= '{desde}' AND v.CreationTime < DATEADD(day, 1, '{hasta}')
+        GROUP BY CAST(v.CreationTime AS date)
+        ORDER BY fecha
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
+    """
+
+
 def _select_tail(src, alias):
     """SELECT + JOINs comunes. src = CTE de origen (visitas/plataforma), alias = vi/pl."""
     return f"""

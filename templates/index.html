@@ -289,6 +289,7 @@
     {% if 'rutina' in paginas_visibles %}<button class="nav-item" data-pagina="rutina">⏱️ <span>Rutina de ordeño</span></button>{% endif %}
     {% if 'evolucion' in paginas_visibles %}<button class="nav-item" data-pagina="evolucion">📈 <span>Evolución</span></button>{% endif %}
     {% if 'salud' in paginas_visibles %}<button class="nav-item" data-pagina="salud">🩺 <span>Salud del rodeo</span></button>{% endif %}
+    {% if 'ficha' in paginas_visibles %}<button class="nav-item" data-pagina="ficha">🐄 <span>Ficha Animal</span></button>{% endif %}
     {% if 'tareas' in paginas_visibles %}<button class="nav-item" data-pagina="tareas">✅ <span>Tareas pendientes</span></button>{% endif %}
     {% if 'consultas' in paginas_visibles %}<button class="nav-item" data-pagina="consultas">🔍 <span>Consultas e IA</span></button>{% endif %}
   </nav>
@@ -498,6 +499,25 @@
     <div id="alarmas-unidades-cuerpo"></div>
   </section>
 
+  <section class="card" id="incidentes-dia-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Incidentes de ordeño</h2>
+      <span class="aviso">% de ordeños de cada día afectados por cada incidencia.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="incid-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="incid-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="incid-aplicar">Aplicar</button>
+      </div>
+    </div>
+    <div class="aviso" id="incid-info" style="margin-top:8px"></div>
+    <div class="kpis" id="incid-kpis" style="margin-top:10px"></div>
+    <div class="chart-box" style="height:300px;margin-top:12px"><canvas id="chart-incidentes-dia"></canvas></div>
+  </section>
+
   <section class="card" id="mantenimiento-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">Mantenimiento preventivo</h2>
@@ -606,13 +626,33 @@
 
     <section class="card" id="salud-atencion2-card">
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <h2 style="margin:0">Atención vacas <span class="chip ambar">EXPERIMENTAL</span></h2>
+        <h2 style="margin:0">Atención vacas <span class="chip ambar" style="cursor:help" title="Compara cada vaca contra SU PROPIO historial de los últimos 3 días vs. una referencia de 3 días previa (con 4 días de hueco). Combina caída de leche, alarma de bajo rendimiento, producción vs. esperada, conductividad, sangre en leche, tendencia de condición corporal y ordeños faltados en 3 sistemas (UBRE / METABÓLICO / GENERAL); el score final es el sistema más alto. En el backtest contra 647 diagnósticos reales todavía no superó al índice clásico — por eso es experimental, se muestra en paralelo para validar en el campo.">EXPERIMENTAL ❓</span></h2>
       </div>
       <span class="aviso">Índice multi-sistema (ubre / metabólico / general) armado y calibrado contra 647
         diagnósticos reales de este tambo. En la comparación contra el índice de arriba con la misma tasa de
         falsos positivos, <b>todavía no lo supera</b> — se muestra en paralelo, a validar con evidencia de campo.
         Cada tarjeta explica el motivo para que el operario juzgue si la señal es real.</span>
       <div id="salud-atencion2-cuerpo"></div>
+    </section>
+
+    <section class="card" id="salud-bcs-card">
+      <h2 style="margin:0">Condición corporal (BCS)</h2>
+      <span class="aviso">Última lectura de la cámara de score corporal por vaca · DEL (días desde el
+        último parto) en el eje X, score 1-5 en el eje Y. Los umbrales de "fuera de rango" son de manejo
+        general (no es la curva objetivo propia de DelPro) — ajustalos como quieras.</span>
+      <div class="controls" style="margin-top:10px;flex-wrap:wrap">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Score mínimo
+          <input type="number" id="bcs-min" step="0.05" style="width:70px;padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Score máximo
+          <input type="number" id="bcs-max" step="0.05" style="width:70px;padding:6px 8px">
+        </label>
+        <span id="bcs-repro-check" style="display:flex;gap:10px;flex-wrap:wrap"></span>
+        <button class="secundario" id="bcs-aplicar">Aplicar</button>
+      </div>
+      <div class="aviso" id="bcs-info" style="margin-top:8px"></div>
+      <div class="chart-box" style="height:340px;margin-top:10px"><canvas id="chart-bcs"></canvas></div>
+      <div id="bcs-fuera-cuerpo" style="margin-top:12px"></div>
     </section>
 
     <section class="card" id="salud-rcs-grupo-card">
@@ -684,6 +724,52 @@
         <canvas id="chart-podal"></canvas>
       </div>
     </section>
+  </div>
+
+  <div class="page" id="page-ficha" hidden>
+    <section class="card">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0">🐄 Ficha Animal</h2>
+        <span class="aviso">Buscá un animal por su número de RP para ver su historial completo.</span>
+      </div>
+      <div class="controls" style="margin-top:10px">
+        <input type="text" id="ficha-rp" placeholder="Número de RP" inputmode="numeric"
+               style="padding:8px 10px;width:160px">
+        <button id="ficha-buscar">Buscar</button>
+      </div>
+      <div class="aviso" id="ficha-estado" style="margin-top:8px"></div>
+    </section>
+
+    <div id="ficha-resultado" hidden>
+      <section class="card">
+        <h2 style="margin:0" id="ficha-titulo">Información general</h2>
+        <div class="kpis" id="ficha-info-grid" style="margin-top:10px"></div>
+      </section>
+
+      <section class="card">
+        <h2 style="margin:0">Producción diaria</h2>
+        <span class="aviso">Últimos 60 días · kg por día.</span>
+        <div class="chart-box" style="height:260px;margin-top:10px"><canvas id="chart-ficha-prod"></canvas></div>
+      </section>
+
+      <section class="card">
+        <h2 style="margin:0">Condición corporal (BCS)</h2>
+        <span class="aviso">Todas las lecturas de la cámara BCS de este animal · DEL en el eje X, score 1-5 en el eje Y.</span>
+        <div class="chart-box" style="height:260px;margin-top:10px"><canvas id="chart-ficha-bcs"></canvas></div>
+      </section>
+
+      <section class="card">
+        <h2 style="margin:0">Test de leche</h2>
+        <span class="aviso">Producción diaria, conductividad, RCS, grasa y proteína en el tiempo (fecha en el eje X).</span>
+        <div class="chart-box" style="height:300px;margin-top:10px"><canvas id="chart-ficha-test"></canvas></div>
+      </section>
+
+      <section class="card">
+        <h2 style="margin:0">Historial de eventos</h2>
+        <span class="aviso">Cambios de grupo, celos, inseminaciones, controles de gestación, partos y más.</span>
+        <div id="ficha-eventos-cuerpo" style="margin-top:10px"></div>
+      </section>
+    </div>
   </div>
 
   <div class="page" id="page-tareas" hidden>
@@ -1120,6 +1206,50 @@ async function cargarCicla() {
   }
 }
 document.getElementById('cicla-aplicar').addEventListener('click', cargarCicla);
+
+let chartIncidDia = null, incidReintento = null;
+
+async function cargarIncidentesDia() {
+  clearTimeout(incidReintento);
+  const info = document.getElementById('incid-info');
+  let desde = document.getElementById('incid-desde').value;
+  let hasta = document.getElementById('incid-hasta').value;
+  if (!hasta) hasta = hoyISO();
+  if (!desde) desde = menosDias(hasta, 6);
+  document.getElementById('incid-desde').value = desde;
+  document.getElementById('incid-hasta').value = hasta;
+  info.textContent = 'Calculando…';
+  const SERIES_INCID = [
+    ['% Bloqueos', 'pct_bloqueos'], ['% Deslizamientos', 'pct_deslizamientos'],
+    ['% Patadas', 'pct_patadas'], ['% Modo manual', 'pct_manual'],
+    ['% Recolocaciones', 'pct_recolocaciones'],
+  ];
+  try {
+    const d = await pedirJSON(`/api/ordeno/incidentes_dia?desde=${desde}&hasta=${hasta}&tambo=${encodeURIComponent(tamboActual)}`);
+    const dias = d.dias || [];
+    const labels = dias.map(x => x.fecha);
+    const datasets = SERIES_INCID.map(([label, campo], k) => ({
+      label, data: dias.map(x => x[campo]),
+      borderColor: SERIES[k % SERIES.length], backgroundColor: SERIES[k % SERIES.length],
+      borderWidth: 2, pointRadius: labels.length > 20 ? 0 : 3, tension: .25, spanGaps: true,
+    }));
+    const opts = baseOpts(true);
+    opts.scales.y.ticks = { callback: v => v + '%' };
+    chartIncidDia = dibujar('chart-incidentes-dia', chartIncidDia, {
+      type: 'line', data: { labels, datasets }, options: opts,
+    });
+    const ultimo = dias[dias.length - 1];
+    document.getElementById('incid-kpis').innerHTML = ultimo ? SERIES_INCID.map(([label, campo]) =>
+      `<div class="tile"><div class="label">${label}</div><div class="value">${ultimo[campo] == null ? '—' : ultimo[campo] + '%'}</div></div>`
+    ).join('') : '';
+    info.textContent = dias.length ? `${dias.length} día(s) entre ${desde} y ${hasta}.`
+      : 'Sin ordeños registrados en este rango.';
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; incidReintento = setTimeout(cargarIncidentesDia, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('incid-aplicar').addEventListener('click', cargarIncidentesDia);
 
 async function cargarCanalesAlertas() {
   const cont = document.getElementById('alertas-canales');
@@ -1881,6 +2011,202 @@ function renderSaludRcsVacas() {
     </tr>`).join('') + `</tbody></table></div>`;
 }
 
+let saludBcs = null, chartBcs = null;
+const BCS_REPRO_ORDEN = ['Vacía', 'Inseminada', 'Preñada', 'En secado', '-'];
+
+function pintarSaludBcs(d) {
+  saludBcs = d;
+  if (!document.getElementById('bcs-min').value) document.getElementById('bcs-min').value = d.bcs_bajo;
+  if (!document.getElementById('bcs-max').value) document.getElementById('bcs-max').value = d.bcs_alto;
+  const presentes = [...new Set((d.vacas || []).map(v => v.reproductivo))];
+  const cont = document.getElementById('bcs-repro-check');
+  if (!cont.dataset.armado) {
+    cont.innerHTML = BCS_REPRO_ORDEN.filter(r => presentes.includes(r)).map(r => `
+      <label class="aviso" style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" data-repro="${r}" checked> ${r === '-' ? 'Sin dato' : r}
+      </label>`).join('');
+    cont.dataset.armado = '1';
+  }
+  renderSaludBcs();
+}
+
+function actualizarGaugeBcs(n) {
+  const actual = document.getElementById('gauge-bcs');
+  if (!actual) return;   // el vúmetro todavía no se pintó (primera carga)
+  actual.outerHTML = gaugeSVG({ id: 'gauge-bcs', pct: Math.min(100, n / 30 * 100), valor: n,
+    label: 'Fuera de score (BCS)', sub: 'vacas', target: 'salud-bcs-card' });
+}
+
+function renderSaludBcs() {
+  const cont = document.getElementById('bcs-fuera-cuerpo');
+  const info = document.getElementById('bcs-info');
+  if (!saludBcs) return;
+  const min = parseFloat(document.getElementById('bcs-min').value);
+  const max = parseFloat(document.getElementById('bcs-max').value);
+  const reproActivos = [...document.querySelectorAll('#bcs-repro-check input:checked')].map(c => c.dataset.repro);
+  const vacas = (saludBcs.vacas || []).filter(v => reproActivos.includes(v.reproductivo));
+  if (!vacas.length) {
+    info.textContent = 'Sin vacas con lectura de BCS para este filtro.';
+    cont.innerHTML = ''; chartBcs = dibujar('chart-bcs', chartBcs, { type: 'scatter', data: { datasets: [] } });
+    return;
+  }
+  const enRango = vacas.filter(v => v.score >= min && v.score <= max);
+  const fuera = vacas.filter(v => v.score < min || v.score > max);
+  actualizarGaugeBcs(fuera.length);
+  chartBcs = dibujar('chart-bcs', chartBcs, {
+    type: 'scatter',
+    data: { datasets: [
+      { label: 'En rango', data: enRango.map(v => ({ x: v.del, y: v.score })),
+        backgroundColor: css('--muted'), pointRadius: 3.5 },
+      { label: 'Fuera de rango', data: fuera.map(v => ({ x: v.del, y: v.score })),
+        backgroundColor: css('--critical'), pointRadius: 4.5 },
+    ] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: true, labels: { boxWidth: 12, boxHeight: 12 } } },
+      scales: {
+        x: { title: { display: true, text: 'Días desde el último parto (DEL)' },
+             grid: { color: css('--grid') }, border: { color: css('--baseline') } },
+        y: { title: { display: true, text: 'Score corporal (BCS)' }, min: 1, max: 5,
+             grid: { color: css('--grid') }, border: { display: false } },
+      },
+    },
+  });
+  info.textContent = `${vacas.length} vaca(s) con lectura de BCS · ${fuera.length} fuera del rango ${min}-${max}.`;
+  if (!fuera.length) {
+    cont.innerHTML = `<div class="aviso">Ninguna vaca fuera del rango elegido. ✔</div>`;
+    return;
+  }
+  fuera.sort((a, b) => Math.min(a.score - min, max - a.score) - Math.min(b.score - min, max - b.score));
+  cont.innerHTML = `<div class="tabla-scroll" style="max-height:360px"><table>
+    <thead><tr><th>Vaca</th><th>Rodeo</th><th>DEL</th><th>L</th><th>Score</th><th>Estado</th><th>Fecha lectura</th></tr></thead>
+    <tbody>` + fuera.map(v => `<tr>
+      <td>${fmt(v.rp)}</td><td>${v.grupo || '—'}</td><td>${fmt(v.del)}</td><td>${fmt(v.lactancia)}</td>
+      <td style="color:var(--critical);font-weight:700">${v.score.toFixed(2)}</td>
+      <td>${v.reproductivo === '-' ? '—' : v.reproductivo}</td>
+      <td>${v.fecha_score || '—'}</td>
+    </tr>`).join('') + `</tbody></table></div>`;
+}
+document.getElementById('bcs-aplicar').addEventListener('click', renderSaludBcs);
+
+// --- Ficha Animal: búsqueda individual por RP ------------------------------
+let chartFichaProd = null, chartFichaBcs = null, chartFichaTest = null;
+
+function edadTexto(nacimientoISO) {
+  if (!nacimientoISO) return '—';
+  const nac = new Date(nacimientoISO + 'T00:00:00');
+  const hoy = new Date();
+  let meses = (hoy.getFullYear() - nac.getFullYear()) * 12 + (hoy.getMonth() - nac.getMonth());
+  if (hoy.getDate() < nac.getDate()) meses--;
+  return `${Math.floor(meses / 12)} a, ${meses % 12} m`;
+}
+
+function pintarFichaInfo(info) {
+  document.getElementById('ficha-titulo').textContent = `Vaca ${fmt(info.rp)} — Información general`;
+  const filas = [
+    ['Grupo', info.grupo ? `${info.grupo_num} · ${info.grupo}` : '—'],
+    ['Edad', edadTexto(info.nacimiento)],
+    ['Lactancia', fmt(info.lactancia)],
+    ['DEL (días en ordeño)', info.del == null ? '—' : fmt(info.del)],
+    ['Estado reproductivo', info.reproductivo || '—'],
+    ['Último parto', info.ultimo_parto || '—'],
+    ['Control de gestación esperado', info.control_gestacion_esperado || '—'],
+    ['Producción media (7 días)', info.produccion_media_7d == null ? '—' : fmt(info.produccion_media_7d) + ' kg'],
+    ['Producción de ayer', info.produccion_ayer == null ? '—' : fmt(info.produccion_ayer) + ' kg'],
+    ['Último RCS', info.ultimo_rcs == null ? '—' : `${fmt(Math.round(info.ultimo_rcs * 1000))} (${info.fecha_rcs})`],
+    ['Último celo', info.ultimo_celo || '—'],
+    ['Última inseminación', info.ultima_inseminacion || '—'],
+  ];
+  document.getElementById('ficha-info-grid').innerHTML = filas.map(([l, v]) =>
+    `<div class="tile"><div class="label">${l}</div><div class="value" style="font-size:17px">${v}</div></div>`).join('');
+}
+
+function pintarFichaEventos(eventos) {
+  const cont = document.getElementById('ficha-eventos-cuerpo');
+  if (!eventos.length) { cont.innerHTML = '<div class="aviso">Sin eventos registrados.</div>'; return; }
+  cont.innerHTML = `<div class="tabla-scroll" style="max-height:360px"><table>
+    <thead><tr><th>Fecha</th><th>Evento</th><th>Detalle</th></tr></thead>
+    <tbody>` + eventos.map(e => `<tr>
+      <td>${String(e.fecha).slice(0, 10)}</td><td>${e.tipo}</td><td>${e.detalle || '—'}</td>
+    </tr>`).join('') + `</tbody></table></div>`;
+}
+
+function pintarFichaProduccion(produccion) {
+  chartFichaProd = dibujar('chart-ficha-prod', chartFichaProd, {
+    type: 'line',
+    data: { labels: produccion.map(p => p.fecha), datasets: [
+      { label: 'Kg/día', data: produccion.map(p => p.kg),
+        borderColor: SERIES[0], backgroundColor: SERIES[0], borderWidth: 2, pointRadius: 2, tension: .2 },
+    ] },
+    options: baseOpts(false),
+  });
+}
+
+function pintarFichaBcs(bcs) {
+  chartFichaBcs = dibujar('chart-ficha-bcs', chartFichaBcs, {
+    type: 'scatter',
+    data: { datasets: [{ label: 'Score BCS', data: bcs.map(b => ({ x: b.del, y: b.score })),
+      backgroundColor: SERIES[2], pointRadius: 3.5 }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { title: { display: true, text: 'Días desde el último parto (DEL)' },
+             grid: { color: css('--grid') }, border: { color: css('--baseline') } },
+        y: { title: { display: true, text: 'Score corporal (BCS)' }, min: 1, max: 5,
+             grid: { color: css('--grid') }, border: { display: false } },
+      },
+    },
+  });
+}
+
+function pintarFichaTest(testDiario, testControles) {
+  const fechas = [...new Set([...testDiario.map(d => d.fecha), ...testControles.map(d => d.fecha)])].sort();
+  const diaPorFecha = Object.fromEntries(testDiario.map(d => [d.fecha, d]));
+  const ctrlPorFecha = Object.fromEntries(testControles.map(d => [d.fecha, d]));
+  const serie = campo => fechas.map(f => (diaPorFecha[f] || {})[campo] ?? null);
+  const serieCtrl = campo => fechas.map(f => (ctrlPorFecha[f] || {})[campo] ?? null);
+  chartFichaTest = dibujar('chart-ficha-test', chartFichaTest, {
+    type: 'line',
+    data: { labels: fechas, datasets: [
+      { label: 'Producción (kg)', data: serie('kg'), borderColor: SERIES[0], backgroundColor: SERIES[0],
+        borderWidth: 2, pointRadius: 0, tension: .2, spanGaps: true },
+      { label: 'Conductividad', data: serie('cond_max'), borderColor: SERIES[1], backgroundColor: SERIES[1],
+        borderWidth: 1.5, pointRadius: 0, tension: .2, spanGaps: true },
+      { label: 'RCS (miles)', data: serieCtrl('scc'), borderColor: SERIES[5], backgroundColor: SERIES[5],
+        borderWidth: 0, pointRadius: 5, showLine: false },
+      { label: '% Grasa', data: serieCtrl('grasa'), borderColor: SERIES[3], backgroundColor: SERIES[3],
+        borderWidth: 0, pointRadius: 4, showLine: false },
+      { label: '% Proteína', data: serieCtrl('proteina'), borderColor: SERIES[4], backgroundColor: SERIES[4],
+        borderWidth: 0, pointRadius: 4, showLine: false },
+    ] },
+    options: baseOpts(true),
+  });
+}
+
+async function buscarFicha() {
+  const rp = document.getElementById('ficha-rp').value.trim();
+  const estado = document.getElementById('ficha-estado');
+  const resultado = document.getElementById('ficha-resultado');
+  if (!rp) { estado.textContent = 'Ingresá un número de RP.'; return; }
+  estado.textContent = 'Buscando…';
+  resultado.hidden = true;
+  try {
+    const d = await pedirJSON(`/api/animal/ficha?rp=${encodeURIComponent(rp)}&tambo=${encodeURIComponent(tamboActual)}`);
+    pintarFichaInfo(d.info);
+    pintarFichaEventos(d.eventos);
+    pintarFichaProduccion(d.produccion);
+    pintarFichaBcs(d.bcs);
+    pintarFichaTest(d.test_diario, d.test_controles);
+    resultado.hidden = false;
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('ficha-buscar').addEventListener('click', buscarFicha);
+document.getElementById('ficha-rp').addEventListener('keydown', e => { if (e.key === 'Enter') buscarFicha(); });
+
 function pintarSaludConductividad(d) {
   const idx = { fecha: d.columns.indexOf('fecha'), grupo: d.columns.indexOf('grupo'),
                 cond: d.columns.indexOf('cond_promedio') };
@@ -1929,11 +2255,12 @@ function pintarSaludProduccion(d) {
 // Vúmetro semicircular: pct 0-100 = qué tan cerca del extremo "malo" (rojo) está.
 // Clic → hace scroll a la tarjeta correspondiente. disabled=true = placeholder
 // sin dato todavía (sensores que no están instalados/conectados).
-function gaugeSVG({ pct, valor, label, sub, target, disabled }) {
+function gaugeSVG({ pct, valor, label, sub, target, disabled, id }) {
   const p = Math.max(0, Math.min(100, pct || 0));
   const rot = (p / 100) * 180 - 90;
   const click = (!disabled && target) ? ` onclick="document.getElementById('${target}').scrollIntoView({behavior:'smooth',block:'start'})"` : '';
-  return `<div class="gauge${disabled ? ' disabled' : ''}"${click}>
+  const idAttr = id ? ` id="${id}"` : '';
+  return `<div class="gauge${disabled ? ' disabled' : ''}"${idAttr}${click}>
     <svg class="gauge-svg" viewBox="0 0 100 58">
       <path d="M8,55 A42,42 0 0 1 29,18.63" fill="none" stroke="var(--good)" stroke-width="9" stroke-linecap="round"/>
       <path d="M29,18.63 A42,42 0 0 1 71,18.63" fill="none" stroke="var(--warning)" stroke-width="9" stroke-linecap="round"/>
@@ -1946,7 +2273,7 @@ function gaugeSVG({ pct, valor, label, sub, target, disabled }) {
   </div>`;
 }
 
-function pintarSaludGauges(atencion, atencion2, rcsGrupo, podalEstado, podalVacas) {
+function pintarSaludGauges(atencion, atencion2, rcsGrupo, bcs, podalEstado, podalVacas) {
   const cont = document.getElementById('salud-kpis');
   const gauges = [];
   if (atencion) {
@@ -1968,6 +2295,13 @@ function pintarSaludGauges(atencion, atencion2, rcsGrupo, podalEstado, podalVaca
       label: 'RCS > 300.000', sub: `${altas} vacas`, target: 'salud-rcs-grupo-card' }));
     gauges.push(gaugeSVG({ pct: Math.min(100, nuevas / 30 * 100), valor: nuevas,
       label: 'Casos nuevos RCS', sub: 'vs. control anterior', target: 'salud-rcs-grupo-card' }));
+  }
+  if (bcs && bcs.vacas) {
+    const min = parseFloat(document.getElementById('bcs-min').value) || bcs.bcs_bajo;
+    const max = parseFloat(document.getElementById('bcs-max').value) || bcs.bcs_alto;
+    const n = bcs.vacas.filter(v => v.score < min || v.score > max).length;
+    gauges.push(gaugeSVG({ id: 'gauge-bcs', pct: Math.min(100, n / 30 * 100), valor: n,
+      label: 'Fuera de score (BCS)', sub: 'vacas', target: 'salud-bcs-card' }));
   }
   // Placeholders: sensores todavía no instalados/conectados en este tambo.
   gauges.push(gaugeSVG({ disabled: true, label: 'Rumia', sub: 'collar DeLaval (a conectar)' }));
@@ -2117,7 +2451,8 @@ async function cargarSalud() {
   clearTimeout(saludReintento);
   const estado = document.getElementById('salud-estado');
   estado.textContent = 'Cargando…';
-  let atencionD = null, atencion2D = null, rcsGrupoD = null, podalEstadoD = null, podalVacasD = null;
+  let atencionD = null, atencion2D = null, rcsGrupoD = null, bcsD = null,
+      podalEstadoD = null, podalVacasD = null;
   const listos = await Promise.all([
     seccionSalud('/api/salud/atencion', 'salud-atencion-cuerpo', d => {
       atencionD = d; pintarSaludAtencion(d);
@@ -2129,6 +2464,9 @@ async function cargarSalud() {
       rcsGrupoD = d; pintarSaludRcsGrupo(d);
     }),
     seccionSalud('/api/salud/rcs_vacas', 'salud-rcs-vacas-cuerpo', pintarSaludRcsVacas),
+    seccionSalud('/api/salud/bcs_vacas', 'bcs-fuera-cuerpo', d => {
+      bcsD = d; pintarSaludBcs(d);
+    }),
     seccionSalud('/api/salud/conductividad', null, pintarSaludConductividad),
     seccionSalud('/api/salud/produccion_rodeo', 'salud-prod-cuerpo', pintarSaludProduccion),
     seccionSalud('/api/podal/estado', 'podal-camaras', d => {
@@ -2138,7 +2476,7 @@ async function cargarSalud() {
       podalVacasD = d.vacas || []; pintarPodal(d);
     }),
   ]);
-  pintarSaludGauges(atencionD, atencion2D, rcsGrupoD, podalEstadoD, podalVacasD);
+  pintarSaludGauges(atencionD, atencion2D, rcsGrupoD, bcsD, podalEstadoD, podalVacasD);
   const faltan = listos.filter(x => !x).length;
   estado.textContent = faltan
     ? `Calculando ${faltan} sección(es)… (la base de esta PC es lenta, se reintenta sola)`
@@ -2768,7 +3106,7 @@ document.getElementById('evolucion-info').textContent =
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'evolucion', 'salud', 'tareas', 'consultas']
+const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'evolucion', 'salud', 'ficha', 'tareas', 'consultas']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -2780,7 +3118,7 @@ function cargarDatosDePagina(id) {
     cargarDashboard(); cargarCicla(); cargarComparar(); cargarLaser(); cargarCanalesAlertas();
     cargarResumenProduccion(); cargarResumenAnimales(); cargarResumenDuraciones(); cargarResumenGrupo();
   }
-  else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); }
+  else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
   else if (id === 'rutina') cargarRutina();
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
