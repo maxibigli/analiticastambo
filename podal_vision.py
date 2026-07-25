@@ -25,11 +25,17 @@ como EXPERIMENTAL hasta validarlo a campo.
 """
 from __future__ import annotations
 
-import numpy as np
+# numpy/cv2 pesan varios MB y solo hacen falta si las cámaras están activas:
+# si faltan, el resto de la app (sin cámaras configuradas) tiene que seguir
+# funcionando igual -- no puede tirar abajo todo el arranque de app.py.
+try:
+    import numpy as np
+except ImportError:
+    np = None
 
 try:
     import cv2
-except ImportError:  # pesa varios MB; solo hace falta si las cámaras están activas
+except ImportError:
     cv2 = None
 
 AREA_MINIMA_PX = 4000       # contorno mínimo para considerar "hay un animal"
@@ -42,11 +48,12 @@ UMBRAL_CURVATURA_ALTA = 0.035
 UMBRAL_OSCILACION_ALTA = 18.0
 
 
-def _requiere_cv2():
-    if cv2 is None:
+def _requiere_vision():
+    if cv2 is None or np is None:
+        faltan = " y ".join(n for n, m in (("opencv-python-headless", cv2), ("numpy", np)) if m is None)
         raise RuntimeError(
-            "Falta opencv-python-headless. Instalá las dependencias "
-            "(pip install -r requirements.txt) para usar la visión de cámaras."
+            f"Falta instalar {faltan}. Corré `pip install -r requirements.txt` para "
+            "usar la visión de cámaras (el resto de la app funciona igual sin esto)."
         )
 
 
@@ -57,7 +64,7 @@ class DetectorPresencia:
     usa la máscara para el perfil del lomo."""
 
     def __init__(self, historia: int = 300, umbral: float = 24.0):
-        _requiere_cv2()
+        _requiere_vision()
         self._bg = cv2.createBackgroundSubtractorMOG2(
             history=historia, varThreshold=umbral, detectShadows=True)
 
@@ -117,7 +124,7 @@ def procesar_secuencia_marcha(frames: list) -> dict | None:
     y las métricas de cada cuadro se acumulan sobre la marcha con
     `curvatura_lomo` + `agregar_metricas` (rehacer la detección desde cero
     sobre cuadros ya recortados le hace perder ese calentamiento)."""
-    _requiere_cv2()
+    _requiere_vision()
     detector = DetectorPresencia()
     curvaturas, centros_y = [], []
     for frame in frames:
@@ -136,6 +143,7 @@ def agregar_metricas(curvaturas: list, centros_y: list) -> dict | None:
     completa. None si no hubo suficientes cuadros útiles para puntuar."""
     if len(curvaturas) < MIN_FRAMES_UTILES:
         return None
+    _requiere_vision()
     # Se descartan los extremos (entrada/salida de cuadro, cuerpo parcial):
     recorte_ini = len(curvaturas) // 5
     recorte = curvaturas[recorte_ini: len(curvaturas) - recorte_ini] or curvaturas
