@@ -636,6 +636,24 @@
       <span class="aviso">Kg por ordeño de cada rodeo, con la variación contra el período anterior.</span>
       <div id="salud-prod-cuerpo"></div>
     </section>
+
+    <section class="card" id="salud-podal-card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">🦶 Problemas podales <span class="chip ambar">EXPERIMENTAL</span></h2>
+        <span class="aviso">Cámaras en la salida de la rotativa: una confirma el instante de paso, la otra mide
+          cómo camina la vaca. Score 1 (normal) a 5 (renguera severa) — heurístico sin calibrar todavía con
+          video real de este tambo, no reemplaza el diagnóstico del veterinario.</span>
+      </div>
+      <div id="podal-camaras" class="aviso" style="margin-top:8px"></div>
+      <div id="podal-cuerpo" style="margin-top:10px"></div>
+      <div class="controls" style="margin-top:14px;align-items:center">
+        <input type="text" id="podal-buscar-rp" placeholder="Ver tendencia de una vaca (RP)…" style="width:200px">
+        <button class="secundario" id="podal-buscar-btn">Ver tendencia</button>
+      </div>
+      <div class="chart-box" id="podal-chart-box" style="height:220px;margin-top:10px" hidden>
+        <canvas id="chart-podal"></canvas>
+      </div>
+    </section>
   </div>
 
   <div class="page" id="page-tareas" hidden>
@@ -1898,7 +1916,7 @@ function gaugeSVG({ pct, valor, label, sub, target, disabled }) {
   </div>`;
 }
 
-function pintarSaludGauges(atencion, atencion2, rcsGrupo) {
+function pintarSaludGauges(atencion, atencion2, rcsGrupo, podalEstado, podalVacas) {
   const cont = document.getElementById('salud-kpis');
   const gauges = [];
   if (atencion) {
@@ -1924,15 +1942,100 @@ function pintarSaludGauges(atencion, atencion2, rcsGrupo) {
   // Placeholders: sensores todavía no instalados/conectados en este tambo.
   gauges.push(gaugeSVG({ disabled: true, label: 'Rumia', sub: 'collar DeLaval (a conectar)' }));
   gauges.push(gaugeSVG({ disabled: true, label: 'Ingesta', sub: 'collar DeLaval (a conectar)' }));
-  gauges.push(gaugeSVG({ disabled: true, label: 'Problemas podales', sub: 'cámaras rotativa (a instalar)' }));
+  if (podalEstado && podalEstado.habilitado) {
+    const n = (podalVacas || []).length;
+    gauges.push(gaugeSVG({ pct: Math.min(100, n / 10 * 100), valor: n,
+      label: 'Problemas podales', sub: 'vacas con alerta', target: 'salud-podal-card' }));
+  } else {
+    gauges.push(gaugeSVG({ disabled: true, label: 'Problemas podales', sub: 'cámaras rotativa (a instalar)' }));
+  }
   cont.innerHTML = gauges.join('');
+}
+
+function pintarPodalCamaras(estado) {
+  const cont = document.getElementById('podal-camaras');
+  if (!estado || !estado.habilitado) {
+    cont.innerHTML = 'Sin cámaras configuradas para este tambo (ver <code>config_podal.py</code>).';
+    return;
+  }
+  const punto = ok => `<span style="color:${ok ? 'var(--good)' : 'var(--critical)'}">●</span>`;
+  cont.innerHTML = `${punto(estado.camara_marcha_conectada)} Cámara de marcha
+    ${punto(estado.camara_posicion_conectada)} Cámara de posición
+    <button class="secundario" id="podal-toggle" style="margin-left:10px">
+      ${estado.activa ? 'Detener captura' : 'Iniciar captura'}
+    </button>
+    ${estado.ultimo_error ? `<span style="color:var(--critical)"> — ${estado.ultimo_error}</span>` : ''}`;
+  document.getElementById('podal-toggle').addEventListener('click', async () => {
+    await pedirJSON(`/api/podal/${estado.activa ? 'detener' : 'iniciar'}?tambo=${encodeURIComponent(tamboActual)}`,
+      { method: 'POST' });
+    cargarPodalEstado();
+  });
+}
+
+function pintarPodal(d) {
+  const cont = document.getElementById('podal-cuerpo');
+  const vacas = d.vacas || [];
+  if (!vacas.length) {
+    cont.innerHTML = `<div class="aviso" style="margin-top:6px">Ninguna vaca con alerta de renguera. ✔</div>`;
+    return;
+  }
+  cont.innerHTML = `<div class="tabla-scroll" style="max-height:360px"><table>
+    <thead><tr><th>Vaca</th><th>Score reciente</th><th>Referencia</th><th>Tendencia</th>
+      <th>Lecturas</th><th>Motivo</th></tr></thead>
+    <tbody>` + vacas.map(v => `<tr>
+      <td>${fmt(v.rp)}</td>
+      <td style="font-weight:700;color:${v.score_reciente >= 4 ? 'var(--critical)' : 'var(--warning)'}">${v.score_reciente}</td>
+      <td>${v.score_referencia == null ? '—' : v.score_referencia}</td>
+      <td>${v.tendencia == null ? '—' : (v.tendencia > 0 ? '+' : '') + v.tendencia}</td>
+      <td>${v.n_lecturas}</td>
+      <td>${(v.motivos || []).join(' · ') || '—'}</td>
+    </tr>`).join('') + `</tbody></table></div>`;
+}
+
+let chartPodal = null;
+
+async function verTendenciaPodal(rp) {
+  const box = document.getElementById('podal-chart-box');
+  try {
+    const d = await pedirJSON(`/api/podal/historial/${encodeURIComponent(rp)}?tambo=${encodeURIComponent(tamboActual)}`);
+    const lecturas = (d.lecturas || []).slice().reverse();
+    if (!lecturas.length) {
+      box.hidden = true;
+      alert(`Sin lecturas guardadas para la vaca ${rp}.`);
+      return;
+    }
+    box.hidden = false;
+    chartPodal = dibujar('chart-podal', chartPodal, {
+      type: 'line',
+      data: {
+        labels: lecturas.map(l => l.ts),
+        datasets: [{ label: `Score renguera — vaca ${rp}`, data: lecturas.map(l => l.score),
+          borderColor: css('--accent'), pointRadius: 2 }],
+      },
+      options: baseOpts(true),
+    });
+  } catch (e) {
+    box.hidden = true;
+    alert(e.message || 'No se pudo cargar la tendencia.');
+  }
+}
+
+document.getElementById('podal-buscar-btn').addEventListener('click', () => {
+  const rp = document.getElementById('podal-buscar-rp').value.trim();
+  if (rp) verTendenciaPodal(rp);
+});
+
+async function cargarPodalEstado() {
+  try {
+    pintarPodalCamaras(await pedirJSON('/api/podal/estado?tambo=' + encodeURIComponent(tamboActual)));
+  } catch (e) { /* la tarjeta de salud ya muestra errores generales */ }
 }
 
 async function cargarSalud() {
   clearTimeout(saludReintento);
   const estado = document.getElementById('salud-estado');
   estado.textContent = 'Cargando…';
-  let atencionD = null, atencion2D = null, rcsGrupoD = null;
+  let atencionD = null, atencion2D = null, rcsGrupoD = null, podalEstadoD = null, podalVacasD = null;
   const listos = await Promise.all([
     seccionSalud('/api/salud/atencion', 'salud-atencion-cuerpo', d => {
       atencionD = d; pintarSaludAtencion(d);
@@ -1946,8 +2049,14 @@ async function cargarSalud() {
     seccionSalud('/api/salud/rcs_vacas', 'salud-rcs-vacas-cuerpo', pintarSaludRcsVacas),
     seccionSalud('/api/salud/conductividad', null, pintarSaludConductividad),
     seccionSalud('/api/salud/produccion_rodeo', 'salud-prod-cuerpo', pintarSaludProduccion),
+    seccionSalud('/api/podal/estado', 'podal-camaras', d => {
+      podalEstadoD = d; pintarPodalCamaras(d);
+    }),
+    seccionSalud('/api/podal/vacas', 'podal-cuerpo', d => {
+      podalVacasD = d.vacas || []; pintarPodal(d);
+    }),
   ]);
-  pintarSaludGauges(atencionD, atencion2D, rcsGrupoD);
+  pintarSaludGauges(atencionD, atencion2D, rcsGrupoD, podalEstadoD, podalVacasD);
   const faltan = listos.filter(x => !x).length;
   estado.textContent = faltan
     ? `Calculando ${faltan} sección(es)… (la base de esta PC es lenta, se reintenta sola)`

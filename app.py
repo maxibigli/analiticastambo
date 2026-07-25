@@ -21,6 +21,7 @@ import correo
 import db
 import laserenisima
 import mantenimiento
+import podal
 import resumen
 import rutina
 import salud
@@ -683,6 +684,53 @@ def api_salud_atencion_v2():
         return espera
     fichas = salud.calcular_atencion_v2(data["columns"], data["rows"])
     return jsonify({"vacas": fichas, "experimental": True})
+
+
+# --- Problemas podales (renguera por cámaras) -------------------------------
+# Heurístico v1, sin calibrar con video real de este tambo (no hay cámaras
+# instaladas todavía) -- ver la nota completa en podal_vision.py. Las cámaras
+# solo se activan si el tambo tiene configuración en config_podal.py.
+
+@app.get("/api/podal/estado")
+@auth.requiere_rol("admin")
+def api_podal_estado():
+    tambo = _tambo_del_request()
+    return jsonify(podal.estado(tambo))
+
+
+@app.post("/api/podal/iniciar")
+@auth.requiere_rol("admin")
+def api_podal_iniciar():
+    # Se llama sin cuerpo JSON (el tambo va en la URL), a diferencia de
+    # _tambo_del_request() que espera el tambo en el body para POST.
+    tambo = tambos.resolver(request.args.get("tambo", ""))
+    return jsonify(podal.iniciar(tambo))
+
+
+@app.post("/api/podal/detener")
+@auth.requiere_rol("admin")
+def api_podal_detener():
+    tambo = tambos.resolver(request.args.get("tambo", ""))
+    return jsonify(podal.detener(tambo))
+
+
+@app.get("/api/podal/vacas")
+@auth.requiere_rol("admin")
+def api_podal_vacas():
+    """Vacas con alerta de renguera: promedio reciente de score vs. su propio
+    historial previo (ver podal.calcular_alertas)."""
+    tambo = _tambo_del_request()
+    return jsonify({"vacas": podal.calcular_alertas(tambo), "estimacion_propia": True})
+
+
+@app.get("/api/podal/historial/<int:rp>")
+@auth.requiere_rol("admin")
+def api_podal_historial(rp: int):
+    """Serie temporal de scores de una vaca puntual, para el gráfico de
+    tendencia."""
+    tambo = _tambo_del_request()
+    dias = request.args.get("dias", type=int) or podal.DIAS_REFERENCIA_DEFECTO
+    return jsonify({"rp": rp, "lecturas": podal.historial(tambo, rp=rp, dias=dias)})
 
 
 @app.get("/api/predefinidas")
