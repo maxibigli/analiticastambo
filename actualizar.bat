@@ -34,6 +34,12 @@ if errorlevel 1 (
 git reset --hard origin/master
 
 echo.
+echo === (extra) instalando dependencias nuevas si hay ===
+where python >nul 2>&1 && (python -m pip install -q -r requirements.txt) || (
+    "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" -m pip install -q -r requirements.txt
+)
+
+echo.
 echo === 2/3: deteniendo el servidor actual ===
 powershell -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | Where-Object { $_.CommandLine -like '*servidor.py*' } | ForEach-Object { Write-Host ('  deteniendo PID ' + $_.ProcessId); Stop-Process -Id $_.ProcessId -Force }"
 timeout /t 2 /nobreak >nul
