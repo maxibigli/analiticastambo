@@ -1,0 +1,24 @@
+# Estado propio de cada instalación (usuarios, sesión, canales de alerta):
+# NO se comparte entre PCs, cada servidor tiene el suyo.
+usuarios.json
+secret_key.txt
+alertas_canales.json
+
+# Scripts y datos de trabajo del backtest del índice de salud (no son parte
+# de la app; datos crudos de animales, no deberían quedar en el repo).
+_bt_*
+
+# Logs de ejecución
+*.log
+*.log.err
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# Editor / SO
+.vscode/
+Thumbs.db

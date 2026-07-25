@@ -1,0 +1,2635 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LactIA — DDM</title>
+<link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb; --page: #f9f9f7;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --baseline: #c3c2b7; --border: rgba(11,11,11,0.10);
+    --accent: #1c5cb8; --good: #006300; --critical: #d03b3b;
+    --warning: #eda100; --violeta: #4a3aa7;
+    /* Paleta de marca (estilo DeLaval): navy para la barra lateral/tarjetas de marca. */
+    --brand-navy: #0f2f5c; --brand-navy-2: #163f76; --brand-ink: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1: #1a1a19; --page: #0d0d0d;
+      --text-primary: #ffffff; --text-secondary: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --baseline: #383835; --border: rgba(255,255,255,0.10);
+      --accent: #4f97e8; --good: #0ca30c; --critical: #e66767;
+      --warning: #c98500; --violeta: #9085e9;
+      --brand-navy: #0b2245; --brand-navy-2: #123563; --brand-ink: #ffffff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--page); color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 15px;
+  }
+  header {
+    padding: 18px 24px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+  }
+  header .sub { color: var(--text-secondary); font-size: 13px; }
+  main { max-width: 1100px; margin: 0 auto; padding: 20px 24px 60px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+  .tile {
+    background: var(--surface-1); border: 1px solid var(--border); border-top: 3px solid var(--accent);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .tile .label { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+  .tile .value { font-size: 27px; font-weight: 750; margin-top: 4px; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; margin-top: 16px;
+  }
+  .card h2 { margin: 0 0 10px; font-size: 16px; font-weight: 750; color: var(--accent); letter-spacing: -.1px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  .chart-box { position: relative; height: 280px; }
+  .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  select, input[type=text], textarea, button {
+    font: inherit; color: var(--text-primary); background: var(--page);
+    border: 1px solid var(--baseline); border-radius: 8px; padding: 8px 10px;
+  }
+  textarea { width: 100%; resize: vertical; min-height: 60px; }
+  button { cursor: pointer; background: var(--accent); color: #fff; border: none; padding: 9px 16px; }
+  button.secundario { background: transparent; color: var(--text-primary); border: 1px solid var(--baseline); }
+  button:disabled { opacity: .5; cursor: default; }
+  #estado { color: var(--text-secondary); font-size: 13px; min-height: 18px; margin-top: 8px; }
+  #estado.error { color: var(--critical); }
+  .analisis {
+    border-left: 3px solid var(--accent); padding: 8px 12px; margin: 10px 0;
+    color: var(--text-secondary); background: color-mix(in srgb, var(--accent) 6%, transparent);
+    border-radius: 0 8px 8px 0;
+  }
+  table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 13px; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--grid); text-align: left; }
+  th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface-1); }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; }
+  .tabla-scroll { max-height: 380px; overflow: auto; border: 1px solid var(--grid); border-radius: 8px; }
+  details { margin-top: 10px; color: var(--text-secondary); font-size: 13px; }
+  pre { white-space: pre-wrap; background: var(--page); padding: 10px; border-radius: 8px; }
+  .aviso { color: var(--text-secondary); font-size: 13px; }
+  .tareas-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+  .tarea-card {
+    background: var(--page); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px; cursor: pointer; text-align: left; color: inherit;
+    transition: border-color .15s;
+  }
+  .tarea-card:hover { border-color: var(--accent); }
+  .tarea-card.activa { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .tarea-card .t-titulo { font-size: 13px; color: var(--text-secondary); }
+  .tarea-card .t-num { font-size: 30px; font-weight: 650; margin-top: 4px; }
+  .tarea-card .t-num.cero { color: var(--muted); }
+  .tarea-card .t-calc { font-size: 20px; font-weight: 500; color: var(--muted); margin-top: 8px; }
+  #tareas-detalle { margin-top: 14px; }
+  #tareas-detalle h3 { margin: 0 0 4px; font-size: 15px; }
+  .badge { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; display: inline-flex; align-items: center; gap: 6px; }
+  .badge.vivo { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+  .badge.vivo::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--critical); animation: latido 1.4s infinite; }
+  .badge.historico { background: color-mix(in srgb, var(--muted) 22%, transparent); color: var(--text-secondary); }
+  @keyframes latido { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
+  #ordeno-tabla td.cell-alerta { color: var(--critical); font-weight: 600; }
+  #ordeno-tabla td.cell-aviso { color: var(--accent); font-weight: 600; }
+  #ordeno-tabla tr.fila-alerta td:first-child { box-shadow: inset 3px 0 0 var(--critical); }
+  .segmentado { display: inline-flex; border: 1px solid var(--baseline); border-radius: 8px; overflow: hidden; }
+  .segmentado .seg { border: none; border-radius: 0; background: transparent; color: var(--text-secondary); padding: 7px 14px; cursor: pointer; }
+  .segmentado .seg.activa { background: var(--accent); color: #fff; }
+  .leyenda-punto { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin: 0 3px 0 8px; vertical-align: middle; }
+  .resumen-inc {
+    margin-top: 10px; padding: 9px 12px; border-radius: 9px; font-size: 12.5px;
+    background: var(--page); border: 1px solid var(--border); color: var(--text-secondary);
+  }
+  .resumen-inc b { color: var(--text-primary); }
+  .resumen-inc .malo { color: var(--critical); font-weight: 700; }
+  .mant-lista { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .mant-item { border: 1px solid var(--border); border-radius: 9px; padding: 9px 12px; }
+  .mant-item.critico { border-color: var(--critical); }
+  .mant-cab { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; }
+  .mant-cab .nombre { font-weight: 650; }
+  .mant-cab .dato { color: var(--text-secondary); white-space: nowrap; }
+  .mant-cab .dato.critico { color: var(--critical); font-weight: 700; }
+  .mant-cab .dato.ambar { color: var(--warning); font-weight: 700; }
+  .mant-barra { margin-top: 7px; height: 7px; border-radius: 5px; background: var(--grid); overflow: hidden; }
+  .mant-barra > div { height: 100%; border-radius: 5px; background: var(--good); }
+  .mant-barra > div.ambar { background: var(--warning); }
+  .mant-barra > div.critico { background: var(--critical); }
+  .mant-vacio, .alarmas-unid-vacio { color: var(--text-secondary); font-size: 13px; margin-top: 10px; }
+  .alarmas-unid-tabla td.critico, .alarmas-unid-tabla th.critico { color: var(--critical); font-weight: 700; }
+  .rotativa-layout { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; margin-top: 12px; }
+  #rotativa { flex: 1 1 380px; min-width: 0; display: flex; justify-content: center; }
+  #rotativa svg { max-width: 742px; width: 100%; height: auto; }
+  #rotativa .puesto-foco { cursor: pointer; }
+  .rotativa-col { flex: 1 1 280px; min-width: 250px; max-width: 400px; display: flex; flex-direction: column; gap: 10px; }
+  #rotativa-detalle { display: flex; flex-direction: column; gap: 7px; }
+  #panel-alarmas:empty { display: none; }
+  .panel-alarmas {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
+  }
+  .panel-alarmas .pa-head { background: var(--accent); color: #fff; padding: 7px 12px; font-weight: 650; font-size: 13px; display: flex; justify-content: space-between; }
+  .panel-alarmas .pa-tabs { display: flex; }
+  .panel-alarmas .pa-tab { flex: 1; border: none; border-radius: 0; background: var(--page); color: var(--text-secondary); padding: 8px 10px; cursor: pointer; font-weight: 600; font-size: 13px; }
+  .panel-alarmas .pa-tab.activa { background: var(--accent); color: #fff; }
+  .panel-alarmas .pa-vacio { padding: 12px; color: var(--text-secondary); font-size: 13px; }
+  .panel-alarmas table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  .panel-alarmas th { text-align: left; color: var(--text-secondary); font-weight: 600; padding: 5px 10px; border-bottom: 1px solid var(--grid); }
+  .panel-alarmas td { padding: 5px 10px; border-bottom: 1px solid var(--grid); }
+  .panel-alarmas .pa-plaza { font-weight: 700; text-align: center; }
+  .panel-alarmas .pa-alarma { color: var(--critical); font-weight: 600; }
+  .panel-alarmas .pa-scroll { max-height: 220px; overflow: auto; }
+  .puesto-card {
+    display: grid; grid-template-columns: 34px 1fr; gap: 2px 9px; align-items: center;
+    background: var(--page); border: 1px solid var(--border); border-radius: 9px; padding: 7px 11px;
+  }
+  .puesto-card.alerta { border-color: var(--critical); }
+  .puesto-card.vacio { opacity: .5; }
+  .puesto-card .pnum { grid-row: 1 / 3; font-size: 17px; font-weight: 700; color: var(--text-secondary); text-align: center; }
+  .puesto-card .prp { font-size: 14px; font-weight: 650; }
+  .puesto-card .pmeta { font-size: 11.5px; color: var(--text-secondary); }
+  .puesto-card .chip { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 20px; margin-left: 4px; }
+  .chip.rojo { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+  .chip.ambar { background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--warning); }
+  .chip.violeta { background: color-mix(in srgb, var(--violeta) 20%, transparent); color: var(--violeta); }
+  /* Vúmetros de Salud del rodeo */
+  .gauge-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .gauge { width: 128px; text-align: center; cursor: pointer; padding: 8px 4px 10px; border-radius: 10px; transition: background .15s; }
+  .gauge:hover { background: var(--baseline); }
+  .gauge.disabled { cursor: default; opacity: .42; }
+  .gauge-svg { width: 100%; height: auto; display: block; }
+  .gauge-needle { stroke: var(--text-primary); stroke-width: 2.6; stroke-linecap: round; transform-origin: 50px 55px; transition: transform .5s ease; }
+  .gauge-hub { fill: var(--text-primary); }
+  .gauge-value { font-size: 19px; font-weight: 800; margin-top: 1px; }
+  .gauge-label { font-size: 11px; color: var(--text-secondary); font-weight: 650; margin-top: 1px; }
+  .gauge-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+  .gauge.disabled .gauge-sub { font-weight: 600; }
+  /* Atención vacas v2 (experimental) */
+  .aten2-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
+  .aten2-card { background: var(--page); border: 1px solid var(--border); border-radius: 11px; padding: 12px 14px; border-top: 3px solid var(--muted); }
+  .aten2-card.sis-ubre { border-top-color: var(--critical); }
+  .aten2-card.sis-metabolico { border-top-color: var(--warning); }
+  .aten2-card.sis-general { border-top-color: var(--accent); }
+  .aten2-cab { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .aten2-rp { font-size: 18px; font-weight: 750; }
+  .aten2-score { font-size: 20px; font-weight: 800; }
+  .aten2-card.sis-ubre .aten2-score { color: var(--critical); }
+  .aten2-card.sis-metabolico .aten2-score { color: var(--warning); }
+  .aten2-card.sis-general .aten2-score { color: var(--accent); }
+  .aten2-meta { font-size: 11.5px; color: var(--text-secondary); margin-top: 1px; }
+  .aten2-sis { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase;
+    padding: 2px 8px; border-radius: 20px; margin-top: 8px; }
+  .aten2-card.sis-ubre .aten2-sis { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+  .aten2-card.sis-metabolico .aten2-sis { background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--warning); }
+  .aten2-card.sis-general .aten2-sis { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .aten2-motivos { list-style: none; margin: 9px 0 0; padding: 0; font-size: 12.5px; color: var(--text-secondary); }
+  .aten2-motivos li { position: relative; padding-left: 13px; margin-top: 4px; }
+  .aten2-motivos li::before { content: '•'; position: absolute; left: 1px; color: var(--text-secondary); }
+  .aten2-barras { display: flex; gap: 6px; margin-top: 10px; font-size: 10px; color: var(--muted); }
+  .aten2-barras span { flex: 1; text-align: center; padding: 3px 0; border-radius: 6px; background: var(--baseline); }
+  .aten2-barras span.top { font-weight: 700; }
+  .aten2-card.sis-ubre .aten2-barras .b-ubre.top { background: color-mix(in srgb, var(--critical) 16%, transparent); color: var(--critical); }
+  .aten2-card.sis-metabolico .aten2-barras .b-metab.top { background: color-mix(in srgb, var(--warning) 20%, transparent); color: var(--warning); }
+  .aten2-card.sis-general .aten2-barras .b-sist.top { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  .trat-box { margin-top: 7px; padding: 7px 9px; border-radius: 8px; background: color-mix(in srgb, var(--warning) 14%, transparent); border-left: 3px solid var(--warning); }
+  .trat-titulo { font-size: 12.5px; font-weight: 700; color: var(--warning); }
+  .trat-det { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
+  .trat-det b { color: var(--text-primary); }
+  .trat-drogas { font-size: 13px; margin-top: 3px; }
+  .trat-drogas b { color: var(--warning); }
+  /* Rutina de ordeño */
+  .rutina-sesiones { display: flex; gap: 8px; flex-wrap: wrap; }
+  .rutina-sesion-btn {
+    background: var(--page); border: 1px solid var(--baseline); border-radius: 9px;
+    padding: 8px 12px; cursor: pointer; text-align: left; color: var(--text-primary);
+  }
+  .rutina-sesion-btn.activa { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .rutina-sesion-btn .rs-score { font-size: 20px; font-weight: 700; }
+  .rutina-sesion-btn .rs-hora { font-size: 11.5px; color: var(--text-secondary); }
+  .rutina-score-nota { font-size: 40px; font-weight: 750; }
+  .rutina-layout { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; margin-top: 14px; }
+  #rutina-chart { flex: 2 1 520px; min-width: 0; overflow-x: auto; }
+  #rutina-chart svg { display: block; }
+  .rutina-panel { flex: 1 1 260px; min-width: 240px; max-width: 340px; display: flex; flex-direction: column; gap: 12px; }
+  .rutina-medidor { display: flex; flex-direction: column; gap: 8px; }
+  .rm-fila { }
+  .rm-cab { display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 3px; }
+  .rm-cab .rm-val { font-weight: 700; }
+  .rm-barra { height: 7px; border-radius: 4px; background: var(--grid); overflow: hidden; }
+  .rm-barra > div { height: 100%; border-radius: 4px; }
+  .rutina-hallazgos { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
+  .rutina-hallazgos li { list-style: none; padding-left: 16px; position: relative; }
+  .rutina-hallazgos li::before { content: '•'; position: absolute; left: 2px; color: var(--warning); }
+  .rutina-leyenda { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
+  .rutina-leyenda span.pt { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .rutina-tooltip {
+    position: fixed; pointer-events: none; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 10px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.18);
+    z-index: 50; display: none; max-width: 240px;
+  }
+  /* Sistema: shell + sidebar + topbar */
+  .app-shell { display: flex; min-height: 100vh; align-items: stretch; }
+  .sidebar {
+    flex: 0 0 216px; width: 216px; background: var(--brand-navy);
+    display: flex; flex-direction: column; padding: 16px 10px; gap: 2px;
+  }
+  .sidebar-brand {
+    display: flex; align-items: center; gap: 9px;
+    font-weight: 750; font-size: 16.5px; padding: 6px 10px 18px; white-space: nowrap;
+    color: var(--brand-ink); letter-spacing: -.1px;
+  }
+  .sidebar-brand img { width: 24px; height: 24px; flex-shrink: 0; }
+  .nav-item {
+    display: flex; align-items: center; gap: 10px; text-align: left; background: transparent;
+    color: rgba(255,255,255,.72); border: none; border-left: 3px solid transparent; border-radius: 8px;
+    padding: 10px 12px; font-size: 14px; font: inherit; cursor: pointer; width: 100%;
+  }
+  .nav-item:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .nav-item.activa {
+    background: var(--brand-navy-2); color: #fff; font-weight: 650;
+    border-left-color: var(--accent);
+  }
+  .sidebar-fondo { display: none; }
+  .main-area { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+  .hamburguesa { display: none; background: transparent; border: 1px solid var(--baseline); color: var(--text-primary); padding: 6px 10px; }
+  @media (max-width: 880px) {
+    .sidebar {
+      position: fixed; left: 0; top: 0; bottom: 0; z-index: 41; transform: translateX(-100%);
+      transition: transform .2s ease; box-shadow: 2px 0 16px rgba(0,0,0,.3);
+    }
+    .sidebar.abierta { transform: translateX(0); }
+    .sidebar-fondo.abierta { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 40; }
+    .hamburguesa { display: inline-block; }
+  }
+  @media print {
+    .sidebar, .sidebar-fondo, .hamburguesa, header .controls, .controles-consulta, #ia-card, button, details { display: none !important; }
+    body { background: #fff; }
+  }
+</style>
+</head>
+<body>
+<div class="app-shell">
+  <nav class="sidebar" id="sidebar">
+    <div class="sidebar-brand"><img src="/static/img/logo.svg" alt="">LactIA</div>
+    {% if 'dashboard' in paginas_visibles %}<button class="nav-item" data-pagina="dashboard">📊 <span>Dashboard</span></button>{% endif %}
+    {% if 'ordeno' in paginas_visibles %}<button class="nav-item" data-pagina="ordeno">🔄 <span>Ordeño en vivo</span></button>{% endif %}
+    {% if 'rutina' in paginas_visibles %}<button class="nav-item" data-pagina="rutina">⏱️ <span>Rutina de ordeño</span></button>{% endif %}
+    {% if 'evolucion' in paginas_visibles %}<button class="nav-item" data-pagina="evolucion">📈 <span>Evolución</span></button>{% endif %}
+    {% if 'salud' in paginas_visibles %}<button class="nav-item" data-pagina="salud">🩺 <span>Salud del rodeo</span></button>{% endif %}
+    {% if 'tareas' in paginas_visibles %}<button class="nav-item" data-pagina="tareas">✅ <span>Tareas pendientes</span></button>{% endif %}
+    {% if 'consultas' in paginas_visibles %}<button class="nav-item" data-pagina="consultas">🔍 <span>Consultas e IA</span></button>{% endif %}
+  </nav>
+  <div class="sidebar-fondo" id="sidebar-fondo"></div>
+  <div class="main-area">
+    <header>
+      <button class="hamburguesa" id="btn-hamburguesa" aria-label="Abrir menú">☰</button>
+      <label class="sub" style="display:flex;align-items:center;gap:6px">
+        Tambo:
+        <select id="sel-tambo" style="padding:5px 8px"></select>
+      </label>
+      <span class="sub" id="ia-estado">{% if ia_disponible %}IA activa{% else %}IA no configurada — solo consultas predefinidas{% endif %}</span>
+      <span class="sub" style="margin-left:auto;display:flex;align-items:center;gap:10px">
+        👤 {{ usuario }} ({{ rol }})
+        <a href="/logout" style="color:var(--accent)">Salir</a>
+      </span>
+    </header>
+    <main>
+  <div class="page" id="page-dashboard" hidden>
+  <div class="aviso" id="dashboard-estado"></div>
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2>Producción de leche — últimos 30 días</h2>
+      <div class="chart-box"><canvas id="chart-prod"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Estado reproductivo del rodeo</h2>
+      <div class="chart-box"><canvas id="chart-repro"></canvas></div>
+    </div>
+  </section>
+
+  <section class="card" id="resumen-produccion-card">
+    <h2 style="margin:0">Resumen diario de producción — últimos 7 días</h2>
+    <div class="aviso" id="resumen-produccion-info" style="margin-top:6px"></div>
+    <div class="rutina-layout" style="margin-top:10px">
+      <div style="flex:2 1 480px;min-width:0">
+        <div class="chart-box" style="height:260px"><canvas id="chart-resumen-produccion"></canvas></div>
+      </div>
+      <div class="kpis" id="resumen-produccion-kpis" style="flex:1 1 220px;grid-template-columns:1fr"></div>
+    </div>
+  </section>
+
+  <section class="card" id="resumen-animales-card">
+    <h2 style="margin:0">Composición del rodeo</h2>
+    <div class="aviso" id="resumen-animales-info" style="margin-top:6px"></div>
+    <div class="rutina-layout" style="margin-top:10px">
+      <div style="flex:1 1 260px;min-width:220px">
+        <div class="chart-box" style="height:240px"><canvas id="chart-resumen-animales"></canvas></div>
+      </div>
+      <div class="kpis" id="resumen-reproduccion-kpis" style="flex:2 1 320px"></div>
+    </div>
+  </section>
+
+  <section class="card" id="resumen-duraciones-card">
+    <h2 style="margin:0">Duraciones de ordeño — últimos 7 días</h2>
+    <span class="aviso">Minutos por sesión (hasta 3 por día).</span>
+    <div class="chart-box" style="height:260px;margin-top:10px"><canvas id="chart-resumen-duraciones"></canvas></div>
+  </section>
+
+  <section class="card" id="resumen-grupo-card">
+    <h2 style="margin:0">Producción media por grupo — últimos 30 días</h2>
+    <span class="aviso">Kg/vaca/día de los grupos más numerosos, con el promedio general del tambo (línea punteada).</span>
+    <div class="chart-box" style="height:280px;margin-top:10px"><canvas id="chart-resumen-grupo"></canvas></div>
+  </section>
+
+  <section class="card" id="alertas-whatsapp-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🔔 Alertas</h2>
+      <span class="aviso">Revisa a las 8:00 y 20:00: temp. caudalímetro &gt;5°C, U.F.C. &gt;40, score de rutina &lt;60%, incidencias de la rotativa.</span>
+      <button class="secundario" id="whatsapp-probar" style="margin-left:auto">Probar envío</button>
+    </div>
+    <div id="alertas-canales" style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px"></div>
+    <div class="aviso" id="whatsapp-info" style="margin-top:8px"></div>
+  </section>
+
+  <section class="card" id="cicla-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🥛 Entregas de leche (CICLA)</h2>
+      <span class="aviso">Litros medidos por el caudalímetro y temperatura de entrega, por carga.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="cicla-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="cicla-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="cicla-aplicar">Aplicar</button>
+      </div>
+    </div>
+    <div class="aviso" id="cicla-info" style="margin-top:8px"></div>
+    <div class="kpis" id="cicla-kpis" style="margin-top:10px"></div>
+    <div class="grid2" style="margin-top:14px">
+      <div>
+        <div class="aviso" style="margin-bottom:6px">Litros entregados por carga</div>
+        <div class="chart-box" style="height:220px"><canvas id="chart-cicla-dif"></canvas></div>
+      </div>
+      <div>
+        <div class="aviso" style="margin-bottom:6px">Temperatura promedio de entrega (°C) · umbral 4°C</div>
+        <div class="chart-box" style="height:220px"><canvas id="chart-cicla-temp"></canvas></div>
+      </div>
+    </div>
+    <div id="cicla-hallazgos" style="margin-top:14px"></div>
+  </section>
+
+  <section class="card" id="comparar-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">⚖️ Caudalímetro vs. Comprador (litros/día)</h2>
+      <span class="aviso">Litros Cicla (caudalímetro) vs. litros oficiales recibidos por La Serenísima, por día · umbral ±3%.</span>
+    </div>
+    <div class="aviso" id="comparar-info" style="margin-top:8px"></div>
+    <div class="chart-box" style="height:240px;margin-top:10px"><canvas id="chart-comparar"></canvas></div>
+    <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🧪 Calidad de leche (La Serenísima)</h2>
+      <span class="aviso">Datos oficiales del comprador — período actual, tambo 1565.</span>
+    </div>
+    <div class="kpis" id="laser-kpis" style="margin-top:10px"></div>
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Litros por entrega</div>
+      <div class="chart-box" style="height:220px"><canvas id="chart-laser-litros"></canvas></div>
+    </div>
+    <div style="margin-top:20px">
+      <div class="aviso" style="margin-bottom:6px">Grasa %</div>
+      <div class="chart-box" style="height:220px"><canvas id="chart-laser-grasa"></canvas></div>
+    </div>
+    <div style="margin-top:20px">
+      <div class="aviso" style="margin-bottom:6px">Proteínas %</div>
+      <div class="chart-box" style="height:220px"><canvas id="chart-laser-proteinas"></canvas></div>
+    </div>
+    <div style="margin-top:20px">
+      <div class="aviso" style="margin-bottom:6px">U.F.C.</div>
+      <div class="chart-box" style="height:220px"><canvas id="chart-laser-ufc"></canvas></div>
+    </div>
+    <div style="margin-top:20px">
+      <div class="aviso" style="margin-bottom:6px">Temperatura (°C) · umbral 4°C</div>
+      <div class="chart-box" style="height:220px"><canvas id="chart-laser-temp"></canvas></div>
+    </div>
+  </section>
+  </div>
+
+  <div class="page" id="page-ordeno" hidden>
+  <section class="card" id="ordeno-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Ordeño en la rotativa</h2>
+      <span id="ordeno-badge" class="badge historico">—</span>
+      <span id="ordeno-info" class="aviso"></span>
+      <div class="segmentado" style="margin-left:auto">
+        <button id="vista-rotativa" class="seg activa">Rotativa</button>
+        <button id="vista-tabla" class="seg">Tabla</button>
+      </div>
+      <label class="aviso" style="display:flex;align-items:center;gap:6px" title="Vacas reales del último ordeño subiendo a la plataforma (no toca la base). Para probar la pantalla cuando no hay ordeño en curso.">
+        <input type="checkbox" id="ordeno-sim"> 🎬 Simulación
+      </label>
+      <button class="secundario" id="ordeno-refrescar">Actualizar</button>
+    </div>
+
+    <!-- Vista gráfica: simulación de la rotativa -->
+    <div id="rotativa-wrap">
+      <div class="controls" style="margin-top:12px">
+        <label class="aviso">Ver puestos
+          <input type="number" id="rot-desde" min="1" max="80" value="60" style="width:56px">
+          a
+          <input type="number" id="rot-hasta" min="1" max="80" value="70" style="width:56px">
+        </label>
+        <span class="aviso" style="margin-left:8px">
+          <span class="leyenda-punto" style="background:var(--accent)"></span>ordeñando ·
+          <span class="leyenda-punto" style="background:var(--critical)"></span>sin permiso ·
+          <span class="leyenda-punto" style="background:var(--warning)"></span>tratamiento ·
+          <span class="leyenda-punto" style="background:var(--violeta)"></span>apartar ·
+          <span class="leyenda-punto" style="background:transparent;border:1px dashed var(--muted)"></span>vacío ·
+          <span class="leyenda-punto" style="background:transparent;border:1.5px dashed var(--warning)"></span>incidencias del día (desliz/patada/bloqueo/recoloc) ·
+          <span class="leyenda-punto" style="background:transparent;border:2px solid var(--critical)"></span>3 o más
+        </span>
+      </div>
+      <div id="rotativa-resumen" class="resumen-inc"></div>
+      <div class="rotativa-layout">
+        <div id="rotativa"></div>
+        <div class="rotativa-col">
+          <div id="panel-alarmas"></div>
+          <div id="rotativa-detalle"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vista tabla -->
+    <div id="tabla-wrap" hidden>
+      <div class="controls" style="margin-top:12px">
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="ordeno-vivo"> En vivo (girando ahora)
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="ordeno-alertas"> Solo con alerta
+        </label>
+        <input type="text" id="ordeno-buscar" placeholder="Buscar RP…" style="width:120px">
+      </div>
+      <div class="tabla-scroll" style="max-height:440px;margin-top:12px"><table id="ordeno-tabla"></table></div>
+    </div>
+  </section>
+
+  <section class="card" id="alarmas-unidades-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Alarmas críticas de unidades</h2>
+      <span class="aviso">Deslizamiento &gt;15% o bloqueo &gt;6% de los ordeños del día, por puesto.</span>
+    </div>
+    <div id="alarmas-unidades-cuerpo"></div>
+  </section>
+
+  <section class="card" id="mantenimiento-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Mantenimiento preventivo</h2>
+      <span class="aviso">Tubos cortos, pezoneras, lubricadores… (contadores cargados en DelPro)</span>
+      <button class="secundario" id="mantenimiento-refrescar" style="margin-left:auto">Actualizar</button>
+    </div>
+    <div id="mantenimiento-cuerpo"></div>
+  </section>
+  </div>
+
+  <div class="page" id="page-rutina" hidden>
+  <section class="card" id="rutina-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Rutina de ordeño</h2>
+      <span class="aviso">Identificación → colocación de pezonera → retiro, por sesión.</span>
+      <div class="controls" style="margin-left:auto">
+        <button class="secundario" id="rutina-config-toggle">⚙ Configurar análisis</button>
+        <button class="secundario" id="rutina-dia-ant" title="Día anterior">◀</button>
+        <input type="date" id="rutina-fecha" style="padding:7px 8px">
+        <button class="secundario" id="rutina-dia-sig" title="Día siguiente">▶</button>
+      </div>
+    </div>
+    <div id="rutina-config-panel" hidden style="margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:9px">
+      <div class="aviso" style="margin-bottom:6px">Grupos a incluir en el análisis</div>
+      <div id="rutina-grupos-check" style="display:flex;flex-wrap:wrap;gap:12px"></div>
+      <div class="aviso" style="margin:14px 0 6px">Peso de cada componente en el score (%)</div>
+      <div id="rutina-pesos-inputs" style="display:flex;flex-wrap:wrap;gap:14px"></div>
+      <div style="margin-top:14px;display:flex;gap:10px">
+        <button class="secundario" id="rutina-config-aplicar">Aplicar</button>
+        <button class="secundario" id="rutina-config-reset">Restablecer valores por defecto</button>
+      </div>
+    </div>
+    <div id="rutina-info" class="aviso" style="margin-top:8px"></div>
+    <div class="rutina-sesiones" id="rutina-sesiones" style="margin-top:10px"></div>
+    <div class="rutina-layout" id="rutina-cuerpo"></div>
+  </section>
+  <div class="rutina-tooltip" id="rutina-tooltip"></div>
+  </div>
+
+  <div class="page" id="page-evolucion" hidden>
+  <section class="card" id="evolucion-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Evolución de la rutina de ordeño</h2>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="evolucion-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="evolucion-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="evolucion-aplicar">Aplicar</button>
+        <span class="aviso">·</span>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Mes
+          <select id="evolucion-mes" style="padding:6px 8px"></select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Año
+          <select id="evolucion-anio" style="padding:6px 8px"></select>
+        </label>
+        <button class="secundario" id="evolucion-ver-mes" title="Carga el mes completo, día por día">Ver mes completo</button>
+      </div>
+    </div>
+    <div class="aviso" id="evolucion-info" style="margin-top:8px"></div>
+    <div class="chart-box" style="height:340px;margin-top:10px;overflow-x:auto;overflow-y:hidden">
+      <div id="evolucion-chart-wrap" style="height:100%">
+        <canvas id="chart-evolucion"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="rendimiento-card">
+    <h2 style="margin:0">Rutina vs. rendimiento de la rotativa</h2>
+    <span class="aviso">Cada punto es UNA sesión: score general de esa sesión vs. vacas/hora que dio la rotativa. Mismo rango de fechas que arriba.</span>
+    <div class="aviso" id="rendimiento-info" style="margin-top:8px"></div>
+    <div class="chart-box" style="height:320px;margin-top:10px"><canvas id="chart-rendimiento"></canvas></div>
+  </section>
+
+  <section class="card" id="rendimiento-linea-card">
+    <h2 style="margin:0">Rutina y rendimiento por día (línea de tiempo)</h2>
+    <span class="aviso">Un día por punto (total del día) · calidad de rutina, vacas/hora y retiradas forzadas, cada uno con su escala.</span>
+    <div class="chart-box" style="height:320px;margin-top:10px;overflow-x:auto;overflow-y:hidden">
+      <div id="rendimiento-linea-wrap" style="height:100%">
+        <canvas id="chart-rendimiento-linea"></canvas>
+      </div>
+    </div>
+  </section>
+  </div>
+
+  <div class="page" id="page-salud" hidden>
+    <section class="card" id="salud-kpis-card">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0">🩺 Salud del rodeo</h2>
+        <span class="aviso">Réplica del reporte Chi con los datos de la base.</span>
+        <button class="secundario" id="salud-refrescar" style="margin-left:auto">Actualizar</button>
+      </div>
+      <div class="gauge-row" id="salud-kpis" style="margin-top:12px"></div>
+      <div class="aviso" id="salud-estado" style="margin-top:8px"></div>
+    </section>
+
+    <section class="card" id="salud-atencion-card">
+      <h2 style="margin:0">Atención vacas</h2>
+      <span class="aviso">⚠ Índice <b>propio</b>, no es el score del add-on Chi: ese se calcula
+        dentro de su programa y no queda guardado en la base. Usa las mismas señales
+        (caída de leche, conductividad, tendencia), pero sus valores no son comparables.</span>
+      <div id="salud-atencion-cuerpo"></div>
+    </section>
+
+    <section class="card" id="salud-atencion2-card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <h2 style="margin:0">Atención vacas <span class="chip ambar">EXPERIMENTAL</span></h2>
+      </div>
+      <span class="aviso">Índice multi-sistema (ubre / metabólico / general) armado y calibrado contra 647
+        diagnósticos reales de este tambo. En la comparación contra el índice de arriba con la misma tasa de
+        falsos positivos, <b>todavía no lo supera</b> — se muestra en paralelo, a validar con evidencia de campo.
+        Cada tarjeta explica el motivo para que el operario juzgue si la señal es real.</span>
+      <div id="salud-atencion2-cuerpo"></div>
+    </section>
+
+    <section class="card" id="salud-rcs-grupo-card">
+      <h2 style="margin:0">Mayores RCS por rodeo</h2>
+      <span class="aviso">Células somáticas del último control lechero vs. el anterior · umbral 300.000.</span>
+      <div id="salud-rcs-grupo-cuerpo"></div>
+    </section>
+
+    <section class="card" id="salud-rcs-vacas-card">
+      <h2 style="margin:0">Vacas con RCS &gt; 300.000</h2>
+      <span class="aviso">Las <b>crónicas</b> (altas en el último control y en el anterior) van marcadas.</span>
+      <div class="controls" style="margin-top:8px">
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="salud-solo-cronicas"> Ver solo crónicas
+        </label>
+      </div>
+      <div id="salud-rcs-vacas-cuerpo"></div>
+    </section>
+
+    <section class="card" id="salud-cond-card">
+      <h2 style="margin:0">Vista del rebaño (conductividad)</h2>
+      <span class="aviso">Conductividad relativa promedio por rodeo · por encima de 115 hay sospecha de mastitis.</span>
+      <div class="chart-box" style="height:320px;margin-top:10px"><canvas id="chart-salud-cond"></canvas></div>
+    </section>
+
+    <section class="card" id="salud-prod-card">
+      <h2 style="margin:0">Estadística de producción de leche</h2>
+      <span class="aviso">Kg por ordeño de cada rodeo, con la variación contra el período anterior.</span>
+      <div id="salud-prod-cuerpo"></div>
+    </section>
+  </div>
+
+  <div class="page" id="page-tareas" hidden>
+  <section class="card">
+    <h2>Tareas pendientes</h2>
+    <div class="aviso" style="margin-bottom:10px">Listas derivadas del estado del rodeo y del equipo de ordeño, al estilo del To-Do de DelPro. Hacé clic en una tarjeta para ver el detalle.</div>
+    <div id="tareas-grid" class="tareas-grid"></div>
+    <div id="tareas-detalle"></div>
+  </section>
+  </div>
+
+  <div class="page" id="page-consultas" hidden>
+  <section class="card">
+    <h2>Consultas y reportes</h2>
+    <div class="controls controles-consulta">
+      <select id="sel-consulta"></select>
+      <button id="btn-consulta">Ejecutar</button>
+    </div>
+    <div id="ia-card" style="margin-top:14px">
+      <textarea id="txt-pregunta" placeholder="Pregunta libre a la base de datos, p. ej.: ¿Cuáles fueron las 10 vacas con mayor caída de producción esta semana respecto a la anterior?"{% if not ia_disponible %} disabled{% endif %}></textarea>
+      <div class="controls" style="margin-top:8px">
+        <button id="btn-preguntar" {% if not ia_disponible %}disabled{% endif %}>Preguntar con IA</button>
+        {% if not ia_disponible %}<span class="aviso">Configura ANTHROPIC_API_KEY para habilitar preguntas libres.</span>{% endif %}
+      </div>
+    </div>
+    <div id="estado"></div>
+  </section>
+
+  <section class="card" id="resultado" hidden>
+    <h2 id="res-titulo"></h2>
+    <div class="aviso" id="res-supuestos"></div>
+    <div class="analisis" id="res-analisis" hidden></div>
+    <div class="chart-box" id="res-chart-box"><canvas id="chart-res"></canvas></div>
+    <div class="tabla-scroll"><table id="res-tabla"></table></div>
+    <div class="controls" style="margin-top:12px">
+      <button class="secundario" id="btn-csv">Exportar CSV</button>
+      <button class="secundario" onclick="window.print()">Imprimir / PDF</button>
+    </div>
+    <details><summary>Ver SQL ejecutado</summary><pre id="res-sql"></pre></details>
+  </section>
+  </div>
+    </main>
+  </div>
+</div>
+
+<script>
+const ia_disp = {% if ia_disponible %}true{% else %}false{% endif %};
+const oscuro = matchMedia('(prefers-color-scheme: dark)').matches;
+// Paleta de gráficas alineada a la identidad DeLaval: azul de marca a la cabeza,
+// seguido de tonos afines (navy, celeste) y acentos para distinguir series.
+const SERIES = oscuro
+  ? ['#4f97e8','#8fbdec','#123563','#c98500','#3fae82','#e66767','#9085e9','#d55181']
+  : ['#1c5cb8','#5a8fd6','#0f2f5c','#eda100','#1baf7a','#d03b3b','#4a3aa7','#e87ba4'];
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+Chart.defaults.color = css('--muted');
+Chart.defaults.borderColor = css('--grid');
+Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+
+let chartProd, chartRepro, chartRes, ultimoResultado = null;
+let tamboActual = '';
+
+function fmt(n) {
+  return typeof n === 'number' ? n.toLocaleString('es-AR', {maximumFractionDigits: 1}) : (n ?? '');
+}
+
+function baseOpts(mostrarLeyenda) {
+  return {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: mostrarLeyenda, labels: { boxWidth: 12, boxHeight: 12 } } },
+    scales: {
+      x: { grid: { display: false }, border: { color: css('--baseline') } },
+      y: { beginAtZero: true, grid: { color: css('--grid') }, border: { display: false } }
+    }
+  };
+}
+
+function dibujar(canvasId, chartRef, cfg) {
+  if (chartRef) chartRef.destroy();
+  return new Chart(document.getElementById(canvasId), cfg);
+}
+
+function construirGrafica(data, spec) {
+  const idxX = data.columns.indexOf(spec.eje_x);
+  let series = (spec.series || []).filter(c => data.columns.includes(c));
+  if (!series.length) {
+    series = data.columns.filter((c, i) => i !== idxX && data.rows.every(r => typeof r[i] === 'number' || r[i] === null));
+  }
+  const labels = data.rows.map(r => idxX >= 0 ? r[idxX] : '');
+  if (spec.tipo === 'pie') {
+    const i = data.columns.indexOf(series[0]);
+    return {
+      type: 'doughnut',
+      data: { labels, datasets: [{ data: data.rows.map(r => r[i]),
+        backgroundColor: SERIES.slice(0, data.rows.length), borderColor: css('--surface-1'), borderWidth: 2 }] },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'right', labels: { boxWidth: 12, boxHeight: 12 } } } }
+    };
+  }
+  const datasets = series.map((col, k) => {
+    const i = data.columns.indexOf(col);
+    const vals = data.rows.map(r => r[i]);
+    return spec.tipo === 'line'
+      ? { label: col, data: vals, borderColor: SERIES[k % 8], backgroundColor: SERIES[k % 8],
+          borderWidth: 2, pointRadius: labels.length > 60 ? 0 : 2.5, tension: .25 }
+      : { label: col, data: vals, backgroundColor: SERIES[k % 8],
+          maxBarThickness: 28, borderRadius: 4, borderSkipped: 'bottom' };
+  });
+  return { type: spec.tipo === 'line' ? 'line' : 'bar',
+           data: { labels, datasets }, options: baseOpts(series.length > 1) };
+}
+
+function pintarTabla(data) {
+  const t = document.getElementById('res-tabla');
+  const numCols = data.columns.map((c, i) => data.rows.some(r => typeof r[i] === 'number'));
+  t.innerHTML = '<thead><tr>' + data.columns.map(c => `<th>${c}</th>`).join('') + '</tr></thead>' +
+    '<tbody>' + data.rows.map(r =>
+      '<tr>' + r.map((v, i) => `<td class="${numCols[i] ? 'num' : ''}">${fmt(v)}</td>`).join('') + '</tr>'
+    ).join('') + '</tbody>';
+}
+
+function mostrarResultado(res) {
+  ultimoResultado = res;
+  document.getElementById('resultado').hidden = false;
+  document.getElementById('res-titulo').textContent = res.titulo || '';
+  document.getElementById('res-supuestos').textContent = res.supuestos ? 'Supuestos: ' + res.supuestos : '';
+  const an = document.getElementById('res-analisis');
+  an.hidden = !res.analisis; an.textContent = res.analisis || '';
+  document.getElementById('res-sql').textContent = res.sql || '';
+  const spec = res.grafica || { tipo: 'table' };
+  const box = document.getElementById('res-chart-box');
+  if (spec.tipo === 'table' || spec.tipo === 'stat' || !res.rows.length) {
+    box.style.display = 'none';
+  } else {
+    box.style.display = '';
+    chartRes = dibujar('chart-res', chartRes, construirGrafica(res, spec));
+  }
+  pintarTabla(res);
+  if (res.truncated) estado('Aviso: resultados truncados a 5000 filas.');
+  document.getElementById('resultado').scrollIntoView({ behavior: 'smooth' });
+}
+
+function estado(msg, esError) {
+  const e = document.getElementById('estado');
+  e.textContent = msg || ''; e.className = esError ? 'error' : '';
+}
+
+async function pedirJSON(url, opts) {
+  const r = await fetch(url, opts);
+  const j = await r.json().catch(() => ({ error: 'Respuesta inválida del servidor' }));
+  if (r.status === 202) { const e = new Error(j.mensaje || 'calentando'); e.calentando = true; e.info = j; throw e; }
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+async function cargarDashboard(intento = 0) {
+  try {
+    const d = await pedirJSON('/api/dashboard?tambo=' + encodeURIComponent(tamboActual));
+    const k = d.kpis || {};
+    const f = k.fecha_dato ? ` (${k.fecha_dato})` : '';
+    const tiles = [
+      ['Kg de leche' + f, k.kg_ultimo_dia], ['Vacas en ordeño' + f, k.vacas_en_ordeno],
+      ['Ordeños' + f, k.ordenos_ultimo_dia], ['Animales activos', k.animales_activos],
+      ['Preñadas', k.prenadas],
+    ];
+    document.getElementById('kpis').innerHTML = tiles.map(([l, v]) =>
+      `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
+    chartProd = dibujar('chart-prod', chartProd,
+      construirGrafica(d.produccion, { tipo: 'line', eje_x: 'fecha', series: ['kg_leche'] }));
+    chartRepro = dibujar('chart-repro', chartRepro,
+      construirGrafica(d.reproduccion, { tipo: 'pie', eje_x: 'estado', series: ['vacas'] }));
+    document.getElementById('dashboard-estado').textContent = '';
+  } catch (e) {
+    const el = document.getElementById('dashboard-estado');
+    if (e.calentando && intento < 40) {
+      el.textContent = `${e.message} (${e.info?.progreso || ''})`;
+      return setTimeout(() => cargarDashboard(intento + 1), 3000);
+    }
+    el.textContent = 'Error cargando el dashboard: ' + e.message;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Resumen 'estilo home de DelPro': producción diaria (7 días + variación vs.
+// ayer), composición del rodeo (donut + reproducción), duraciones de ordeño
+// (7 días) y producción media por grupo (30 días).
+// ---------------------------------------------------------------------------
+let chartResumenProduccion = null, chartResumenAnimales = null,
+    chartResumenDuraciones = null, chartResumenGrupo = null;
+
+async function cargarResumenProduccion() {
+  const info = document.getElementById('resumen-produccion-info');
+  try {
+    const d = await pedirJSON('/api/resumen/produccion?tambo=' + encodeURIComponent(tamboActual));
+    const dias = d.dias || [];
+    chartResumenProduccion = dibujar('chart-resumen-produccion', chartResumenProduccion, {
+      type: 'line',
+      data: {
+        labels: dias.map(x => x.fecha),
+        datasets: [
+          { label: 'Producción total (kg)', data: dias.map(x => x.kg_total), yAxisID: 'y',
+            borderColor: SERIES[0], backgroundColor: SERIES[0], pointRadius: 3, tension: .25 },
+          { label: 'Promedio por vaca (kg)', data: dias.map(x => x.promedio_kg), yAxisID: 'y2',
+            borderColor: css('--warning'), backgroundColor: css('--warning'), pointRadius: 3, tension: .25 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, labels: { boxWidth: 12, boxHeight: 12 } } },
+        scales: {
+          x: { grid: { display: false }, border: { color: css('--baseline') } },
+          y: { position: 'left', title: { display: true, text: 'Kg totales' },
+               grid: { color: css('--grid') }, border: { display: false } },
+          y2: { position: 'right', title: { display: true, text: 'Kg/vaca' },
+                grid: { display: false }, border: { display: false } },
+        },
+      },
+    });
+    const v = d.variacion || {}, a = d.ayer || {};
+    const deltaTxt = (n) => n == null ? '' : (n > 0 ? '▲ +' : n < 0 ? '▼ ' : '— ') + fmt(Math.abs(n));
+    const deltaEstilo = (n) => n == null ? '' : `style="color:${n >= 0 ? css('--good') : css('--critical')}"`;
+    const tiles = [
+      ['Producción diaria (kg)', a.kg_total, v.kg_total],
+      ['Producción desconocida (kg)', a.kg_desconocida, v.kg_desconocida],
+      ['Promedio por vaca (kg)', a.promedio_kg, v.promedio_kg],
+      ['Vacas ordeñadas', a.vacas_ordenadas, v.vacas_ordenadas],
+    ];
+    document.getElementById('resumen-produccion-kpis').innerHTML = tiles.map(([l, val, delta]) => `
+      <div class="tile">
+        <div class="label">${l}</div>
+        <div class="value">${fmt(val)}</div>
+        <div class="aviso" ${deltaEstilo(delta)}>${deltaTxt(delta)}</div>
+      </div>`).join('');
+    info.textContent = a.fecha ? `Último día completo: ${a.fecha} (comparado con el día anterior)` : 'Sin datos suficientes.';
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; setTimeout(cargarResumenProduccion, 3000); }
+    else info.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function cargarResumenAnimales() {
+  const info = document.getElementById('resumen-animales-info');
+  try {
+    const d = await pedirJSON('/api/resumen/animales?tambo=' + encodeURIComponent(tamboActual));
+    const segmentos = [
+      ['Vacas en ordeño', d.vacas_ordeno, SERIES[0]],
+      ['Vacas secas', d.vacas_secas, css('--warning')],
+      ['Novillas preñadas', d.novillas_prenadas, css('--muted')],
+      ['Novillas sin preñar', d.novillas_sin_prenar, css('--good')],
+    ];
+    chartResumenAnimales = dibujar('chart-resumen-animales', chartResumenAnimales, {
+      type: 'doughnut',
+      data: {
+        labels: segmentos.map(s => s[0]),
+        datasets: [{ data: segmentos.map(s => s[1]), backgroundColor: segmentos.map(s => s[2]) }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 12, boxHeight: 12 } } },
+      },
+    });
+    const neto = (d.altas_ayer || 0) - (d.bajas_ayer || 0);
+    info.textContent = `${fmt(d.total)} animales en total` +
+      (d.altas_ayer || d.bajas_ayer
+        ? ` (${neto > 0 ? '+' : ''}${neto} vs. ayer: ${d.altas_ayer} alta(s), ${d.bajas_ayer} baja(s))` : '');
+    const tiles = [
+      ['Novillas preñadas / novillas', d.pct_novillas_prenadas != null ? d.pct_novillas_prenadas + '%' : '—'],
+      ['Vacas preñadas / vacas', d.pct_vacas_prenadas != null ? d.pct_vacas_prenadas + '%' : '—'],
+      ['Días en ordeño (DIM promedio)', d.dim_promedio ?? '—'],
+    ];
+    document.getElementById('resumen-reproduccion-kpis').innerHTML = tiles.map(([l, val]) =>
+      `<div class="tile"><div class="label">${l}</div><div class="value">${val}</div></div>`).join('');
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; setTimeout(cargarResumenAnimales, 3000); }
+    else info.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function cargarResumenDuraciones() {
+  try {
+    const d = await pedirJSON('/api/resumen/duraciones?tambo=' + encodeURIComponent(tamboActual));
+    const puntos = d.puntos || [];
+    const maxSesiones = Math.max(1, ...puntos.map(p => p.duraciones.length));
+    const colores = [SERIES[2], css('--warning'), SERIES[4], SERIES[5], SERIES[6]];
+    const datasets = [];
+    for (let i = 0; i < maxSesiones; i++) {
+      datasets.push({
+        label: `Sesión ${i + 1}`,
+        data: puntos.map(p => p.duraciones[i] ?? null),
+        backgroundColor: colores[i % colores.length],
+      });
+    }
+    chartResumenDuraciones = dibujar('chart-resumen-duraciones', chartResumenDuraciones, {
+      type: 'bar',
+      data: { labels: puntos.map(p => p.fecha), datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, labels: { boxWidth: 12, boxHeight: 12 } } },
+        scales: {
+          x: { grid: { display: false }, border: { color: css('--baseline') } },
+          y: { title: { display: true, text: 'Minutos' }, grid: { color: css('--grid') }, border: { display: false } },
+        },
+      },
+    });
+    if (d.calculando) setTimeout(cargarResumenDuraciones, 4000);
+  } catch (e) {
+    if (e.calentando) setTimeout(cargarResumenDuraciones, 4000);
+  }
+}
+
+async function cargarResumenGrupo() {
+  try {
+    const d = await pedirJSON('/api/resumen/produccion_grupo?tambo=' + encodeURIComponent(tamboActual));
+    const detalle = d.detalle || { columns: [], rows: [] };
+    const idx = { fecha: detalle.columns.indexOf('fecha'), grupo: detalle.columns.indexOf('grupo'),
+                  promedio_kg: detalle.columns.indexOf('promedio_kg') };
+    const fechas = [...new Set(detalle.rows.map(r => r[idx.fecha]))].sort();
+    const porGrupo = {};
+    (d.grupos || []).forEach(g => { porGrupo[g] = {}; });
+    detalle.rows.forEach(r => {
+      const g = r[idx.grupo];
+      if (!porGrupo[g]) porGrupo[g] = {};
+      porGrupo[g][r[idx.fecha]] = r[idx.promedio_kg];
+    });
+    const nombresG = d.nombres || {};
+    const datasets = (d.grupos || []).map((g, i) => ({
+      label: nombresG[g] || `Grupo ${g}`, data: fechas.map(f => porGrupo[g][f] ?? null),
+      borderColor: SERIES[i % SERIES.length], backgroundColor: SERIES[i % SERIES.length],
+      pointRadius: 0, borderWidth: 1.8, tension: .25, spanGaps: true,
+    }));
+    const general = d.general || { columns: [], rows: [] };
+    const idxG = { fecha: general.columns.indexOf('fecha'), promedio_kg: general.columns.indexOf('promedio_kg') };
+    const porFechaGeneral = {};
+    general.rows.forEach(r => { porFechaGeneral[r[idxG.fecha]] = r[idxG.promedio_kg]; });
+    datasets.push({
+      label: 'Promedio general', data: fechas.map(f => porFechaGeneral[f] ?? null),
+      borderColor: css('--text-primary'), backgroundColor: css('--text-primary'),
+      borderDash: [6, 4], borderWidth: 2.2, pointRadius: 0, tension: .25, spanGaps: true,
+    });
+    chartResumenGrupo = dibujar('chart-resumen-grupo', chartResumenGrupo, {
+      type: 'line',
+      data: { labels: fechas, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, labels: { boxWidth: 12, boxHeight: 12 } } },
+        scales: {
+          x: { grid: { display: false }, border: { color: css('--baseline') } },
+          y: { title: { display: true, text: 'Kg/vaca/día' }, grid: { color: css('--grid') }, border: { display: false } },
+        },
+      },
+    });
+    if (d.calculando) setTimeout(cargarResumenGrupo, 4000);
+  } catch (e) {
+    if (e.calentando) setTimeout(cargarResumenGrupo, 4000);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Entregas de leche (CICLA): litros medidos por el caudalímetro vs. los
+// declarados al proveedor, y temperatura de entrega, por carga.
+// ---------------------------------------------------------------------------
+let chartCiclaDif = null, chartCiclaTemp = null;
+
+function hoyISO() { return new Date().toISOString().slice(0, 10); }
+function menosDias(fechaISO, n) {
+  const d = new Date(fechaISO + 'T00:00:00'); d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+function graficaUmbral(canvasId, chartRef, valores, etiquetas, alertas, umbrales, tituloY, conLinea) {
+  const datasets = [{
+    label: tituloY, data: valores.map((v, i) => ({ x: i, y: v })),
+    backgroundColor: valores.map((v, i) => alertas[i] ? css('--critical') : css('--accent')),
+    borderColor: css('--accent'), pointRadius: conLinea ? 2.5 : 4,
+    showLine: !!conLinea, borderWidth: 1.8, tension: .2, spanGaps: true,
+  }];
+  umbrales.forEach(u => datasets.push({
+    label: `${u}`, data: valores.map((_, i) => ({ x: i, y: u })), type: 'line',
+    borderColor: css('--warning'), borderDash: [5, 4], borderWidth: 1.3, pointRadius: 0,
+  }));
+  return dibujar(canvasId, chartRef, {
+    type: 'scatter', data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { callback: v => etiquetas[v] || '' }, grid: { display: false }, border: { color: css('--baseline') } },
+        y: { grid: { color: css('--grid') }, border: { display: false } },
+      },
+    },
+  });
+}
+
+async function cargarCicla() {
+  const info = document.getElementById('cicla-info');
+  let desde = document.getElementById('cicla-desde').value;
+  let hasta = document.getElementById('cicla-hasta').value;
+  if (!hasta) hasta = hoyISO();
+  if (!desde) desde = menosDias(hasta, 6);
+  document.getElementById('cicla-desde').value = desde;
+  document.getElementById('cicla-hasta').value = hasta;
+  info.textContent = 'Consultando CICLA…';
+  try {
+    const d = await pedirJSON(`/api/cicla/cargas?desde=${desde}&hasta=${hasta}`);
+    const r = d.resumen;
+    const litros = d.cargas.map(c => c.lts_cicla).filter(v => v != null);
+    const litrosProm = litros.length ? Math.round(litros.reduce((a, b) => a + b, 0) / litros.length) : null;
+    document.getElementById('cicla-kpis').innerHTML = [
+      ['Cargas', r.total_cargas],
+      ['Litros totales', litros.length ? Math.round(litros.reduce((a, b) => a + b, 0)) : null],
+      ['Litros promedio por carga', litrosProm],
+      ['Alertas de temperatura (>4°C)', r.alertas_temperatura],
+      ['Temperatura promedio', r.temp_promedio],
+    ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
+
+    const etiquetas = d.cargas.map(c => c.fecha.split(' ')[0]);
+    chartCiclaDif = graficaUmbral('chart-cicla-dif', chartCiclaDif,
+      d.cargas.map(c => c.lts_cicla), etiquetas, d.cargas.map(() => false), [], 'Litros');
+    chartCiclaTemp = graficaUmbral('chart-cicla-temp', chartCiclaTemp,
+      d.cargas.map(c => c.temperatura), etiquetas, d.cargas.map(c => c.alerta_temp),
+      [4], 'Temperatura °C');
+
+    const peores = d.cargas.filter(c => c.alerta_temp)
+      .sort((a, b) => (b.temperatura || 0) - (a.temperatura || 0)).slice(0, 8);
+    document.getElementById('cicla-hallazgos').innerHTML = peores.length
+      ? '<div class="aviso" style="margin-bottom:4px">Cargas con temperatura fuera de rango</div><ul class="rutina-hallazgos">' +
+        peores.map(c => `<li>${c.fecha} · carga ${c.carga} · ${fmt(c.lts_cicla)} L · temp ${c.temperatura}°C</li>`).join('') + '</ul>'
+      : '<div class="aviso">Sin cargas con alerta de temperatura en este rango. ✔</div>';
+
+    info.textContent = `${d.cargas.length} cargas entre ${desde} y ${hasta}.` +
+      (d.incompleto ? ' ⚠ CICLA tiene más páginas de datos que no se pudieron traer automáticamente '
+        + '(intentá un rango más corto, p. ej. una semana, para ver todo).' : '');
+  } catch (e) {
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('cicla-aplicar').addEventListener('click', cargarCicla);
+
+async function cargarCanalesAlertas() {
+  const cont = document.getElementById('alertas-canales');
+  if (!cont) return;
+  try {
+    const d = await pedirJSON('/api/alertas/canales');
+    cont.innerHTML = d.canales.map(c => `
+      <label class="aviso" style="display:flex;align-items:center;gap:6px" title="${c.configurado ? '' : 'Sin configurar: faltan variables de entorno (ver INSTALL.md)'}">
+        <input type="checkbox" data-canal="${c.id}" ${c.activo ? 'checked' : ''} ${c.configurado ? '' : 'disabled'}>
+        ${c.nombre}${c.configurado ? '' : ' — sin configurar'}
+      </label>`).join('');
+    cont.querySelectorAll('input[data-canal]').forEach(chk => {
+      chk.addEventListener('change', async () => {
+        chk.disabled = true;
+        try {
+          await pedirJSON('/api/alertas/canales', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ canal: chk.dataset.canal, activo: chk.checked }),
+          });
+        } catch (e) {
+          chk.checked = !chk.checked;
+          document.getElementById('whatsapp-info').textContent = 'Error: ' + e.message;
+        } finally {
+          chk.disabled = false;
+        }
+      });
+    });
+  } catch (e) {
+    cont.innerHTML = `<span class="aviso">Error cargando canales: ${e.message}</span>`;
+  }
+}
+
+document.getElementById('whatsapp-probar').addEventListener('click', async () => {
+  const info = document.getElementById('whatsapp-info');
+  const btn = document.getElementById('whatsapp-probar');
+  btn.disabled = true; info.textContent = 'Enviando mensaje de prueba…';
+  try {
+    await pedirJSON('/api/alertas/probar', { method: 'POST' });
+    info.textContent = '✅ Mensaje enviado — revisá tu WhatsApp.';
+  } catch (e) {
+    info.textContent = '❌ ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+let chartComparar = null;
+
+async function cargarComparar() {
+  const info = document.getElementById('comparar-info');
+  const hasta = hoyISO(), desde = menosDias(hasta, 6);
+  info.textContent = 'Consultando CICLA y La Serenísima…';
+  try {
+    const d = await pedirJSON(`/api/entregas/comparar?desde=${desde}&hasta=${hasta}`);
+    const etiquetas = d.dias.map(p => p.fecha.slice(5));
+    chartComparar = graficaUmbral('chart-comparar', chartComparar,
+      d.dias.map(p => p.diferencia_pct), etiquetas, d.dias.map(p => p.alerta), [3, -3], 'Diferencia %');
+    const conDatos = d.dias.filter(p => p.diferencia_pct != null);
+    const alertas = conDatos.filter(p => p.alerta).length;
+    info.textContent = `${conDatos.length} día(s) comparables entre ${desde} y ${hasta} · ${alertas} con desvío >3%.` +
+      (d.cicla_incompleto ? ' ⚠ CICLA puede estar incompleto para este rango (ver tarjeta de arriba).' : '');
+  } catch (e) {
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+let chartLaserLitros = null, chartLaserGrasa = null, chartLaserProteinas = null,
+    chartLaserUfc = null, chartLaserTemp = null;
+
+async function cargarLaser() {
+  try {
+    const d = await pedirJSON('/api/laser/entregas');
+    const r = d.resumen;
+    const ultima = d.entregas[d.entregas.length - 1];
+    const ufcUltimo = (ultima && ultima.ufc != null) ? ultima.ufc : 'NORMAL';
+    document.getElementById('laser-kpis').innerHTML = [
+      ['Entregas (período actual)', r.total_entregas],
+      ['Litros totales', r.litros_total],
+      ['Grasa % promedio', r.grasa_promedio],
+      ['Proteínas % promedio', r.proteinas_promedio],
+      ['U.F.C. Último', ufcUltimo],
+      ['Temperatura promedio', r.temp_promedio],
+    ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
+
+    const etiquetas = d.entregas.map(e => e.fecha_entrega.split(' ')[0]);
+    const sinAlerta = d.entregas.map(() => false);
+    chartLaserLitros = graficaUmbral('chart-laser-litros', chartLaserLitros,
+      d.entregas.map(e => e.litros), etiquetas, sinAlerta, [], 'Litros', true);
+    chartLaserGrasa = graficaUmbral('chart-laser-grasa', chartLaserGrasa,
+      d.entregas.map(e => e.grasa), etiquetas, sinAlerta, [], 'Grasa %', true);
+    chartLaserProteinas = graficaUmbral('chart-laser-proteinas', chartLaserProteinas,
+      d.entregas.map(e => e.proteinas), etiquetas, sinAlerta, [], 'Proteínas %', true);
+    chartLaserUfc = graficaUmbral('chart-laser-ufc', chartLaserUfc,
+      d.entregas.map(e => e.ufc), etiquetas, sinAlerta, [], 'U.F.C.', true);
+    chartLaserTemp = graficaUmbral('chart-laser-temp', chartLaserTemp,
+      d.entregas.map(e => e.temperatura), etiquetas, d.entregas.map(e => e.temperatura != null && e.temperatura > 4),
+      [4], 'Temperatura °C', true);
+  } catch (e) {
+    document.getElementById('laser-kpis').innerHTML = `<div class="aviso">Error: ${e.message}</div>`;
+  }
+}
+
+async function cargarPredefinidas() {
+  const lista = await pedirJSON('/api/predefinidas');
+  document.getElementById('sel-consulta').innerHTML =
+    lista.map(c => `<option value="${c.id}">${c.titulo}</option>`).join('');
+}
+
+document.getElementById('btn-consulta').addEventListener('click', async () => {
+  estado('Consultando…');
+  try {
+    const id = document.getElementById('sel-consulta').value;
+    mostrarResultado(await pedirJSON('/api/consulta',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, tambo: tamboActual }) }));
+    estado('');
+  } catch (e) { estado(e.message, true); }
+});
+
+document.getElementById('btn-preguntar').addEventListener('click', async () => {
+  const pregunta = document.getElementById('txt-pregunta').value.trim();
+  if (!pregunta) return estado('Escribe una pregunta.', true);
+  const b = document.getElementById('btn-preguntar');
+  b.disabled = true; estado('La IA está generando y ejecutando la consulta… puede tardar un momento.');
+  try {
+    mostrarResultado(await pedirJSON('/api/preguntar',
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pregunta, tambo: tamboActual }) }));
+    estado('');
+  } catch (e) { estado(e.message, true); }
+  finally { b.disabled = false; }
+});
+
+function exportarCSV(columns, rows, filename) {
+  const esc = v => { const s = String(v ?? ''); return /[";\n]/.test(s) ? '"' + s.replaceAll('"', '""') + '"' : s; };
+  const csv = [columns.join(';')].concat(rows.map(r => r.map(esc).join(';'))).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+}
+
+document.getElementById('btn-csv').addEventListener('click', () => {
+  if (ultimoResultado) exportarCSV(ultimoResultado.columns, ultimoResultado.rows, 'reporte_delpro.csv');
+});
+
+let ordenoData = null, ordenoTimer = null, ordenoReintento = null;
+let ordenoVista = 'rotativa';       // 'rotativa' (gráfica) | 'tabla'
+// Orientación del dibujo de la rotativa (para que coincida con la real):
+// ROT_INICIO_DEG = ángulo donde se dibuja el puesto 1 (0°=derecha, 90°=abajo,
+// 180°=izquierda, -90°/270°=arriba). ROT_SENTIDO = +1 horario, -1 antihorario.
+const ROT_INICIO_DEG = 63;   // el puesto 1 queda donde antes estaba el 35
+const ROT_SENTIDO = 1;       // sentido horario
+const INC_UMBRAL_ROJO = 3;   // incidencias por puesto para marcar en rojo
+const UMBRAL_DESLIZ_PCT = 15;   // % de ordeños del día con deslizamiento -> crítico
+const UMBRAL_BLOQ_PCT = 6;      // % de ordeños del día con bloqueo -> crítico
+const ORDENO_REFRESCO_MS = 25000;   // sesión completa
+const VIVO_REFRESCO_MS = 8000;      // en vivo / rotativa: más ágil
+
+function modoVivo() { return document.getElementById('ordeno-vivo').checked; }
+function modoSim() { return document.getElementById('ordeno-sim').checked; }
+let simReiniciar = false;   // al activar el toggle, la 1ª petición reinicia la simulación
+function esGrafica() { return ordenoVista === 'rotativa'; }
+
+function reprogramarRefrescoOrdeno() {
+  clearInterval(ordenoTimer);
+  const ms = (esGrafica() || modoVivo() || modoSim()) ? VIVO_REFRESCO_MS : ORDENO_REFRESCO_MS;
+  ordenoTimer = setInterval(cargarOrdeno, ms);
+}
+
+function filaConAlerta(fila, idx) {
+  return fila[idx.permiso] === 'NO ordeñar' || fila[idx.tratamiento] === 'Sí' || fila[idx.apartar] === 'Apartar';
+}
+
+// Color del puesto según estado (prioridad: sin permiso > apartar > tratamiento > ordeñando).
+function colorEstado(fila, idx) {
+  if (!fila) return { fill: 'transparent', stroke: 'var(--muted)', dash: true };
+  if (fila[idx.permiso] === 'NO ordeñar') return { fill: 'var(--critical)', stroke: 'var(--critical)' };
+  if (fila[idx.apartar] === 'Apartar') return { fill: 'var(--violeta)', stroke: 'var(--violeta)' };
+  if (fila[idx.tratamiento] === 'Sí') return { fill: 'var(--warning)', stroke: 'var(--warning)' };
+  return { fill: 'var(--accent)', stroke: 'var(--accent)' };
+}
+
+function rangoRotativa() {
+  let d = parseInt(document.getElementById('rot-desde').value) || 1;
+  let h = parseInt(document.getElementById('rot-hasta').value) || 80;
+  d = Math.min(Math.max(d, 1), 80); h = Math.min(Math.max(h, 1), 80);
+  if (d > h) [d, h] = [h, d];
+  return [d, h];
+}
+
+// Umbrales relativos a la mediana de incidencias por puesto: lo normal en una
+// rotativa es tener algunos deslizamientos por puesto; lo que interesa es el
+// puesto que se DESVÍA del resto (unidad con falla).
+function calcularUmbrales(porPuesto, idx, N) {
+  const tot = [];
+  for (let p = 1; p <= N; p++) { const f = porPuesto[p]; if (f) tot.push(incidenciasTotal(f, idx)); }
+  if (!tot.length) return { ambar: 1, rojo: 3, mediana: 0 };
+  const orden = [...tot].sort((a, b) => a - b);
+  const mediana = orden[Math.floor(orden.length / 2)];
+  return {
+    mediana,
+    ambar: Math.max(Math.round(mediana * 1.5), 2),
+    rojo: Math.max(Math.round(mediana * 2.5), 4),
+  };
+}
+
+function pintarResumenIncidencias(porPuesto, idx, N, umbrales) {
+  const cont = document.getElementById('rotativa-resumen');
+  if (!cont) return;
+  let d = 0, pa = 0, b = 0, re = 0;
+  const filas = [];
+  for (let p = 1; p <= N; p++) {
+    const f = porPuesto[p]; if (!f) continue;
+    d += f[idx.desliz] || 0; pa += f[idx.patadas] || 0;
+    b += f[idx.bloqueos] || 0; re += f[idx.recoloc] || 0;
+    filas.push({ p, t: incidenciasTotal(f, idx), d: f[idx.desliz] || 0, b: f[idx.bloqueos] || 0, pa: f[idx.patadas] || 0 });
+  }
+  if (!filas.length) { cont.innerHTML = ''; return; }
+  const peores = filas.filter(x => x.t >= umbrales.rojo).sort((a, b2) => b2.t - a.t).slice(0, 4);
+  const detalle = peores.length
+    ? ' — revisar: ' + peores.map(x => {
+        const partes = [];
+        if (x.d) partes.push(`${x.d} desliz`);
+        if (x.b) partes.push(`${x.b} bloq`);
+        if (x.pa) partes.push(`${x.pa} pat`);
+        return `<span class="malo">puesto ${x.p}</span> (${partes.join(', ')})`;
+      }).join(' · ')
+    : ' — sin puestos fuera de lo normal';
+  cont.innerHTML = `🔧 <b>Incidencias del día</b>: ${d} deslizamientos · ${re} recolocaciones · ` +
+    `${b} bloqueos · ${pa} patadas. Mediana por puesto: ${umbrales.mediana}${detalle}`;
+}
+
+// Alarmas críticas por unidad: % de ordeños del día con deslizamiento/bloqueo,
+// usando los mismos conteos de incidencias (desliz/bloqueos/ordenos_dia) que ya
+// trae el ordeño, pero como PORCENTAJE fijo (no relativo a la mediana) — son los
+// umbrales de referencia de la rotativa (deslizamiento >15%, bloqueo >6%).
+function pintarAlarmasUnidades() {
+  const cont = document.getElementById('alarmas-unidades-cuerpo');
+  if (!cont) return;
+  if (!ordenoData || !ordenoData.rows) { cont.innerHTML = ''; return; }
+  const idx = Object.fromEntries(ordenoData.columns.map((c, i) => [c, i]));
+  if (idx.ordenos_dia === undefined || idx.ordenos_con_desliz === undefined) { cont.innerHTML = ''; return; }
+  const porPuesto = {};
+  ordenoData.rows.forEach(r => { porPuesto[r[idx.posicion]] = r; });
+  const filas = [];
+  for (let p = 1; p <= 80; p++) {
+    const f = porPuesto[p]; if (!f) continue;
+    const n = f[idx.ordenos_dia] || 0; if (n <= 0) continue;
+    const pctDesliz = 100 * (f[idx.ordenos_con_desliz] || 0) / n;
+    const pctBloq = 100 * (f[idx.ordenos_con_bloqueo] || 0) / n;
+    if (pctDesliz > UMBRAL_DESLIZ_PCT || pctBloq > UMBRAL_BLOQ_PCT) {
+      filas.push({ p, n, pctDesliz, pctBloq });
+    }
+  }
+  if (!filas.length) {
+    cont.innerHTML = `<div class="alarmas-unid-vacio">✔ Ninguna unidad supera los umbrales críticos hoy.</div>`;
+    return;
+  }
+  filas.sort((a, b) => Math.max(b.pctDesliz - UMBRAL_DESLIZ_PCT, b.pctBloq - UMBRAL_BLOQ_PCT) -
+                       Math.max(a.pctDesliz - UMBRAL_DESLIZ_PCT, a.pctBloq - UMBRAL_BLOQ_PCT));
+  cont.innerHTML = `<div class="tabla-scroll alarmas-unid-tabla" style="max-height:300px;margin-top:12px">
+    <table><thead><tr><th>Puesto</th><th>Ordeños hoy</th><th>Deslizamiento</th><th>Bloqueo</th></tr></thead><tbody>` +
+    filas.map(x => `<tr>
+      <td>${x.p}</td><td>${x.n}</td>
+      <td class="${x.pctDesliz > UMBRAL_DESLIZ_PCT ? 'critico' : ''}">${x.pctDesliz.toFixed(0)}%</td>
+      <td class="${x.pctBloq > UMBRAL_BLOQ_PCT ? 'critico' : ''}">${x.pctBloq.toFixed(0)}%</td>
+    </tr>`).join('') + `</tbody></table></div>`;
+}
+
+// Producción baja: real vs esperada. Devuelve {baja, pct, kg, txt} o null.
+function bajaProduccion(f, idx) {
+  const real = f[idx.real_kg], esp = f[idx.esperada_kg];
+  if (real == null || !esp || esp <= 0) {
+    return f[idx.a_baja] ? { baja: true, txt: 'Baja producción' } : null;
+  }
+  const pct = Math.round(100 * real / esp), dif = real - esp;
+  // Con el ordeño EN CURSO (vivo o simulación) la vaca todavía no terminó:
+  // comparar contra la producción esperada final marcaría "baja" a casi todas.
+  // Ahí solo vale la alarma oficial (a_baja); el % queda como dato informativo.
+  const enCurso = ordenoData && (ordenoData.simulacion || (ordenoData.modo === 'vivo' && ordenoData.ordenando));
+  const baja = f[idx.a_baja] === 1 || (!enCurso && pct < 80);
+  return { baja, pct, kg: dif, txt: `${fmt(real)}kg (${dif >= 0 ? '+' : ''}${fmt(dif)}kg) ${pct}%` };
+}
+
+// Alarmas activas de la vaca actual (para el color, el ícono y el panel).
+function alarmasDe(f, idx) {
+  if (!f) return [];
+  const a = [];
+  if (f[idx.a_cond]) a.push('Alarma de conductividad');
+  else if (f[idx.conductividad] > 115) a.push('Conductividad alta');
+  const bp = bajaProduccion(f, idx);
+  if (bp && bp.baja) a.push('Baja producción' + (bp.txt && bp.pct != null ? ' ' + bp.txt : ''));
+  if (f[idx.a_sangre]) a.push('Sangre en leche');
+  if (f[idx.a_retirada]) a.push('Retirada prematura');
+  if (f[idx.permiso] === 'NO ordeñar') a.push('Sin permiso de ordeño');
+  return a;
+}
+
+// Color de la plaza estilo DeLaval (prioridad: alarma > equipo > atención > OK > vacía).
+// Usa la MISMA lógica que el panel (alarmasDe) para que sean consistentes.
+function colorPlaza(f, idx) {
+  if (!f) return { fill: oscuro ? '#33332f' : '#dcdcd6', txt: 'var(--muted)' };
+  const al = alarmasDe(f, idx);
+  const soloRetirada = al.length === 1 && al[0] === 'Retirada prematura';
+  if (al.length && !soloRetirada) return { fill: '#e53935', txt: '#fff' };   // alarma
+  if (f[idx.a_retirada]) return { fill: '#fb8c00', txt: '#fff' };             // equipo
+  if (f[idx.tratamiento] === 'Sí' || f[idx.apartar] === 'Apartar')
+    return { fill: '#f6bf26', txt: '#3a2f00' };                               // atención
+  return { fill: oscuro ? '#43a047' : '#57a24a', txt: '#fff' };               // OK
+}
+
+// Panel central estilo DeLaval con pestañas Alarmas / Ordeño.
+let panelTab = 'alarmas';
+
+function pintarPanelAlarmas(porPuesto, idx, N) {
+  const cont = document.getElementById('panel-alarmas');
+  if (!cont) return;
+  // Alarmas
+  const alarmas = [];
+  for (let p = 1; p <= N; p++) {
+    const f = porPuesto[p]; if (!f) continue;
+    alarmasDe(f, idx).forEach(a => alarmas.push({ p, rp: f[idx.rp], a }));
+  }
+  // Ordeño (todas las vacas de la plataforma, con producción)
+  const ordeno = [];
+  for (let p = 1; p <= N; p++) {
+    const f = porPuesto[p]; if (!f) continue;
+    const bp = bajaProduccion(f, idx);
+    ordeno.push({ p, rp: f[idx.rp], kg: f[idx.real_kg], pct: bp && bp.pct != null ? bp.pct : null, baja: bp && bp.baja });
+  }
+
+  let cuerpo;
+  if (panelTab === 'alarmas') {
+    cuerpo = alarmas.length
+      ? `<div class="pa-scroll"><table><thead><tr><th>Plaza</th><th>Animal</th><th>Alarma</th></tr></thead><tbody>` +
+        alarmas.map(x => `<tr><td class="pa-plaza">${x.p}</td><td>${x.rp === 0 ? 'sin ID' : fmt(x.rp)}</td><td class="pa-alarma">${x.a}</td></tr>`).join('') +
+        `</tbody></table></div>`
+      : `<div class="pa-vacio">Sin alarmas en la plataforma. ✔</div>`;
+  } else {
+    cuerpo = `<div class="pa-scroll"><table><thead><tr><th>Plaza</th><th>Animal</th><th>Producción</th></tr></thead><tbody>` +
+      ordeno.map(x => {
+        const kg = x.kg != null ? fmt(x.kg) + ' kg' : '—';
+        const pct = x.pct != null ? ` · ${x.pct}%` : '';
+        const cl = x.baja ? ' style="color:var(--critical);font-weight:600"' : '';
+        return `<tr><td class="pa-plaza">${x.p}</td><td>${x.rp === 0 ? 'sin ID' : fmt(x.rp)}</td><td${cl}>${kg}${pct}</td></tr>`;
+      }).join('') + `</tbody></table></div>`;
+  }
+
+  const tab = (id, txt, n) =>
+    `<button class="pa-tab${panelTab === id ? ' activa' : ''}" data-tab="${id}">${txt}${n != null ? ' (' + n + ')' : ''}</button>`;
+  cont.innerHTML = `<div class="panel-alarmas">
+    <div class="pa-tabs">${tab('alarmas', 'Alarmas', alarmas.length)}${tab('ordeno', 'Ordeño', ordeno.length)}</div>
+    ${cuerpo}
+  </div>`;
+  cont.querySelectorAll('.pa-tab').forEach(b => b.addEventListener('click', () => {
+    panelTab = b.dataset.tab;
+    pintarPanelAlarmas(porPuesto, idx, N);
+  }));
+}
+
+function renderRotativa() {
+  const cont = document.getElementById('rotativa');
+  if (!ordenoData || !ordenoData.rows) { cont.innerHTML = ''; return; }
+  const idx = Object.fromEntries(ordenoData.columns.map((c, i) => [c, i]));
+  const porPuesto = {};
+  ordenoData.rows.forEach(r => { porPuesto[r[idx.posicion]] = r; });
+  const N = 80, [desde, hasta] = rangoRotativa();
+  const umbrales = calcularUmbrales(porPuesto, idx, N);
+  pintarResumenIncidencias(porPuesto, idx, N, umbrales);
+  pintarPanelAlarmas(porPuesto, idx, N);
+  const size = 742, cx = size / 2, cy = size / 2;
+  const Ro = size / 2 - 14, Ri = Ro - 92;      // cuñas: radio externo / interno
+  const step = 2 * Math.PI / N, halfW = step * 0.44;
+  const ang = p => (ROT_INICIO_DEG * Math.PI / 180) + ROT_SENTIDO * (p - 1) * step;
+  const pt = (a, r) => `${(cx + r * Math.cos(a)).toFixed(1)} ${(cy + r * Math.sin(a)).toFixed(1)}`;
+  let svg = '';
+  for (let p = 1; p <= N; p++) {
+    const a = ang(p), a1 = a - halfW, a2 = a + halfW;
+    const fila = porPuesto[p], foco = p >= desde && p <= hasta, c = colorPlaza(fila, idx);
+    // Cuña (sector anular).
+    const d = `M ${pt(a1, Ro)} A ${Ro} ${Ro} 0 0 1 ${pt(a2, Ro)} L ${pt(a2, Ri)} A ${Ri} ${Ri} 0 0 0 ${pt(a1, Ri)} Z`;
+    svg += `<path d="${d}" fill="${c.fill}" stroke="${foco ? css('--accent') : (oscuro ? '#1a1a19' : '#fff')}" stroke-width="${foco ? 2.5 : 1}"/>`;
+    // Número del puesto (chico, en el borde interno).
+    svg += `<text x="${pt(a, Ri + 11).split(' ')[0]}" y="${+pt(a, Ri + 11).split(' ')[1] + 3}" text-anchor="middle" font-size="9" fill="${oscuro ? '#c3c2b7' : '#555'}" style="pointer-events:none">${p}</text>`;
+    // RP de la vaca, en el medio de la cuña.
+    if (fila) {
+      const [rx, ry] = pt(a, (Ri + Ro) / 2 + 4).split(' ').map(Number);
+      const rp = fila[idx.rp] === 0 ? '?' : fila[idx.rp];
+      svg += `<text x="${rx}" y="${ry + 4}" text-anchor="middle" font-size="12" font-weight="700" fill="${c.txt}" style="pointer-events:none">${rp}</text>`;
+      // Barra de progreso de ordeño en el borde externo (kg reales vs esperados).
+      const real = fila[idx.real_kg];
+      if (real != null && real > 0) {
+        const esp = fila[idx.esperada_kg];
+        const prog = Math.max(0.04, Math.min(esp > 0 ? real / esp : real / 20, 1));
+        const Rp = Ro - 5;
+        svg += `<path d="M ${pt(a1 + halfW * 0.12, Rp)} A ${Rp} ${Rp} 0 0 1 ${pt(a1 + (a2 - a1 - halfW * 0.24) * prog + halfW * 0.12, Rp)}" fill="none" stroke="rgba(255,255,255,0.9)" stroke-width="3.5" stroke-linecap="round"/>`;
+      }
+    }
+  }
+  // Centro: título.
+  svg += `<text x="${cx}" y="${cy - 8}" text-anchor="middle" font-size="16" font-weight="650" fill="var(--text-primary)">Rotativa</text>`;
+  svg += `<text x="${cx}" y="${cy + 14}" text-anchor="middle" font-size="13" fill="var(--muted)">80 puestos · foco ${desde}–${hasta}</text>`;
+  cont.innerHTML = `<svg viewBox="0 0 ${size} ${size}">${svg}</svg>`;
+  renderRotativaDetalle(porPuesto, idx, desde, hasta);
+}
+
+function diasHasta(s) {
+  if (!s) return null;
+  const d = new Date(s + 'T00:00:00'), hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  return Math.round((d - hoy) / 86400000);
+}
+function diasTxt(s) {
+  const n = diasHasta(s);
+  if (n == null) return '';
+  if (n === 0) return 'hoy'; if (n === 1) return 'mañana';
+  return n > 0 ? `en ${n} días` : `vencido hace ${-n} d`;
+}
+
+function lineaProduccion(f, idx) {
+  const bp = bajaProduccion(f, idx);
+  if (!bp || bp.pct == null) return bp && bp.baja ? `<div class="pmeta" style="color:var(--critical);font-weight:600">⚠ Baja producción</div>` : '';
+  const cl = bp.baja ? 'style="color:var(--critical);font-weight:600"' : '';
+  return `<div class="pmeta" ${cl}>${bp.baja ? '⚠ ' : ''}Producción: ${bp.txt}</div>`;
+}
+
+function saludUbre(f, idx) {
+  const scc = f[idx.scc], cond = f[idx.conductividad];
+  if (scc == null && cond == null) return '';
+  const partes = [];
+  if (scc != null) {
+    const cl = scc > 400 ? 'style="color:var(--critical);font-weight:600"'
+      : scc > 200 ? 'style="color:var(--warning);font-weight:600"' : '';
+    partes.push(`<span ${cl}>Cél. som. ${fmt(scc)}</span>`);
+  }
+  if (cond != null) {
+    const cl = cond > 115 ? 'style="color:var(--warning);font-weight:600"' : '';
+    partes.push(`<span ${cl}>Cond. ${fmt(cond)}</span>`);
+  }
+  return `<div class="pmeta">🩺 ${partes.join(' · ')}</div>`;
+}
+
+function lineaUltTrat(f, idx) {
+  // Último tratamiento (histórico). Se oculta si hay uno activo (ya lo muestra el recuadro).
+  if (f[idx.tratamiento] === 'Sí') return '';
+  const nombre = f[idx.ult_tratamiento];
+  if (!nombre || nombre === 'N/A') return '';
+  const fecha = f[idx.ult_tratamiento_fecha] ? ` (${f[idx.ult_tratamiento_fecha]})` : '';
+  return `<div class="pmeta">Últ. tratamiento: <b>${nombre}</b>${fecha}</div>`;
+}
+
+function bloqueTratamiento(f, idx) {
+  const nombre = f[idx.tratamiento_det], diag = f[idx.diagnostico], drogas = f[idx.droga_dosis];
+  const retiro = f[idx.retiro_leche], faena = f[idx.no_faenar], fin = f[idx.fin_tratamiento];
+  const hayTrat = nombre || drogas || retiro || diag || f[idx.tratamiento] === 'Sí';
+  if (!hayTrat) return '';
+  const l1 = [];
+  if (diag) l1.push(diag);
+  if (fin) l1.push(`fin tratamiento <b>${fin}</b> (${diasTxt(fin)})`);
+  const l2 = [];
+  if (retiro) l2.push(`Retiro leche: <b>${retiro}</b> (${diasTxt(retiro)})`);
+  if (faena) l2.push(`No faenar: <b>${faena}</b>`);
+  return `<div class="trat-box">
+    <div class="trat-titulo">💊 A tratar${nombre ? ': ' + nombre : ''}</div>
+    ${drogas ? `<div class="trat-det trat-drogas"><b>${drogas}</b></div>` : ''}
+    ${l1.length ? `<div class="trat-det">${l1.join(' · ')}</div>` : ''}
+    ${l2.length ? `<div class="trat-det">${l2.join(' · ')}</div>` : ''}
+  </div>`;
+}
+
+function renderRotativaDetalle(porPuesto, idx, desde, hasta) {
+  let html = '';
+  for (let p = desde; p <= hasta; p++) {
+    const f = porPuesto[p];
+    if (!f) {
+      html += `<div class="puesto-card vacio"><div class="pnum">${p}</div><div><div class="prp">— vacío —</div></div></div>`;
+      continue;
+    }
+    const chips = [];
+    if (f[idx.permiso] === 'NO ordeñar') chips.push('<span class="chip rojo">sin permiso</span>');
+    if (f[idx.tratamiento] === 'Sí') chips.push('<span class="chip ambar">tratamiento</span>');
+    if (f[idx.apartar] === 'Apartar') chips.push('<span class="chip violeta">apartar</span>');
+    if (f[idx.desliz] > 0) chips.push(`<span class="chip ambar">desliz ×${f[idx.desliz]}</span>`);
+    if (f[idx.patadas] > 0) chips.push(`<span class="chip rojo">patadas ×${f[idx.patadas]}</span>`);
+    if (f[idx.bloqueos] > 0) chips.push(`<span class="chip ambar">bloqueos ×${f[idx.bloqueos]}</span>`);
+    if (f[idx.recoloc] > 0) chips.push(`<span class="chip violeta">recoloc ×${f[idx.recoloc]}</span>`);
+    const kg = f[idx.produccion_kg] != null ? fmt(f[idx.produccion_kg]) + ' kg' : '—';
+    const rp = f[idx.rp] === 0 ? 'sin ID' : fmt(f[idx.rp]);
+    const parto = f[idx.ultimo_parto] ? ` · últ. parto ${f[idx.ultimo_parto]}` : '';
+    html += `<div class="puesto-card${filaConAlerta(f, idx) ? ' alerta' : ''}">
+      <div class="pnum">${p}</div>
+      <div>
+        <div class="prp">RP ${rp} ${chips.join(' ')}</div>
+        <div class="pmeta">Grupo ${fmt(f[idx.grupo])} · ${fmt(f[idx.dias])} días · ${kg} · ${f[idx.reproductivo]}${parto}</div>
+        ${lineaProduccion(f, idx)}
+        ${saludUbre(f, idx)}
+        ${lineaUltTrat(f, idx)}
+        ${bloqueTratamiento(f, idx)}
+      </div>
+    </div>`;
+  }
+  document.getElementById('rotativa-detalle').innerHTML = html;
+}
+
+const COLS_DETALLE = new Set(['diagnostico', 'tratamiento_det', 'droga_dosis', 'fin_tratamiento',
+  'retiro_leche', 'no_faenar', 'ultimo_parto', 'ult_tratamiento', 'ult_tratamiento_fecha',
+  'separar', 'desliz', 'patadas', 'bloqueos', 'recoloc', 'ordenos_dia',
+  'real_kg', 'esperada_kg', 'a_baja', 'a_cond', 'a_sangre', 'a_retirada']);
+
+// Total de incidencias del equipo en el día para un puesto.
+function incidenciasTotal(f, idx) {
+  if (!f) return 0;
+  return (f[idx.desliz] || 0) + (f[idx.patadas] || 0) + (f[idx.bloqueos] || 0) + (f[idx.recoloc] || 0);
+}
+
+function renderTabla() {
+  const t = document.getElementById('ordeno-tabla');
+  if (!ordenoData) { t.innerHTML = ''; return; }
+  const cols = ordenoData.columns;
+  const idx = Object.fromEntries(cols.map((c, i) => [c, i]));
+  const vis = cols.map((c, i) => i).filter(i => !COLS_DETALLE.has(cols[i]));  // columnas visibles
+  const soloAlerta = document.getElementById('ordeno-alertas').checked;
+  const buscar = document.getElementById('ordeno-buscar').value.trim();
+  let filas = ordenoData.rows;
+  if (soloAlerta) filas = filas.filter(r => filaConAlerta(r, idx));
+  if (buscar) filas = filas.filter(r => String(r[idx.rp] ?? '').includes(buscar));
+  const numCols = cols.map((c, i) => ordenoData.rows.some(r => typeof r[i] === 'number'));
+  const cellClase = (col, val) => {
+    if (col === 'permiso' && val === 'NO ordeñar') return ' cell-alerta';
+    if (col === 'apartar' && val === 'Apartar') return ' cell-alerta';
+    if (col === 'tratamiento' && val === 'Sí') return ' cell-aviso';
+    return '';
+  };
+  t.innerHTML = '<thead><tr>' + vis.map(i => `<th>${cols[i]}</th>`).join('') + '</tr></thead><tbody>' +
+    filas.map(r => {
+      const alerta = filaConAlerta(r, idx) ? ' class="fila-alerta"' : '';
+      return `<tr${alerta}>` + vis.map(i =>
+        `<td class="${numCols[i] ? 'num' : ''}${cellClase(cols[i], r[i])}">${fmt(r[i])}</td>`).join('') + '</tr>';
+    }).join('') + '</tbody>';
+}
+
+function actualizarInfoOrdeno() {
+  if (!ordenoData) { document.getElementById('ordeno-info').textContent = ''; return; }
+  const cuenta = `${ordenoData.rows ? ordenoData.rows.length : 0} vacas`;
+  let texto;
+  if (ordenoData.simulacion) {
+    texto = `🎬 Simulación con vacas reales del último ordeño · ${cuenta} en la plataforma`;
+  } else if (ordenoData.modo === 'vivo') {
+    texto = ordenoData.ordenando
+      ? `Girando ahora · ${cuenta} en la plataforma`
+      : `⚠ No hay ordeño en curso — última vuelta: ${ordenoData.momento || '—'} (${ordenoData.hace}) · ${cuenta}`;
+  } else {
+    const cab = ordenoData.momento ? `${ordenoData.momento} (${ordenoData.hace}) · ` : '';
+    texto = cab + cuenta;
+  }
+  document.getElementById('ordeno-info').textContent = texto;
+}
+
+function renderOrdeno() {
+  document.getElementById('rotativa-wrap').hidden = !esGrafica();
+  document.getElementById('tabla-wrap').hidden = esGrafica();
+  if (esGrafica()) renderRotativa(); else renderTabla();
+  actualizarInfoOrdeno();
+  pintarAlarmasUnidades();
+}
+
+async function cargarOrdeno() {
+  clearTimeout(ordenoReintento);
+  const vivo = esGrafica() || modoVivo();   // la rotativa gráfica siempre usa la plataforma
+  let modo = '';
+  if (modoSim()) {
+    modo = '&modo=simulacion' + (simReiniciar ? '&reiniciar=1' : '');
+    simReiniciar = false;
+  } else if (vivo) { modo = '&modo=vivo'; }
+  try {
+    const d = await pedirJSON('/api/ordeno?tambo=' + encodeURIComponent(tamboActual) + modo);
+    ordenoData = d;
+    const badge = document.getElementById('ordeno-badge');
+    if (d.simulacion) { badge.className = 'badge vivo'; badge.textContent = '🎬 SIMULACIÓN'; }
+    else if (d.en_vivo) { badge.className = 'badge vivo'; badge.textContent = 'EN VIVO'; }
+    else { badge.className = 'badge historico'; badge.textContent = 'Último ordeño'; }
+    renderOrdeno();
+  } catch (e) {
+    if (e.calentando) {
+      document.getElementById('ordeno-badge').textContent = 'cargando…';
+      ordenoReintento = setTimeout(cargarOrdeno, 3000);
+    } else {
+      document.getElementById('ordeno-info').textContent = 'Error: ' + e.message;
+    }
+  }
+}
+
+// --- Mantenimiento preventivo del equipo de ordeño ---------------------------
+function mantenimientoItemsHTML(columns, rows) {
+  const idx = Object.fromEntries((columns || []).map((c, i) => [c, i]));
+  return `<div class="mant-lista">` + rows.map(f => {
+    const limite = f[idx.limite], acumulado = f[idx.acumulado];
+    const pct = (limite > 0) ? Math.min(100 * acumulado / limite, 999) : null;
+    const alarma = f[idx.alarma] === 1;
+    const critico = alarma || (pct != null && pct >= 100);
+    const ambar = !critico && pct != null && pct >= 85;
+    const clNivel = critico ? 'critico' : (ambar ? 'ambar' : '');
+    const dato = pct != null
+      ? `${fmt(acumulado)} / ${fmt(limite)} ${f[idx.unidad] || ''} (${pct.toFixed(0)}%)`
+      : `${fmt(acumulado)} ${f[idx.unidad] || ''}`;
+    return `<div class="mant-item${critico ? ' critico' : ''}">
+      <div class="mant-cab">
+        <span class="nombre">${critico ? '⚠ ' : ''}${f[idx.nombre]}${f[idx.tipo] ? ` <span class="aviso">(${f[idx.tipo]})</span>` : ''}</span>
+        <span class="dato ${clNivel}">${dato}</span>
+      </div>
+      ${pct != null ? `<div class="mant-barra"><div class="${clNivel}" style="width:${Math.min(pct, 100)}%"></div></div>` : ''}
+      ${f[idx.desde] ? `<div class="aviso" style="margin-top:4px">Desde: ${f[idx.desde]}</div>` : ''}
+    </div>`;
+  }).join('') + `</div>`;
+}
+
+function pintarMantenimiento(data) {
+  const cont = document.getElementById('mantenimiento-cuerpo');
+  if (!cont) return;
+  const filas = data.rows || [];
+  cont.innerHTML = filas.length ? mantenimientoItemsHTML(data.columns, filas)
+    : `<div class="mant-vacio">Sin contadores de mantenimiento cargados en DelPro.</div>`;
+}
+
+async function cargarMantenimiento() {
+  const cont = document.getElementById('mantenimiento-cuerpo');
+  try {
+    const d = await pedirJSON('/api/mantenimiento?tambo=' + encodeURIComponent(tamboActual));
+    pintarMantenimiento(d);
+  } catch (e) {
+    if (cont) cont.innerHTML = `<div class="mant-vacio">Error: ${e.message}</div>`;
+  }
+}
+document.getElementById('mantenimiento-refrescar').addEventListener('click', cargarMantenimiento);
+
+// ---------------------------------------------------------------------------
+// Salud del rodeo (réplica del reporte Chi). Cada sección se pide por
+// separado: si una tarda o falla, las demás igual se muestran.
+// ---------------------------------------------------------------------------
+let chartSaludCond = null, saludRcsVacas = null, saludReintento = null;
+
+const milesRCS = n => n == null ? '—' : Math.round(n).toLocaleString('es-AR');
+
+// Pinta una sección; si el backend responde 202 (calculando) reintenta sola.
+async function seccionSalud(url, destino, pintar) {
+  try {
+    const d = await pedirJSON(url + '?tambo=' + encodeURIComponent(tamboActual));
+    pintar(d);
+    return true;
+  } catch (e) {
+    const cont = destino && document.getElementById(destino);
+    if (e.calentando) {
+      if (cont) cont.innerHTML = `<div class="aviso" style="margin-top:10px">${e.message}</div>`;
+      return false;
+    }
+    if (cont) cont.innerHTML = `<div class="aviso" style="margin-top:10px">Error: ${e.message}</div>`;
+    return true;   // error real: no tiene sentido reintentar en bucle
+  }
+}
+
+function pintarSaludAtencion(d) {
+  const cont = document.getElementById('salud-atencion-cuerpo');
+  const vacas = d.vacas || [];
+  if (!vacas.length) {
+    cont.innerHTML = `<div class="aviso" style="margin-top:10px">Ninguna vaca supera los umbrales de atención. ✔</div>`;
+    return;
+  }
+  cont.innerHTML = `<div class="tabla-scroll" style="max-height:420px;margin-top:12px"><table>
+    <thead><tr><th>Vaca</th><th>Rodeo</th><th>DEL</th><th>L</th><th>Índice</th>
+      <th>Motivo</th><th>Leche %</th><th>Tendencia</th><th>Cond.</th><th>Últ. ordeño</th></tr></thead>
+    <tbody>` + vacas.map(v => `<tr>
+      <td>${fmt(v.rp)}</td><td>${v.grupo || '—'}</td><td>${fmt(v.del)}</td><td>${fmt(v.lactancia)}</td>
+      <td style="font-weight:700;color:${v.score >= 4 ? 'var(--critical)' : 'var(--warning)'}">${v.score}</td>
+      <td>${v.motivos.join(' · ')}</td>
+      <td>${v.pct_esperado == null ? '—' : v.pct_esperado + '%'}</td>
+      <td>${v.caida_pct == null ? '—' : v.caida_pct + '%'}</td>
+      <td>${v.conductividad == null ? '—' : v.conductividad}</td>
+      <td>${v.ultimo_ordeno || '—'}</td>
+    </tr>`).join('') + `</tbody></table></div>`;
+}
+
+const SIS_CLASE = { UBRE: 'sis-ubre', 'METABÓLICO': 'sis-metabolico', GENERAL: 'sis-general' };
+
+function pintarSaludAtencionV2(d) {
+  const cont = document.getElementById('salud-atencion2-cuerpo');
+  const vacas = d.vacas || [];
+  if (!vacas.length) {
+    cont.innerHTML = `<div class="aviso" style="margin-top:10px">Ninguna vaca supera los umbrales del índice experimental. ✔</div>`;
+    return;
+  }
+  const EXPLIC = {
+    'b-ubre': 'UBRE (riesgo de mastitis): combina alarma de conductividad del equipo, pico de conductividad y caída de leche. 0 a 10 — más alto, más evidencia.',
+    'b-metab': 'METABÓLICO (riesgo post-parto, ej. metritis): combina caída de condición corporal (BCS) y caída de leche. 0 a 10.',
+    'b-sist': 'GENERAL: combina caída de leche contra el propio historial de la vaca y ordeños faltantes en los últimos 3 días. 0 a 10.',
+  };
+  const barra = (v, cls, top) => `<span class="${cls}${top ? ' top' : ''}" title="${EXPLIC[cls]}">${v == null ? '—' : v}</span>`;
+  cont.innerHTML = `<div class="aten2-grid">` + vacas.map(v => {
+    const cls = SIS_CLASE[v.sistema] || '';
+    return `<div class="aten2-card ${cls}">
+      <div class="aten2-cab">
+        <div><div class="aten2-rp">Vaca ${fmt(v.rp)}</div>
+          <div class="aten2-meta">${v.grupo || '—'} · DEL ${fmt(v.del)} · L${fmt(v.lactancia)}</div></div>
+        <div class="aten2-score" title="Score del sistema con más evidencia (remarcado abajo). Se lista a partir de 2.0.">${v.score}</div>
+      </div>
+      <span class="aten2-sis" title="${EXPLIC[cls] || ''}">${v.sistema}</span>
+      <ul class="aten2-motivos">${v.motivos.map(m => `<li>${m.texto}</li>`).join('')}</ul>
+      <div class="aten2-barras">
+        ${barra(v.S_ubre, 'b-ubre', v.sistema === 'UBRE')}
+        ${barra(v.S_metab, 'b-metab', v.sistema === 'METABÓLICO')}
+        ${barra(v.S_sist, 'b-sist', v.sistema === 'GENERAL')}
+      </div>
+    </div>`;
+  }).join('') + `</div>`;
+}
+
+function pintarSaludRcsGrupo(d) {
+  const cont = document.getElementById('salud-rcs-grupo-cuerpo');
+  const filas = d.filas || [];
+  if (!filas.length) {
+    cont.innerHTML = `<div class="aviso" style="margin-top:10px">Sin controles lecheros registrados en el último año.</div>`;
+    return;
+  }
+  const colorRcs = v => v == null ? '' : (v > 300000 ? 'color:var(--critical);font-weight:700'
+                        : v > 200000 ? 'color:var(--warning);font-weight:600' : '');
+  cont.innerHTML = `<div class="tabla-scroll" style="max-height:360px;margin-top:12px"><table>
+    <thead><tr><th>Rodeo</th><th>Vacas</th><th>Prom. último RCS</th>
+      <th>&gt;300.000 último</th><th>&gt;300.000 previo</th><th>Crónicas</th><th>Máx. RCS</th></tr></thead>
+    <tbody>` + filas.map(f => `<tr>
+      <td>${f.grupo}</td><td>${fmt(f.vacas)}</td>
+      <td style="${colorRcs(f.scc_promedio)}">${milesRCS(f.scc_promedio)}</td>
+      <td>${f.pct_altas_ultimo == null ? '—' : `${f.pct_altas_ultimo}% (${f.altas_ultimo} vacas, ${f.nuevas} nuevas)`}</td>
+      <td>${f.pct_altas_anterior == null ? '—' : `${f.pct_altas_anterior}% (${f.altas_anterior} vacas)`}</td>
+      <td>${f.pct_cronicas == null ? '—' : `${f.pct_cronicas}% (${f.cronicas} vacas)`}</td>
+      <td style="${colorRcs(f.scc_maximo)}">${milesRCS(f.scc_maximo)}</td>
+    </tr>`).join('') + `</tbody></table></div>`;
+}
+
+function pintarSaludRcsVacas(d) {
+  saludRcsVacas = d;
+  renderSaludRcsVacas();
+}
+
+function renderSaludRcsVacas() {
+  const cont = document.getElementById('salud-rcs-vacas-cuerpo');
+  if (!saludRcsVacas) return;
+  const solo = document.getElementById('salud-solo-cronicas').checked;
+  const filas = solo ? (saludRcsVacas.cronicas || []) : (saludRcsVacas.altas || []);
+  if (!filas.length) {
+    cont.innerHTML = `<div class="aviso" style="margin-top:10px">Ninguna vaca supera el umbral. ✔</div>`;
+    return;
+  }
+  cont.innerHTML = `<div class="aviso" style="margin-top:10px">${filas.length} vaca(s)${solo ? ' crónicas' : ''}.</div>
+    <div class="tabla-scroll" style="max-height:420px;margin-top:8px"><table>
+    <thead><tr><th>Vaca</th><th>Rodeo</th><th>DEL</th><th>L</th>
+      <th>Último RCS</th><th>RCS anterior</th><th>Estado</th></tr></thead>
+    <tbody>` + filas.map(v => `<tr>
+      <td>${fmt(v.rp)}</td><td>${v.grupo || '—'}</td><td>${fmt(v.del)}</td><td>${fmt(v.lactancia)}</td>
+      <td style="color:var(--critical);font-weight:700">${milesRCS(v.scc_ultimo)}</td>
+      <td>${milesRCS(v.scc_anterior)}</td>
+      <td>${v.cronica ? '<span class="chip rojo">crónica</span>' : '<span class="chip ambar">nueva</span>'}</td>
+    </tr>`).join('') + `</tbody></table></div>`;
+}
+
+function pintarSaludConductividad(d) {
+  const idx = { fecha: d.columns.indexOf('fecha'), grupo: d.columns.indexOf('grupo'),
+                cond: d.columns.indexOf('cond_promedio') };
+  const fechas = [...new Set(d.rows.map(r => String(r[idx.fecha]).slice(0, 10)))].sort();
+  const grupos = [...new Set(d.rows.map(r => r[idx.grupo]))];
+  const porGrupo = {};
+  d.rows.forEach(r => {
+    const g = r[idx.grupo];
+    (porGrupo[g] = porGrupo[g] || {})[String(r[idx.fecha]).slice(0, 10)] = r[idx.cond];
+  });
+  const datasets = grupos.map((g, i) => ({
+    label: g, data: fechas.map(f => porGrupo[g][f] ?? null),
+    borderColor: SERIES[i % SERIES.length], backgroundColor: SERIES[i % SERIES.length],
+    pointRadius: 0, borderWidth: 1.8, tension: .25, spanGaps: true,
+  }));
+  // Línea de referencia del umbral de sospecha.
+  datasets.push({
+    label: `Umbral ${d.umbral}`, data: fechas.map(() => d.umbral),
+    borderColor: css('--critical'), borderDash: [6, 4], borderWidth: 1.4, pointRadius: 0,
+  });
+  chartSaludCond = dibujar('chart-salud-cond', chartSaludCond, {
+    type: 'line', data: { labels: fechas, datasets }, options: baseOpts(true),
+  });
+}
+
+function pintarSaludProduccion(d) {
+  const cont = document.getElementById('salud-prod-cuerpo');
+  const rodeos = d.rodeos || [];
+  if (!rodeos.length) {
+    cont.innerHTML = `<div class="aviso" style="margin-top:10px">Sin datos de producción en el período.</div>`;
+    return;
+  }
+  const varTxt = v => v == null ? '—'
+    : `<span style="color:${v > 0 ? 'var(--good)' : v < 0 ? 'var(--critical)' : 'var(--muted)'}">${v > 0 ? '+' : ''}${v}%</span>`;
+  cont.innerHTML = `<div class="tabla-scroll" style="max-height:460px;margin-top:12px"><table>
+    <thead><tr><th>Rodeo</th><th>Período</th><th>Kg por ordeño</th>
+      <th>Tendencia (leche)</th><th>Tendencia (cond.)</th></tr></thead>
+    <tbody>` + rodeos.map(r => r.filas.map((f, i) => `<tr>
+      <td>${i === 0 ? `<b>${r.grupo}</b>` : ''}</td>
+      <td>${f.periodo}</td>
+      <td class="num">${f.kg_por_ordeno == null ? '—' : fmt(f.kg_por_ordeno)}</td>
+      <td>${varTxt(f.var_leche)}</td><td>${varTxt(f.var_cond)}</td>
+    </tr>`).join('')).join('') + `</tbody></table></div>`;
+}
+
+// Vúmetro semicircular: pct 0-100 = qué tan cerca del extremo "malo" (rojo) está.
+// Clic → hace scroll a la tarjeta correspondiente. disabled=true = placeholder
+// sin dato todavía (sensores que no están instalados/conectados).
+function gaugeSVG({ pct, valor, label, sub, target, disabled }) {
+  const p = Math.max(0, Math.min(100, pct || 0));
+  const rot = (p / 100) * 180 - 90;
+  const click = (!disabled && target) ? ` onclick="document.getElementById('${target}').scrollIntoView({behavior:'smooth',block:'start'})"` : '';
+  return `<div class="gauge${disabled ? ' disabled' : ''}"${click}>
+    <svg class="gauge-svg" viewBox="0 0 100 58">
+      <path d="M8,55 A42,42 0 0 1 29,18.63" fill="none" stroke="var(--good)" stroke-width="9" stroke-linecap="round"/>
+      <path d="M29,18.63 A42,42 0 0 1 71,18.63" fill="none" stroke="var(--warning)" stroke-width="9" stroke-linecap="round"/>
+      <path d="M71,18.63 A42,42 0 0 1 92,55" fill="none" stroke="var(--critical)" stroke-width="9" stroke-linecap="round"/>
+      ${disabled ? '' : `<line x1="50" y1="55" x2="50" y2="17" class="gauge-needle" style="transform:rotate(${rot}deg)"/><circle cx="50" cy="55" r="4" class="gauge-hub"/>`}
+    </svg>
+    <div class="gauge-value">${disabled ? '—' : fmt(valor)}</div>
+    <div class="gauge-label">${label}</div>
+    ${sub ? `<div class="gauge-sub">${sub}</div>` : ''}
+  </div>`;
+}
+
+function pintarSaludGauges(atencion, atencion2, rcsGrupo) {
+  const cont = document.getElementById('salud-kpis');
+  const gauges = [];
+  if (atencion) {
+    const n = (atencion.vacas || []).length;
+    gauges.push(gaugeSVG({ pct: Math.min(100, n / 15 * 100), valor: n,
+      label: 'Atención (clásico)', sub: 'vacas a revisar', target: 'salud-atencion-card' }));
+  }
+  if (atencion2) {
+    const n = (atencion2.vacas || []).length;
+    gauges.push(gaugeSVG({ pct: Math.min(100, n / 15 * 100), valor: n,
+      label: 'Atención (experimental)', sub: 'en validación de campo', target: 'salud-atencion2-card' }));
+  }
+  if (rcsGrupo && rcsGrupo.filas) {
+    const tot = rcsGrupo.filas.reduce((a, f) => a + (f.vacas || 0), 0);
+    const altas = rcsGrupo.filas.reduce((a, f) => a + (f.altas_ultimo || 0), 0);
+    const nuevas = rcsGrupo.filas.reduce((a, f) => a + (f.nuevas || 0), 0);
+    const pctAltas = tot ? Math.round(100 * altas / tot) : 0;
+    gauges.push(gaugeSVG({ pct: pctAltas, valor: `${pctAltas}%`,
+      label: 'RCS > 300.000', sub: `${altas} vacas`, target: 'salud-rcs-grupo-card' }));
+    gauges.push(gaugeSVG({ pct: Math.min(100, nuevas / 30 * 100), valor: nuevas,
+      label: 'Casos nuevos RCS', sub: 'vs. control anterior', target: 'salud-rcs-grupo-card' }));
+  }
+  // Placeholders: sensores todavía no instalados/conectados en este tambo.
+  gauges.push(gaugeSVG({ disabled: true, label: 'Rumia', sub: 'collar DeLaval (a conectar)' }));
+  gauges.push(gaugeSVG({ disabled: true, label: 'Ingesta', sub: 'collar DeLaval (a conectar)' }));
+  gauges.push(gaugeSVG({ disabled: true, label: 'Problemas podales', sub: 'cámaras rotativa (a instalar)' }));
+  cont.innerHTML = gauges.join('');
+}
+
+async function cargarSalud() {
+  clearTimeout(saludReintento);
+  const estado = document.getElementById('salud-estado');
+  estado.textContent = 'Cargando…';
+  let atencionD = null, atencion2D = null, rcsGrupoD = null;
+  const listos = await Promise.all([
+    seccionSalud('/api/salud/atencion', 'salud-atencion-cuerpo', d => {
+      atencionD = d; pintarSaludAtencion(d);
+    }),
+    seccionSalud('/api/salud/atencion_v2', 'salud-atencion2-cuerpo', d => {
+      atencion2D = d; pintarSaludAtencionV2(d);
+    }),
+    seccionSalud('/api/salud/rcs_grupo', 'salud-rcs-grupo-cuerpo', d => {
+      rcsGrupoD = d; pintarSaludRcsGrupo(d);
+    }),
+    seccionSalud('/api/salud/rcs_vacas', 'salud-rcs-vacas-cuerpo', pintarSaludRcsVacas),
+    seccionSalud('/api/salud/conductividad', null, pintarSaludConductividad),
+    seccionSalud('/api/salud/produccion_rodeo', 'salud-prod-cuerpo', pintarSaludProduccion),
+  ]);
+  pintarSaludGauges(atencionD, atencion2D, rcsGrupoD);
+  const faltan = listos.filter(x => !x).length;
+  estado.textContent = faltan
+    ? `Calculando ${faltan} sección(es)… (la base de esta PC es lenta, se reintenta sola)`
+    : '';
+  if (faltan) saludReintento = setTimeout(cargarSalud, 8000);
+}
+
+document.getElementById('salud-refrescar').addEventListener('click', cargarSalud);
+document.getElementById('salud-solo-cronicas').addEventListener('change', renderSaludRcsVacas);
+
+let tareasData = [], tareaAbierta = null, tareasTimer = null;
+
+function pintarTareas() {
+  const grid = document.getElementById('tareas-grid');
+  grid.innerHTML = tareasData.map(t => {
+    if (t.calculando) {
+      return `<div class="tarea-card" title="${t.descripcion}"><div class="t-titulo">${t.titulo}</div><div class="t-calc">calculando…</div></div>`;
+    }
+    const cls = t.cantidad === 0 ? 't-num cero' : 't-num';
+    const activa = t.id === tareaAbierta ? ' activa' : '';
+    return `<button class="tarea-card${activa}" data-id="${t.id}" title="${t.descripcion}"><div class="t-titulo">${t.titulo}</div><div class="${cls}">${t.cantidad}</div></button>`;
+  }).join('');
+  grid.querySelectorAll('.tarea-card[data-id]').forEach(el =>
+    el.addEventListener('click', () => abrirTarea(el.dataset.id)));
+  pintarDetalleTarea();
+}
+
+function abrirTarea(id) {
+  tareaAbierta = (tareaAbierta === id) ? null : id;
+  pintarTareas();
+}
+
+function pintarDetalleTarea() {
+  const cont = document.getElementById('tareas-detalle');
+  const t = tareasData.find(x => x.id === tareaAbierta);
+  if (!t || t.calculando) { cont.innerHTML = ''; return; }
+  if (!t.rows.length) {
+    const vacio = t.id === 'mantenimiento' ? 'Sin contadores en alerta.'
+      : t.id === 'unidades' ? 'Ninguna unidad supera los umbrales críticos hoy.'
+      : 'Sin animales en esta tarea.';
+    cont.innerHTML = `<h3>${t.titulo}</h3><div class="aviso">${vacio} ✔</div>`;
+    return;
+  }
+  if (t.id === 'mantenimiento') {
+    cont.innerHTML = `<h3>${t.titulo} — ${t.cantidad}</h3><div class="aviso">${t.descripcion}</div>` +
+      mantenimientoItemsHTML(t.columns, t.rows);
+    return;
+  }
+  if (t.id === 'unidades') {
+    const idx = Object.fromEntries(t.columns.map((c, i) => [c, i]));
+    const pct = (v, umbral) => v == null ? '—'
+      : v > umbral ? `<span style="color:var(--critical);font-weight:700">⚠ ${v}%</span>` : `${v}%`;
+    const tabla = `<table><thead><tr><th>Puesto</th><th>Ordeños hoy</th><th>Deslizamiento</th>
+        <th>Bloqueo</th><th>Patadas</th><th>Recolocaciones</th><th>Ret. forzada</th><th>Prod. relativa</th></tr></thead>
+      <tbody>` + t.rows.map(r => `<tr>
+        <td class="num">${fmt(r[idx.posicion])}</td><td class="num">${fmt(r[idx.ordenos_dia])}</td>
+        <td class="num">${pct(r[idx.deslizamiento_pct], UMBRAL_DESLIZ_PCT)}</td>
+        <td class="num">${pct(r[idx.bloqueo_pct], UMBRAL_BLOQ_PCT)}</td>
+        <td class="num">${fmt(r[idx.patadas])}</td><td class="num">${fmt(r[idx.recolocaciones])}</td>
+        <td class="num">${fmt(r[idx.retiradas])}</td>
+        <td class="num">${r[idx.prod_relativa_pct] == null ? '—' : r[idx.prod_relativa_pct] + '%'}</td>
+      </tr>`).join('') + `</tbody></table>`;
+    cont.innerHTML = `<h3>${t.titulo} — ${t.cantidad}</h3><div class="aviso">${t.descripcion}</div><div class="tabla-scroll">${tabla}</div>`;
+    return;
+  }
+  const numCols = t.columns.map((c, i) => t.rows.some(r => typeof r[i] === 'number'));
+  const tabla = '<table><thead><tr>' + t.columns.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>' +
+    t.rows.map(r => '<tr>' + r.map((v, i) => `<td class="${numCols[i] ? 'num' : ''}">${fmt(v)}</td>`).join('') + '</tr>').join('') +
+    '</tbody></table>';
+  cont.innerHTML = `<h3>${t.titulo} — ${t.cantidad}</h3><div class="aviso">${t.descripcion}</div><div class="tabla-scroll">${tabla}</div>` +
+    `<div class="controls" style="margin-top:10px"><button class="secundario" id="btn-csv-tarea">Exportar CSV</button></div>`;
+  document.getElementById('btn-csv-tarea').addEventListener('click', () => exportarCSV(t.columns, t.rows, 'tarea_' + t.id + '.csv'));
+}
+
+async function cargarTareas() {
+  try {
+    const d = await pedirJSON('/api/tareas?tambo=' + encodeURIComponent(tamboActual));
+    tareasData = d.tareas;
+    pintarTareas();
+    clearTimeout(tareasTimer);
+    if (d.calculando) tareasTimer = setTimeout(cargarTareas, 3000);
+  } catch (e) {
+    document.getElementById('tareas-grid').innerHTML = '<div class="aviso">No se pudieron cargar las tareas: ' + e.message + '</div>';
+  }
+}
+
+let tambosInfo = {};   // id -> {nombre, produccion}
+
+function aplicarCandadoProduccion() {
+  // En tambos de producción se bloquea el cuadro de preguntas por IA.
+  const prod = (tambosInfo[tamboActual] || {}).produccion;
+  const card = document.getElementById('ia-card');
+  const txt = document.getElementById('txt-pregunta');
+  const btn = document.getElementById('btn-preguntar');
+  if (!card) return;
+  let aviso = document.getElementById('aviso-produccion');
+  if (prod) {
+    if (txt) txt.disabled = true;
+    if (btn) btn.disabled = true;
+    if (!aviso) {
+      aviso = document.createElement('div');
+      aviso.id = 'aviso-produccion';
+      aviso.className = 'aviso';
+      aviso.style.cssText = 'margin-top:8px;color:var(--warning)';
+      card.appendChild(aviso);
+    }
+    aviso.textContent = '🔒 Preguntas por IA deshabilitadas: base de producción en vivo (solo lectura).';
+  } else {
+    if (txt) txt.disabled = false;
+    if (btn && ia_disp) btn.disabled = false;
+    if (aviso) aviso.remove();
+  }
+}
+
+async function cargarTambos() {
+  const sel = document.getElementById('sel-tambo');
+  try {
+    const d = await pedirJSON('/api/tambos');
+    tambosInfo = Object.fromEntries(d.tambos.map(t => [t.id, t]));
+    tamboActual = d.default || (d.tambos[0] && d.tambos[0].id) || '';
+    sel.innerHTML = d.tambos.map(t =>
+      `<option value="${t.id}"${t.id === tamboActual ? ' selected' : ''}>${t.nombre}${t.produccion ? ' (producción)' : ''}</option>`).join('');
+    aplicarCandadoProduccion();
+    sel.addEventListener('change', () => {
+      tamboActual = sel.value;
+      document.getElementById('resultado').hidden = true;  // el resultado era de otro tambo
+      ultimoResultado = null;
+      tareaAbierta = null;
+      rutinaSesionIdx = 0;
+      aplicarCandadoProduccion();
+      // Solo se recarga la página actual (las demás son datos de otro tambo,
+      // pero recién se vuelven a pedir si el usuario realmente las visita).
+      paginasCargadas.clear();
+      cargarDatosDePagina(paginaActual);
+      // La evolución NO se recarga sola: es pesada, se dispara solo con
+      // "Aplicar" o "Ver mes completo".
+    });
+  } catch (e) {
+    sel.innerHTML = '<option>—</option>';
+  }
+}
+
+document.getElementById('ordeno-refrescar').addEventListener('click', cargarOrdeno);
+document.getElementById('ordeno-alertas').addEventListener('change', renderOrdeno);
+document.getElementById('ordeno-buscar').addEventListener('input', renderOrdeno);
+document.getElementById('ordeno-vivo').addEventListener('change', () => {
+  cargarOrdeno(); reprogramarRefrescoOrdeno();
+});
+document.getElementById('ordeno-sim').addEventListener('change', () => {
+  simReiniciar = modoSim();       // al encender, arranca la simulación de cero
+  cargarOrdeno(); reprogramarRefrescoOrdeno();
+});
+document.getElementById('rot-desde').addEventListener('input', renderRotativa);
+document.getElementById('rot-hasta').addEventListener('input', renderRotativa);
+function cambiarVistaOrdeno(v) {
+  ordenoVista = v;
+  document.getElementById('vista-rotativa').classList.toggle('activa', v === 'rotativa');
+  document.getElementById('vista-tabla').classList.toggle('activa', v === 'tabla');
+  cargarOrdeno();                 // recarga con el modo correcto (rotativa → plataforma)
+  reprogramarRefrescoOrdeno();
+}
+document.getElementById('vista-rotativa').addEventListener('click', () => cambiarVistaOrdeno('rotativa'));
+document.getElementById('vista-tabla').addEventListener('click', () => cambiarVistaOrdeno('tabla'));
+// El auto-refresco arranca/para solo mientras la página "Ordeño en vivo" está
+// activa (ver irAPagina): no tiene sentido consultar de fondo una sección oculta.
+
+// ---------------------------------------------------------------------------
+// Rutina de ordeño: identificación → colocación de pezonera → retiro, por
+// sesión, con un score 0-100% que resume la calidad de la rutina.
+// ---------------------------------------------------------------------------
+const RUTINA_PUESTOS = 80;
+let rutinaData = null, rutinaSesionIdx = 0, rutinaZoom = 1;
+
+function colorScore(v) {
+  if (v == null) return 'var(--muted)';
+  if (v >= 85) return 'var(--good)';
+  if (v >= 65) return 'var(--warning)';
+  return 'var(--critical)';
+}
+
+// --- Configuración del análisis de rutina: qué grupos incluir y el peso de
+// cada componente del score. Se guarda en localStorage (por navegador) y se
+// manda como query params a /api/rutina y /api/rutina/evolucion; sin tocar
+// nada, se comporta igual que antes (todos los grupos, pesos por defecto).
+const RUTINA_PESOS_DEFECTO = { prep_90s: 30, lerdas: 10, entre_grupos: 20,
+  manejo_corral: 15, mezcla_rodeos: 10, ocupacion: 15 };
+const RUTINA_PESOS_LABELS = {
+  prep_90s: 'Colocación ≤90s', lerdas: 'Sin vacas lerdas',
+  entre_grupos: 'Sin tiempos muertos entre grupos', manejo_corral: 'Manejo de corral',
+  mezcla_rodeos: 'Sin mezcla de rodeos', ocupacion: 'Ocupación de la plataforma',
+};
+const RUTINA_CONFIG_KEY = 'delpro_rutina_config_v1';
+let rutinaGruposDisponibles = [];
+
+function leerConfigRutina() {
+  try {
+    const raw = localStorage.getItem(RUTINA_CONFIG_KEY);
+    return raw ? JSON.parse(raw) : { grupos: null, pesos: null };
+  } catch (e) { return { grupos: null, pesos: null }; }
+}
+function guardarConfigRutina(cfg) { localStorage.setItem(RUTINA_CONFIG_KEY, JSON.stringify(cfg)); }
+
+// Query string con los filtros actuales (vacío si nunca se tocó la configuración).
+function paramsRutinaConfig() {
+  const cfg = leerConfigRutina();
+  let extra = '';
+  if (cfg.grupos && cfg.grupos.length) extra += '&grupos=' + encodeURIComponent(cfg.grupos.join(','));
+  if (cfg.pesos) extra += '&pesos=' + encodeURIComponent(JSON.stringify(cfg.pesos));
+  return extra;
+}
+
+async function cargarGruposRutina() {
+  const cont = document.getElementById('rutina-grupos-check');
+  if (!cont) return;
+  try {
+    const d = await pedirJSON('/api/rutina/grupos?tambo=' + encodeURIComponent(tamboActual));
+    const idx = { grupo: d.columns.indexOf('grupo'), cantidad: d.columns.indexOf('cantidad'),
+                  nombre: d.columns.indexOf('nombre') };
+    // Se muestra el nombre real de DelPro ("Rodeo 1"), pero la clave sigue
+    // siendo el OID interno, que es con lo que filtra el backend.
+    rutinaGruposDisponibles = d.rows.map(r => ({
+      grupo: r[idx.grupo], cantidad: r[idx.cantidad],
+      nombre: idx.nombre >= 0 ? r[idx.nombre] : null,
+    }));
+    const marcados = leerConfigRutina().grupos;   // null = todos tildados
+    cont.innerHTML = rutinaGruposDisponibles.map(g => `
+      <label class="aviso" style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" data-grupo="${g.grupo}" ${(!marcados || marcados.includes(g.grupo)) ? 'checked' : ''}>
+        ${g.nombre || 'Grupo ' + g.grupo} (${g.cantidad})
+      </label>`).join('');
+  } catch (e) {
+    cont.innerHTML = `<span class="aviso">Error cargando grupos: ${e.message}</span>`;
+  }
+}
+
+function pintarPesosRutina() {
+  const cont = document.getElementById('rutina-pesos-inputs');
+  if (!cont) return;
+  const pesos = leerConfigRutina().pesos || RUTINA_PESOS_DEFECTO;
+  cont.innerHTML = Object.keys(RUTINA_PESOS_DEFECTO).map(clave => `
+    <label class="aviso" style="display:flex;flex-direction:column;gap:3px">
+      ${RUTINA_PESOS_LABELS[clave]}
+      <input type="number" min="0" max="100" data-peso="${clave}" value="${pesos[clave]}" style="width:80px;padding:5px 7px">
+    </label>`).join('');
+}
+
+document.getElementById('rutina-config-toggle').addEventListener('click', () => {
+  const panel = document.getElementById('rutina-config-panel');
+  panel.hidden = !panel.hidden;
+  if (!panel.hidden) {
+    if (!rutinaGruposDisponibles.length) cargarGruposRutina();
+    pintarPesosRutina();
+  }
+});
+
+document.getElementById('rutina-config-aplicar').addEventListener('click', () => {
+  const checks = Array.from(document.querySelectorAll('#rutina-grupos-check input[type=checkbox]'));
+  const todosMarcados = checks.every(chk => chk.checked);
+  const grupos = todosMarcados ? null : checks.filter(chk => chk.checked).map(chk => Number(chk.dataset.grupo));
+  const pesos = {};
+  document.querySelectorAll('#rutina-pesos-inputs input[data-peso]').forEach(inp => {
+    pesos[inp.dataset.peso] = Number(inp.value) || 0;
+  });
+  const esDefecto = JSON.stringify(pesos) === JSON.stringify(RUTINA_PESOS_DEFECTO);
+  guardarConfigRutina({ grupos, pesos: esDefecto ? null : pesos });
+  cargarRutina(document.getElementById('rutina-fecha').value);
+});
+
+document.getElementById('rutina-config-reset').addEventListener('click', () => {
+  guardarConfigRutina({ grupos: null, pesos: null });
+  cargarGruposRutina();
+  pintarPesosRutina();
+  cargarRutina(document.getElementById('rutina-fecha').value);
+});
+
+async function cargarRutina(fecha) {
+  const info = document.getElementById('rutina-info');
+  try {
+    let url = '/api/rutina?tambo=' + encodeURIComponent(tamboActual) + paramsRutinaConfig();
+    if (fecha) url += '&fecha=' + encodeURIComponent(fecha);
+    const d = await pedirJSON(url);
+    rutinaData = d;
+    const inp = document.getElementById('rutina-fecha');
+    if (inp.value !== d.fecha) inp.value = d.fecha;
+    rutinaSesionIdx = Math.min(rutinaSesionIdx, Math.max(0, d.sesiones.length - 1));
+    pintarRutinaSesiones();
+    pintarRutinaSesion();
+    info.textContent = (d.sesiones.length
+      ? `${d.sesiones.length} sesión(es) el ${d.fecha}`
+      : `Sin ordeños registrados el ${d.fecha}.`)
+      + (d.incompleto ? ' ⚠ Día con muchísimo movimiento: el análisis puede estar incompleto.' : '');
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; setTimeout(() => cargarRutina(fecha), 3000); }
+    else { info.textContent = 'Error: ' + e.message; document.getElementById('rutina-cuerpo').innerHTML = ''; }
+  }
+}
+
+function pintarRutinaSesiones() {
+  const cont = document.getElementById('rutina-sesiones');
+  if (!rutinaData || !rutinaData.sesiones.length) { cont.innerHTML = ''; return; }
+  const hora = iso => new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+  cont.innerHTML = rutinaData.sesiones.map((s, i) => `
+    <button class="rutina-sesion-btn${i === rutinaSesionIdx ? ' activa' : ''}" data-i="${i}">
+      <div class="rs-score" style="color:${colorScore(s.score)}">${s.score}%</div>
+      <div class="rs-hora">${hora(s.inicio)}–${hora(s.fin)} · ${s.vacas} vacas</div>
+    </button>`).join('');
+  cont.querySelectorAll('.rutina-sesion-btn').forEach(b => b.addEventListener('click', () => {
+    rutinaSesionIdx = Number(b.dataset.i);
+    pintarRutinaSesiones();
+    pintarRutinaSesion();
+  }));
+}
+
+function pintarRutinaSesion() {
+  const cuerpo = document.getElementById('rutina-cuerpo');
+  if (!rutinaData || !rutinaData.sesiones.length) { cuerpo.innerHTML = ''; return; }
+  const s = rutinaData.sesiones[rutinaSesionIdx];
+  const barras = s.detalle.map(d => `
+    <div class="rm-fila">
+      <div class="rm-cab"><span>${d.label} <span style="opacity:.6">(${d.peso}%)</span></span><span class="rm-val" style="color:${colorScore(d.valor)}">${d.valor == null ? 'sin datos' : d.valor + '%'}</span></div>
+      <div class="rm-barra"><div style="width:${d.valor == null ? 0 : d.valor}%;background:${colorScore(d.valor)}"></div></div>
+    </div>`).join('');
+  const hallazgos = s.hallazgos.length
+    ? '<ul class="rutina-hallazgos">' + s.hallazgos.map(h => `<li>${h.texto}</li>`).join('') + '</ul>'
+    : '<div class="aviso">Sin hallazgos relevantes en esta sesión.</div>';
+  cuerpo.innerHTML = `
+    <div style="flex-basis:100%;display:flex;align-items:center;gap:8px;margin-bottom:2px">
+      <label class="aviso" style="display:flex;align-items:center;gap:8px">🔍 Zoom
+        <input type="range" id="rutina-zoom" min="1" max="15" step="0.5" value="${rutinaZoom}" style="width:160px">
+        <span id="rutina-zoom-val">${rutinaZoom}×</span>
+      </label>
+      <button class="secundario" id="rutina-zoom-reset" style="margin-left:6px">Restablecer</button>
+    </div>
+    <div id="rutina-chart"></div>
+    <div class="rutina-panel">
+      <div>
+        <div class="aviso">Puntaje de la sesión</div>
+        <div class="rutina-score-nota" style="color:${colorScore(s.score)}">${s.score}%</div>
+        <div class="aviso">${s.duracion_min} min · ${s.vacas} vacas</div>
+      </div>
+      <div class="rutina-medidor">${barras}</div>
+      <div>
+        <div class="aviso" style="margin-bottom:4px">Hallazgos</div>
+        ${hallazgos}
+      </div>
+    </div>`;
+  document.getElementById('rutina-zoom').addEventListener('input', (e) => {
+    rutinaZoom = Number(e.target.value);
+    document.getElementById('rutina-zoom-val').textContent = rutinaZoom + '×';
+    renderRutinaChart(rutinaData.sesiones[rutinaSesionIdx]);
+  });
+  document.getElementById('rutina-zoom-reset').addEventListener('click', () => {
+    rutinaZoom = 1;
+    document.getElementById('rutina-zoom').value = 1;
+    document.getElementById('rutina-zoom-val').textContent = '1×';
+    renderRutinaChart(rutinaData.sesiones[rutinaSesionIdx]);
+  });
+  renderRutinaChart(s);
+}
+
+function renderRutinaChart(s) {
+  const cont = document.getElementById('rutina-chart');
+  const inicio = new Date(s.inicio).getTime(), fin = new Date(s.fin).getTime();
+  const dur = Math.max(fin - inicio, 1000);
+  const durMin = dur / 60000;
+  const pxPerMin = (durMin > 240 ? 9 : 14) * rutinaZoom;
+  const margenIzq = 30, margenSup = 8, margenInf = 24;
+  const anchoPx = Math.max(700, margenIzq + 24 + durMin * pxPerMin);
+  const alto = margenSup + margenInf + RUTINA_PUESTOS * 10;
+  const x = t => margenIzq + ((t - inicio) / dur) * (anchoPx - margenIzq - 14);
+  const y = p => margenSup + (RUTINA_PUESTOS - p) * ((alto - margenSup - margenInf) / RUTINA_PUESTOS);
+
+  let grid = '';
+  const pasoMs = (durMin > 240 ? 10 : 5) * 60 * 1000;
+  const t0 = Math.ceil(inicio / pasoMs) * pasoMs;
+  for (let t = t0; t <= fin; t += pasoMs) {
+    const xx = x(t);
+    grid += `<line x1="${xx.toFixed(1)}" y1="${margenSup}" x2="${xx.toFixed(1)}" y2="${(alto - margenInf).toFixed(1)}" stroke="var(--grid)" stroke-width="1"/>`;
+    grid += `<text x="${xx.toFixed(1)}" y="${(alto - margenInf + 13).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="middle">${new Date(t).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</text>`;
+  }
+  let ejey = '';
+  for (let p = 0; p <= RUTINA_PUESTOS; p += 8) {
+    ejey += `<text x="${margenIzq - 5}" y="${(y(p) + 3).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="end">${p}</text>`;
+  }
+
+  let filas = '';
+  s.visitas.forEach((v, i) => {
+    if (!v.puesto) return;
+    const xi = x(new Date(v.hora_id).getTime());
+    const xf = v.hora_fin ? x(new Date(v.hora_fin).getTime()) : xi;
+    const yy = y(v.puesto).toFixed(1);
+    filas += `<line x1="${xi.toFixed(1)}" y1="${yy}" x2="${xf.toFixed(1)}" y2="${yy}" stroke="var(--violeta)" stroke-width="2.6" opacity=".65"/>`;
+    filas += `<path class="rt-pt" data-i="${i}" d="M ${xi.toFixed(1)},${(yy - 4).toFixed(1)} L ${(xi + 4).toFixed(1)},${yy} L ${xi.toFixed(1)},${(+yy + 4).toFixed(1)} L ${(xi - 4).toFixed(1)},${yy} Z" fill="${v.color}"/>`;
+    if (v.hora_coloc) {
+      const xc = x(new Date(v.hora_coloc).getTime());
+      filas += `<rect class="rt-pt" data-i="${i}" x="${(xc - 3.2).toFixed(1)}" y="${(+yy - 3.2).toFixed(1)}" width="6.4" height="6.4" fill="${v.color}"${v.cumple_90 ? '' : ' stroke="var(--critical)" stroke-width="1.6"'}/>`;
+    }
+    if (v.hora_fin) {
+      filas += `<path class="rt-pt" data-i="${i}" d="M ${(xf - 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${(xf + 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${xf.toFixed(1)},${(+yy - 4.4).toFixed(1)} Z" fill="${v.color}"${v.lerda ? ' stroke="var(--critical)" stroke-width="1.6"' : ''}/>`;
+    }
+  });
+
+  const leyendaGrupos = s.grupos.filter((g, i) => s.grupos.findIndex(g2 => g2.grupo === g.grupo) === i)
+    .map(g => `<span><span class="pt" style="background:${g.color}"></span>${g.nombre || 'Grupo ' + (g.grupo ?? '—')}</span>`).join('');
+
+  cont.innerHTML = `
+    <svg viewBox="0 0 ${anchoPx.toFixed(0)} ${alto.toFixed(0)}" width="${anchoPx.toFixed(0)}" height="${alto.toFixed(0)}">
+      ${grid}${ejey}${filas}
+    </svg>
+    <div class="rutina-leyenda">
+      ${leyendaGrupos}
+      <span><span class="pt" style="background:var(--violeta);opacity:.6"></span>Tiempo total</span>
+      <span>◆ Identificación</span><span>■ Colocación (rojo = &gt;90s)</span><span>▲ Retiro (rojo = lerda)</span>
+    </div>`;
+}
+
+document.addEventListener('mousemove', (e) => {
+  const tip = document.getElementById('rutina-tooltip');
+  const el = e.target.closest && e.target.closest('.rt-pt');
+  if (!el || !rutinaData) { tip.style.display = 'none'; return; }
+  const s = rutinaData.sesiones[rutinaSesionIdx];
+  const v = s.visitas[Number(el.dataset.i)];
+  const hora = iso => iso ? new Date(iso).toLocaleTimeString('es-AR') : '—';
+  const prep = v.prep_seg == null ? '—' : `${v.prep_seg}s ${v.cumple_90 ? '✓' : '⚠ objetivo ≤90s'}`;
+  const nomGrupo = (s.grupos.find(g => g.grupo === v.grupo) || {}).nombre
+                   || 'Grupo ' + (v.grupo ?? '—');
+  tip.innerHTML = `<b>Puesto ${v.puesto}</b> · RP ${v.rp || '?'} · ${nomGrupo}<br>
+    ID ${hora(v.hora_id)} · Coloc. ${hora(v.hora_coloc)} · Fin ${hora(v.hora_fin)}<br>
+    Prep: ${prep}${v.lerda ? ' · <span style="color:var(--critical)">lerda</span>' : ''}`;
+  tip.style.display = 'block';
+  tip.style.left = (e.clientX + 14) + 'px';
+  tip.style.top = (e.clientY + 14) + 'px';
+});
+
+document.getElementById('rutina-fecha').addEventListener('change', () => {
+  rutinaSesionIdx = 0;
+  cargarRutina(document.getElementById('rutina-fecha').value);
+});
+function moverDiaRutina(delta) {
+  const inp = document.getElementById('rutina-fecha');
+  const base = inp.value ? new Date(inp.value + 'T00:00:00') : new Date();
+  base.setDate(base.getDate() + delta);
+  const iso = base.toISOString().slice(0, 10);
+  rutinaSesionIdx = 0;
+  cargarRutina(iso);
+}
+document.getElementById('rutina-dia-ant').addEventListener('click', () => moverDiaRutina(-1));
+document.getElementById('rutina-dia-sig').addEventListener('click', () => moverDiaRutina(1));
+
+// ---------------------------------------------------------------------------
+// Evolución de la rutina de ordeño a lo largo del año: una muestra semanal de
+// cada uno de los 6 parámetros + el score general. Se completa de a poco en
+// segundo plano (52 días pesados no se pueden calcular todos de una vez).
+// ---------------------------------------------------------------------------
+let chartEvolucion = null, evolucionTimer = null;
+const EVOLUCION_SERIES = [
+  { clave: 'score', label: 'Calidad de Rutina', ancho: 3 },
+  { clave: 'prep_90s', label: 'Colocación ≤90s' },
+  { clave: 'lerdas', label: 'Sin vacas lerdas' },
+  { clave: 'entre_grupos', label: 'Sin tiempos muertos entre grupos' },
+  { clave: 'manejo_corral', label: 'Manejo de corral' },
+  { clave: 'mezcla_rodeos', label: 'Sin mezcla de rodeos' },
+  { clave: 'ocupacion', label: 'Ocupación de la plataforma' },
+];
+
+const EVOLUCION_PX_POR_PUNTO = 26;   // ancho por punto para poder desplazarse y ver el detalle
+
+async function cargarEvolucion() {
+  clearTimeout(evolucionTimer);
+  const info = document.getElementById('evolucion-info');
+  const desde = document.getElementById('evolucion-desde').value;
+  const hasta = document.getElementById('evolucion-hasta').value;
+  try {
+    let url = '/api/rutina/evolucion?tambo=' + encodeURIComponent(tamboActual) + paramsRutinaConfig();
+    if (desde) url += '&desde=' + encodeURIComponent(desde);
+    if (hasta) url += '&hasta=' + encodeURIComponent(hasta);
+    const d = await pedirJSON(url);
+    if (d.desde && !document.getElementById('evolucion-desde').value) document.getElementById('evolucion-desde').value = d.desde;
+    if (d.hasta && !document.getElementById('evolucion-hasta').value) document.getElementById('evolucion-hasta').value = d.hasta;
+
+    const labels = d.puntos.map(p => new Date(p.fecha + 'T00:00:00')
+      .toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: '2-digit' }));
+    const datasets = EVOLUCION_SERIES.map((s, k) => ({
+      label: s.label, data: d.puntos.map(p => p[s.clave]),
+      borderColor: SERIES[k % 8], backgroundColor: SERIES[k % 8],
+      borderWidth: s.ancho || 1.6, pointRadius: d.total_puntos > 90 ? 0 : 3, tension: .25,
+    }));
+    const ancho = Math.max(700, d.total_puntos * EVOLUCION_PX_POR_PUNTO);
+    document.getElementById('evolucion-chart-wrap').style.width = ancho + 'px';
+    chartEvolucion = dibujar('chart-evolucion', chartEvolucion, {
+      type: 'line', data: { labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, labels: { boxWidth: 12, boxHeight: 12 } } },
+        scales: {
+          x: { grid: { display: false }, border: { color: css('--baseline') } },
+          y: { min: 0, max: 100, grid: { color: css('--grid') }, border: { display: false } },
+        },
+      },
+    });
+    const rango = d.intervalo_dias === 1 ? 'día por día' : `cada ${d.intervalo_dias} días`;
+    const avisoIncompletos = d.dias_incompletos && d.dias_incompletos.length
+      ? ` ⚠ ${d.dias_incompletos.length} día(s) con muchísimo movimiento pueden estar incompletos (${d.dias_incompletos.slice(0, 5).join(', ')}${d.dias_incompletos.length > 5 ? '…' : ''}).`
+      : '';
+    info.textContent = (d.listas < d.total_puntos
+      ? `Procesando historial: ${d.listas}/${d.total_puntos} fechas listas (${rango})… (esto tarda porque el SQL de esta PC es lento)`
+      : `${d.puntos.length} de ${d.total_puntos} fechas con datos (${rango}).`) + avisoIncompletos;
+    pintarRendimiento(d.sesiones || []);
+    pintarRendimientoLinea(d.puntos || []);
+    if (d.calculando) evolucionTimer = setTimeout(cargarEvolucion, 5000);
+  } catch (e) {
+    info.textContent = e.message || 'Error al cargar la evolución.';
+    if (e.calentando) evolucionTimer = setTimeout(cargarEvolucion, 4000);
+  }
+}
+document.getElementById('evolucion-aplicar').addEventListener('click', cargarEvolucion);
+
+let chartRendimiento = null;
+
+function pintarRendimiento(sesiones) {
+  const info = document.getElementById('rendimiento-info');
+  const validas = sesiones.filter(s => s.vacas_por_hora != null);
+  chartRendimiento = dibujar('chart-rendimiento', chartRendimiento, {
+    type: 'scatter',
+    data: { datasets: [{
+      label: 'Sesión', data: validas.map(s => ({ x: s.score, y: s.vacas_por_hora })),
+      backgroundColor: css('--accent'), pointRadius: 5,
+    }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => {
+          const s = validas[ctx.dataIndex];
+          return `${s.fecha} ${s.inicio.slice(11, 16)} · score ${s.score}% · ${s.vacas_por_hora} vacas/h (${s.vacas} vacas)`;
+        } } },
+      },
+      scales: {
+        x: { title: { display: true, text: 'Calidad de Rutina (%)' }, min: 0, max: 100,
+             grid: { color: css('--grid') }, border: { color: css('--baseline') } },
+        y: { title: { display: true, text: 'Vacas/hora' }, grid: { color: css('--grid') }, border: { display: false } },
+      },
+    },
+  });
+  if (!validas.length) { info.textContent = 'Sin sesiones con datos suficientes en este rango.'; return; }
+  // Correlación simple para dar una pista rápida de la relación (no reemplaza mirar el gráfico).
+  const xs = validas.map(s => s.score), ys = validas.map(s => s.vacas_por_hora);
+  const n = xs.length, mx = xs.reduce((a, b) => a + b, 0) / n, my = ys.reduce((a, b) => a + b, 0) / n;
+  const cov = xs.reduce((a, x, i) => a + (x - mx) * (ys[i] - my), 0);
+  const sx = Math.sqrt(xs.reduce((a, x) => a + (x - mx) ** 2, 0)), sy = Math.sqrt(ys.reduce((a, y) => a + (y - my) ** 2, 0));
+  const r = (sx && sy) ? cov / (sx * sy) : null;
+  info.textContent = `${n} sesión(es) con datos.` + (r != null ? ` Correlación score↔vacas/hora: r=${r.toFixed(2)}.` : '');
+}
+
+let chartRendimientoLinea = null;
+
+function pintarRendimientoLinea(puntos) {
+  const validas = puntos.filter(p => p.vacas_por_hora != null)
+    .slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
+  const etiquetas = validas.map(p => p.fecha);
+  const ancho = Math.max(700, validas.length * EVOLUCION_PX_POR_PUNTO);
+  document.getElementById('rendimiento-linea-wrap').style.width = ancho + 'px';
+  chartRendimientoLinea = dibujar('chart-rendimiento-linea', chartRendimientoLinea, {
+    type: 'line',
+    data: {
+      labels: etiquetas,
+      datasets: [
+        { label: 'Calidad de Rutina (%)', data: validas.map(s => s.score), yAxisID: 'y',
+          borderColor: css('--accent'), backgroundColor: css('--accent'), pointRadius: 3, tension: .25 },
+        { label: 'Vacas/hora', data: validas.map(s => s.vacas_por_hora), yAxisID: 'y2',
+          borderColor: css('--warning'), backgroundColor: css('--warning'), pointRadius: 3, tension: .25 },
+        { label: 'Retiradas forzadas', data: validas.map(s => s.retiradas_forzadas), yAxisID: 'y3',
+          borderColor: css('--critical'), backgroundColor: css('--critical'), pointRadius: 3, tension: .25 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: true, labels: { boxWidth: 12, boxHeight: 12 } } },
+      scales: {
+        x: { grid: { display: false }, border: { color: css('--baseline') } },
+        y: { position: 'left', min: 0, max: 100, title: { display: true, text: 'Calidad de Rutina (%)' },
+             grid: { color: css('--grid') }, border: { display: false } },
+        y2: { position: 'right', min: 0, max: 500, title: { display: true, text: 'Vacas/hora' },
+              grid: { display: false }, border: { display: false } },
+        y3: { position: 'right', min: 0, title: { display: true, text: 'Retiradas forzadas' },
+              grid: { display: false }, border: { display: false } },
+      },
+    },
+  });
+}
+
+// Selector rápido de mes completo: llena Desde/Hasta con el 1º y el último día
+// del mes elegido. Un mes (~30 días) ya cae dentro del tope de puntos de
+// /api/rutina/evolucion, así que el resultado es SIEMPRE día por día.
+(function inicializarSelectorMes() {
+  const selMes = document.getElementById('evolucion-mes');
+  const selAnio = document.getElementById('evolucion-anio');
+  const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio',
+                 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+  const hoy = new Date();
+  selMes.innerHTML = MESES.map((m, i) =>
+    `<option value="${i + 1}"${i === hoy.getMonth() ? ' selected' : ''}>${m}</option>`).join('');
+  const anioActual = hoy.getFullYear();
+  const anios = [];
+  for (let a = anioActual; a >= anioActual - 4; a--) anios.push(a);
+  selAnio.innerHTML = anios.map(a => `<option value="${a}"${a === anioActual ? ' selected' : ''}>${a}</option>`).join('');
+})();
+
+function ultimoDiaMes(anio, mes) {
+  return new Date(anio, mes, 0).toISOString().slice(0, 10);  // día 0 del mes siguiente = último día de este
+}
+
+document.getElementById('evolucion-ver-mes').addEventListener('click', () => {
+  const anio = Number(document.getElementById('evolucion-anio').value);
+  const mes = Number(document.getElementById('evolucion-mes').value);
+  document.getElementById('evolucion-desde').value = `${anio}-${String(mes).padStart(2, '0')}-01`;
+  document.getElementById('evolucion-hasta').value = ultimoDiaMes(anio, mes);
+  cargarEvolucion();
+});
+
+document.getElementById('evolucion-info').textContent =
+  'Elegí un rango de fechas o un mes y presioná "Aplicar" / "Ver mes completo" para calcularlo.';
+
+// ---------------------------------------------------------------------------
+// Navegación entre páginas (sidebar): cada sección carga sus datos recién la
+// primera vez que se visita — esta base SQL es lenta, no tiene sentido pedir
+// las 6 secciones de una si el usuario solo quiere ver una.
+// ---------------------------------------------------------------------------
+const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
+const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'evolucion', 'salud', 'tareas', 'consultas']
+  .filter(p => PAGINAS_VISIBLES.includes(p));
+const paginasCargadas = new Set();
+let paginaActual = null;
+
+function cargarDatosDePagina(id) {
+  if (paginasCargadas.has(id)) return;
+  paginasCargadas.add(id);
+  if (id === 'dashboard') {
+    cargarDashboard(); cargarCicla(); cargarComparar(); cargarLaser(); cargarCanalesAlertas();
+    cargarResumenProduccion(); cargarResumenAnimales(); cargarResumenDuraciones(); cargarResumenGrupo();
+  }
+  else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); }
+  else if (id === 'rutina') cargarRutina();
+  else if (id === 'salud') cargarSalud();
+  else if (id === 'tareas') cargarTareas();
+  else if (id === 'consultas') cargarPredefinidas();
+  // 'evolucion' no se autocarga: solo con "Aplicar" / "Ver mes completo".
+}
+
+function cerrarMenuMovil() {
+  document.getElementById('sidebar').classList.remove('abierta');
+  document.getElementById('sidebar-fondo').classList.remove('abierta');
+}
+
+function irAPagina(id) {
+  if (!PAGINAS.includes(id)) id = PAGINAS[0];
+  if (id === paginaActual) return;
+  paginaActual = id;
+  PAGINAS.forEach(p => { document.getElementById('page-' + p).hidden = p !== id; });
+  document.querySelectorAll('.nav-item').forEach(el =>
+    el.classList.toggle('activa', el.dataset.pagina === id));
+  cerrarMenuMovil();
+  if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
+  cargarDatosDePagina(id);
+  // El auto-refresco del ordeño solo tiene sentido con esa página a la vista.
+  if (id === 'ordeno') reprogramarRefrescoOrdeno(); else clearInterval(ordenoTimer);
+  // El reintento de Salud solo tiene sentido con esa página a la vista.
+  if (id !== 'salud') clearTimeout(saludReintento);
+}
+
+document.querySelectorAll('.nav-item').forEach(el =>
+  el.addEventListener('click', () => irAPagina(el.dataset.pagina)));
+window.addEventListener('hashchange', () => irAPagina(location.hash.slice(1)));
+document.getElementById('btn-hamburguesa').addEventListener('click', () => {
+  document.getElementById('sidebar').classList.toggle('abierta');
+  document.getElementById('sidebar-fondo').classList.toggle('abierta');
+});
+document.getElementById('sidebar-fondo').addEventListener('click', cerrarMenuMovil);
+
+// Primero se resuelve el tambo, luego se muestra la página inicial (la de la
+// URL si hay hash, si no el Dashboard) y se cargan solo SUS datos.
+cargarTambos().then(() => irAPagina(location.hash.slice(1) || PAGINAS[0]));
+</script>
+</body>
+</html>
