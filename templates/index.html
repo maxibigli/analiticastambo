@@ -418,6 +418,71 @@
         <button class="lac-segment__item" data-tab="performance" aria-pressed="false">Performance</button>
         <button class="lac-segment__item" data-tab="partos" aria-pressed="false">Partos y Secados</button>
         <button class="lac-segment__item" data-tab="tasa" aria-pressed="false">Tasa de Preñez</button>
+        <button class="lac-segment__item" data-tab="gestacion" aria-pressed="false">Análisis de Gestación</button>
+      </div>
+    </div>
+
+    <div id="repro-panel-gestacion" hidden>
+      <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Rebaño
+          <select id="gs-rebano" style="padding:6px 8px"></select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="gs-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="gs-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="gs-aplicar">Aplicar</button>
+      </div>
+      <p class="explica" style="margin-top:10px">
+        <b>Qué busca.</b> Cuánto duran de verdad las gestaciones del tambo, y compararlo contra el
+        parámetro que la aplicación usa para proyectar. Ese parámetro (<b>Días de gestación</b>,
+        configurado en DelPro) es el que decide <i>cuándo va a parir cada vaca</i> en Proyección de
+        Rebaños y en Partos y Secados, y de ahí sale también la fecha de secado. Si las gestaciones
+        reales promedian menos que el parámetro, todas esas fechas salen corridas.
+        <br>También lee el rodeo: una gestación más corta de lo normal suele venir con mellizos,
+        estrés térmico o problemas sanitarios, y esos terneros nacen más chicos.
+        <br><b>Cómo se calcula.</b> Para cada parto se busca la última inseminación anterior y se
+        cuentan los días. Se descartan las combinaciones fuera del rango biológico (240 a 310 días):
+        si la diferencia cae afuera, esa inseminación no es la del parto y falta el registro del
+        servicio que sí quedó.
+        <br><b>L0 y L1+.</b> L0 es el primer parto —era vaquillona hasta ese momento— y L1+ el resto.
+        <br><b>Verificación.</b> Es el calce más ajustado de todo el análisis reproductivo: contra el
+        informe de DelPro da idéntico en siete de diez filas contrastadas y se desvía en un solo
+        animal en las otras tres.
+      </p>
+      <div class="aviso" id="gs-info" style="margin-top:8px"></div>
+      <div class="aviso" id="gs-alerta" style="margin-top:6px"></div>
+      <div class="kpis" id="gs-kpis" style="margin-top:10px"></div>
+
+      <div style="margin-top:18px">
+        <h3 class="g-titulo">Duración de gestaciones por mes de parto</h3>
+        <p class="explica">
+          Las barras son los días de gestación de cada grupo (eje izquierdo) y las líneas la
+          cantidad de partos (eje derecho). La línea punteada marca el parámetro configurado: las
+          barras que quedan por debajo son meses en que las vacas parieron antes de lo previsto.
+        </p>
+        <div class="chart-box" style="height:330px"><canvas id="chart-gs-mes"></canvas></div>
+      </div>
+
+      <div style="margin-top:20px">
+        <h3 class="g-titulo">Dispersión de las gestaciones</h3>
+        <p class="explica">
+          Cuántos partos cayeron en cada duración. El promedio solo no alcanza: dos rodeos con el
+          mismo promedio de 277 días pueden tener uno las gestaciones muy juntas y el otro una cola
+          de partos prematuros, que es un problema sanitario y se ve acá y no en el promedio.
+        </p>
+        <div class="chart-box" style="height:300px"><canvas id="chart-gs-dist"></canvas></div>
+      </div>
+
+      <div style="margin-top:20px">
+        <h3 class="g-titulo">Detalle por mes</h3>
+        <p class="explica">
+          La columna <b>Desvío</b> son los días de diferencia contra el parámetro configurado.
+          Negativo significa que parieron antes.
+        </p>
+        <div style="overflow-x:auto" id="gs-tabla"></div>
       </div>
     </div>
 
@@ -2919,6 +2984,114 @@ document.getElementById('tp-dim').addEventListener('click', ev => {
   pintarTasaPrenez();   // las dos vistas vienen juntas: no vuelve a consultar
 });
 
+// --- Análisis de gestación ---------------------------------------------------
+let chartGsMes = null, chartGsDist = null, gsDatos = null, gsReintento = null;
+
+function pintarGestacion() {
+  const d = gsDatos;
+  if (!d) return;
+  const r = d.resumen || {};
+  const labels = (d.meses || []).map(m => etiquetaMes(m));
+
+  document.getElementById('gs-kpis').innerHTML = [
+    ['Partos analizados', fmt(r.partos)],
+    ['Gestación real promedio', r.dias_promedio == null ? '—' : fmt(r.dias_promedio) + ' d'],
+    ['Parámetro configurado', fmt(r.dias_configurados) + ' d'],
+    ['Desvío', r.desvio == null ? '—' : (r.desvio > 0 ? '+' : '') + fmt(r.desvio) + ' d'],
+  ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+
+  const o = baseOpts(true);
+  o.interaction = { mode: 'index', intersect: false };
+  o.scales.y.title = { display: true, text: 'días de gestación' };
+  o.scales.y.beginAtZero = false;
+  o.scales.y1 = {
+    position: 'right', beginAtZero: true, grid: { drawOnChartArea: false },
+    border: { display: false }, title: { display: true, text: 'partos' },
+  };
+  const cfg = r.dias_configurados;
+  chartGsMes = dibujar('chart-gs-mes', chartGsMes, {
+    type: 'bar',
+    data: { labels, datasets: [
+      { type: 'bar', label: 'Días gest. L0', data: d.series['L0'].dias,
+        backgroundColor: SERIES[1], borderWidth: 0, maxBarThickness: 26, borderRadius: 3 },
+      { type: 'bar', label: 'Días gest. L1+', data: d.series['L1+'].dias,
+        backgroundColor: SERIES[5], borderWidth: 0, maxBarThickness: 26, borderRadius: 3 },
+      // Referencia: el parámetro que usan las proyecciones.
+      { type: 'line', label: `Parámetro (${cfg} d)`, data: labels.map(() => cfg),
+        borderColor: SERIES[2], borderDash: [6, 4], borderWidth: 2, pointRadius: 0 },
+      { type: 'line', label: 'Partos L0', yAxisID: 'y1', data: d.series['L0'].partos,
+        borderColor: SERIES[4], backgroundColor: SERIES[4], borderWidth: 2, pointRadius: 3, tension: .3 },
+      { type: 'line', label: 'Partos L1+', yAxisID: 'y1', data: d.series['L1+'].partos,
+        borderColor: SERIES[0], backgroundColor: SERIES[0], borderWidth: 2, pointRadius: 3, tension: .3 },
+    ] },
+    options: o,
+  });
+
+  const h = d.histograma || { dias: [] };
+  const oH = baseOpts(true);
+  oH.interaction = { mode: 'index', intersect: false };
+  oH.scales.y.title = { display: true, text: 'partos' };
+  oH.scales.x.title = { display: true, text: 'días de gestación' };
+  oH.scales.x.stacked = true;
+  oH.scales.y.stacked = true;
+  chartGsDist = dibujar('chart-gs-dist', chartGsDist, {
+    type: 'bar',
+    data: { labels: h.dias, datasets: [
+      { label: 'L0', data: h['L0'], backgroundColor: SERIES[1], borderWidth: 0 },
+      { label: 'L1+', data: h['L1+'], backgroundColor: SERIES[5], borderWidth: 0 },
+    ] },
+    options: oH,
+  });
+
+  tablaInteractiva('gs-tabla', [
+    { clave: 'mes', titulo: 'Mes', tipo: 'texto', fmt: v => etiquetaMes(v) },
+    { clave: 'grupo', titulo: 'Grupo', tipo: 'texto' },
+    { clave: 'partos', titulo: 'Partos', tipo: 'num' },
+    { clave: 'dias', titulo: 'Días de gestación', tipo: 'num' },
+    { clave: 'dias_min', titulo: 'Mínimo', tipo: 'num', fmt: v => String(v) },
+    { clave: 'dias_max', titulo: 'Máximo', tipo: 'num', fmt: v => String(v) },
+    { clave: 'desvio', titulo: 'Desvío vs parámetro', tipo: 'num',
+      fmt: v => (v > 0 ? '+' : '') + fmt(v) + ' d' },
+  ], d.tabla || [], { orden: 'mes' });
+
+  document.getElementById('gs-info').textContent =
+    `${fmt(r.partos)} partos entre ${d.desde} y ${d.hasta}.`;
+  // Lo que de verdad importa: cuánto se corren las fechas proyectadas.
+  const dv = r.desvio;
+  document.getElementById('gs-alerta').innerHTML = (dv == null || Math.abs(dv) < 1.5) ? ''
+    : `<span style="color:var(--warning)">⚠ Las gestaciones reales promedian ` +
+      `<b>${fmt(r.dias_promedio)} días</b> contra los <b>${cfg}</b> configurados en DelPro. ` +
+      `Eso corre <b>${fmt(Math.abs(dv))} días</b> ${dv < 0 ? 'hacia adelante' : 'hacia atrás'} ` +
+      `todas las fechas de parto y de secado que proyectan Proyección de Rebaños y Partos y ` +
+      `Secados. Se corrige cambiando el parámetro en DelPro.</span>`;
+}
+
+async function cargarGestacion() {
+  clearTimeout(gsReintento);
+  const info = document.getElementById('gs-info');
+  await cargarRebanos();
+  const sel = document.getElementById('gs-rebano');
+  if (!sel.options.length && reproRebanos) {
+    const def = (reproRebanos.find(x => x.es_el_tambo) || {}).herd;
+    sel.innerHTML = reproRebanos.map(x =>
+      `<option value="${x.herd}"${x.herd === def ? ' selected' : ''}>${x.nombre}</option>`).join('');
+  }
+  const g = (id, def) => { const e = document.getElementById(id); if (!e.value) e.value = def; return e.value; };
+  const hasta = g('gs-hasta', hoyISO());
+  const desde = g('gs-desde', menosDias(hasta, 365));
+  info.textContent = 'Analizando…';
+  try {
+    gsDatos = await pedirJSON(`/api/reproduccion/gestacion?desde=${desde}&hasta=${hasta}` +
+      `&rebano=${encodeURIComponent(sel.value)}&tambo=${encodeURIComponent(tamboActual)}`);
+    pintarGestacion();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; gsReintento = setTimeout(cargarGestacion, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('gs-aplicar').addEventListener('click', cargarGestacion);
+document.getElementById('gs-rebano').addEventListener('change', cargarGestacion);
+
 // --- Performance -------------------------------------------------------------
 let chartPerfCurva = null, chartPerfPers = null, chartPerfDist = null, chartPerfConc = null;
 let perfDatos = null, perfDim = 'lactancia', perfReintento = null;
@@ -3105,7 +3278,10 @@ document.getElementById('repro-tabs').addEventListener('click', ev => {
   document.getElementById('repro-panel-performance').hidden = tab !== 'performance';
   document.getElementById('repro-panel-partos').hidden = tab !== 'partos';
   document.getElementById('repro-panel-tasa').hidden = tab !== 'tasa';
+  document.getElementById('repro-panel-gestacion').hidden = tab !== 'gestacion';
   document.getElementById('repro-panel-metas').hidden = tab !== 'metas';
+  if (tab === 'gestacion' && !gsDatos) cargarGestacion();
+  if (tab !== 'gestacion') clearTimeout(gsReintento);
   if (tab === 'partos' && !psDatos) cargarPartosSecados();
   if (tab === 'tasa' && !tpDatos) cargarTasaPrenez();
   if (tab !== 'partos') clearTimeout(psReintento);

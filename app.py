@@ -21,6 +21,7 @@ import correo
 import db
 import ficha_animal
 import flujos
+import gestacion
 import iot_monitoreo
 import laserenisima
 import mantenimiento
@@ -2013,6 +2014,70 @@ def api_tasa_prenez():
         "mes": tasa_prenez.analizar(data["mes"]["datos"], data["mes"]["ventanas"],
                                     tipo, ciclo, pev),
     })
+
+
+@app.get("/api/reproduccion/gestacion")
+@auth.requiere_rol("admin")
+def api_reproduccion_gestacion():
+    """"Análisis de Gestación": duración real de las gestaciones por mes de
+    parto, contra el parámetro de días de gestación que usa el tambo.
+    Ver `gestacion.py`."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    try:
+        hasta = (datetime.datetime.strptime(request.args["hasta"], "%Y-%m-%d").date()
+                 if request.args.get("hasta") else hoy)
+        desde = (datetime.datetime.strptime(request.args["desde"], "%Y-%m-%d").date()
+                 if request.args.get("desde") else hasta - datetime.timedelta(days=365))
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    if desde > hasta:
+        desde, hasta = hasta, desde
+    if (hasta - desde).days > gestacion.RANGO_MAX_DIAS:
+        return jsonify({"error": f"El rango no puede superar {gestacion.RANGO_MAX_DIAS} días."}), 400
+
+    herd_param = (request.args.get("rebano") or "").strip()
+    if not herd_param:
+        herd = rebano.por_defecto(tambo)
+    elif herd_param.lower() == rebano.TODOS:
+        herd = rebano.TODOS
+    else:
+        try:
+            herd = int(herd_param)
+        except ValueError:
+            return jsonify({"error": f"Rebaño inválido: {herd_param!r}"}), 400
+
+    key = f"{tambo}:gestacion:{desde}:{hasta}:{herd}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=REPRO_CACHE_TTL_S)
+    if data is None:
+        with _cache_lock:
+            arrancar = key not in _refreshing
+            if arrancar:
+                _refreshing.add(key)
+
+        def run(k=key):
+            d, h = desde.isoformat(), hasta.isoformat()
+            try:
+                _cache_set(k, {
+                    "mes": db.run_query(gestacion.sql_por_mes(d, h, herd),
+                                        tambo=tambo, max_rows=200),
+                    "dist": db.run_query(gestacion.sql_distribucion(d, h, herd),
+                                         tambo=tambo, max_rows=300),
+                })
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                with _cache_lock:
+                    _refreshing.discard(k)
+
+        if arrancar:
+            threading.Thread(target=run, daemon=True).start()
+        return jsonify({"calentando": True, "mensaje": "Analizando gestaciones…"}), 202
+
+    resultado = gestacion.analizar(data["mes"], data["dist"],
+                                   parametros.valor("dias_gestacion", tambo))
+    resultado.update({"desde": desde.isoformat(), "hasta": hasta.isoformat(), "rebano": herd})
+    return jsonify(resultado)
 
 
 @app.get("/api/reproduccion/rebanos")
