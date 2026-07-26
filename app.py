@@ -14,6 +14,7 @@ import datetime
 import os
 
 import ai
+import alimentacion
 import auth
 import cicla
 import conciliacion
@@ -2696,6 +2697,92 @@ def api_alimentacion_guardar_conciliacion():
         return jsonify(_conciliacion_estado(tambo))
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 502
+
+
+CONVERSION_CACHE_TTL_S = 1800
+
+
+@app.get("/api/alimentacion/conversion")
+@auth.requiere_rol("admin")
+def api_alimentacion_conversion():
+    """Eficiencia de conversión: kg de sólidos por kg de materia seca, por grupo
+    y por vaca. Ver `alimentacion.py` — es una medida de GRUPO, la materia seca
+    por vaca es un reparto del corral."""
+    tambo = _tambo_del_request()
+    herd = rebano.por_defecto(tambo)
+    try:
+        dias = min(int(request.args.get("dias") or alimentacion.DIAS_DEFECTO),
+                   alimentacion.RANGO_MAX_DIAS)
+    except ValueError:
+        return jsonify({"error": "Cantidad de días inválida."}), 400
+
+    mapeo = conciliacion.lote_de_grupo(tambo)
+    if not mapeo:
+        return jsonify({"error": "Todavía no hay ningún lote asignado a un grupo. "
+                                 "Definí el mapeo en la pestaña «Conciliación de grupos» "
+                                 "y volvé acá."}), 409
+
+    key = f"{tambo}:alim_conversion:{herd}:{dias}"
+    data, _ = _cache_get(key, allow_stale=True, ttl=CONVERSION_CACHE_TTL_S)
+    if data is None:
+        with _cache_lock:
+            arrancar = key not in _refreshing
+            if arrancar:
+                _refreshing.add(key)
+
+        def run(k=key):
+            try:
+                # El período termina en el último día COMPLETO de AnimalDaily, no
+                # en hoy: los últimos días vienen a medio cargar y hundirían los
+                # promedios (ver `conciliacion.ultimo_dia_completo`).
+                d_dias = db.run_query(conciliacion.sql_dias_animaldaily(herd),
+                                      tambo=tambo, max_rows=60)
+                ultimo = conciliacion.ultimo_dia_completo(d_dias)
+                hasta = (datetime.date.fromisoformat(ultimo["fecha"]) if ultimo["fecha"]
+                         else datetime.date.today())
+                desde = hasta - datetime.timedelta(days=dias - 1)
+                consumos = proveedores.de(tambo).consumos(desde, hasta)
+                ms, diag = alimentacion.ms_por_lote_dia(consumos)
+                _cache_set(k, {
+                    "desde": desde.isoformat(), "hasta": hasta.isoformat(),
+                    "ms": {f"{l}|{f.isoformat()}": v for (l, f), v in ms.items()},
+                    "diagnostico": diag,
+                    "prod_dia": db.run_query(
+                        alimentacion.sql_produccion_grupo_dia(desde, hasta, herd),
+                        tambo=tambo, max_rows=4000),
+                    "prod_vaca": db.run_query(
+                        alimentacion.sql_produccion_vaca(desde, hasta, herd),
+                        tambo=tambo, max_rows=5000),
+                    "solidos": db.run_query(
+                        alimentacion.sql_solidos_vaca(desde, hasta, herd),
+                        tambo=tambo, max_rows=5000),
+                    "grupos": db.run_query(conciliacion.sql_grupos(herd),
+                                           tambo=tambo, max_rows=500),
+                })
+            except Exception as exc:  # noqa: BLE001
+                _cache_set(k, {"error": str(exc)})
+            finally:
+                with _cache_lock:
+                    _refreshing.discard(k)
+
+        if arrancar:
+            threading.Thread(target=run, daemon=True).start()
+        return jsonify({"calentando": True,
+                        "mensaje": "Calculando la conversión (leche, sólidos y "
+                                   "materia seca de las últimas semanas)…"}), 202
+
+    if data.get("error"):
+        return jsonify({"error": data["error"]}), 502
+
+    ms = {}
+    for clave, v in data["ms"].items():
+        lote, fecha = clave.rsplit("|", 1)
+        ms[(lote, datetime.date.fromisoformat(fecha))] = v
+    salida = alimentacion.analizar(
+        data["prod_dia"], data["prod_vaca"], data["solidos"], ms,
+        conciliacion.grupos_de(data["grupos"]), mapeo, data["diagnostico"])
+    salida.update({"desde": data["desde"], "hasta": data["hasta"], "dias": dias})
+    return jsonify(salida)
 
 
 if __name__ == "__main__":

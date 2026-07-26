@@ -910,7 +910,51 @@
       <span class="aviso">Qué lote del mixer alimenta a qué grupo de DelPro.</span>
       <div class="lac-segment" id="alim-tabs" role="group" aria-label="Vista" style="margin-left:auto">
         <button class="lac-segment__item" data-tab="conciliacion" aria-pressed="true">Conciliación de grupos</button>
+        <button class="lac-segment__item" data-tab="conversion" aria-pressed="false">Eficiencia de conversión</button>
       </div>
+    </div>
+
+    <div id="alim-panel-conversion" hidden>
+      <p class="explica" style="margin-top:12px">
+        <b>Qué mide.</b> Cuántos <b>kg de sólidos</b> (grasa + proteína) produce el rodeo por cada
+        <b>kg de materia seca</b> que come. Es una relación física: no necesita precios, y por eso
+        se puede calcular hoy aunque los ingredientes de Haasten estén sin precio cargado.
+        <br><b>Es una medida de GRUPO, no de vaca.</b> El TMR se entrega al corral y no hay
+        comederos individuales: a todas las vacas de un grupo se les imputa <b>la misma</b> materia
+        seca. Entonces, dentro de un mismo corral, ordenar por conversión es ordenar por kg de
+        sólidos con otro nombre. Sirve para comparar <b>grupos entre sí</b> y al tambo contra sí
+        mismo en el tiempo. La columna de kg de MS por vaca es un <b>reparto, no una medición</b>:
+        no descartes una vaca por ese número.
+        <br><b>Solo grupos de ordeñe.</b> En preparto el lote alimenta a vacas que no ordeñan, así
+        que el indicador daría cualquier cosa. Esos grupos quedan afuera.
+        <br><b>Los sólidos sí son individuales</b>: salen del control lechero mensual de cada vaca
+        (grasa y proteína medidas), no de un promedio del rodeo.
+      </p>
+      <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Período
+          <select id="cv-dias" style="padding:6px 8px">
+            <option value="14">2 semanas</option>
+            <option value="28" selected>4 semanas</option>
+            <option value="56">8 semanas</option>
+            <option value="84">12 semanas</option>
+          </select>
+        </label>
+        <button class="secundario" id="cv-aplicar">Aplicar</button>
+      </div>
+      <div class="aviso" id="cv-info" style="margin-top:8px"></div>
+      <section class="kpis" id="cv-kpis" style="margin-top:10px"></section>
+      <div id="cv-avisos" style="margin-top:10px"></div>
+
+      <h3 class="g-titulo" style="margin-top:20px">Por grupo — el indicador confiable</h3>
+      <div class="chart-box" style="height:260px;margin-top:8px"><canvas id="chart-cv"></canvas></div>
+      <div style="overflow-x:auto;margin-top:10px" id="cv-tabla-grupos"></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Por vaca</h3>
+      <span class="aviso">Los kg de leche y de sólidos son de cada animal. La materia seca es la de
+        su grupo repartida en partes iguales — por eso, dentro de un mismo grupo, este orden es el
+        de los sólidos.</span>
+      <div style="overflow-x:auto;margin-top:8px" id="cv-tabla-vacas"></div>
+      <div class="aviso" id="cv-diagnostico" style="margin-top:12px"></div>
     </div>
 
     <div id="alim-panel-conciliacion">
@@ -5725,6 +5769,157 @@ document.getElementById('conc-guardar').addEventListener('click', async () => {
     concPintar(false);
     info.textContent = 'Mapeo guardado.';
   } catch (e) { info.textContent = 'Error al guardar: ' + e.message; }
+});
+
+// --- Alimentación: eficiencia de conversión ----------------------------------
+let cvDatos = null, chartCv = null, cvReintento = null;
+
+function pintarConversion() {
+  const d = cvDatos, r = d.resumen || {};
+  const conv = r.conversion_tambo;
+  // El número solo no dice nada: se lo ubica contra las referencias de la
+  // industria para vacas de alta producción.
+  const juicio = conv == null ? ''
+    : conv >= r.referencia_buena ? 'por encima de lo bueno'
+    : conv >= r.referencia_baja ? 'en la banda habitual'
+    : 'por debajo de la banda habitual';
+
+  document.getElementById('cv-kpis').innerHTML = [
+    ['Conversión del tambo', conv == null ? '—' : conv.toFixed(3),
+      `kg sólidos / kg MS · ${juicio}`],
+    ['Materia seca', fmt(r.kg_ms_total) + ' kg', 'entregada en el período'],
+    ['Sólidos producidos', fmt(r.kg_solidos_total) + ' kg', 'grasa + proteína'],
+    ['Grupos en el indicador', fmt(r.grupos_confiables),
+      (r.grupos_no_confiables || r.grupos_sin_descargas)
+        ? `${fmt((r.grupos_no_confiables || 0) + (r.grupos_sin_descargas || 0))} afuera, ver abajo`
+        : 'todos los de ordeñe'],
+    ['Vacas', fmt(r.vacas),
+      r.vacas_sin_control ? `${fmt(r.vacas_sin_control)} sin control lechero` : 'todas con control'],
+  ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
+    `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
+
+  const g = d.grupos || [];
+  // Al gráfico van SOLO los confiables. Un grupo con descargas incompletas
+  // dibuja la barra más alta justamente por estar mal, y una barra alta se lee
+  // como "el mejor" antes de que nadie llegue a leer la aclaración.
+  const gc = g.filter(x => x.confiable);
+  const o = baseOpts(true);
+  o.scales.y.title = { display: true, text: 'kg sólidos / kg MS' };
+  chartCv = dibujar('chart-cv', chartCv, {
+    type: 'bar',
+    data: {
+      labels: gc.map(x => x.grupo),
+      datasets: [
+        { label: 'Conversión', data: gc.map(x => x.conversion),
+          backgroundColor: gc.map(x => x.conversion >= r.referencia_buena ? '#4f9a94'
+            : x.conversion >= r.referencia_baja ? '#d9a066' : '#b3382c') },
+      ],
+    },
+    options: o,
+  });
+
+  // Grupos que quedaron afuera del indicador, con el motivo. Son hallazgos para
+  // el tambo, no ruido: significan descargas que no se están registrando.
+  const malos = (d.grupos || []).filter(x => !x.confiable);
+  const sinDesc = d.sin_descargas || [];
+  document.getElementById('cv-avisos').innerHTML = (malos.length || sinDesc.length)
+    ? malos.map(x => `<div class="aviso" style="padding:6px 0">
+        <span class="chip rojo">Fuera del indicador</span> <b>${x.grupo}</b> (lote ${x.lote}):
+        ${x.motivo}</div>`).join('') +
+      (sinDesc.length ? `<div class="aviso" style="padding:6px 0">
+        <span class="chip rojo">Sin descargas</span>
+        ${sinDesc.length} grupo(s) de ordeñe con lote asignado pero <b>ninguna descarga
+        registrada</b> en el período — ${fmt(sinDesc.reduce((s, x) => s + x.cabezas, 0))}
+        vacas comiendo sin que quede registro:
+        ${sinDesc.map(x => `${x.grupo} (${fmt(x.cabezas)})`).join(', ')}.</div>` : '')
+    : '';
+
+  tablaInteractiva('cv-tabla-grupos', [
+    { clave: 'grupo', titulo: 'Grupo', tipo: 'texto',
+      fmt: (v, f) => f.confiable ? v : `${v} <span class="chip rojo">no confiable</span>` },
+    { clave: 'lote', titulo: 'Lote', tipo: 'texto' },
+    { clave: 'vacas_promedio', titulo: 'Vacas', tipo: 'num' },
+    { clave: 'kg_ms_vaca_dia', titulo: 'kg MS/vaca/día', tipo: 'num' },
+    { clave: 'kg_leche_vaca_dia', titulo: 'kg leche/vaca/día', tipo: 'num' },
+    { clave: 'pct_solidos', titulo: '% sólidos', tipo: 'num',
+      fmt: v => v == null ? '—' : v.toFixed(2) + ' %' },
+    { clave: 'kg_solidos_vaca_dia', titulo: 'kg sólidos/vaca/día', tipo: 'num',
+      fmt: v => v == null ? '—' : v.toFixed(2) },
+    { clave: 'conversion', titulo: 'Conversión', tipo: 'num',
+      fmt: v => v == null ? '—' : `<b>${v.toFixed(3)}</b>` },
+    { clave: 'dias', titulo: 'Días con dato', tipo: 'num' },
+  ], g, { orden: 'conversion' });
+
+  tablaInteractiva('cv-tabla-vacas', [
+    { clave: 'rp', titulo: 'RP', tipo: 'num' },
+    { clave: 'grupo', titulo: 'Grupo', tipo: 'texto' },
+    { clave: 'lactancia', titulo: 'Lact.', tipo: 'num' },
+    { clave: 'dim', titulo: 'DEL', tipo: 'num' },
+    { clave: 'kg_leche_dia', titulo: 'kg leche/día', tipo: 'num' },
+    { clave: 'grasa', titulo: '% grasa', tipo: 'num',
+      fmt: v => v == null ? '—' : v.toFixed(2) },
+    { clave: 'proteina', titulo: '% proteína', tipo: 'num',
+      fmt: v => v == null ? '—' : v.toFixed(2) },
+    { clave: 'kg_solidos_dia', titulo: 'kg sólidos/día', tipo: 'num',
+      fmt: v => v == null ? '—' : `<b>${v.toFixed(2)}</b>` },
+    { clave: 'kg_ms_dia', titulo: 'kg MS/día (reparto)', tipo: 'num',
+      fmt: v => v == null ? '—' : `<span class="aviso">${fmt(v)}</span>` },
+    { clave: 'conversion', titulo: 'Conversión', tipo: 'num',
+      fmt: v => v == null ? '—' : v.toFixed(3) },
+  ], d.vacas || [], { orden: 'kg_solidos_dia' });
+
+  const dg = d.diagnostico || {};
+  const recetas = Object.entries(dg.recetas || {});
+  document.getElementById('cv-diagnostico').innerHTML =
+    `<b>De dónde sale la materia seca.</b> Haasten no la entrega calculada: se saca del %MS de ` +
+    `cada receta (kg de ingrediente × su %MS) aplicado a los kg descargados a cada lote. ` +
+    `%MS por receta del período: ` +
+    recetas.map(([n, p]) => `${n} <b>${p}%</b>`).join(' · ') + '.' +
+    (dg.kg_sin_receta ? `<br>${fmt(dg.kg_sin_receta)} kg descargados quedaron afuera porque su ` +
+      `mezcla se cargó antes del inicio del período y no se sabe con qué receta.` : '') +
+    (dg.kg_negativos ? ` ${fmt(Math.abs(dg.kg_negativos))} kg de correcciones y devoluciones ` +
+      `se descontaron.` : '');
+
+  document.getElementById('cv-info').innerHTML =
+    `Período: <b>${d.desde}</b> a <b>${d.hasta}</b> (${d.dias} días). Termina en el último día ` +
+    `completo de datos diarios de DelPro, no en hoy. ${d.grupos.length} grupo(s) de ordeñe con ` +
+    `lote asignado.`;
+}
+
+async function cargarConversion() {
+  const info = document.getElementById('cv-info');
+  clearTimeout(cvReintento);
+  const dias = document.getElementById('cv-dias').value;
+  try {
+    const d = await pedirJSON('/api/alimentacion/conversion?tambo=' +
+      encodeURIComponent(tamboActual) + '&dias=' + dias);
+    if (d.calentando) {
+      info.textContent = d.mensaje;
+      cvReintento = setTimeout(cargarConversion, 3000);
+      return;
+    }
+    cvDatos = d;
+    pintarConversion();
+  } catch (e) {
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('cv-aplicar').addEventListener('click', () => {
+  cvDatos = null;
+  cargarConversion();
+});
+
+// Pestañas de Alimentación.
+document.getElementById('alim-tabs').addEventListener('click', (ev) => {
+  const b = ev.target.closest('[data-tab]');
+  if (!b) return;
+  const tab = b.dataset.tab;
+  document.querySelectorAll('#alim-tabs [data-tab]').forEach(x =>
+    x.setAttribute('aria-pressed', String(x.dataset.tab === tab)));
+  document.getElementById('alim-panel-conciliacion').hidden = tab !== 'conciliacion';
+  document.getElementById('alim-panel-conversion').hidden = tab !== 'conversion';
+  if (tab === 'conversion' && !cvDatos) cargarConversion();
 });
 
 // ---------------------------------------------------------------------------

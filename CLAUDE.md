@@ -143,6 +143,42 @@ El objetivo es saber cuánto rinde cada vaca: ingreso por sólidos menos costo
 de alimento (IOFC), eficiencia de conversión (kg de sólidos por kg de materia
 seca) y potencial sin explotar (su pico contra el de su grupo y lactancia).
 
+**EFICIENCIA DE CONVERSIÓN: HECHA** (`alimentacion.py`, pestaña "Eficiencia de
+conversión"). Medido sobre las cuatro semanas al 21/07/2026:
+
+    Rodeo 2   23,3 kg MS → 3,81 kg sólidos → 0,163
+    Rodeo 3   22,3 kg MS → 3,14 kg sólidos → 0,141
+    Rodeo 1   23,8 kg MS → 3,24 kg sólidos → 0,136  (frescas, DIM 23)
+    Rodeo 5   25,0 kg MS → 2,87 kg sólidos → 0,114  ← come más y convierte peor
+    tambo                                    0,140
+
+**Es una medida de GRUPO, no de vaca**, y hay que repetirlo cada vez: sin
+comederos individuales a todas las vacas del corral se les imputa la MISMA
+materia seca, así que ordenar por conversión DENTRO de un grupo es ordenar por
+kg de sólidos con otro nombre. Los sólidos sí son individuales y medidos (del
+control lechero mensual: 1.506 vacas controladas en julio, 93% del rodeo).
+
+**La materia seca hay que calcularla**, Haasten no la da: `kgHeads` del lote es
+el objetivo configurado (24,3 constante), no lo entregado. Cada operación del
+mixer tiene UNA receta (314 de 314) y las cargas traen el %MS por ingrediente,
+así que `%MS de la receta × kg descargados` da la MS real. Las cargas y
+descargas de una operación cierran dentro del 4% en los casos normales.
+
+**El denominador sale de `AnimalDaily` por día, no de un conteo fijo.** En el
+grupo de frescas pasaron 868 vacas distintas en 28 días teniendo ~400 a la vez:
+con un conteo estático la MS por vaca da la mitad y parece que pasan hambre.
+
+**Guarda de plausibilidad (`MS_MIN_PLAUSIBLE`, 10 kg).** El lote "Enfermeria"
+(grupo Rodeo 9) tiene 3.142 kg registrados en cuatro semanas para 35 vacas —
+7,5 kg de MS por vaca — y con eso la conversión daba **0,349**, el doble del
+mejor rodeo y por encima de lo que permite la biología. Encabezaba el ranking
+justamente por estar mal. Los grupos fuera de banda se muestran con el motivo
+pero no entran al total ni al gráfico ni a la conversión por vaca.
+
+**Dos hallazgos para el tambo, no del código:** las descargas de "Enfermeria"
+no se están registrando completas, y **"Rodeo 4 - Baja" (120 cabezas) no tiene
+NINGUNA descarga registrada** en el período pese a tener lote asignado.
+
 **CONCILIACIÓN DE GRUPOS: HECHA** (pestaña "🌾 Alimentación"). Módulos:
 `conciliacion.py` (dominio y mapeo guardado), `proveedores/haasten.py`.
 
