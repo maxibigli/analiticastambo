@@ -247,10 +247,17 @@ por ingrediente. **`GET /api/device/all` se cuelga: no usarlo.** De los cinco
 equipos de la cuenta, el único mixer es el SIP-N 202616012; los GAC son de
 combustible y el DELPROSIPN no manda datos desde junio.
 
-**48 de los 72 lotes son de relleno** ("Corral 23" a "Corral 70", con
-`kgHeads = 0` y 100 cabezas fijas). Se marcan `activo=False` por el criterio
-físico de que sin kg de materia seca por cabeza no se alimenta a nadie — no
-por el nombre, y no se ocultan.
+**Un lote que no recibe comida no es un lote.** De los 72 que declara el mixer,
+48 son de relleno ("Corral 23" a "Corral 70", `kgHeads = 0`) y otros 14 tienen
+ración configurada pero **no vieron un kg en cuatro meses** (Secas, Chiquitas
+1-5, Servicio 1-2, Preñadas 1-5). **Quedan 10 lotes reales**: los cinco rodeos
+de ordeñe, enfermería, secas, recría y los dos de preparto — que es lo que
+tiene un tambo de verdad. Pedirle un grupo a los otros generaba catorce alertas
+de algo que no es un problema, y catorce alertas falsas tapan las verdaderas.
+El criterio es el dato, no una lista: se miran las descargas de los últimos 30
+días (`CONCILIACION_DIAS_USO`). Los que no se usan van a una sección plegada,
+no se ocultan. Un lote MAPEADO que dejó de recibir sigue a la vista: es
+justamente el caso que hay que ver (le pasó a "Rodeo 4").
 
 **Los 70 ingredientes siguen con `price: 0`** — el tambo no los cargó (se hace
 desde "Editar ingrediente" en Haasten). El proveedor los traduce a `None`, no a

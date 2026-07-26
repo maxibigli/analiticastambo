@@ -34,6 +34,7 @@ este tambo carga: si alertaran, el ruido taparía lo único accionable. Igual se
 listan y se pueden mapear, y el tambo puede silenciar un grupo de ordeñe a mano
 si de verdad no se alimenta desde el proveedor.
 """
+import collections
 import json
 import os
 import re
@@ -390,11 +391,35 @@ def _estado(diferencia, pct, umbral_pct, umbral_cabezas) -> str:
     return ESTADO_REVISAR
 
 
-def analizar(grupos: list, lotes: list, mapeo: dict) -> dict:
+def kg_por_lote(consumos: dict) -> dict:
+    """{lote: kg descargados} en el período. Es lo que distingue un lote que se
+    usa de uno que solo está configurado."""
+    salida = collections.defaultdict(float)
+    for d in (consumos or {}).get("descargas") or []:
+        kg = d.get("kg") or 0
+        if kg > 0:
+            salida[(d.get("lote") or "").strip()] += kg
+    return dict(salida)
+
+
+def analizar(grupos: list, lotes: list, mapeo: dict, kg_lote: dict = None) -> dict:
     """Cruza los dos lados y arma todo lo que muestra la pantalla.
 
     `grupos`: salida de `grupos_de`. `lotes`: lo que devuelve el proveedor
     (`[{lote, cabezas, ...}]`, puede venir vacío si no se pudo consultar).
+    `kg_lote`: {lote: kg descargados} del período, de `kg_por_lote`.
+
+    UN LOTE QUE NO RECIBE COMIDA NO ES UN LOTE. El mixer de este tambo declara
+    24 lotes con ración configurada, pero solo 8 reciben descargas: "Secas" y
+    los trece de Chiquitas, Servicio y Preñadas no vieron un kg en cuatro meses.
+    Existen como configuración vieja, no como corrales que haya que conciliar.
+    Pedirles un grupo generaba catorce alertas de algo que no es un problema, y
+    catorce alertas falsas tapan las dos verdaderas. En un tambo real son dos a
+    seis lotes de ordeñe más secas, vaquillonas y enfermería: no mucho más.
+
+    Los que sí quedan a la vista son los que recibieron comida O los que el
+    tambo ya mapeó — un lote mapeado que dejó de recibir es justamente el caso
+    que hay que ver (le pasó a "Rodeo 4" al reorganizar los rodeos).
     """
     umbral_pct = mapeo.get("umbral_pct", UMBRAL_PCT)
     umbral_cabezas = mapeo.get("umbral_cabezas", UMBRAL_CABEZAS)
@@ -427,11 +452,21 @@ def analizar(grupos: list, lotes: list, mapeo: dict) -> dict:
         pct = round(dif / cab_delpro * 100, 1) if (dif is not None and cab_delpro) else None
         # Un lote que ya no está en el proveedor pero sí en el mapeo cuenta como
         # activo: hay que mirarlo, no esconderlo.
-        activo = del_prov.get("activo", True) if del_prov else True
+        tiene_racion = del_prov.get("activo", True) if del_prov else True
+        kg_recibidos = (kg_lote or {}).get(nombre)
+        # Sin datos de descargas (`kg_lote` en None) no se puede saber si se usa:
+        # se asume que sí, que es el comportamiento anterior.
+        en_uso = None if kg_lote is None else bool(kg_recibidos)
+        # A la tabla principal van los que reciben comida o los que el tambo ya
+        # mapeó. El resto es configuración vieja y va a la sección plegada.
+        activo = tiene_racion and (en_uso is not False or bool(oids))
         filas_lote.append({
             "lote": nombre,
             "en_proveedor": del_prov is not None,
             "activo": activo,
+            "tiene_racion": tiene_racion,
+            "en_uso": en_uso,
+            "kg_recibidos": round(kg_recibidos) if kg_recibidos else 0,
             "cabezas_proveedor": cab_prov,
             "categoria": (del_prov or {}).get("categoria"),
             "kg_ms_cabeza": (del_prov or {}).get("kg_ms_cabeza"),
@@ -461,13 +496,16 @@ def analizar(grupos: list, lotes: list, mapeo: dict) -> dict:
                             "falta_lote": falta})
 
     sin_lote = [g for g in filas_grupo if g["falta_lote"]]
-    # Los lotes de relleno (sin kg de materia seca por cabeza) no alimentan a
-    # nadie: no tiene sentido reclamarles un grupo ni contar sus cabezas.
+    # Afuera quedan los de relleno (sin ración configurada) y los que están
+    # configurados pero no reciben comida: ninguno alimenta a nadie, así que no
+    # tiene sentido reclamarles un grupo ni contar sus cabezas.
     activos = [f for f in filas_lote if f["activo"]]
     inactivos = [f for f in filas_lote if not f["activo"]]
     lotes_sin_grupo = [f for f in activos if f["en_proveedor"] and not f["grupos"]]
     total_ordene = sum(g["cabezas"] for g in grupos if g["es_ordene"])
-    total_prov = sum(l.get("cabezas") or 0 for l in lotes if l.get("activo", True))
+    nombres_activos = {f["lote"] for f in activos}
+    total_prov = sum(l.get("cabezas") or 0 for l in lotes
+                     if (l.get("lote") or "").strip() in nombres_activos)
 
     alertas = []
     if sin_lote:
@@ -508,8 +546,11 @@ def analizar(grupos: list, lotes: list, mapeo: dict) -> dict:
         "grupos": filas_grupo,
         "alertas": alertas,
         "huerfanos": huerfanos,
-        # Los lotes de relleno no se sugieren: no hay nada que mapearles.
-        "sugerencias": sugerir(grupos, [l for l in lotes if l.get("activo", True)],
+        # Solo se sugieren los lotes que están en uso: proponerle un grupo a uno
+        # que hace meses no recibe comida es inventarle trabajo al tambo.
+        "sugerencias": sugerir(grupos,
+                               [l for l in lotes
+                                if (l.get("lote") or "").strip() in nombres_activos],
                                set(asignado_a) | silenciados),
         "resumen": {
             "grupos": len(grupos),
