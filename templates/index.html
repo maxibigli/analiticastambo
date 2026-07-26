@@ -603,29 +603,6 @@
       <div class="kpis" id="tp-kpis" style="margin-top:10px"></div>
       <div class="chart-box" style="height:330px;margin-top:12px"><canvas id="chart-tasa-prenez"></canvas></div>
       <div style="overflow-x:auto;margin-top:14px" id="tp-tabla"></div>
-
-      <div style="margin-top:24px;border-top:1px solid var(--border);padding-top:18px">
-        <h3 class="g-titulo">Estrés calórico contra reproducción</h3>
-        <p class="explica">
-          <b>Qué busca.</b> Si el bache reproductivo del verano es por calor o por manejo. Son dos
-          problemas distintos y se arreglan distinto: uno con sombra, ventilación y aspersores; el
-          otro con un plan de servicio.
-          <br><b>Cómo leerlo.</b> Las barras son los <b>servicios</b> de cada mes, la línea azul la
-          <b>tasa de concepción</b> y la verde el <b>ITH</b> (eje derecho). El ITH es el índice de
-          temperatura y humedad: por encima de <b>72</b> la vaca está en estrés calórico, por
-          encima de <b>80</b> es severo. Sale del clima real de las coordenadas del tambo.
-          <br><b>Dos aclaraciones que cambian la lectura</b>, y por eso están marcadas en el
-          gráfico:
-          <br>· Los meses <b>en gris</b> están incompletos: el chequeo de preñez se hace unos 45
-          días después del servicio, así que los servicios recientes todavía no tienen resultado.
-          Su concepción no se dibuja porque daría casi cero y no sería real.
-          <br>· Los meses <b>sin barra</b> son marzo y abril, cuando el tambo no insemina. No es
-          una caída de performance, es una parada de servicio planificada.
-        </p>
-        <div class="aviso" id="ith-resumen" style="margin-bottom:10px"></div>
-        <div class="chart-box" style="height:340px"><canvas id="chart-ith"></canvas></div>
-        <div style="overflow-x:auto;margin-top:12px" id="ith-tabla"></div>
-      </div>
     </div>
 
     <div id="repro-panel-partos" hidden>
@@ -3225,87 +3202,6 @@ async function cargarTasaPrenez() {
     if (e.calentando) { info.textContent = e.message; tpReintento = setTimeout(cargarTasaPrenez, 5000); return; }
     info.textContent = 'Error: ' + e.message;
   }
-  // El ITH va aparte: usa dos años para tener varios veranos, y no depende
-  // del tipo de animal ni de la dimensión elegida arriba.
-  cargarIth(sel.value);
-}
-
-// --- Estrés calórico contra reproducción -------------------------------------
-let chartIth = null, ithReintento = null;
-
-function pintarIth(d) {
-  const m = d.meses || [], u = d.umbrales || {};
-  const gris = 'rgba(140,140,140,.35)';
-
-  const o = baseOpts(true);
-  o.interaction = { mode: 'index', intersect: false };
-  o.scales.y.title = { display: true, text: 'servicios · % concepción' };
-  o.scales.y1 = {
-    position: 'right', beginAtZero: false, suggestedMin: 50, suggestedMax: 85,
-    grid: { drawOnChartArea: false }, border: { display: false },
-    title: { display: true, text: 'ITH' },
-  };
-  chartIth = dibujar('chart-ith', chartIth, {
-    type: 'bar',
-    data: {
-      labels: m.map(x => etiquetaMes(x.mes)),
-      datasets: [
-        { type: 'bar', label: 'Servicios', data: m.map(x => x.servicios),
-          // Los meses incompletos van en gris: sus servicios son reales pero
-          // su resultado todavía no se conoce.
-          backgroundColor: m.map(x => x.incompleto ? gris : SERIES[1]),
-          borderWidth: 0, maxBarThickness: 26, borderRadius: 3 },
-        { type: 'line', label: '% concepción', data: m.map(x => x.pct_concepcion),
-          borderColor: SERIES[0], backgroundColor: SERIES[0],
-          borderWidth: 2, pointRadius: 3, tension: .25, spanGaps: false },
-        { type: 'line', label: 'ITH del mes', yAxisID: 'y1', data: m.map(x => x.ith),
-          borderColor: SERIES[4], backgroundColor: SERIES[4],
-          borderWidth: 2, pointRadius: 2, tension: .3 },
-        { type: 'line', label: `Estrés (ITH ${u.moderado})`, yAxisID: 'y1',
-          data: m.map(() => u.moderado), borderColor: SERIES[5],
-          borderDash: [6, 4], borderWidth: 1.5, pointRadius: 0 },
-      ],
-    },
-    options: o,
-  });
-
-  const c = d.comparacion || {};
-  const dif = (c.concepcion_fresco != null && c.concepcion_calor != null)
-    ? (c.concepcion_fresco - c.concepcion_calor) : null;
-  document.getElementById('ith-resumen').innerHTML = dif == null ? '' :
-    `En los <b>${c.meses_calor} meses calurosos</b> (ITH ≥ ${u.moderado}) la concepción fue de ` +
-    `<b>${fmt(c.concepcion_calor)}%</b> contra <b>${fmt(c.concepcion_fresco)}%</b> en los ` +
-    `${c.meses_fresco} meses frescos: <b>${fmt(dif)} puntos menos</b>. Y se hicieron ` +
-    `<b>${fmt(c.servicios_calor)} servicios promedio por mes contra ${fmt(c.servicios_fresco)}</b>. ` +
-    `<span class="aviso">Excluye los meses sin servicio y los que todavía no tienen chequeo.</span>`;
-
-  tablaInteractiva('ith-tabla', [
-    { clave: 'mes', titulo: 'Mes', tipo: 'texto', fmt: v => etiquetaMes(v) },
-    { clave: 'ith', titulo: 'ITH del mes', tipo: 'num' },
-    { clave: 'ith_pico', titulo: 'ITH pico', tipo: 'num' },
-    { clave: 'dias_estres', titulo: 'Días con estrés', tipo: 'num', fmt: v => String(v) },
-    { clave: 'dias_severo', titulo: 'Días severos', tipo: 'num', fmt: v => String(v) },
-    { clave: 'servicios', titulo: 'Servicios', tipo: 'num' },
-    { clave: 'pct_concepcion', titulo: '% concepción', tipo: 'num',
-      fmt: (v, f) => f.incompleto ? '<span class="aviso">sin chequear</span>'
-                   : f.sin_servicio ? '<span class="aviso">sin servicio</span>'
-                   : fmt(v) + ' %' },
-  ], m, { orden: 'mes' });
-}
-
-async function cargarIth(herd) {
-  clearTimeout(ithReintento);
-  const res = document.getElementById('ith-resumen');
-  res.textContent = 'Trayendo el clima…';
-  const hasta = hoyISO();
-  try {
-    const d = await pedirJSON(`/api/reproduccion/ith?desde=${menosDias(hasta, 730)}` +
-      `&hasta=${hasta}&rebano=${encodeURIComponent(herd)}&tambo=${encodeURIComponent(tamboActual)}`);
-    pintarIth(d);
-  } catch (e) {
-    if (e.calentando) { res.textContent = e.message; ithReintento = setTimeout(() => cargarIth(herd), 5000); return; }
-    res.textContent = 'No se pudo traer el clima: ' + e.message;
-  }
 }
 document.getElementById('tp-aplicar').addEventListener('click', cargarTasaPrenez);
 ['tp-tipo', 'tp-rebano'].forEach(id =>
@@ -5678,7 +5574,7 @@ function concPintar(sucio) {
   document.getElementById('conc-kpis').innerHTML = [
     ['Cabezas en DelPro', fmt(r.cabezas_delpro_total), `${r.grupos} grupos`],
     ['Cabezas en el proveedor', fmt(r.cabezas_proveedor),
-      `${r.lotes} lotes en uso` + (r.lotes_inactivos ? ` · ${r.lotes_inactivos} sin uso` : '')],
+      `${r.lotes} lotes activos` + (r.lotes_inactivos ? ` · ${r.lotes_inactivos} de relleno` : '')],
     ['Vacas de ordeñe sin lote', fmt(r.cabezas_sin_lote),
       r.grupos_sin_lote ? `${r.grupos_sin_lote} grupo(s)` : 'todos asignados'],
     ['Lotes sin grupo', fmt(r.lotes_sin_grupo), 'su costo no se reparte'],
@@ -5742,7 +5638,6 @@ function concPintar(sucio) {
     const [cls, txt] = CONC_ESTADOS[est];
     return `<tr>
       <td><b>${f.lote}</b>${f.en_proveedor ? '' : ' <span class="chip ambar">ya no está en el proveedor</span>'}
-        ${f.en_uso === false ? ' <span class="chip rojo">sin descargas</span>' : ''}
         ${f.indice_ordene != null ? `<div class="aviso">Haasten lo asocia al grupo N° ${f.indice_ordene}</div>` : ''}</td>
       <td class="aviso">${f.categoria || '—'}</td>
       <td class="num">${f.cabezas_proveedor == null ? '—' : fmt(f.cabezas_proveedor)}</td>
@@ -5760,10 +5655,8 @@ function concPintar(sucio) {
   document.getElementById('conc-tabla-lotes').innerHTML =
     `<table class="lac-table">${cabecera}<tbody>${activos.map(filaLote).join('')}</tbody></table>` +
     (relleno.length ? `<details style="margin-top:10px"><summary class="aviso">
-        ${relleno.length} lote(s) que <b>no alimentan a nadie</b> — o no tienen ración configurada,
-        o hace ${d.proveedor && d.proveedor.dias_uso || 30} días que no reciben una descarga.
-        No hace falta mapearlos: son configuración vieja del mixer, no corrales.
-        Se listan por si alguno se empieza a usar.</summary>
+        ${relleno.length} lote(s) de relleno — sin kg de materia seca por cabeza, no alimentan a
+        nadie. Se listan por si alguno se empieza a usar.</summary>
       <table class="lac-table" style="margin-top:6px">${cabecera}
         <tbody>${relleno.map(filaLote).join('')}</tbody></table></details>` : '');
 
