@@ -76,6 +76,19 @@
   details { margin-top: 10px; color: var(--text-secondary); font-size: 13px; }
   pre { white-space: pre-wrap; background: var(--page); padding: 10px; border-radius: 8px; }
   .aviso { color: var(--text-secondary); font-size: 13px; }
+  /* Título + explicación al pie de cada gráfico: qué muestra y de dónde sale
+     el número. Texto plano a propósito — no cuesta nada de render. */
+  .g-titulo { margin: 0 0 5px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+  .explica {
+    margin: 0 0 10px; max-width: 105ch; color: var(--text-secondary);
+    font-size: 12.5px; line-height: 1.55;
+    border-left: 3px solid var(--border); padding-left: 10px;
+  }
+  .explica b { color: var(--text-primary); font-weight: 600; }
+  .explica code {
+    font-family: ui-monospace, "Cascadia Mono", Menlo, monospace; font-size: 11.5px;
+    background: var(--page); padding: 1px 4px; border-radius: 3px;
+  }
   .tareas-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
   .tarea-card {
     background: var(--page); border: 1px solid var(--border); border-radius: 10px;
@@ -621,47 +634,97 @@
         <input type="number" id="flu-rmax" step="0.05" min="0" max="20" value="1.00" style="padding:6px 8px;width:80px">
       </label>
     </div>
+    <p class="explica" style="margin-top:10px">
+      Los dos umbrales de arriba son los mismos que muestra el informe de DelPro y definen qué
+      cuenta como retirada tardía o prematura en el primer gráfico. Cambiarlos recalcula todo.
+      El rango puede ser de hasta 120 días; cada rango nuevo tarda unos segundos la primera vez
+      y después queda en memoria media hora.
+    </p>
     <div class="aviso" id="flu-info" style="margin-top:8px"></div>
+    <p class="explica" style="margin-top:10px">
+      <b>Resumen del período.</b> Promedios de todo el rango elegido, ponderados por la cantidad
+      de ordeños de cada día — así una sesión corta no pesa igual que un día completo.
+    </p>
     <div class="kpis" id="flu-kpis" style="margin-top:10px"></div>
 
-    <div style="margin-top:16px">
-      <div class="aviso" style="margin-bottom:6px"
-           title="Porcentaje de ordeños del día con cada problema de retirada. Modo manual y retiro manual son intervenciones del operario.">
-        Problemas en flujo de retirada (% de ordeños del día)
-      </div>
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Problemas en flujo de retirada</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> Qué porcentaje de los ordeños de cada día terminó mal al soltar la
+        pezonera. <b>Retirada tardía</b> es seguir ordeñando una ubre ya casi vacía: castiga el
+        pezón y es la puerta de entrada a la mastitis. <b>Prematura</b> es soltarla con leche
+        todavía bajando: queda leche en la ubre y cae la producción.
+        <br><b>Cómo se calcula.</b> De cada ordeño individual se lee <code>TakeOffFlow</code>, el
+        flujo en kg/min en el instante exacto en que se retiró. Se cuentan los que quedaron por
+        debajo del mínimo y por encima del máximo que fijaste arriba, sobre los ordeños del día
+        que tienen esa lectura. <b>Retirada forzada</b>, <b>modo manual</b> y <b>retiro manual</b>
+        son banderas que graba la propia máquina (<code>ForcedRetract</code>,
+        <code>ManualMode</code>, <code>ManualDetach</code>) y van sobre el total del día: las dos
+        últimas son intervenciones del operario.
+      </p>
       <div class="chart-box" style="height:280px"><canvas id="chart-flu-retirada"></canvas></div>
     </div>
 
-    <div style="margin-top:16px">
-      <div class="aviso" style="margin-bottom:6px"
-           title="Flujo promedio en cada tramo de la curva de bajada (eje izquierdo, kg/min) contra duración del ordeño y tiempo de colocación (eje derecho, segundos).">
-        Flujos y rutina — tramos de la bajada vs. duración y colocación
-      </div>
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Flujos y rutina — tramos de la bajada vs. duración y colocación</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> La curva de bajada de leche partida en cuatro tramos. Lo que hay que
+        mirar es el escalón entre <b>0-15 s</b> y <b>15-30 s</b>: si el primero está muy por
+        debajo del segundo, las vacas se están enganchando <i>antes</i> de bajar la leche, o sea
+        que falta estimulación en la preparación.
+        <br><b>Cómo se calcula.</b> Promedio del día de <code>Flow0To15</code>,
+        <code>Flow15To30</code>, <code>Flow30To60</code> y <code>Flow60To120</code>, en kg/min
+        (eje izquierdo). En el eje derecho, en segundos: <code>IsoDuration</code> es lo que duró
+        el ordeño y <code>LowFlowDurationInSec</code> son los segundos iniciales con flujo bajo,
+        que es lo que DelPro llama tiempo de colocación.
+      </p>
       <div class="chart-box" style="height:300px"><canvas id="chart-flu-rutina"></canvas></div>
     </div>
 
-    <div class="grid2" style="margin-top:16px">
+    <div class="grid2" style="margin-top:20px">
       <div>
-        <div class="aviso" style="margin-bottom:6px"
-             title="Curva de bajada promedio de cada grupo de ordeñe. Un grupo con el tramo 0-15 s muy bajo está mal preparado.">
-          Flujo de leche por grupo (kg/min)
-        </div>
+        <h3 class="g-titulo">Flujo de leche por grupo</h3>
+        <p class="explica">
+          <b>Qué muestra.</b> La misma curva de bajada, pero comparando rodeos entre sí. Sirve
+          para separar un problema general de la rutina de uno puntual de un grupo — por horario,
+          por operario o por etapa de lactancia.
+          <br><b>Cómo se calcula.</b> Promedio de los cuatro tramos más el flujo de retirada,
+          agrupado por el rodeo del animal. Entran solo los grupos marcados como de ordeñe en
+          DelPro. <b>Ojo:</b> usa el rodeo <i>actual</i> de la vaca, no el que tenía el día del
+          ordeño — en rangos largos, las que cambiaron de grupo cuentan en el nuevo.
+        </p>
         <div class="chart-box" style="height:280px"><canvas id="chart-flu-grupo"></canvas></div>
       </div>
       <div>
-        <div class="aviso" style="margin-bottom:6px"
-             title="Cómo se reparten los ordeños según su flujo promedio y su flujo pico, en cajones de 1 kg/min.">
-          Distribución de flujos (% de ordeños)
-        </div>
+        <h3 class="g-titulo">Distribución de flujos</h3>
+        <p class="explica">
+          <b>Qué muestra.</b> Cómo se reparte el rodeo, no el promedio. Un pico angosto es un
+          rodeo parejo; una cola larga hacia la izquierda son vacas de bajada lenta que se
+          esconden detrás de un promedio aceptable.
+          <br><b>Cómo se calcula.</b> Cada ordeño aporta su <code>AverageFlow</code> (flujo
+          promedio) y su <code>PeakFlow</code> (flujo máximo), redondeados al kg/min más cercano
+          — el cajón "3" son los ordeños de 2,5 a 3,49 kg/min. Cada curva suma 100%.
+        </p>
         <div class="chart-box" style="height:280px"><canvas id="chart-flu-distribucion"></canvas></div>
       </div>
     </div>
 
-    <div style="margin-top:16px">
-      <div class="aviso" style="margin-bottom:6px" id="flu-bimodal-titulo"
-           title="Bimodalidad: la vaca baja la leche cisternal, se corta, y recién después llega la alveolar. La base guarda la curva resumida en 4 tramos, así que el criterio estricto detecta menos casos que DelPro (que ve la curva completa) — la tendencia sí es comparable. 'Arranque lento' es el síntoma de estimulación insuficiente, la causa habitual.">
-        Bimodalidad por días en ordeño (DEO)
-      </div>
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Bimodalidad por días en ordeño (DEO)</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> Bimodalidad es cuando la vaca larga primero la leche que ya tenía
+        guardada en la cisterna, el flujo se corta, y recién unos segundos después baja la
+        alveolar. Cortado por días en ordeño para ver si pega en las recién paridas o en las de
+        fin de lactancia.
+        <br><b>Cómo se calcula.</b> <b>Bimodalidad</b> cuenta los ordeños que arrancaron con al
+        menos 0,20 kg/min y después cayeron (<code>Flow15To30 &lt; Flow0To15</code>).
+        <b>Importante:</b> la base guarda la curva resumida en cuatro tramos promediados, no
+        segundo a segundo, así que las caídas cortas se pierden y este número da bastante más
+        bajo que el de DelPro — la <i>tendencia</i> sí es comparable, el valor absoluto no.
+        <b>Arranque lento</b> cuenta los que ni siquiera llegaron a 0,50 kg/min en los primeros
+        15 s: es el síntoma de estimulación insuficiente, que es la causa habitual de la
+        bimodalidad, y es el más accionable de los dos.
+      </p>
       <div class="chart-box" style="height:300px"><canvas id="chart-flu-bimodal"></canvas></div>
     </div>
   </section>
