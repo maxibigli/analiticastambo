@@ -93,6 +93,32 @@
     background: var(--brand-navy); color: #fff; font-weight: 600;
     font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
   }
+  /* Indicador de procesos en curso. Fijo abajo a la derecha: informa sin
+     tapar nada ni mover el layout. */
+  #procesos-caja {
+    position: fixed; right: 16px; bottom: 16px; z-index: 60;
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; min-width: 210px; max-width: 320px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.18); font-size: 12.5px;
+  }
+  .proc-titulo { font-weight: 600; margin-bottom: 6px; color: var(--text-primary); }
+  .proc-n {
+    background: var(--accent); color: #fff; border-radius: 999px;
+    padding: 0 6px; font-size: 11px; margin-left: 4px;
+  }
+  .proc-item {
+    display: flex; align-items: center; gap: 7px;
+    color: var(--text-secondary); padding: 2px 0;
+  }
+  .proc-seg { margin-left: auto; font-variant-numeric: tabular-nums; opacity: .75; }
+  .proc-punto {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+    flex: none; animation: latido 1.2s ease-in-out infinite;
+  }
+  .proc-nota { margin-top: 6px; font-size: 11px; color: var(--muted); }
+  /* Botón para arrancar a mano las secciones pesadas. */
+  .activar-caja { padding: 18px 0; text-align: center; }
+  .activar-caja .aviso { display: block; margin-top: 8px; }
   /* Parámetro que el tambo cambió respecto del defecto de DelPro. */
   .pm-modificado td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
   /* Fila con dato vencido: se ve distinta pero no grita. */
@@ -314,6 +340,9 @@
 </style>
 </head>
 <body>
+<!-- Qué está calculando la aplicación en este momento. Se llena solo desde
+     pedirJSON: cualquier llamada al servidor aparece acá. -->
+<div id="procesos-caja" hidden></div>
 <div class="app-shell">
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-brand"><img src="/static/img/logo.svg" alt="">LactIA</div>
@@ -1715,12 +1744,78 @@ function estado(msg, esError) {
   e.textContent = msg || ''; e.className = esError ? 'error' : '';
 }
 
+// --- Indicador de procesos en curso ------------------------------------------
+// El servidor atiende las consultas a SQL Server DE A UNA (ver el semáforo de
+// db.py), así que varias cargas pesadas se encolan. Sin nada a la vista la app
+// parece colgada cuando en realidad está trabajando.
+//
+// Se instrumenta `pedirJSON`, que es el único punto por donde pasan todas las
+// llamadas: así cada carga aparece sola en el indicador sin tocar ninguna de
+// las funciones que cargan datos.
+const PROCESOS = new Map();
+let procesoSeq = 0;
+
+// Nombre legible a partir de la URL, para no tener que etiquetar cada llamada.
+const NOMBRE_PROCESO = [
+  [/\/api\/flujos\//, 'Análisis de flujos'],
+  [/\/api\/proyeccion\//, 'Proyección de rebaños'],
+  [/\/api\/reproduccion\/resultados/, 'Indicadores reproductivos'],
+  [/\/api\/reproduccion\/preneces/, 'Indicadores de preñez'],
+  [/\/api\/reproduccion\/performance/, 'Performance productiva'],
+  [/\/api\/reproduccion\/partos_secados/, 'Partos y secados'],
+  [/\/api\/reproduccion\/tasa_prenez/, 'Tasa de preñez'],
+  [/\/api\/reproduccion\/gestacion/, 'Análisis de gestación'],
+  [/\/api\/reproduccion\/parametros/, 'Parámetros'],
+  [/\/api\/rutina\/rendimiento/, 'Rendimiento de sala'],
+  [/\/api\/rutina/, 'Rutina de ordeño'],
+  [/\/api\/ordeno|\/api\/incidentes/, 'Ordeño'],
+  [/\/api\/salud|\/api\/podal/, 'Salud del rodeo'],
+  [/\/api\/cicla/, 'CICLA (caudalímetro)'],
+  [/\/api\/entregas/, 'Comparación con el comprador'],
+  [/\/api\/laser/, 'La Serenísima'],
+  [/\/api\/dashboard|\/api\/resumen/, 'Dashboard'],
+  [/\/api\/tareas/, 'Tareas'],
+  [/\/api\/iot/, 'Monitoreo IoT'],
+];
+
+function nombreProceso(url) {
+  for (const [re, nombre] of NOMBRE_PROCESO) if (re.test(url)) return nombre;
+  return 'Consulta';
+}
+
+function pintarProcesos() {
+  const caja = document.getElementById('procesos-caja');
+  if (!caja) return;
+  const lista = [...PROCESOS.values()];
+  caja.hidden = !lista.length;
+  if (!lista.length) return;
+  const ahora = Date.now();
+  caja.innerHTML =
+    `<div class="proc-titulo">Calculando… <span class="proc-n">${lista.length}</span></div>` +
+    lista.map(p => {
+      const seg = Math.round((ahora - p.inicio) / 1000);
+      return `<div class="proc-item"><span class="proc-punto"></span>${p.nombre}` +
+             `<span class="proc-seg">${seg}s</span></div>`;
+    }).join('') +
+    (lista.length > 1
+      ? '<div class="proc-nota">Se procesan de a una para no sobrecargar la base.</div>' : '');
+}
+setInterval(pintarProcesos, 1000);   // refresca los segundos transcurridos
+
 async function pedirJSON(url, opts) {
-  const r = await fetch(url, opts);
-  const j = await r.json().catch(() => ({ error: 'Respuesta inválida del servidor' }));
-  if (r.status === 202) { const e = new Error(j.mensaje || 'calentando'); e.calentando = true; e.info = j; throw e; }
-  if (!r.ok) throw new Error(j.error || r.statusText);
-  return j;
+  const id = ++procesoSeq;
+  PROCESOS.set(id, { nombre: nombreProceso(url), inicio: Date.now() });
+  pintarProcesos();
+  try {
+    const r = await fetch(url, opts);
+    const j = await r.json().catch(() => ({ error: 'Respuesta inválida del servidor' }));
+    if (r.status === 202) { const e = new Error(j.mensaje || 'calentando'); e.calentando = true; e.info = j; throw e; }
+    if (!r.ok) throw new Error(j.error || r.statusText);
+    return j;
+  } finally {
+    PROCESOS.delete(id);
+    pintarProcesos();
+  }
 }
 
 async function cargarDashboard(intento = 0) {
@@ -3371,16 +3466,22 @@ document.getElementById('repro-tabs').addEventListener('click', ev => {
   document.getElementById('repro-panel-parametros').hidden = tab !== 'parametros';
   document.getElementById('repro-panel-metas').hidden = tab !== 'metas';
   if (tab === 'parametros' && !pmDatos) cargarParametros();
-  if (tab === 'gestacion' && !gsDatos) cargarGestacion();
+  if (tab === 'gestacion' && !gsDatos)
+    activarAPedido('gs-info', cargarGestacion, 'el análisis de gestación', DEMORA);
   if (tab !== 'gestacion') clearTimeout(gsReintento);
-  if (tab === 'partos' && !psDatos) cargarPartosSecados();
-  if (tab === 'tasa' && !tpDatos) cargarTasaPrenez();
+  if (tab === 'partos' && !psDatos)
+    activarAPedido('ps-info', cargarPartosSecados, 'partos y secados', DEMORA);
+  if (tab === 'tasa' && !tpDatos)
+    activarAPedido('tp-info', cargarTasaPrenez, 'la tasa de preñez', DEMORA);
   if (tab !== 'partos') clearTimeout(psReintento);
   if (tab !== 'tasa') clearTimeout(tpReintento);
   if (tab === 'metas' && !reproMetas) cargarMetas();
-  if (tab === 'preneces' && !prenDatos) cargarPreneces();
-  if (tab === 'performance' && !perfDatos) cargarPerformance();
-  if (tab === 'resultados' && !document.getElementById('repro-tabla').innerHTML) cargarRepro();
+  if (tab === 'preneces' && !prenDatos)
+    activarAPedido('pren-info', cargarPreneces, 'los indicadores de preñez', DEMORA);
+  if (tab === 'performance' && !perfDatos)
+    activarAPedido('perf-info', cargarPerformance, 'la performance productiva', DEMORA);
+  if (tab === 'resultados' && !document.getElementById('repro-tabla').innerHTML)
+    activarAPedido('repro-info', cargarRepro, 'los indicadores reproductivos', DEMORA);
   if (tab !== 'preneces') clearTimeout(prenReintento);
   if (tab !== 'performance') clearTimeout(perfReintento);
 });
@@ -5296,6 +5397,25 @@ const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'proyec
 const paginasCargadas = new Set();
 let paginaActual = null;
 
+// Arranque a pedido de las secciones pesadas. En vez de largarse a calcular
+// apenas se entra —y encolarse detrás de lo que ya esté corriendo— muestran un
+// botón. Las de uso diario (dashboard, ordeño, tareas) siguen automáticas:
+// ponerles un botón haría incómodo el uso cotidiano.
+function activarAPedido(contId, fn, titulo, detalle) {
+  const cont = document.getElementById(contId);
+  if (!cont) { fn(); return; }
+  cont.innerHTML = `<div class="activar-caja">
+      <button class="secundario" type="button">▶ Calcular ${titulo}</button>
+      <span class="aviso">${detalle || ''}</span>
+    </div>`;
+  cont.querySelector('button').addEventListener('click', () => {
+    cont.innerHTML = '';
+    fn();
+  });
+}
+
+const DEMORA = 'Consulta pesada: puede tardar un rato la primera vez, después queda en memoria.';
+
 function cargarDatosDePagina(id) {
   if (paginasCargadas.has(id)) return;
   paginasCargadas.add(id);
@@ -5304,14 +5424,21 @@ function cargarDatosDePagina(id) {
     cargarResumenProduccion(); cargarResumenAnimales(); cargarResumenDuraciones(); cargarResumenGrupo();
   }
   else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
-  else if (id === 'rutina') { cargarRutina(); cargarRendimiento(); }
-  else if (id === 'flujos') cargarFlujos();
-  else if (id === 'proyeccion') cargarProyeccion();
+  else if (id === 'rutina') {
+    cargarRutina();
+    activarAPedido('rend-info', cargarRendimiento, 'rendimiento de sala', DEMORA);
+  }
+  else if (id === 'flujos') activarAPedido('flu-info', cargarFlujos, 'flujos de ordeño', DEMORA);
+  else if (id === 'proyeccion') activarAPedido('proy-info', cargarProyeccion, 'la proyección', DEMORA);
   // Arranca en Parámetros Reproductivos: es la primera pestaña y la consulta
   // es de 20 filas, así que la página abre al instante en vez de esperar las
   // consultas pesadas. Las demás cargan al entrar en ellas.
   else if (id === 'repro') cargarParametros();
-  else if (id === 'entregas') { cargarCicla(); cargarComparar(); cargarLaser(); }
+  else if (id === 'entregas') {
+    activarAPedido('cicla-info', cargarCicla, 'las cargas de CICLA', DEMORA);
+    activarAPedido('comparar-info', cargarComparar, 'la comparación con el comprador', DEMORA);
+    activarAPedido('laser-info', cargarLaser, 'la calidad de La Serenísima', DEMORA);
+  }
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
   else if (id === 'consultas') cargarPredefinidas();
