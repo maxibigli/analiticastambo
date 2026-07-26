@@ -412,6 +412,120 @@
         <button class="lac-segment__item" data-tab="metas" aria-pressed="true">Calibración de Objetivos</button>
         <button class="lac-segment__item" data-tab="resultados" aria-pressed="false">Resultados</button>
         <button class="lac-segment__item" data-tab="preneces" aria-pressed="false">Indicadores de Preñez</button>
+        <button class="lac-segment__item" data-tab="performance" aria-pressed="false">Performance</button>
+      </div>
+    </div>
+
+    <div id="repro-panel-performance" hidden>
+      <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Reporte
+          <select id="perf-reporte" style="padding:6px 8px">
+            <option value="peak" selected>Peak de producción</option>
+            <option value="distribucion">Distribución de producción</option>
+          </select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Rebaño
+          <select id="perf-rebano" style="padding:6px 8px"></select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="perf-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="perf-hasta" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px" id="perf-comp-caja"
+               title="Superpone la curva del período anterior, en punteado, para ver si el rodeo mejoró o empeoró.">
+          <input type="checkbox" id="perf-comparar"> Comparar con el año anterior
+        </label>
+        <button class="secundario" id="perf-aplicar">Aplicar</button>
+      </div>
+      <div class="aviso" id="perf-info" style="margin-top:8px"></div>
+
+      <div id="perf-peak">
+        <div style="margin-top:18px">
+          <h3 class="g-titulo">Curva de lactancia por DEO</h3>
+          <p class="explica">
+            <b>Qué busca.</b> Ver la forma de la lactancia de cada categoría. Una vaca adulta sana
+            sube rápido, pica alto y temprano, y después baja despacio. Una vaquillona de primer
+            parto pica más bajo y más tarde, pero sostiene mejor. Si la curva de una categoría
+            arranca aplastada, el problema está en el arranque (transición, calostro, dieta de
+            preparto); si cae a pico, el problema es de persistencia (sanidad, calor, ración).
+            <br><b>Cómo se calcula.</b> Promedio de kg del día de cada vaca, agrupado por su día de
+            lactancia y su número de lactancia. Se descartan los días sin lectura, que si no
+            hunden todos los promedios. Con "Comparar" se superpone en punteado el mismo período
+            del año anterior.
+          </p>
+          <div class="chart-box" style="height:320px"><canvas id="chart-perf-curva"></canvas></div>
+        </div>
+
+        <div style="margin-top:20px">
+          <h3 class="g-titulo">Arranque, pico y persistencia</h3>
+          <p class="explica">
+            <b>Qué busca.</b> Los tres números que gobiernan cuánta leche da una lactancia entera.
+            El <b>arranque</b> (kg promedio entre los 15 y 30 días) anticipa el resto: una vaca que
+            arranca mal rara vez se recupera. El <b>pico</b> y el <b>día del pico</b> dicen cuánto y
+            cuándo llegó al máximo. La <b>persistencia</b> —cuánto pierde por mes después del
+            pico— suele valer más leche total que el pico mismo: bajar un punto de caída mensual
+            rinde más que subir un kilo de pico.
+            <br><b>Cómo se calcula.</b> La relación arranque/pico se hace <b>vaca por vaca</b>,
+            cada una contra su propio pico, y recién después se promedia — DelPro promedia por
+            separado y le salen valores imposibles, como un pico a los 225 días en segunda
+            lactancia. La caída mensual se mide sobre la curva, desde el tramo de mayor producción
+            hasta el final.
+          </p>
+          <div style="overflow-x:auto" id="perf-tabla"></div>
+        </div>
+
+        <div style="margin-top:20px">
+          <h3 class="g-titulo">Persistencia por lactancia</h3>
+          <p class="explica">
+            Cuánto pierde cada categoría por mes después del pico, en porcentaje. Cuanto más baja
+            la barra, mejor sostiene la producción.
+          </p>
+          <div class="chart-box" style="height:260px"><canvas id="chart-perf-persistencia"></canvas></div>
+        </div>
+      </div>
+
+      <div id="perf-distribucion" hidden>
+        <div style="margin-top:18px">
+          <h3 class="g-titulo">¿De dónde sale la leche?</h3>
+          <p class="explica">
+            <b>Qué busca.</b> Localizar dónde está el rendimiento y dónde está el lastre. Para cada
+            corte se muestra qué porcentaje de las <b>vacas</b> y qué porcentaje de los <b>kilos</b>
+            representa cada segmento, pero lo que hay que mirar es el <b>índice</b>: los kg por vaca
+            y por día del segmento divididos por los del rodeo entero. Un <b>1,20</b> significa que
+            ese grupo rinde 20% por encima del promedio; un <b>0,85</b>, 15% por debajo. Un
+            promedio general aceptable puede estar tapando un grupo entero rindiendo mal.
+            <br><b>Ojo con el corte por grupo:</b> usa el rodeo <i>actual</i> de la vaca, no el que
+            tenía cada día. Por eso pueden aparecer grupos de secas o de preparto con producción:
+            es leche que esa vaca dio mientras estaba en ordeñe, atribuida a donde está hoy.
+          </p>
+          <div class="controls" style="margin-bottom:10px">
+            <div class="lac-segment" id="perf-dim" role="group" aria-label="Corte">
+              <button class="lac-segment__item" data-dim="lactancia" aria-pressed="true">Por lactancia</button>
+              <button class="lac-segment__item" data-dim="grupo" aria-pressed="false">Por grupo</button>
+              <button class="lac-segment__item" data-dim="deo" aria-pressed="false">Por DEO</button>
+            </div>
+          </div>
+          <div class="chart-box" style="height:300px"><canvas id="chart-perf-dist"></canvas></div>
+          <div style="overflow-x:auto;margin-top:12px" id="perf-dist-tabla"></div>
+        </div>
+
+        <div style="margin-top:20px">
+          <h3 class="g-titulo">Concentración: qué parte del rodeo hace la leche</h3>
+          <p class="explica">
+            <b>Qué busca.</b> Saber si la producción se apoya en pocas vacas buenas o está
+            repartida. Se ordena el rodeo de mayor a menor producción y se parte en diez, y se ve
+            cuánta leche hace cada décimo. Si el primer décimo hace mucho más que el último, el
+            rodeo es desparejo y hay margen concreto levantando la cola —esas vacas comen, ocupan
+            lugar en la sala y producen poco—. Si está parejo, el margen está en mover la media de
+            todo el rodeo, que es más caro.
+            <br><b>Cómo se calcula.</b> Promedio de kg/día de cada vaca en el período (solo las que
+            tienen al menos 5 días medidos), ordenadas de mayor a menor y repartidas en décimos.
+            La línea es el acumulado.
+          </p>
+          <div class="chart-box" style="height:300px"><canvas id="chart-perf-conc"></canvas></div>
+        </div>
       </div>
     </div>
 
@@ -2392,6 +2506,181 @@ document.getElementById('pren-dim').addEventListener('click', ev => {
   pintarPreneces();   // las dos vistas vienen juntas: no vuelve a consultar
 });
 
+// --- Performance -------------------------------------------------------------
+let chartPerfCurva = null, chartPerfPers = null, chartPerfDist = null, chartPerfConc = null;
+let perfDatos = null, perfDim = 'lactancia', perfReintento = null;
+
+const PERF_LACT = [['l1', '1ra lactancia', 0], ['l2', '2da lactancia', 2],
+                   ['l3', '3ra y más', 3], ['todas', 'Todas', 4]];
+
+function pintarPerfPeak(d) {
+  const oCur = baseOpts(true);
+  oCur.interaction = { mode: 'index', intersect: false };
+  oCur.scales.y.title = { display: true, text: 'kg/día por vaca' };
+  oCur.scales.y.beginAtZero = false;
+  oCur.scales.x.title = { display: true, text: 'Días en ordeñe' };
+  const ds = PERF_LACT.map(([k, lbl, ci]) =>
+    linea(lbl, d.curva[k], SERIES[ci], { borderWidth: k === 'todas' ? 3 : 2 }));
+  if (d.comparacion) {
+    PERF_LACT.forEach(([k, lbl, ci]) => ds.push(
+      linea(lbl + ' (año anterior)', d.comparacion[k], SERIES[ci],
+            { borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5 })));
+  }
+  chartPerfCurva = dibujar('chart-perf-curva', chartPerfCurva, {
+    type: 'line', data: { labels: d.tramos, datasets: ds }, options: oCur,
+  });
+
+  const a = d.arranque || {};
+  document.getElementById('perf-tabla').innerHTML = `<table class="lac-table">
+    <thead><tr><th>Lactancia</th><th class="num">Vacas</th>
+    <th class="num">Arranque ${a.desde}-${a.hasta} DEO</th><th class="num">Pico</th>
+    <th class="num">Día del pico</th><th class="num">Arranque / pico</th>
+    <th class="num">Pico de la curva</th><th class="num">Caída por mes</th></tr></thead>
+    <tbody>${(d.tabla || []).map(t => `<tr${t.clave === 'todas' ? ' style="font-weight:600"' : ''}>
+      <td>${t.lactancia}</td><td class="num">${fmt(t.vacas)}</td>
+      <td class="num">${t.kg_arranque == null ? '—' : fmt(t.kg_arranque) + ' kg'}</td>
+      <td class="num">${t.kg_peak == null ? '—' : fmt(t.kg_peak) + ' kg'}</td>
+      <td class="num">${t.dia_peak == null ? '—' : fmt(t.dia_peak) + ' d'}</td>
+      <td class="num">${t.rel_arranque_peak == null ? '—' : fmt(t.rel_arranque_peak) + ' %'}</td>
+      <td class="num">${t.pico_kg == null ? '—' : fmt(t.pico_kg) + ' kg @ ' + t.pico_tramo}</td>
+      <td class="num">${t.caida_mes_pct == null ? '—' :
+        fmt(t.caida_mes_pct) + ' % (' + fmt(t.caida_mes_kg) + ' kg)'}</td></tr>`).join('')}
+    </tbody></table>`;
+
+  const oP = baseOpts(false);
+  oP.scales.y.title = { display: true, text: '% de caída por mes' };
+  chartPerfPers = dibujar('chart-perf-persistencia', chartPerfPers, {
+    type: 'bar',
+    data: {
+      labels: (d.tabla || []).map(t => t.lactancia),
+      datasets: [{ label: 'Caída mensual', data: (d.tabla || []).map(t => t.caida_mes_pct),
+        backgroundColor: (d.tabla || []).map((_t, i) => SERIES[i % SERIES.length]),
+        borderWidth: 0, maxBarThickness: 60, borderRadius: 3 }],
+    },
+    options: oP,
+  });
+}
+
+function pintarPerfDist() {
+  const d = perfDatos;
+  const corte = d[perfDim] || { segmentos: [] };
+  const segs = corte.segmentos;
+  const labels = segs.map(s => s.segmento);
+
+  const oD = baseOpts(true);
+  oD.interaction = { mode: 'index', intersect: false };
+  oD.scales.y.title = { display: true, text: '% del rodeo' };
+  oD.scales.y1 = {
+    position: 'right', beginAtZero: true, grid: { drawOnChartArea: false },
+    border: { display: false }, title: { display: true, text: 'índice (1 = promedio)' },
+  };
+  chartPerfDist = dibujar('chart-perf-dist', chartPerfDist, {
+    type: 'bar',
+    data: { labels, datasets: [
+      { type: 'bar', label: '% de vacas', data: segs.map(s => s.pct_vacas),
+        backgroundColor: SERIES[1], borderWidth: 0, maxBarThickness: 40, borderRadius: 3 },
+      { type: 'bar', label: '% de los kilos', data: segs.map(s => s.pct_kg),
+        backgroundColor: SERIES[0], borderWidth: 0, maxBarThickness: 40, borderRadius: 3 },
+      { type: 'line', label: 'Índice de rendimiento', yAxisID: 'y1',
+        data: segs.map(s => s.indice), borderColor: SERIES[3], backgroundColor: SERIES[3],
+        borderWidth: 2, pointRadius: 4, tension: .2 },
+    ] },
+    options: oD,
+  });
+
+  const marca = i => i == null ? '' :
+    (i >= 1.05 ? ' <span style="color:var(--good)">▲</span>'
+     : i <= 0.95 ? ' <span style="color:var(--critical)">▼</span>' : '');
+  document.getElementById('perf-dist-tabla').innerHTML = `<table class="lac-table">
+    <thead><tr><th>Segmento</th><th class="num">Vacas</th><th class="num">% vacas</th>
+    <th class="num">% kilos</th><th class="num">kg/vaca/día</th>
+    <th class="num">Índice</th></tr></thead>
+    <tbody>${segs.map(s => `<tr><td>${s.segmento}</td><td class="num">${fmt(s.vacas)}</td>
+      <td class="num">${fmt(s.pct_vacas)} %</td><td class="num">${fmt(s.pct_kg)} %</td>
+      <td class="num">${fmt(s.kg_vaca_dia)}</td>
+      <td class="num">${s.indice == null ? '—' : fmt(s.indice) + marca(s.indice)}</td></tr>`).join('')}
+    </tbody>
+    <tfoot><tr><th>Rodeo entero</th><th class="num">${fmt(corte.vacas)}</th><th class="num">100 %</th>
+    <th class="num">100 %</th><th class="num">${fmt(corte.kg_vaca_dia_rodeo)}</th>
+    <th class="num">1,00</th></tr></tfoot></table>`;
+
+  const conc = d.concentracion || [];
+  const oC = baseOpts(true);
+  oC.interaction = { mode: 'index', intersect: false };
+  oC.scales.y.title = { display: true, text: '% de la leche' };
+  oC.scales.x.title = { display: true, text: 'Décimo del rodeo (1 = las mejores)' };
+  oC.scales.y1 = {
+    position: 'right', beginAtZero: true, max: 100, grid: { drawOnChartArea: false },
+    border: { display: false }, title: { display: true, text: '% acumulado' },
+  };
+  chartPerfConc = dibujar('chart-perf-conc', chartPerfConc, {
+    type: 'bar',
+    data: { labels: conc.map(x => 'D' + x.decimo), datasets: [
+      { type: 'bar', label: '% de la leche', data: conc.map(x => x.pct_kg),
+        backgroundColor: SERIES[0], borderWidth: 0, maxBarThickness: 44, borderRadius: 3 },
+      { type: 'line', label: '% acumulado', yAxisID: 'y1', data: conc.map(x => x.acumulado),
+        borderColor: SERIES[4], backgroundColor: SERIES[4], borderWidth: 2, pointRadius: 3, tension: .2 },
+    ] },
+    options: oC,
+  });
+}
+
+function pintarPerformance() {
+  if (!perfDatos) return;
+  const esPeak = perfDatos.reporte === 'peak';
+  document.getElementById('perf-peak').hidden = !esPeak;
+  document.getElementById('perf-distribucion').hidden = esPeak;
+  document.getElementById('perf-comp-caja').style.display = esPeak ? '' : 'none';
+  if (esPeak) pintarPerfPeak(perfDatos); else pintarPerfDist();
+  const c = perfDatos.concentracion;
+  document.getElementById('perf-info').textContent =
+    `${perfDatos.desde} a ${perfDatos.hasta}.` +
+    (perfDatos.comp_desde ? ` Comparado con ${perfDatos.comp_desde} a ${perfDatos.comp_hasta}.` : '') +
+    (c && c.length ? ` El mejor décimo hace el ${fmt(c[0].pct_kg)}% de la leche y el último el ${fmt(c[c.length - 1].pct_kg)}%.` : '');
+}
+
+async function cargarPerformance() {
+  clearTimeout(perfReintento);
+  const info = document.getElementById('perf-info');
+  await cargarRebanos();
+  const sel = document.getElementById('perf-rebano');
+  if (!sel.options.length && reproRebanos) {
+    const def = (reproRebanos.find(r => r.es_el_tambo) || {}).herd;
+    sel.innerHTML = reproRebanos.map(r =>
+      `<option value="${r.herd}"${r.herd === def ? ' selected' : ''}>${r.nombre}</option>`).join('');
+  }
+  const g = (id, def) => { const e = document.getElementById(id); if (!e.value) e.value = def; return e.value; };
+  const hasta = g('perf-hasta', hoyISO());
+  const desde = g('perf-desde', menosDias(hasta, 365));
+  const reporte = document.getElementById('perf-reporte').value;
+  let extra = '';
+  if (reporte === 'peak' && document.getElementById('perf-comparar').checked) {
+    extra = `&comp_desde=${menosDias(desde, 365)}&comp_hasta=${menosDias(hasta, 365)}`;
+  }
+  info.textContent = 'Calculando…';
+  try {
+    perfDatos = await pedirJSON(`/api/reproduccion/performance?reporte=${reporte}` +
+      `&desde=${desde}&hasta=${hasta}&rebano=${encodeURIComponent(sel.value)}${extra}` +
+      `&tambo=${encodeURIComponent(tamboActual)}`);
+    pintarPerformance();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; perfReintento = setTimeout(cargarPerformance, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('perf-aplicar').addEventListener('click', cargarPerformance);
+document.getElementById('perf-reporte').addEventListener('change', cargarPerformance);
+document.getElementById('perf-rebano').addEventListener('change', cargarPerformance);
+document.getElementById('perf-comparar').addEventListener('change', cargarPerformance);
+document.getElementById('perf-dim').addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-dim]');
+  if (!btn || btn.dataset.dim === perfDim) return;
+  perfDim = btn.dataset.dim;
+  document.querySelectorAll('#perf-dim [data-dim]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.dim === perfDim)));
+  pintarPerfDist();   // los tres cortes vienen juntos: no vuelve a consultar
+});
+
 document.getElementById('repro-tabs').addEventListener('click', ev => {
   const btn = ev.target.closest('[data-tab]');
   if (!btn) return;
@@ -2400,11 +2689,14 @@ document.getElementById('repro-tabs').addEventListener('click', ev => {
   const tab = btn.dataset.tab;
   document.getElementById('repro-panel-resultados').hidden = tab !== 'resultados';
   document.getElementById('repro-panel-preneces').hidden = tab !== 'preneces';
+  document.getElementById('repro-panel-performance').hidden = tab !== 'performance';
   document.getElementById('repro-panel-metas').hidden = tab !== 'metas';
   if (tab === 'metas' && !reproMetas) cargarMetas();
   if (tab === 'preneces' && !prenDatos) cargarPreneces();
+  if (tab === 'performance' && !perfDatos) cargarPerformance();
   if (tab === 'resultados' && !document.getElementById('repro-tabla').innerHTML) cargarRepro();
   if (tab !== 'preneces') clearTimeout(prenReintento);
+  if (tab !== 'performance') clearTimeout(perfReintento);
 });
 
 async function cargarCanalesAlertas() {

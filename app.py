@@ -24,6 +24,7 @@ import flujos
 import iot_monitoreo
 import laserenisima
 import mantenimiento
+import performance
 import podal
 import preneces
 import proyeccion
@@ -1756,6 +1757,100 @@ def api_reproduccion_preneces():
         "mes": preneces.analizar(data["mes"], "mes", tipo),
         "tramos_deo": [t[0] for t in preneces.TRAMOS_DEO],
     })
+
+
+@app.get("/api/reproduccion/performance")
+@auth.requiere_rol("admin")
+def api_reproduccion_performance():
+    """"Performance": curva de lactancia y peak por número de lactancia, o
+    distribución de la producción por lactancia, grupo y días en ordeñe.
+    Ver `performance.py`."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+
+    def leer(nombre, defecto):
+        v = request.args.get(nombre)
+        return datetime.datetime.strptime(v, "%Y-%m-%d").date() if v else defecto
+    try:
+        hasta = leer("hasta", hoy)
+        desde = leer("desde", hasta - datetime.timedelta(days=365))
+        comp_hasta = leer("comp_hasta", None)
+        comp_desde = leer("comp_desde", None)
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    if desde > hasta:
+        desde, hasta = hasta, desde
+    if (hasta - desde).days > performance.RANGO_MAX_DIAS:
+        return jsonify({"error": f"El rango no puede superar {performance.RANGO_MAX_DIAS} días."}), 400
+
+    reporte = (request.args.get("reporte") or performance.REPORTE_PEAK).lower()
+    if reporte not in performance.REPORTES:
+        return jsonify({"error": f"Reporte inválido (esperado: {', '.join(performance.REPORTES)})."}), 400
+
+    herd_param = (request.args.get("rebano") or "").strip()
+    if not herd_param:
+        herd = rebano.por_defecto(tambo)
+    elif herd_param.lower() == rebano.TODOS:
+        herd = rebano.TODOS
+    else:
+        try:
+            herd = int(herd_param)
+        except ValueError:
+            return jsonify({"error": f"Rebaño inválido: {herd_param!r}"}), 400
+
+    comparar = bool(comp_desde and comp_hasta)
+    key = (f"{tambo}:perf:{reporte}:{desde}:{hasta}:{herd}"
+           f":{comp_desde if comparar else ''}:{comp_hasta if comparar else ''}")
+    data, fresh = _cache_get(key, allow_stale=True, ttl=REPRO_CACHE_TTL_S)
+    if data is None:
+        with _cache_lock:
+            arrancar = key not in _refreshing
+            if arrancar:
+                _refreshing.add(key)
+
+        def run(k=key):
+            d, h = desde.isoformat(), hasta.isoformat()
+            try:
+                if reporte == performance.REPORTE_PEAK:
+                    res = {
+                        "curva": db.run_query(performance.sql_curva(d, h, herd),
+                                              tambo=tambo, max_rows=100),
+                        "peak": db.run_query(performance.sql_peak(d, h, herd),
+                                             tambo=tambo, max_rows=20),
+                    }
+                    if comparar:
+                        res["curva_comp"] = db.run_query(
+                            performance.sql_curva(comp_desde.isoformat(),
+                                                  comp_hasta.isoformat(), herd),
+                            tambo=tambo, max_rows=100)
+                else:
+                    res = {dim: db.run_query(performance.sql_distribucion(d, h, dim, herd),
+                                             tambo=tambo, max_rows=100)
+                           for dim in ("lactancia", "grupo", "deo")}
+                    res["concentracion"] = db.run_query(
+                        performance.sql_concentracion(d, h, herd), tambo=tambo, max_rows=20)
+                _cache_set(k, res)
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                with _cache_lock:
+                    _refreshing.discard(k)
+
+        if arrancar:
+            threading.Thread(target=run, daemon=True).start()
+        return jsonify({"calentando": True, "mensaje": "Calculando performance…"}), 202
+
+    base = {"desde": desde.isoformat(), "hasta": hasta.isoformat(),
+            "reporte": reporte, "rebano": herd}
+    if reporte == performance.REPORTE_PEAK:
+        base.update(performance.armar_peak(data["curva"], data["peak"], data.get("curva_comp")))
+        if comparar:
+            base["comp_desde"] = comp_desde.isoformat()
+            base["comp_hasta"] = comp_hasta.isoformat()
+    else:
+        base.update(performance.armar_distribucion(
+            {d: data[d] for d in ("lactancia", "grupo", "deo")}, data["concentracion"]))
+    return jsonify(base)
 
 
 @app.get("/api/reproduccion/rebanos")
