@@ -121,6 +121,8 @@
   .activar-caja .aviso { display: block; margin-top: 8px; }
   /* Parámetro que el tambo cambió respecto del defecto de DelPro. */
   .pm-modificado td { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  /* Parámetro pisado desde LactIA: los cálculos NO usan el de DelPro. */
+  .pm-pisado td { background: color-mix(in srgb, var(--warning) 16%, transparent); }
   /* Fila con dato vencido: se ve distinta pero no grita. */
   .ps-vencido td { background: color-mix(in srgb, var(--warning) 14%, transparent); }
   .tabla-interactiva thead th { position: sticky; top: 0; background: var(--surface-1); z-index: 1; }
@@ -523,16 +525,22 @@
         <b>Qué es.</b> Los valores que gobiernan <b>todos</b> los cálculos reproductivos de esta
         aplicación: cuántos días dura la gestación, a los cuántos días se seca una vaca, cuánto
         espera antes del primer servicio, cuánto dura un ciclo de celo.
-        <br><b>De dónde salen.</b> No se cargan acá ni están escritos en el código: se leen en vivo
-        de DelPro (<code>ReproductionSetting</code>). Si el tambo cambia un valor en DelPro, los
-        cálculos de LactIA lo toman solos en el siguiente refresco.
-        <br><b>Por qué mirarlos.</b> La columna <b>Por defecto</b> es lo que trae DelPro de fábrica;
-        la columna <b>Valor</b> es lo que decidió este tambo. Los que están <b>en negrita</b> son los
-        que el tambo cambió — son sus decisiones de manejo, y las que conviene revisar. La última
-        columna dice qué pantallas de LactIA dependen de cada uno.
+        <br><b>De dónde salen.</b> Se leen en vivo de DelPro (<code>ReproductionSetting</code>), pero
+        <b>se pueden pisar acá</b>. Cada tambo guarda los suyos y quedan para las próximas sesiones.
+        <br><b>Las tres columnas de valor.</b> <b>Por defecto</b> es lo que trae DelPro de fábrica.
+        <b>En DelPro</b> es lo que configuró este tambo en la rotativa. <b>En LactIA</b> es el
+        editable: si le ponés un número, los cálculos usan ese; si lo dejás vacío, usan el de DelPro.
+        <br><b>Para qué sirve pisarlo.</b> El caso concreto que apareció: las gestaciones reales de
+        este tambo promedian <b>276,8 días</b> y DelPro tiene <b>280</b>. Podés poner 277 acá y
+        proyectar con el número real, sin tocar la configuración de la rotativa. La última columna
+        dice qué pantallas dependen de cada parámetro.
       </p>
       <div class="aviso" id="pm-info" style="margin-top:8px"></div>
       <div class="aviso" id="pm-alerta" style="margin-top:6px"></div>
+      <div style="display:flex;gap:10px;margin-top:10px">
+        <button class="secundario" id="pm-guardar">Guardar parámetros</button>
+        <button class="secundario" id="pm-revertir">Descartar cambios</button>
+      </div>
       <div style="overflow-x:auto;margin-top:12px" id="pm-tabla"></div>
 
       <div style="margin-top:20px">
@@ -2840,7 +2848,10 @@ function tablaInteractiva(contId, columnas, filas, opciones) {
   }
   function texto(f, c) {
     const v = f[c.clave];
-    if (v == null) return '—';
+    // Con `fmtNulos` la columna se encarga también del valor vacío: lo usan
+    // las que renderizan algo igual, como una celda editable. Sin el flag, un
+    // vacío es un guion y el formateador nunca ve un null.
+    if (v == null && !c.fmtNulos) return '—';
     if (c.fmt) return c.fmt(v, f);
     if (c.tipo === 'bool') return v ? '✓' : '';
     if (c.tipo === 'num') return fmt(v);
@@ -3125,29 +3136,57 @@ const MILKMETRIC = [
   ['Meteorología', 'Longitud', '-62,778799'],
 ];
 
-async function cargarParametros() {
-  const info = document.getElementById('pm-info');
-  info.textContent = 'Leyendo la configuración de DelPro…';
-  try {
-    const d = await pedirJSON('/api/reproduccion/parametros?tambo=' + encodeURIComponent(tamboActual));
-    pmDatos = d.parametros || [];
-  } catch (e) {
-    info.textContent = 'Error: ' + e.message;
-    return;
-  }
+let pmCambios = {}, pmTambo = '';
 
+function pintarParametros() {
   tablaInteractiva('pm-tabla', [
     { clave: 'parametro', titulo: 'Parámetro', tipo: 'texto',
       fmt: (v, f) => f.modificado ? `<b>${v}</b>` : v },
-    { clave: 'valor', titulo: 'Valor (días)', tipo: 'num',
-      fmt: (v, f) => f.modificado ? `<b>${v}</b>` : String(v) },
     { clave: 'defecto', titulo: 'Por defecto', tipo: 'num', fmt: v => String(v) },
+    { clave: 'delpro', titulo: 'En DelPro', tipo: 'num',
+      fmt: (v, f) => f.modificado ? `<b>${v}</b>` : String(v) },
+    // Editable: lo que usan los cálculos si está cargado.
+    { clave: 'ajuste', titulo: 'En LactIA', tipo: 'num', fmtNulos: true,
+      fmt: (v, f) => `<input type="number" class="pm-ajuste" data-clave="${f.clave}" ` +
+        `min="${f.minimo}" max="${f.maximo}" placeholder="${f.delpro}" ` +
+        `value="${v == null ? '' : v}" style="padding:4px 6px;width:78px;text-align:right">` },
     { clave: 'minimo', titulo: 'Mín.', tipo: 'num', fmt: v => String(v) },
     { clave: 'maximo', titulo: 'Máx.', tipo: 'num', fmt: v => String(v) },
     { clave: 'activo', titulo: 'Activo', tipo: 'bool' },
     { clave: 'usado_en', titulo: 'Usado en', tipo: 'texto',
       fmt: v => (v && v.length) ? `<span class="aviso">${v.join(' · ')}</span>` : '' },
-  ], pmDatos, { claseFila: f => f.modificado ? 'pm-modificado' : '' });
+  ], pmDatos, { claseFila: f => f.pisado ? 'pm-pisado' : (f.modificado ? 'pm-modificado' : '') });
+
+  document.querySelectorAll('.pm-ajuste').forEach(inp =>
+    inp.addEventListener('change', () => {
+      pmCambios[inp.dataset.clave] = inp.value;
+      document.getElementById('pm-info').textContent =
+        `${Object.keys(pmCambios).length} parámetro(s) con cambios sin guardar.`;
+    }));
+
+  const g = pmDatos.find(p => p.clave === 'dias_gestacion');
+  const s = pmDatos.find(p => p.clave === 'dias_secado');
+  const pisados = pmDatos.filter(p => p.pisado).length;
+  document.getElementById('pm-alerta').innerHTML =
+    `Los cálculos de <b>${pmTambo}</b> están usando <b>${g ? g.vigente : '?'} días de gestación</b> ` +
+    `y <b>${s ? s.vigente : '?'} días de período seco</b>` +
+    (pisados ? ` · ${pisados} parámetro(s) pisado(s) desde LactIA.` : '.') +
+    ` En <b>Análisis de Gestación</b> podés ver cuánto duran las gestaciones de verdad.`;
+}
+
+async function cargarParametros() {
+  const info = document.getElementById('pm-info');
+  info.textContent = 'Leyendo la configuración…';
+  try {
+    const d = await pedirJSON('/api/reproduccion/parametros?tambo=' + encodeURIComponent(tamboActual));
+    pmDatos = d.parametros || [];
+    pmTambo = d.tambo_nombre || tamboActual;
+    pmCambios = {};
+  } catch (e) {
+    info.textContent = 'Error: ' + e.message;
+    return;
+  }
+  pintarParametros();
 
   document.getElementById('pm-milkmetric').innerHTML = `<table class="lac-table">
     <thead><tr><th>Pestaña</th><th>Parámetro</th><th class="num">Valor</th></tr></thead>
@@ -3155,18 +3194,31 @@ async function cargarParametros() {
       `<tr><td>${p}</td><td>${n}</td><td class="num">${v}</td></tr>`).join('')}</tbody></table>`;
 
   const cambiados = pmDatos.filter(p => p.modificado).length;
-  info.textContent = `${pmDatos.length} parámetros leídos de DelPro · ` +
-    `${cambiados} cambiados respecto del valor por defecto.`;
-
-  // Los dos que más pesan en los cálculos, a la vista sin tener que buscarlos.
-  const g = pmDatos.find(p => p.clave === 'dias_gestacion');
-  const s = pmDatos.find(p => p.clave === 'dias_secado');
-  document.getElementById('pm-alerta').innerHTML =
-    `Los cálculos de LactIA están usando <b>${g ? g.valor : '?'} días de gestación</b> y ` +
-    `<b>${s ? s.valor : '?'} días de período seco</b>, que es lo que dice DelPro. ` +
-    `En la pestaña <b>Análisis de Gestación</b> podés ver cuánto duran las gestaciones de verdad ` +
-    `y si ese parámetro está bien puesto.`;
+  info.textContent = `${pmDatos.length} parámetros de ${pmTambo} · ` +
+    `${cambiados} cambiados en DelPro respecto del valor de fábrica.`;
 }
+
+document.getElementById('pm-revertir').addEventListener('click', cargarParametros);
+document.getElementById('pm-guardar').addEventListener('click', async () => {
+  const info = document.getElementById('pm-info');
+  if (!Object.keys(pmCambios).length) { info.textContent = 'No hay cambios para guardar.'; return; }
+  info.textContent = 'Guardando…';
+  try {
+    const d = await pedirJSON('/api/reproduccion/parametros?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cambios: pmCambios }),
+    });
+    pmDatos = d.parametros || [];
+    pmCambios = {};
+    pintarParametros();
+    info.textContent = 'Guardado. Los cálculos de las otras pestañas se van a rehacer con estos valores.';
+    // Todo lo cacheado en el navegador quedó hecho con los valores viejos.
+    perfDatos = psDatos = tpDatos = gsDatos = prenDatos = proyDatos = null;
+    document.getElementById('repro-tabla').innerHTML = '';
+  } catch (e) {
+    info.textContent = 'Error al guardar: ' + e.message;
+  }
+});
 
 // --- Análisis de gestación ---------------------------------------------------
 let chartGsMes = null, chartGsDist = null, gsDatos = null, gsReintento = null;

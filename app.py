@@ -1947,7 +1947,33 @@ def api_reproduccion_parametros():
             _cache_set(key, data)
         except Exception as exc:  # noqa: BLE001
             return jsonify({"error": str(exc)}), 502
-    return jsonify({"parametros": parametros.listado(data)})
+    return jsonify({"parametros": parametros.listado(data, tambo), "tambo": tambo,
+                    "tambo_nombre": tambos.TAMBOS.get(tambo, {}).get("nombre", tambo)})
+
+
+@app.post("/api/reproduccion/parametros")
+@auth.requiere_rol("admin")
+def api_reproduccion_guardar_parametros():
+    """Guarda los valores propios del tambo, que pisan a los de DelPro.
+
+    Body: {"cambios": {clave: numero}}. Un valor vacío borra el ajuste y hace
+    que ese parámetro vuelva a tomar lo que dice DelPro."""
+    tambo = _tambo_del_request()
+    try:
+        parametros.guardar_ajustes(tambo, (request.json or {}).get("cambios") or {})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    # Los cálculos cacheados quedaron hechos con los valores viejos.
+    with _cache_lock:
+        for k in [k for k in _cache if k.startswith(f"{tambo}:")]:
+            _cache.pop(k, None)
+    key = f"{tambo}:parametros_repro"
+    data, _ = _cache_get(key, allow_stale=True, ttl=1800)
+    if data is None:
+        data = db.run_query(parametros.SQL, tambo=tambo, max_rows=60)
+        _cache_set(key, data)
+    return jsonify({"parametros": parametros.listado(data, tambo),
+                    "ajustes": parametros.ajustes_de(tambo)})
 
 
 @app.get("/api/reproduccion/tasa_prenez")

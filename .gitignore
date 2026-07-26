@@ -28,3 +28,4 @@ env/
 .vscode/
 Thumbs.db
 metas_reproductivas.json
+parametros_reproductivos.json

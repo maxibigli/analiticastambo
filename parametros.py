@@ -24,6 +24,8 @@ días, y con eso el reparto mensual de secados y la curva de vacas en ordeñe.
 nombres se dedujo comparando la tabla contra la pantalla de DelPro, que las
 lista en el mismo orden (`OrderIndex`).
 """
+import json
+import os
 import threading
 import time
 
@@ -67,6 +69,65 @@ RESPALDO = {
     "espera_voluntaria": 53, "ciclo_celo": 21,
 }
 
+# --- Ajustes propios del tambo ----------------------------------------------
+# Lo que lee de DelPro es el punto de partida, pero el tambo puede querer que
+# LactIA calcule con OTRO valor sin tocar la configuración de la rotativa. El
+# caso que lo motivó: las gestaciones reales de La Ponderosa promedian 276,8
+# días y DelPro tiene 280; se puede poner 277 acá y proyectar con eso.
+#
+# Se guarda por tambo, así cada uno tiene los suyos:
+#     {"ponderosa": {"dias_gestacion": 277}, "don_german": {...}}
+#
+# Archivo fuera de git, como el resto de la configuración propia de cada
+# instalación (usuarios.json, metas_reproductivas.json).
+_RUTA_AJUSTES = os.path.join(os.path.dirname(__file__), "parametros_reproductivos.json")
+_lock_ajustes = threading.Lock()
+
+
+def _leer_ajustes() -> dict:
+    try:
+        with open(_RUTA_AJUSTES, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def ajustes_de(tambo: str) -> dict:
+    """Valores que el tambo pisó a mano. {} si no tocó ninguno."""
+    return _leer_ajustes().get(tambo, {})
+
+
+def guardar_ajustes(tambo: str, cambios: dict) -> dict:
+    """Guarda los valores propios del tambo.
+
+    `cambios`: {clave: numero} — un valor None o "" borra el ajuste y hace que
+    ese parámetro vuelva a tomar lo que dice DelPro.
+    """
+    claves_validas = {c for c, _l in PARAMETROS.values()}
+    with _lock_ajustes:
+        todo = _leer_ajustes()
+        propio = todo.setdefault(tambo, {})
+        for clave, valor_nuevo in (cambios or {}).items():
+            if clave not in claves_validas:
+                raise ValueError(f"Parámetro desconocido: {clave}")
+            if valor_nuevo in (None, ""):
+                propio.pop(clave, None)
+                continue
+            try:
+                n = int(valor_nuevo)
+            except (TypeError, ValueError):
+                raise ValueError(f"Valor inválido para {clave}: {valor_nuevo!r}")
+            if not (0 <= n <= 999):
+                raise ValueError(f"Valor fuera de rango para {clave}: {n}")
+            propio[clave] = n
+        if not propio:
+            todo.pop(tambo, None)
+        with open(_RUTA_AJUSTES, "w", encoding="utf-8") as f:
+            json.dump(todo, f, ensure_ascii=False, indent=1)
+    with _lock:
+        _cache.pop(tambo, None)   # forzar relectura con los ajustes nuevos
+    return ajustes_de(tambo)
+
 SQL = """
     SELECT Parameter, ValueInDays, DefaultValue, MinValue, MaxValue, Active, OrderIndex
     FROM ReproductionSetting
@@ -82,7 +143,10 @@ _lock = threading.Lock()
 
 
 def _leer(tambo: str) -> dict:
-    """{clave: valor_en_dias} del tambo. Cachea; si falla, usa el respaldo."""
+    """{clave: valor_en_dias} vigente del tambo.
+
+    Precedencia: ajuste propio del tambo → lo que dice DelPro → respaldo.
+    """
     with _lock:
         guardado = _cache.get(tambo)
         if guardado and time.time() - guardado[0] < _TTL_S:
@@ -98,6 +162,8 @@ def _leer(tambo: str) -> dict:
                 valores[PARAMETROS[codigo][0]] = int(fila[idx["ValueInDays"]] or 0)
     except Exception:  # noqa: BLE001
         pass
+    # Lo que el tambo pisó a mano gana sobre lo que dice DelPro.
+    valores.update(ajustes_de(tambo))
     with _lock:
         _cache[tambo] = (time.time(), valores)
     return valores
@@ -111,27 +177,38 @@ def valor(clave: str, tambo: str, defecto=None):
 
 
 def listado(data=None, tambo: str = None) -> list:
-    """Tabla completa para mostrar en la página, con etiquetas y rangos.
+    """Tabla completa para mostrar en la página.
 
-    `data`: resultado crudo de `db.run_query(SQL)`. Si no viene, se lee.
+    Cada fila trae tres valores distintos, que es lo que hay que poder
+    distinguir de un vistazo:
+
+        `defecto`   lo que trae DelPro de fábrica
+        `delpro`    lo que configuró el tambo EN DELPRO
+        `ajuste`    lo que se pisó en LactIA (None si no se tocó)
+        `vigente`   el que usan los cálculos = ajuste si hay, si no delpro
     """
     if data is None:
         import db
         data = db.run_query(SQL, tambo=tambo, max_rows=60)
     idx = {c: i for i, c in enumerate(data["columns"])}
+    propios = ajustes_de(tambo) if tambo else {}
     filas = []
     for f in data["rows"]:
         codigo = f[idx["Parameter"]]
         clave, etiqueta = PARAMETROS.get(codigo, (f"param_{codigo}", f"Parámetro {codigo}"))
-        v, defecto = f[idx["ValueInDays"]], f[idx["DefaultValue"]]
+        v_delpro, defecto = f[idx["ValueInDays"]], f[idx["DefaultValue"]]
+        ajuste = propios.get(clave)
         filas.append({
             "clave": clave, "parametro": etiqueta,
-            "valor": v, "defecto": defecto,
+            "delpro": v_delpro, "defecto": defecto,
+            "ajuste": ajuste,
+            "vigente": ajuste if ajuste is not None else v_delpro,
             "minimo": f[idx["MinValue"]], "maximo": f[idx["MaxValue"]],
             "activo": bool(f[idx["Active"]]),
-            # Marcar los que el tambo cambió respecto del defecto de DelPro:
-            # son las decisiones propias del tambo, y las que hay que mirar.
-            "modificado": v is not None and defecto is not None and v != defecto,
+            # El tambo cambió este parámetro en DelPro respecto del de fábrica.
+            "modificado": v_delpro is not None and defecto is not None and v_delpro != defecto,
+            # Y acá se le puso un valor distinto todavía.
+            "pisado": ajuste is not None and ajuste != v_delpro,
             "usado_en": USADO_EN.get(clave, []),
         })
     return filas
