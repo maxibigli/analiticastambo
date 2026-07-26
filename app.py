@@ -2611,6 +2611,11 @@ def api_alertas_probar():
 # contra un sitio externo, así que se cachea igual que CICLA.
 CONCILIACION_CACHE_TTL_S = 600
 
+# Ventana para decidir si un lote se usa. Un mes: alcanza para que un lote real
+# aparezca aunque se descargue día por medio, y es corto como para que uno que
+# se dejó de usar salga de la lista sin que haya que borrarlo en Haasten.
+CONCILIACION_DIAS_USO = 30
+
 
 def _conciliacion_estado(tambo: str, refrescar: bool = False) -> dict:
     """Los dos lados cruzados, más el estado del proveedor.
@@ -2634,22 +2639,30 @@ def _conciliacion_estado(tambo: str, refrescar: bool = False) -> dict:
 
     prov = proveedores.de(tambo)
     key_prov = f"{tambo}:conciliacion_proveedor"
-    lotes, info = [], {"nombre": prov.NOMBRE, "error": None, "equipos": []}
+    lotes, kg_lote = [], None
+    info = {"nombre": prov.NOMBRE, "error": None, "equipos": [],
+            "dias_uso": CONCILIACION_DIAS_USO}
     guardado, _ = _cache_get(key_prov, allow_stale=True, ttl=CONCILIACION_CACHE_TTL_S)
     if guardado is not None and not refrescar:
-        lotes, info = guardado["lotes"], guardado["info"]
+        lotes, kg_lote, info = guardado["lotes"], guardado["kg_lote"], guardado["info"]
     else:
         try:
             lotes = prov.lotes()
             info["equipos"] = [{k: v for k, v in e.items() if not k.startswith("_")}
                                for e in prov.equipos()]
-            _cache_set(key_prov, {"lotes": lotes, "info": info})
+            # Qué lotes RECIBEN comida de verdad. Sin esto, los catorce lotes que
+            # el tambo dejó configurados y no usa piden grupo y generan catorce
+            # alertas falsas que tapan las verdaderas.
+            hoy = datetime.date.today()
+            kg_lote = conciliacion.kg_por_lote(
+                prov.consumos(hoy - datetime.timedelta(days=CONCILIACION_DIAS_USO), hoy))
+            _cache_set(key_prov, {"lotes": lotes, "kg_lote": kg_lote, "info": info})
         except Exception as exc:  # noqa: BLE001
             info["error"] = str(exc)
 
     grupos = conciliacion.grupos_de(data["grupos"])
     mapeo = conciliacion.mapeo_de(tambo)
-    salida = conciliacion.analizar(grupos, lotes, mapeo)
+    salida = conciliacion.analizar(grupos, lotes, mapeo, kg_lote)
     ultimo_cambio = (data["cambio"]["rows"] or [[None]])[0][0]
     salida.update({
         "tambo": tambo,

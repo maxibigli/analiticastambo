@@ -5574,7 +5574,7 @@ function concPintar(sucio) {
   document.getElementById('conc-kpis').innerHTML = [
     ['Cabezas en DelPro', fmt(r.cabezas_delpro_total), `${r.grupos} grupos`],
     ['Cabezas en el proveedor', fmt(r.cabezas_proveedor),
-      `${r.lotes} lotes activos` + (r.lotes_inactivos ? ` · ${r.lotes_inactivos} de relleno` : '')],
+      `${r.lotes} lotes en uso` + (r.lotes_inactivos ? ` · ${r.lotes_inactivos} sin uso` : '')],
     ['Vacas de ordeñe sin lote', fmt(r.cabezas_sin_lote),
       r.grupos_sin_lote ? `${r.grupos_sin_lote} grupo(s)` : 'todos asignados'],
     ['Lotes sin grupo', fmt(r.lotes_sin_grupo), 'su costo no se reparte'],
@@ -5638,6 +5638,7 @@ function concPintar(sucio) {
     const [cls, txt] = CONC_ESTADOS[est];
     return `<tr>
       <td><b>${f.lote}</b>${f.en_proveedor ? '' : ' <span class="chip ambar">ya no está en el proveedor</span>'}
+        ${f.en_uso === false ? ' <span class="chip rojo">sin descargas</span>' : ''}
         ${f.indice_ordene != null ? `<div class="aviso">Haasten lo asocia al grupo N° ${f.indice_ordene}</div>` : ''}</td>
       <td class="aviso">${f.categoria || '—'}</td>
       <td class="num">${f.cabezas_proveedor == null ? '—' : fmt(f.cabezas_proveedor)}</td>
@@ -5655,8 +5656,10 @@ function concPintar(sucio) {
   document.getElementById('conc-tabla-lotes').innerHTML =
     `<table class="lac-table">${cabecera}<tbody>${activos.map(filaLote).join('')}</tbody></table>` +
     (relleno.length ? `<details style="margin-top:10px"><summary class="aviso">
-        ${relleno.length} lote(s) de relleno — sin kg de materia seca por cabeza, no alimentan a
-        nadie. Se listan por si alguno se empieza a usar.</summary>
+        ${relleno.length} lote(s) que <b>no alimentan a nadie</b> — o no tienen ración configurada,
+        o hace ${(d.proveedor && d.proveedor.dias_uso) || 30} días que no reciben una descarga.
+        No hace falta mapearlos: son configuración vieja del mixer, no corrales.
+        Se listan por si alguno se empieza a usar.</summary>
       <table class="lac-table" style="margin-top:6px">${cabecera}
         <tbody>${relleno.map(filaLote).join('')}</tbody></table></details>` : '');
 
