@@ -409,9 +409,9 @@
       <span class="aviso">El rodeo contra los objetivos del tambo, comparando dos períodos.</span>
       <div class="lac-segment" id="repro-tabs" role="group" aria-label="Vista"
            style="margin-left:auto">
-        <button class="lac-segment__item" data-tab="resultados" aria-pressed="true">Resultados</button>
+        <button class="lac-segment__item" data-tab="metas" aria-pressed="true">Calibración de Objetivos</button>
+        <button class="lac-segment__item" data-tab="resultados" aria-pressed="false">Resultados</button>
         <button class="lac-segment__item" data-tab="preneces" aria-pressed="false">Indicadores de Preñez</button>
-        <button class="lac-segment__item" data-tab="metas" aria-pressed="false">Calibración de Objetivos</button>
       </div>
     </div>
 
@@ -465,7 +465,7 @@
       <div style="overflow-x:auto;margin-top:14px" id="pren-tabla"></div>
     </div>
 
-    <div id="repro-panel-resultados">
+    <div id="repro-panel-resultados" hidden>
       <div class="controls" style="margin-top:12px;gap:16px;flex-wrap:wrap">
         <div class="controls" style="gap:5px">
           <span class="aviso" style="font-weight:600">Rango 1</span>
@@ -513,7 +513,7 @@
       <div style="overflow-x:auto;margin-top:14px" id="repro-tabla"></div>
     </div>
 
-    <div id="repro-panel-metas" hidden>
+    <div id="repro-panel-metas">
       <p class="explica" style="margin-top:12px">
         <b>Qué es.</b> Los objetivos del tambo para cada indicador reproductivo. Es la misma pantalla
         de Metas de DelPro: un valor y una condición que define si se cumple.
@@ -4329,7 +4329,10 @@ function cargarDatosDePagina(id) {
   else if (id === 'rutina') { cargarRutina(); cargarRendimiento(); }
   else if (id === 'flujos') cargarFlujos();
   else if (id === 'proyeccion') cargarProyeccion();
-  else if (id === 'repro') cargarRepro();
+  // Arranca en Calibración de Objetivos: es la primera pestaña y además no
+  // toca la base, así que la página abre al instante en vez de esperar la
+  // consulta pesada de Resultados. Las otras dos cargan al entrar en ellas.
+  else if (id === 'repro') cargarMetas();
   else if (id === 'entregas') { cargarCicla(); cargarComparar(); cargarLaser(); }
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
