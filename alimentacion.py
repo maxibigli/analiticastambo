@@ -364,10 +364,40 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
 
     sin_control = sum(1 for f in filas_vaca if not f["controles"])
     no_confiables = [f for f in filas_grupo if not f["confiable"]]
+
+    # Cobertura sobre el rodeo EN ORDEÑE. Es la pregunta que importa —"¿estoy
+    # analizando bien a las vacas que producen?"— y sin esto queda escondida:
+    # las tablas muestran lo que sí se pudo calcular, nunca lo que falta.
+    ordene = {g["oid"]: g for g in grupos if g["es_ordene"] and g["cabezas"] > 0}
+    analizados = {f["oid"] for f in filas_grupo if f["confiable"]}
+    cab_total = sum(g["cabezas"] for g in ordene.values())
+    cab_ok = sum(g["cabezas"] for oid, g in ordene.items() if oid in analizados)
+    motivo_de = {f["oid"]: f["motivo"] for f in no_confiables}
+    sin_lote_oids = {g["oid"] for g in ordene.values() if g["oid"] not in lote_de_grupo}
+    fuera = []
+    for oid, g in ordene.items():
+        if oid in analizados:
+            continue
+        if oid in motivo_de:
+            motivo = motivo_de[oid]
+        elif oid in sin_lote_oids:
+            motivo = "No tiene lote asignado en la conciliación de grupos."
+        else:
+            motivo = ("No hay ninguna descarga registrada a su lote en el período: "
+                      "esas vacas comen sin que quede registro.")
+        fuera.append({"grupo": g["nombre"], "cabezas": g["cabezas"], "motivo": motivo})
+    fuera.sort(key=lambda x: -x["cabezas"])
+
     return {
         "grupos": filas_grupo,
         "vacas": filas_vaca,
         "sin_descargas": sin_descargas,
+        "cobertura": {
+            "cabezas_ordene": cab_total,
+            "cabezas_analizadas": cab_ok,
+            "pct": round(100 * cab_ok / cab_total) if cab_total else None,
+            "fuera": fuera,
+        },
         "resumen": {
             "conversion_tambo": round(tot_sol / tot_ms, 3) if tot_ms else None,
             "kg_ms_total": round(tot_ms),

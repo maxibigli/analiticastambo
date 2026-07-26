@@ -5796,7 +5796,7 @@ document.getElementById('conc-guardar').addEventListener('click', async () => {
 let cvDatos = null, chartCv = null, cvReintento = null;
 
 function pintarConversion() {
-  const d = cvDatos, r = d.resumen || {};
+  const d = cvDatos, r = d.resumen || {}, cob = d.cobertura || {};
   const conv = r.conversion_tambo;
   // El número solo no dice nada: se lo ubica contra las referencias de la
   // industria para vacas de alta producción.
@@ -5810,11 +5810,9 @@ function pintarConversion() {
       `kg sólidos / kg MS · ${juicio}`],
     ['Materia seca', fmt(r.kg_ms_total) + ' kg', 'entregada en el período'],
     ['Sólidos producidos', fmt(r.kg_solidos_total) + ' kg', 'grasa + proteína'],
-    ['Grupos en el indicador', fmt(r.grupos_confiables),
-      (r.grupos_no_confiables || r.grupos_sin_descargas)
-        ? `${fmt((r.grupos_no_confiables || 0) + (r.grupos_sin_descargas || 0))} afuera, ver abajo`
-        : 'todos los de ordeñe'],
-    ['Vacas', fmt(r.vacas),
+    ['Rodeo en ordeñe analizado', (cob.pct == null ? '—' : cob.pct + ' %'),
+      `${fmt(cob.cabezas_analizadas)} de ${fmt(cob.cabezas_ordene)} vacas`],
+    ['Vacas con sólidos', fmt(r.vacas - (r.vacas_sin_control || 0)),
       r.vacas_sin_control ? `${fmt(r.vacas_sin_control)} sin control lechero` : 'todas con control'],
   ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
     `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
@@ -5839,20 +5837,17 @@ function pintarConversion() {
     options: o,
   });
 
-  // Grupos que quedaron afuera del indicador, con el motivo. Son hallazgos para
-  // el tambo, no ruido: significan descargas que no se están registrando.
-  const malos = (d.grupos || []).filter(x => !x.confiable);
-  const sinDesc = d.sin_descargas || [];
-  document.getElementById('cv-avisos').innerHTML = (malos.length || sinDesc.length)
-    ? malos.map(x => `<div class="aviso" style="padding:6px 0">
-        <span class="chip rojo">Fuera del indicador</span> <b>${x.grupo}</b> (lote ${x.lote}):
-        ${x.motivo}</div>`).join('') +
-      (sinDesc.length ? `<div class="aviso" style="padding:6px 0">
-        <span class="chip rojo">Sin descargas</span>
-        ${sinDesc.length} grupo(s) de ordeñe con lote asignado pero <b>ninguna descarga
-        registrada</b> en el período — ${fmt(sinDesc.reduce((s, x) => s + x.cabezas, 0))}
-        vacas comiendo sin que quede registro:
-        ${sinDesc.map(x => `${x.grupo} (${fmt(x.cabezas)})`).join(', ')}.</div>` : '')
+  // Qué vacas de ordeñe NO se están analizando y por qué. Va arriba de todo y en
+  // rojo: la tabla de abajo solo muestra lo que sí se pudo calcular, así que sin
+  // esto el rodeo que falta queda invisible.
+  const fuera = cob.fuera || [];
+  document.getElementById('cv-avisos').innerHTML = fuera.length
+    ? `<div class="aviso" style="padding:6px 0"><span class="chip rojo">Sin analizar</span>
+        <b>${fmt(fuera.reduce((s, x) => s + x.cabezas, 0))} vacas en ordeñe</b> quedan afuera del
+        indicador. No es un problema del cálculo: son datos de alimentación que faltan en
+        Haasten.</div>` +
+      fuera.map(x => `<div class="aviso" style="padding:4px 0 4px 18px">
+        <b>${x.grupo}</b> (${fmt(x.cabezas)} cabezas): ${x.motivo}</div>`).join('')
     : '';
 
   tablaInteractiva('cv-tabla-grupos', [
