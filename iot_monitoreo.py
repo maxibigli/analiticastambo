@@ -24,10 +24,16 @@ import db
 from iot_lavado import RUTA_DB, _conectar_db
 
 MINUTOS_ORDENO_ACTIVO = 15  # última visita dentro de esta ventana = "ordeñando"
+CACHE_ORDENO_TTL_S = 30     # el frontend refresca cada 5s; sin esto pegaría
+                            # una consulta a la base DDM por refresco, de más
+                            # (una sesión de ordeño dura horas, 30s de caché
+                            # no le hace perder nada de "tiempo real" real).
 
 SQL_ULTIMA_VISITA = """
     SELECT MAX(CreationTime) AS ultima FROM MilkingDeviceVisit WHERE GCRecord IS NULL
 """
+
+_cache_ordeno: dict = {}  # tambo -> (timestamp, bool)
 
 # Sensores planeados (ninguno instalado todavía, 2026-07-25 — ver memoria
 # delpro-iot-gateway). "ith" es calculado (temperatura-humedad, estrés
@@ -68,16 +74,23 @@ def _ultimo_estado_canal(canal: str):
 
 
 def _ordeno_activo(tambo: str) -> bool:
+    ahora = datetime.datetime.now()
+    cacheado = _cache_ordeno.get(tambo)
+    if cacheado and (ahora - cacheado[0]).total_seconds() < CACHE_ORDENO_TTL_S:
+        return cacheado[1]
     try:
         data = db.run_query(SQL_ULTIMA_VISITA, tambo=tambo)
         ultima = data["rows"][0][0] if data["rows"] else None
         if ultima is None:
-            return False
-        if isinstance(ultima, str):
-            ultima = datetime.datetime.fromisoformat(ultima)
-        return (datetime.datetime.now() - ultima) <= datetime.timedelta(minutes=MINUTOS_ORDENO_ACTIVO)
+            resultado = False
+        else:
+            if isinstance(ultima, str):
+                ultima = datetime.datetime.fromisoformat(ultima)
+            resultado = (ahora - ultima) <= datetime.timedelta(minutes=MINUTOS_ORDENO_ACTIVO)
     except Exception:  # noqa: BLE001
-        return False
+        resultado = cacheado[1] if cacheado else False  # ante un error puntual, no parpadear a APAGADO
+    _cache_ordeno[tambo] = (ahora, resultado)
+    return resultado
 
 
 def estado_sistema(tambo: str) -> dict:
