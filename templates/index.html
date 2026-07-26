@@ -166,6 +166,11 @@
   /* Vúmetros de Salud del rodeo / Monitoreo IoT (contenedor; el SVG del
      instrumento en sí es liviano y se arma en JS, ver _vumetroSVG). */
   .gauge-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  /* Vúmetro de barra LED (ver _vumetroBarraHTML): panel siempre oscuro, como
+     cualquier instrumento de la paleta Lactia. */
+  .vu-barra { display: flex; gap: 3px; height: 26px; background: var(--lac-inst-well);
+    border-radius: 6px; padding: 4px 6px; }
+  .vu-barra i { flex: 1; border-radius: 2px; transition: background .05s ease, box-shadow .05s ease; }
   /* Monitoreo IoT: estado de 4 fases de la rotativa */
   .iot-estado { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 18px;
     border-radius: 12px; border: 1px solid var(--border); }
@@ -2435,27 +2440,30 @@ function pintarSaludProduccion(d) {
 }
 
 // --- Vúmetros livianos (paleta de instrumento Lactia, SVG mínimo) -----------
-// Mismo lenguaje visual que el kit Lactia (fondo navy fijo + 3 zonas de color
-// + aguja), pero con 6 elementos SVG en vez de las ~44 marcas del vúmetro de
-// aguja del kit (static/js/lactia-gauge.js) — con varios sensores a la vez
-// en pantalla (Salud del rodeo, Monitoreo IoT) esas 44 marcas por instrumento
-// se sentían pesadas. _vumetros guarda una "instancia" liviana por clave
-// (objeto con .set()) para poder actualizarlas sin reconstruir la tarjeta
-// entera (ver pintarVumetros/actualizarGaugeBcs).
+// Barra de LEDs tipo vúmetro de consola de audio: nada de SVG, solo <i> con
+// color de fondo — más liviana todavía que el dial de aguja (sin cálculo de
+// ángulos ni paths). Mismas 3 zonas de color por posición del segmento
+// (los últimos siempre son ámbar/rojo, estén prendidos o no, como en un
+// vúmetro real). _vumetros guarda una "instancia" liviana por clave (objeto
+// con .set()) para poder actualizarlas sin reconstruir la tarjeta entera
+// (ver pintarVumetros/actualizarGaugeBcs).
 const _vumetros = {};
+const VU_SEGMENTOS = 15;
+const VU_WARN_AT = 0.78, VU_DANGER_AT = 0.90;
 
-function _vumetroSVG(pct) {
-  const p = Math.max(0, Math.min(100, pct || 0));
-  const rot = (p / 100) * 180 - 90;
-  return `<svg viewBox="0 0 100 60" style="width:100%;height:auto;display:block">
-    <path d="M6,55 A44,44 0 0 1 94,55 L94,60 L6,60 Z" fill="var(--lac-inst-well)"/>
-    <path d="M10,55 A40,40 0 0 1 33,20.7" fill="none" stroke="var(--lac-inst-zone-low)" stroke-width="7" stroke-linecap="round"/>
-    <path d="M33,20.7 A40,40 0 0 1 67,20.7" fill="none" stroke="var(--lac-inst-zone-mid)" stroke-width="7" stroke-linecap="round"/>
-    <path d="M67,20.7 A40,40 0 0 1 90,55" fill="none" stroke="var(--lac-inst-zone-high)" stroke-width="7" stroke-linecap="round"/>
-    <line x1="50" y1="55" x2="50" y2="18" stroke="#fff" stroke-width="2.5" stroke-linecap="round"
-          style="transform-origin:50px 55px;transform:rotate(${rot}deg);transition:transform .4s ease"/>
-    <circle cx="50" cy="55" r="3.5" fill="#fff"/>
-  </svg>`;
+function _vumetroBarraHTML(pct) {
+  const p = Math.max(0, Math.min(100, pct || 0)) / 100;
+  const activos = Math.round(p * VU_SEGMENTOS);
+  let html = '';
+  for (let i = 1; i <= VU_SEGMENTOS; i++) {
+    const frac = i / VU_SEGMENTOS;
+    const color = frac > VU_DANGER_AT ? 'var(--lac-inst-zone-over)'
+                : frac > VU_WARN_AT ? 'var(--lac-inst-zone-high)'
+                : 'var(--lac-inst-zone-low)';
+    const on = i <= activos;
+    html += `<i style="background:${on ? color : 'var(--lac-inst-off)'}${on ? `;box-shadow:0 0 4px ${color}` : ''}"></i>`;
+  }
+  return html;
 }
 
 function vumetroHTML(key, { label, sub, target, disabled }) {
@@ -2463,10 +2471,10 @@ function vumetroHTML(key, { label, sub, target, disabled }) {
     ? ` onclick="document.getElementById('${target}').scrollIntoView({behavior:'smooth',block:'start'})" style="cursor:pointer"`
     : '';
   const cuerpo = disabled
-    ? `<div class="lac-caption" style="padding:38px 0">sin instalar</div>`
-    : `<div id="vu-${key}" style="width:140px;margin:2px auto 0"></div>
-       <div class="lac-data lac-data-lg" id="vu-${key}-val" style="text-align:center"></div>`;
-  return `<div class="lac-card" style="text-align:center;padding:12px 8px;min-width:170px"${click}>
+    ? `<div class="lac-caption" style="padding:20px 0">sin instalar</div>`
+    : `<div id="vu-${key}" class="vu-barra"></div>
+       <div class="lac-data lac-data-lg" id="vu-${key}-val" style="text-align:center;margin-top:6px"></div>`;
+  return `<div class="lac-card" style="text-align:center;padding:12px 10px;min-width:170px"${click}>
     <div class="lac-eyebrow">${label}</div>
     ${cuerpo}
     <div class="lac-caption" id="vu-${key}-sub" style="margin-top:2px;min-height:14px">${sub || ''}</div>
@@ -2482,7 +2490,7 @@ function vumetroIniciar(key, { valor, min, max, decimals, unidad }) {
   const instancia = {
     set(v) {
       const pct = 100 * (v - min) / (max - min);
-      cont.innerHTML = _vumetroSVG(pct);
+      cont.innerHTML = _vumetroBarraHTML(pct);
       if (val) val.textContent = v.toFixed(decimals) + (unidad || '');
     },
   };
