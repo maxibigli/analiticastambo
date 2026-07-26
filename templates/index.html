@@ -308,6 +308,7 @@
     {% if 'flujos' in paginas_visibles %}<button class="nav-item" data-pagina="flujos">💧 <span>Flujos de ordeño</span></button>{% endif %}
     {% if 'evolucion' in paginas_visibles %}<button class="nav-item" data-pagina="evolucion">📈 <span>Evolución</span></button>{% endif %}
     {% if 'proyeccion' in paginas_visibles %}<button class="nav-item" data-pagina="proyeccion">🔮 <span>Proyección de Rebaños</span></button>{% endif %}
+    {% if 'entregas' in paginas_visibles %}<button class="nav-item" data-pagina="entregas">🥛 <span>Entrega de Leche</span></button>{% endif %}
     {% if 'salud' in paginas_visibles %}<button class="nav-item" data-pagina="salud">🩺 <span>Salud del rodeo</span></button>{% endif %}
     {% if 'ficha' in paginas_visibles %}<button class="nav-item" data-pagina="ficha">🐄 <span>Ficha Animal</span></button>{% endif %}
     {% if 'iot' in paginas_visibles %}<button class="nav-item" data-pagina="iot">📡 <span>Monitoreo IoT</span></button>{% endif %}
@@ -388,6 +389,9 @@
     <div class="aviso" id="whatsapp-info" style="margin-top:8px"></div>
   </section>
 
+  </div>
+
+  <div class="page" id="page-entregas" hidden>
   <section class="card" id="cicla-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">🥛 Entregas de leche (CICLA)</h2>
@@ -402,6 +406,12 @@
         <button class="secundario" id="cicla-aplicar">Aplicar</button>
       </div>
     </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Qué muestra.</b> Cada carga que se despachó: los litros que midió el caudalímetro propio y
+      a qué temperatura salió la leche. Es el registro del tambo, antes de que el comprador pese.
+      <br><b>Cómo se calcula.</b> Sale de la plataforma CICLA, no de la base de DelPro. El umbral de
+      temperatura es 4 °C: por encima, la leche estuvo más caliente de lo que admite el frío.
+    </p>
     <div class="aviso" id="cicla-info" style="margin-top:8px"></div>
     <div class="kpis" id="cicla-kpis" style="margin-top:10px"></div>
     <div class="grid2" style="margin-top:14px">
@@ -422,33 +432,54 @@
       <h2 style="margin:0">⚖️ Caudalímetro vs. Comprador (litros/día)</h2>
       <span class="aviso">Litros Cicla (caudalímetro) vs. litros oficiales recibidos por La Serenísima, por día · umbral ±3%.</span>
     </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Qué muestra.</b> Lo que el tambo midió contra lo que el comprador reconoce, día por día. Es
+      la comparación que importa: la diferencia entre las dos curvas son litros que se produjeron y
+      no se cobran.
+      <br><b>Cómo se calcula.</b> Litros de CICLA contra litros de la liquidación de La Serenísima,
+      cruzados por fecha. El umbral marcado es ±3%: por debajo de eso la diferencia entra en la
+      tolerancia normal entre dos instrumentos distintos; por encima conviene revisar.
+    </p>
     <div class="aviso" id="comparar-info" style="margin-top:8px"></div>
     <div class="chart-box" style="height:240px;margin-top:10px"><canvas id="chart-comparar"></canvas></div>
-    <hr style="border:none;border-top:1px solid var(--border);margin:16px 0">
+  </section>
+
+  <section class="card" id="laser-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">🧪 Calidad de leche (La Serenísima)</h2>
       <span class="aviso">Datos oficiales del comprador — período actual, tambo 1565.</span>
     </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Qué muestra.</b> Los parámetros con los que el comprador liquida la leche: grasa, proteínas,
+      unidades formadoras de colonia y temperatura de recepción. Son los números que definen el
+      precio, medidos por ellos.
+      <br><b>Cómo se calcula.</b> No se calcula acá: se trae de la liquidación de La Serenísima tal
+      como viene. Cada gráfico marca el umbral de bonificación o castigo que corresponde.
+    </p>
     <div class="kpis" id="laser-kpis" style="margin-top:10px"></div>
     <div style="margin-top:14px">
       <div class="aviso" style="margin-bottom:6px">Litros por entrega</div>
       <div class="chart-box" style="height:220px"><canvas id="chart-laser-litros"></canvas></div>
     </div>
-    <div style="margin-top:20px">
-      <div class="aviso" style="margin-bottom:6px">Grasa %</div>
-      <div class="chart-box" style="height:220px"><canvas id="chart-laser-grasa"></canvas></div>
+    <div class="grid2" style="margin-top:20px">
+      <div>
+        <div class="aviso" style="margin-bottom:6px">Grasa %</div>
+        <div class="chart-box" style="height:220px"><canvas id="chart-laser-grasa"></canvas></div>
+      </div>
+      <div>
+        <div class="aviso" style="margin-bottom:6px">Proteínas %</div>
+        <div class="chart-box" style="height:220px"><canvas id="chart-laser-proteinas"></canvas></div>
+      </div>
     </div>
-    <div style="margin-top:20px">
-      <div class="aviso" style="margin-bottom:6px">Proteínas %</div>
-      <div class="chart-box" style="height:220px"><canvas id="chart-laser-proteinas"></canvas></div>
-    </div>
-    <div style="margin-top:20px">
-      <div class="aviso" style="margin-bottom:6px">U.F.C.</div>
-      <div class="chart-box" style="height:220px"><canvas id="chart-laser-ufc"></canvas></div>
-    </div>
-    <div style="margin-top:20px">
-      <div class="aviso" style="margin-bottom:6px">Temperatura (°C) · umbral 4°C</div>
-      <div class="chart-box" style="height:220px"><canvas id="chart-laser-temp"></canvas></div>
+    <div class="grid2" style="margin-top:20px">
+      <div>
+        <div class="aviso" style="margin-bottom:6px">U.F.C.</div>
+        <div class="chart-box" style="height:220px"><canvas id="chart-laser-ufc"></canvas></div>
+      </div>
+      <div>
+        <div class="aviso" style="margin-bottom:6px">Temperatura (°C) · umbral 4°C</div>
+        <div class="chart-box" style="height:220px"><canvas id="chart-laser-temp"></canvas></div>
+      </div>
     </div>
   </section>
   </div>
@@ -3825,7 +3856,7 @@ document.getElementById('evolucion-info').textContent =
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'proyeccion', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
+const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'proyeccion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -3834,13 +3865,14 @@ function cargarDatosDePagina(id) {
   if (paginasCargadas.has(id)) return;
   paginasCargadas.add(id);
   if (id === 'dashboard') {
-    cargarDashboard(); cargarCicla(); cargarComparar(); cargarLaser(); cargarCanalesAlertas();
+    cargarDashboard(); cargarCanalesAlertas();
     cargarResumenProduccion(); cargarResumenAnimales(); cargarResumenDuraciones(); cargarResumenGrupo();
   }
   else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
   else if (id === 'rutina') { cargarRutina(); cargarRendimiento(); }
   else if (id === 'flujos') cargarFlujos();
   else if (id === 'proyeccion') cargarProyeccion();
+  else if (id === 'entregas') { cargarCicla(); cargarComparar(); cargarLaser(); }
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
   else if (id === 'consultas') cargarPredefinidas();
