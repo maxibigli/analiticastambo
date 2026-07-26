@@ -66,11 +66,43 @@ Medido en enero 2026: **26 de 31 días con ITH máx ≥ 72** (estrés moderado),
 el 11 y 12 llegó a 80,4 y 81,7 (severo). En el mismo mes, la pestaña Tasa de
 Preñez da 8% de preñadas y 27% de concepción, contra 27% y 47% en agosto.
 
-**Qué hacer:** superponer el ITH como serie en los gráficos de Tasa de Preñez
-(por ciclo y por mes) y de Análisis de Gestación. Cachear fuerte: el clima
-pasado no cambia, se pide una vez por rango y se guarda.
+**YA SE ANALIZÓ. La hipótesis simple NO se sostiene, y hay dos trampas en el
+dato que hay que resolver antes de graficar nada.**
 
-Umbrales: >68 leve, >72 moderado, >80 severo.
+TRAMPA 1 — los últimos meses están censurados. Un servicio se chequea ~35 días
+después, así que los servicios recientes todavía no tienen resultado. Medido:
+jun-2026 da 11,4% de concepción y jul-2026 da 0,0%. NO ES REAL. El gráfico
+tiene que EXCLUIR o marcar como incompletos los últimos ~2 meses; si no,
+muestra un derrumbe inventado.
+
+TRAMPA 2 — los dos veranos se comportaron distinto con el mismo ITH:
+
+    verano 2024-25 (dic/ene/feb):  51,1%  39,2%  43,1%
+    verano 2025-26 (dic/ene/feb):  20,9%  30,4%  39,9%
+
+Si fuera solo calor serían iguales. Promediarlos hace que se cancelen: por eso
+un primer análisis por tramos de ITH dio PLANO (36,3% sin estrés contra 36,7%
+con estrés severo, y el estrés leve arriba de todo, que es absurdo — mide la
+estación, no el calor).
+
+LO QUE SÍ MUESTRA EL DATO, y es lo que le sirve al tambo: en verano se
+DERRUMBAN LOS SERVICIOS, no la concepción.
+
+    may-2026  ITH 61,0   429 servicios   48,5%
+    dic-2025  ITH 76,4    67 servicios   20,9%
+
+67 servicios contra 429. La tasa de preñez es servicios × concepción, así que
+eso solo explica el 8% de preñadas de enero. Es una decisión de manejo.
+
+**EL GRÁFICO QUE HAY QUE ARMAR** (por mes, no por ciclo): barras de servicios,
+línea de % concepción, línea de ITH en eje derecho, los últimos 2 meses en
+gris con la aclaración de que faltan chequeos, y las bandas de ITH marcadas.
+Que se lea de un vistazo que el bache de verano es de servicios.
+
+Se probaron cuatro ventanas de desfasaje (-40 a +7, -21 a 0, 0 a +7, -60 a
+-21) y ninguna da señal limpia. NO insistir por ahí sin controlar por año.
+
+Umbrales: >68 leve, >72 moderado, >80 severo. Usar el ITH MÁXIMO diario.
 
 **Los parámetros de MilkMetric también tienen que ser editables** (hoy están
 hardcodeados en la constante `MILKMETRIC` del template). No están en DDM, así
