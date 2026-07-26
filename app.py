@@ -26,6 +26,7 @@ import laserenisima
 import mantenimiento
 import podal
 import proyeccion
+import reproduccion
 import resumen
 import rutina
 import salud
@@ -1536,6 +1537,125 @@ def api_proyeccion_rebanos():
                                     data["lact_hist"], desde, hasta, hoy)
     resultado["desde"] = desde
     resultado["hasta"] = hasta
+    return jsonify(resultado)
+
+
+# --- Análisis reproductivo ---------------------------------------------------
+REPRO_CACHE_TTL_S = 3600  # 1 hora: el estado reproductivo cambia de a poco
+
+
+@app.get("/api/reproduccion/metas")
+@auth.requiere_rol("admin")
+def api_reproduccion_metas():
+    """Catálogo de indicadores con la meta y condición vigentes de cada uno."""
+    return jsonify({"metas": reproduccion.metas(),
+                    "condiciones": list(reproduccion.CONDICIONES)})
+
+
+@app.post("/api/reproduccion/metas")
+@auth.requiere_rol("admin")
+def api_reproduccion_guardar_metas():
+    """Guarda metas y condiciones. Body: {"cambios": {clave: {meta, condicion}}}."""
+    cambios = (request.json or {}).get("cambios") or {}
+    try:
+        actualizadas = reproduccion.guardar_metas(cambios)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"metas": actualizadas, "guardados": len(cambios)})
+
+
+def _refresh_repro_async(tambo, rangos, key):
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            hoy = datetime.date.today().isoformat()
+            data = {}
+            # El inventario es una foto del estado actual: una sola consulta
+            # para los dos rangos, no una por rango.
+            data["inv"] = db.run_query(reproduccion.SQL_INVENTARIO, tambo=tambo, max_rows=5)
+            data["pren"] = db.run_query(reproduccion.SQL_PCT_PRENADAS, tambo=tambo, max_rows=5)
+            data["no_insem"] = db.run_query(reproduccion.SQL_NO_INSEMINAR, tambo=tambo, max_rows=5)
+            for nombre, (desde, hasta) in rangos.items():
+                data[f"{nombre}:prenez"] = db.run_query(
+                    reproduccion.sql_prenez_por_del(desde, hasta), tambo=tambo, max_rows=20)
+                # Ventanas de ciclos, contadas hacia atrás desde el fin del rango.
+                for suf, ciclos in (("c1", 1), ("c3", 3), ("c12", 18)):
+                    data[f"{nombre}:{suf}"] = db.run_query(
+                        reproduccion.sql_servicios_por_ciclo(hasta, ciclos),
+                        tambo=tambo, max_rows=200)
+                data[f"{nombre}:ab3c"] = db.run_query(
+                    reproduccion.sql_abortos(
+                        (datetime.date.fromisoformat(hasta)
+                         - datetime.timedelta(days=3 * reproduccion.CICLO_DIAS)).isoformat(),
+                        hasta), tambo=tambo, max_rows=20)
+                data[f"{nombre}:ab12m"] = db.run_query(
+                    reproduccion.sql_abortos(
+                        (datetime.date.fromisoformat(hasta)
+                         - datetime.timedelta(days=365)).isoformat(),
+                        hasta), tambo=tambo, max_rows=20)
+                data[f"{nombre}:es_actual"] = hasta >= hoy
+            _cache_set(key, data)
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+@app.get("/api/reproduccion/resultados")
+@auth.requiere_rol("admin")
+def api_reproduccion_resultados():
+    """Evalúa el rodeo contra las metas, para dos rangos comparables.
+
+    Réplica del informe de metas reproductivas de DelPro. Ver
+    `reproduccion.py`: la calibración de metas es exacta, los valores medidos
+    dependen de los eventos reproductivos de DDM y cada indicador declara su
+    nivel de confianza."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    def leer(nombre, defecto):
+        val = request.args.get(nombre)
+        if not val:
+            return defecto
+        return datetime.datetime.strptime(val, "%Y-%m-%d").date()
+    try:
+        d1 = leer("desde1", datetime.date(hoy.year - 1, 1, 1))
+        h1 = leer("hasta1", datetime.date(hoy.year - 1, 12, 31))
+        d2 = leer("desde2", datetime.date(hoy.year, 1, 1))
+        h2 = leer("hasta2", hoy)
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    if d1 > h1:
+        d1, h1 = h1, d1
+    if d2 > h2:
+        d2, h2 = h2, d2
+
+    rangos = {"r1": (d1.isoformat(), h1.isoformat()), "r2": (d2.isoformat(), h2.isoformat())}
+    key = f"{tambo}:repro:{d1}:{h1}:{d2}:{h2}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=REPRO_CACHE_TTL_S)
+    if data is None:
+        _refresh_repro_async(tambo, rangos, key)
+        return jsonify({"calentando": True, "mensaje": "Evaluando indicadores reproductivos…"}), 202
+    if not fresh:
+        _refresh_repro_async(tambo, rangos, key)
+
+    def valores(nombre):
+        return reproduccion.valores_de_rango(
+            data["inv"], data["pren"], data[f"{nombre}:prenez"],
+            data[f"{nombre}:c1"], data[f"{nombre}:c3"], data[f"{nombre}:c12"],
+            data[f"{nombre}:ab3c"], data[f"{nombre}:ab12m"], data["no_insem"],
+            es_actual=data.get(f"{nombre}:es_actual", False))
+
+    resultado = reproduccion.armar(
+        valores("r1"), valores("r2"),
+        {"desde": rangos["r1"][0], "hasta": rangos["r1"][1]},
+        {"desde": rangos["r2"][0], "hasta": rangos["r2"][1]})
     return jsonify(resultado)
 
 

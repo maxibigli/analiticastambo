@@ -1,0 +1,454 @@
+# -*- coding: utf-8 -*-
+"""Análisis reproductivo: catálogo de indicadores, metas configurables y
+evaluación del rodeo contra esas metas para dos rangos de fechas.
+
+Replica el informe de metas reproductivas de DelPro: un árbol
+Sección → Subsección → Ítem, cada ítem con una META y una CONDICIÓN (>=, <=,
+>, <) que define si el valor medido cumple o no.
+
+QUÉ SE PUEDE CALCULAR Y QUÉ NO
+------------------------------
+La calibración de metas es 100% confiable: es configuración del tambo, no
+depende de la base.
+
+Los valores medidos, en cambio, dependen de los eventos reproductivos de DDM,
+que en esta instalación están incompletos. Se verificó contra el informe de
+DelPro (rangos 2025 completo y 2026 hasta el 26/07) por tres caminos distintos
+y ninguno lo reproduce:
+
+  * `AnimalDaily` da 242 vacas/día promedio en 2025 contra las 2.678 del
+    informe — está poblada solo para una fracción del rodeo.
+  * `HistoryAnimalLactationInfo.OpenDays` reproduce bien la FORMA del % de
+    preñez por DEL en 2025 (31/40/42/48/53 contra 24/33/36/40/48) pero queda
+    ~6 puntos alto, y en 2026 se derrumba porque las lactancias en curso
+    todavía no tienen el campo cargado.
+  * Los eventos de inseminación de 2026 van a la mitad del ritmo de 2025, y
+    796 de 1.715 animales marcados como preñados no tienen inseminación
+    válida (ver `proyeccion.py`).
+
+Por eso cada indicador declara su `confianza`:
+
+  "alta"    — sale del estado actual del rodeo, verificado contra DelPro.
+  "media"   — ratio calculado sobre eventos; el numerador y el denominador
+              vienen de la misma fuente incompleta, así que la proporción es
+              orientativa aunque los absolutos no lo sean.
+  "sin_datos" — no hay forma de calcularlo con lo que hay en la base. Se
+              muestra vacío, igual que hace DelPro con Tasa de Concepción.
+
+La confianza viaja al frontend y se muestra al lado del valor: el objetivo es
+que nadie tome una decisión creyendo que un número orientativo es exacto.
+"""
+import datetime
+import json
+import os
+import threading
+
+# --- Catálogo ----------------------------------------------------------------
+# Estructura: (seccion, subseccion, clave, etiqueta, meta_defecto, condicion,
+#             unidad, decimales, confianza)
+# Las metas y condiciones por defecto son las que tiene configuradas el tambo
+# hoy (capturadas de la pantalla de Metas de DelPro). El usuario las cambia
+# desde la página de Calibración de Objetivos.
+#
+# unidad: "" (conteo), "%" o "d" (días).
+_C = [
+    # --- INVENTARIO ---
+    ("INVENTARIO", "Vacas", "vacas_ordeno", "Vacas Ordeño", 5, ">=", "", 0, "alta"),
+    ("INVENTARIO", "Vacas", "vacas_secas", "Vacas Secas", 6, ">=", "", 0, "alta"),
+    ("INVENTARIO", "Vacas", "total_vacas", "Total Vacas", 7, ">=", "", 0, "alta"),
+    ("INVENTARIO", "Vacas", "pct_lactando", "% Lactando", 45, ">=", "%", 1, "alta"),
+    ("INVENTARIO", "Vacas", "pct_ordeno_l1", "% vacas en ordeño 1ra Lactancia", 42, ">=", "%", 1, "alta"),
+    ("INVENTARIO", "Vacas", "lactancias_prom", "Lactancias promedio", 6, ">=", "", 1, "alta"),
+    ("INVENTARIO", "Promedio días en leche", "del_prom", "Promedio Días en Leche (todas las vacas en ordeño)", 8, ">", "d", 0, "alta"),
+    ("INVENTARIO", "Promedio días en leche", "del_l1", "Promedio Días en Leche 1ra Lactancia", 175, "<=", "d", 0, "alta"),
+    ("INVENTARIO", "Promedio días en leche", "del_l2", "Promedio Días en Leche 2da Lactancia", 175, "<=", "d", 0, "alta"),
+    ("INVENTARIO", "Promedio días en leche", "del_l3", "Promedio Días en Leche 3ra+ lactancia", 175, "<=", "d", 0, "alta"),
+
+    # --- PREÑEZ: % de lactancias que quedaron preñadas antes del día N ---
+    ("PREÑEZ", "% Preñez lactancia 1", "prenez_100_l1", "% Preñez a 100 DEL - Lact = 1", 50, ">=", "%", 1, "media"),
+    ("PREÑEZ", "% Preñez lactancia 1", "prenez_130_l1", "% Preñez a 130 DEL - Lact = 1", 65, ">=", "%", 1, "media"),
+    ("PREÑEZ", "% Preñez lactancia 1", "prenez_150_l1", "% Preñez a 150 DEL - Lact = 1", 75, ">=", "%", 1, "media"),
+    ("PREÑEZ", "% Preñez lactancia 1", "prenez_200_l1", "% Preñez a 200 DEL - Lact = 1", 89, ">=", "%", 1, "media"),
+    ("PREÑEZ", "% Preñez lactancia 1", "prenez_300_l1", "% Preñez a 300 DEL - Lact = 1", 90, ">=", "%", 1, "media"),
+    ("PREÑEZ", "% Preñez lactancia 2+", "prenez_100_l2", "% Preñez a 100 DEL - Lact > 1", 50, ">=", "%", 1, "media"),
+    ("PREÑEZ", "% Preñez lactancia 2+", "prenez_130_l2", "% Preñez a 130 DEL - Lact > 1", 65, ">=", "%", 1, "media"),
+    ("PREÑEZ", "% Preñez lactancia 2+", "prenez_150_l2", "% Preñez a 150 DEL - Lact > 1", 75, ">=", "%", 1, "media"),
+    ("PREÑEZ", "% Preñez lactancia 2+", "prenez_200_l2", "% Preñez a 200 DEL - Lact > 1", 89, ">=", "%", 1, "media"),
+    ("PREÑEZ", "% Preñez lactancia 2+", "prenez_300_l2", "% Preñez a 300 DEL - Lact > 1", 90, ">=", "%", 1, "media"),
+
+    # --- TASA DE SERVICIO: % de vacas elegibles que recibieron servicio ---
+    ("TASA DE SERVICIO", "", "ts_l1_ciclo", "TS Lact=1 último ciclo 21-días", None, ">=", "%", 1, "media"),
+    ("TASA DE SERVICIO", "", "ts_l1_3ciclos", "TS Lact=1 Promedio último 3 ciclos", None, ">=", "%", 1, "media"),
+    ("TASA DE SERVICIO", "", "ts_l1_12m", "TS Lact=1 Promedio últimos 12 meses", None, ">=", "%", 1, "media"),
+    ("TASA DE SERVICIO", "", "ts_l2_ciclo", "TS Lact>1 último ciclo 21-días", None, ">=", "%", 1, "media"),
+    ("TASA DE SERVICIO", "", "ts_l2_3ciclos", "TS Lact>1 Promedio último 3 ciclos", None, ">=", "%", 1, "media"),
+    ("TASA DE SERVICIO", "", "ts_l2_12m", "TS Lact>1 Promedio últimos 12 meses", None, ">=", "%", 1, "media"),
+
+    # --- TASA DE PREÑEZ = tasa de servicio x tasa de concepción ---
+    ("TASA DE PREÑEZ", "", "tp_l1_ciclo", "TP Lact=1 último ciclo 21-días", None, ">=", "%", 1, "media"),
+    ("TASA DE PREÑEZ", "", "tp_l1_3ciclos", "TP Lact=1 Promedio último 3 ciclos", None, ">=", "%", 1, "media"),
+    ("TASA DE PREÑEZ", "", "tp_l1_12m", "TP Lact=1 Promedio últimos 12 meses", None, ">=", "%", 1, "media"),
+    ("TASA DE PREÑEZ", "", "tp_l2_ciclo", "TP Lact>1 último ciclo 21-días", None, ">=", "%", 1, "media"),
+    ("TASA DE PREÑEZ", "", "tp_l2_3ciclos", "TP Lact>1 Promedio último 3 ciclos", None, ">=", "%", 1, "media"),
+    ("TASA DE PREÑEZ", "", "tp_l2_12m", "TP Lact>1 Promedio últimos 12 meses", None, ">=", "%", 1, "media"),
+
+    # --- TASA DE CONCEPCIÓN a primer servicio ---
+    # En el informe de DelPro estas tres salen EN BLANCO en los dos rangos:
+    # requieren ligar cada servicio con el resultado del chequeo posterior, y
+    # `EventPregCheck.DaysFromInsemination` está en 0 en toda la base.
+    ("TASA CONCEPCIÓN", "IA Vacas lactantes", "tc_1s_l1", "1er Serv, Lact = 1", 40, ">=", "%", 1, "sin_datos"),
+    ("TASA CONCEPCIÓN", "IA Vacas lactantes", "tc_1s_l2", "1er Serv, Lact > 1", 35, ">=", "%", 1, "sin_datos"),
+    ("TASA CONCEPCIÓN", "IA Novillas", "tc_1s_nov", "1er Serv (Novillas)", 37, ">=", "%", 1, "sin_datos"),
+
+    # --- ABORTOS ---
+    ("ABORTOS", "Últimos 3 ciclos", "ab_3c_l1", "Lact=1, últimos 3 ciclos", 15, "<=", "%", 1, "media"),
+    ("ABORTOS", "Últimos 3 ciclos", "ab_3c_l2", "Lact>1, últimos 3 ciclos", 15, "<=", "%", 1, "media"),
+    ("ABORTOS", "Últimos 12 meses", "ab_12m_l1", "Lact=1, últimos 12 meses", 15, "<=", "%", 1, "media"),
+    ("ABORTOS", "Últimos 12 meses", "ab_12m_l2", "Lact>1, últimos 12 meses", 15, "<=", "%", 1, "media"),
+    ("ABORTOS", "Últimos 12 meses", "pct_no_inseminar", "% No Inseminar leche", 8, "<=", "%", 1, "media"),
+    ("ABORTOS", "Últimos 12 meses", "pct_prenadas", "% Preñadas", 45, ">=", "%", 1, "alta"),
+]
+
+CATALOGO = [
+    {"seccion": s, "subseccion": sub, "clave": k, "label": lbl,
+     "meta_defecto": meta, "condicion_defecto": cond,
+     "unidad": u, "decimales": dec, "confianza": conf}
+    for (s, sub, k, lbl, meta, cond, u, dec, conf) in _C
+]
+POR_CLAVE = {i["clave"]: i for i in CATALOGO}
+CONDICIONES = (">=", "<=", ">", "<")
+
+# Ciclo reproductivo estándar: 21 días.
+CICLO_DIAS = 21
+# Día de lactancia a partir del cual una vaca es elegible para servicio
+# (período de espera voluntario). No hay una tabla en DDM que lo declare, así
+# que se usa el estándar y se documenta.
+ESPERA_VOLUNTARIA_DIAS = 50
+
+
+# --- Metas configurables -----------------------------------------------------
+_RUTA = os.path.join(os.path.dirname(__file__), "metas_reproductivas.json")
+_lock = threading.Lock()
+
+
+def _leer() -> dict:
+    try:
+        with open(_RUTA, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, ValueError):
+        return {}
+
+
+def metas() -> list:
+    """Catálogo completo con la meta y condición vigentes de cada ítem."""
+    guardado = _leer()
+    out = []
+    for item in CATALOGO:
+        g = guardado.get(item["clave"], {})
+        meta = g.get("meta", item["meta_defecto"])
+        cond = g.get("condicion", item["condicion_defecto"])
+        out.append({**item,
+                    "meta": meta,
+                    "condicion": cond if cond in CONDICIONES else item["condicion_defecto"]})
+    return out
+
+
+def guardar_metas(cambios: dict) -> list:
+    """`cambios`: {clave: {"meta": num|None, "condicion": ">="}}.
+
+    Una meta en None significa "sin meta": el ítem se muestra pero no se
+    evalúa. Es lo que hace DelPro con Tasa de Servicio y Tasa de Preñez.
+    """
+    with _lock:
+        actual = _leer()
+        for clave, valores in (cambios or {}).items():
+            if clave not in POR_CLAVE:
+                raise ValueError(f"Indicador desconocido: {clave}")
+            entrada = actual.setdefault(clave, {})
+            if "meta" in valores:
+                m = valores["meta"]
+                if m in ("", None):
+                    entrada["meta"] = None
+                else:
+                    try:
+                        entrada["meta"] = float(m)
+                    except (TypeError, ValueError):
+                        raise ValueError(f"Meta inválida para {clave}: {m!r}")
+            if "condicion" in valores:
+                c = valores["condicion"]
+                if c not in CONDICIONES:
+                    raise ValueError(f"Condición inválida para {clave}: {c!r}")
+                entrada["condicion"] = c
+        with open(_RUTA, "w", encoding="utf-8") as f:
+            json.dump(actual, f, ensure_ascii=False, indent=1)
+    return metas()
+
+
+def cumple(valor, meta, condicion) -> bool | None:
+    """True/False si cumple la meta; None si falta el valor o la meta."""
+    if valor is None or meta is None:
+        return None
+    if condicion == ">=":
+        return valor >= meta
+    if condicion == "<=":
+        return valor <= meta
+    if condicion == ">":
+        return valor > meta
+    if condicion == "<":
+        return valor < meta
+    return None
+
+
+# --- Consultas ---------------------------------------------------------------
+
+# Inventario y días en leche. Es una FOTO del estado actual del rodeo, no un
+# promedio del rango: la base no permite reconstruir la composición histórica
+# (ver la nota del encabezado). Vale para un rango que termina hoy; para rangos
+# cerrados en el pasado estos ítems se devuelven vacíos.
+SQL_INVENTARIO = """
+    WITH v AS (
+        SELECT r.LactationNumber AS lact,
+               ISNULL(r.IsDryingOff, 0) AS seca,
+               DATEDIFF(day, r.LastLactationChangeDate, GETDATE()) AS del
+        FROM BasicAnimal b
+        JOIN AnimalReproductionInfo r ON r.Animal = b.OID AND r.GCRecord IS NULL
+        WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
+          AND r.LactationNumber >= 1
+    )
+    SELECT SUM(CASE WHEN seca = 0 THEN 1 ELSE 0 END) AS vacas_ordeno,
+           SUM(CASE WHEN seca = 1 THEN 1 ELSE 0 END) AS vacas_secas,
+           COUNT(*) AS total_vacas,
+           AVG(CASE WHEN seca = 0 THEN lact * 1.0 END) AS lactancias_prom,
+           100.0 * SUM(CASE WHEN seca = 0 AND lact = 1 THEN 1 ELSE 0 END)
+                 / NULLIF(SUM(CASE WHEN seca = 0 THEN 1 ELSE 0 END), 0) AS pct_ordeno_l1,
+           AVG(CASE WHEN seca = 0 AND del BETWEEN 0 AND 1000 THEN del * 1.0 END) AS del_prom,
+           AVG(CASE WHEN seca = 0 AND lact = 1 AND del BETWEEN 0 AND 1000 THEN del * 1.0 END) AS del_l1,
+           AVG(CASE WHEN seca = 0 AND lact = 2 AND del BETWEEN 0 AND 1000 THEN del * 1.0 END) AS del_l2,
+           AVG(CASE WHEN seca = 0 AND lact >= 3 AND del BETWEEN 0 AND 1000 THEN del * 1.0 END) AS del_l3
+    FROM v
+"""
+
+# % Preñadas sobre las vacas en ordeñe — estado actual.
+SQL_PCT_PRENADAS = """
+    SELECT 100.0 * SUM(CASE WHEN r.IsPregnant = 1 THEN 1 ELSE 0 END)
+                 / NULLIF(COUNT(*), 0) AS pct_prenadas
+    FROM BasicAnimal b
+    JOIN AnimalReproductionInfo r ON r.Animal = b.OID AND r.GCRecord IS NULL
+    WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
+      AND r.LactationNumber >= 1 AND ISNULL(r.IsDryingOff, 0) = 0
+"""
+
+
+def sql_prenez_por_del(desde: str, hasta: str) -> str:
+    """% de lactancias iniciadas en el rango que quedaron preñadas antes del
+    día N de lactancia.
+
+    `OpenDays` es los días entre el parto y la concepción. Un 0 o un NULL
+    significa "todavía no quedó preñada" (o no se cargó), así que no cuenta
+    como preñez pero sí como denominador — igual que en el informe.
+    """
+    tramos = ", ".join(
+        f"100.0 * SUM(CASE WHEN h.OpenDays > 0 AND h.OpenDays <= {n} THEN 1 ELSE 0 END)"
+        f" / NULLIF(COUNT(*), 0) AS p{n}"
+        for n in (100, 130, 150, 200, 300))
+    return f"""
+        SELECT CASE WHEN h.LactationNumber = 1 THEN 'l1' ELSE 'l2' END AS grupo,
+               COUNT(*) AS n, {tramos}
+        FROM HistoryAnimalLactationInfo h
+        WHERE h.LactationNumber >= 1
+          AND h.StartDate >= '{desde}' AND h.StartDate < DATEADD(day, 1, '{hasta}')
+        GROUP BY CASE WHEN h.LactationNumber = 1 THEN 'l1' ELSE 'l2' END
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
+
+
+def sql_servicios_por_ciclo(hasta: str, ciclos: int) -> str:
+    """Servicios (inseminaciones) y preñeces confirmadas por ciclo de 21 días
+    hacia atrás desde `hasta`, separando primera lactancia del resto.
+
+    El ciclo 0 es el más reciente. Sirve para las tres ventanas del informe:
+    último ciclo (0), promedio de los últimos 3 (0-2) y de los últimos 12
+    meses (todos los ciclos que entren en 365 días).
+    """
+    dias = ciclos * CICLO_DIAS
+    return f"""
+        WITH ev AS (
+            SELECT ae.BasicAnimal AS animal, ae.DateAndTime AS fecha,
+                   ae.LactationNumber AS lact,
+                   DATEDIFF(day, ae.DateAndTime, '{hasta}') / {CICLO_DIAS} AS ciclo,
+                   CASE WHEN i.OID IS NOT NULL THEN 1 ELSE 0 END AS es_servicio,
+                   CASE WHEN p.OID IS NOT NULL AND p.Result = 1 THEN 1 ELSE 0 END AS es_prenez
+            FROM AbstractAnimalEvent ae
+            LEFT JOIN EventInsemination i ON i.OID = ae.OID
+            LEFT JOIN EventPregCheck p ON p.OID = ae.OID
+            WHERE ae.GCRecord IS NULL
+              AND ae.DateAndTime > DATEADD(day, -{dias}, '{hasta}')
+              AND ae.DateAndTime <= '{hasta}'
+              AND (i.OID IS NOT NULL OR p.OID IS NOT NULL)
+        )
+        SELECT ciclo,
+               CASE WHEN lact <= 1 THEN 'l1' ELSE 'l2' END AS grupo,
+               SUM(es_servicio) AS servicios,
+               SUM(es_prenez) AS preneces,
+               COUNT(DISTINCT animal) AS animales
+        FROM ev
+        GROUP BY ciclo, CASE WHEN lact <= 1 THEN 'l1' ELSE 'l2' END
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
+
+
+def sql_abortos(desde: str, hasta: str) -> str:
+    """Abortos sobre partos del mismo período, separando primera lactancia."""
+    return f"""
+        SELECT CASE WHEN ae.LactationNumber <= 1 THEN 'l1' ELSE 'l2' END AS grupo,
+               SUM(CASE WHEN a.OID IS NOT NULL THEN 1 ELSE 0 END) AS abortos,
+               SUM(CASE WHEN c.OID IS NOT NULL THEN 1 ELSE 0 END) AS partos
+        FROM AbstractAnimalEvent ae
+        LEFT JOIN EventAbortion a ON a.OID = ae.OID
+        LEFT JOIN EventCalving c ON c.OID = ae.OID
+        WHERE ae.GCRecord IS NULL
+          AND ae.DateAndTime >= '{desde}' AND ae.DateAndTime < DATEADD(day, 1, '{hasta}')
+          AND (a.OID IS NOT NULL OR c.OID IS NOT NULL)
+        GROUP BY CASE WHEN ae.LactationNumber <= 1 THEN 'l1' ELSE 'l2' END
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
+
+
+# Vacas marcadas para no inseminar, sobre las vacas en ordeñe.
+SQL_NO_INSEMINAR = """
+    SELECT 100.0 * SUM(CASE WHEN b.ToBeCulled = 1 THEN 1 ELSE 0 END)
+                 / NULLIF(COUNT(*), 0) AS pct
+    FROM BasicAnimal b
+    JOIN AnimalReproductionInfo r ON r.Animal = b.OID AND r.GCRecord IS NULL
+    WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
+      AND r.LactationNumber >= 1 AND ISNULL(r.IsDryingOff, 0) = 0
+"""
+
+
+# --- Cálculo -----------------------------------------------------------------
+
+def _fila(data, i=0):
+    filas = data.get("rows") or []
+    if not filas:
+        return {}
+    return dict(zip(data["columns"], filas[i]))
+
+
+def _r(v, dec=1):
+    return None if v is None else round(float(v), dec)
+
+
+def valores_de_rango(data_inv, data_pren, data_prenez, data_ciclos_1, data_ciclos_3,
+                     data_ciclos_12, data_abortos_3c, data_abortos_12m, data_no_insem,
+                     es_actual: bool) -> dict:
+    """Calcula el valor medido de cada indicador para un rango.
+
+    `es_actual`: True si el rango termina hoy. Los ítems de inventario son una
+    foto del estado actual, así que en un rango cerrado en el pasado se dejan
+    vacíos en vez de mostrar el número de hoy como si fuera el de entonces.
+    """
+    v = {}
+
+    if es_actual:
+        inv = _fila(data_inv)
+        v["vacas_ordeno"] = inv.get("vacas_ordeno")
+        v["vacas_secas"] = inv.get("vacas_secas")
+        v["total_vacas"] = inv.get("total_vacas")
+        v["lactancias_prom"] = _r(inv.get("lactancias_prom"))
+        v["pct_ordeno_l1"] = _r(inv.get("pct_ordeno_l1"))
+        for k in ("del_prom", "del_l1", "del_l2", "del_l3"):
+            v[k] = _r(inv.get(k), 0)
+        if v.get("total_vacas"):
+            v["pct_lactando"] = _r(100.0 * (v["vacas_ordeno"] or 0) / v["total_vacas"])
+        v["pct_prenadas"] = _r(_fila(data_pren).get("pct_prenadas"))
+        v["pct_no_inseminar"] = _r(_fila(data_no_insem).get("pct"))
+
+    # % preñez por DEL
+    for fila in (data_prenez.get("rows") or []):
+        d = dict(zip(data_prenez["columns"], fila))
+        g = d["grupo"]
+        for n in (100, 130, 150, 200, 300):
+            v[f"prenez_{n}_{g}"] = _r(d.get(f"p{n}"))
+
+    # Tasa de servicio y de preñez. El denominador es la cantidad de animales
+    # con actividad reproductiva en la ventana: no hay en DDM una lista fiable
+    # de "elegibles para servicio" por fecha pasada, así que la tasa sale sobre
+    # los animales que aparecen en los eventos. Por eso es orientativa.
+    def tasas(data, sufijo):
+        acum = {}
+        for fila in (data.get("rows") or []):
+            d = dict(zip(data["columns"], fila))
+            g = d["grupo"]
+            a = acum.setdefault(g, {"serv": 0, "pren": 0, "anim": 0})
+            a["serv"] += int(d.get("servicios") or 0)
+            a["pren"] += int(d.get("preneces") or 0)
+            a["anim"] += int(d.get("animales") or 0)
+        for g, a in acum.items():
+            if a["anim"]:
+                v[f"ts_{g}_{sufijo}"] = _r(100.0 * a["serv"] / a["anim"])
+                v[f"tp_{g}_{sufijo}"] = _r(100.0 * a["pren"] / a["anim"])
+
+    tasas(data_ciclos_1, "ciclo")
+    tasas(data_ciclos_3, "3ciclos")
+    tasas(data_ciclos_12, "12m")
+
+    def abortos(data, sufijo):
+        for fila in (data.get("rows") or []):
+            d = dict(zip(data["columns"], fila))
+            base = int(d.get("partos") or 0) + int(d.get("abortos") or 0)
+            if base:
+                v[f"ab_{sufijo}_{d['grupo']}"] = _r(100.0 * int(d.get("abortos") or 0) / base)
+
+    abortos(data_abortos_3c, "3c")
+    abortos(data_abortos_12m, "12m")
+    return v
+
+
+def armar(valores_r1: dict, valores_r2: dict, rango1: dict, rango2: dict) -> dict:
+    """Arma el árbol de secciones con meta, condición, los dos valores medidos
+    y si cada uno cumple."""
+    vigentes = metas()
+    secciones, indice = [], {}
+    for item in vigentes:
+        sec = indice.get(item["seccion"])
+        if sec is None:
+            sec = {"seccion": item["seccion"], "subsecciones": [], "_idx": {}}
+            indice[item["seccion"]] = sec
+            secciones.append(sec)
+        sub = sec["_idx"].get(item["subseccion"])
+        if sub is None:
+            sub = {"subseccion": item["subseccion"], "items": []}
+            sec["_idx"][item["subseccion"]] = sub
+            sec["subsecciones"].append(sub)
+        v1 = valores_r1.get(item["clave"])
+        v2 = valores_r2.get(item["clave"])
+        sub["items"].append({
+            "clave": item["clave"], "label": item["label"],
+            "meta": item["meta"], "condicion": item["condicion"],
+            "unidad": item["unidad"], "decimales": item["decimales"],
+            "confianza": item["confianza"],
+            "rango1": v1, "rango2": v2,
+            "cumple1": cumple(v1, item["meta"], item["condicion"]),
+            "cumple2": cumple(v2, item["meta"], item["condicion"]),
+        })
+    for sec in secciones:
+        sec.pop("_idx", None)
+
+    def contar(clave_cumple):
+        ok = sum(1 for i in vigentes
+                 if (valores_r1 if clave_cumple == "cumple1" else valores_r2).get(i["clave"]) is not None
+                 and cumple((valores_r1 if clave_cumple == "cumple1" else valores_r2).get(i["clave"]),
+                            i["meta"], i["condicion"]) is True)
+        total = sum(1 for i in vigentes
+                    if cumple((valores_r1 if clave_cumple == "cumple1" else valores_r2).get(i["clave"]),
+                              i["meta"], i["condicion"]) is not None)
+        return {"cumplen": ok, "evaluados": total}
+
+    return {
+        "secciones": secciones,
+        "rango1": rango1, "rango2": rango2,
+        "resumen1": contar("cumple1"), "resumen2": contar("cumple2"),
+        "condiciones": list(CONDICIONES),
+        "espera_voluntaria_dias": ESPERA_VOLUNTARIA_DIAS,
+        "ciclo_dias": CICLO_DIAS,
+    }

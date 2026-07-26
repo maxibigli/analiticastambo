@@ -87,6 +87,16 @@
   .explica b { color: var(--text-primary); font-weight: 600; }
   /* Meses proyectados: se distinguen de los reales sin gritar. */
   .proy-futuro td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
+  /* Encabezados de sección y subsección dentro de la tabla de indicadores,
+     al estilo del informe de metas de DelPro. */
+  .repro-sec td {
+    background: var(--brand-navy); color: #fff; font-weight: 600;
+    font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .repro-sub td {
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    font-weight: 600; font-size: 12.5px; padding-left: 12px;
+  }
   .explica code {
     font-family: ui-monospace, "Cascadia Mono", Menlo, monospace; font-size: 11.5px;
     background: var(--page); padding: 1px 4px; border-radius: 3px;
@@ -308,6 +318,7 @@
     {% if 'flujos' in paginas_visibles %}<button class="nav-item" data-pagina="flujos">💧 <span>Flujos de ordeño</span></button>{% endif %}
     {% if 'evolucion' in paginas_visibles %}<button class="nav-item" data-pagina="evolucion">📈 <span>Evolución</span></button>{% endif %}
     {% if 'proyeccion' in paginas_visibles %}<button class="nav-item" data-pagina="proyeccion">🔮 <span>Proyección de Rebaños</span></button>{% endif %}
+    {% if 'repro' in paginas_visibles %}<button class="nav-item" data-pagina="repro">🧬 <span>Análisis Reproductivo</span></button>{% endif %}
     {% if 'entregas' in paginas_visibles %}<button class="nav-item" data-pagina="entregas">🥛 <span>Entrega de Leche</span></button>{% endif %}
     {% if 'salud' in paginas_visibles %}<button class="nav-item" data-pagina="salud">🩺 <span>Salud del rodeo</span></button>{% endif %}
     {% if 'ficha' in paginas_visibles %}<button class="nav-item" data-pagina="ficha">🐄 <span>Ficha Animal</span></button>{% endif %}
@@ -389,6 +400,72 @@
     <div class="aviso" id="whatsapp-info" style="margin-top:8px"></div>
   </section>
 
+  </div>
+
+  <div class="page" id="page-repro" hidden>
+  <section class="card" id="repro-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🧬 Análisis Reproductivo</h2>
+      <span class="aviso">El rodeo contra los objetivos del tambo, comparando dos períodos.</span>
+      <div class="lac-segment" id="repro-tabs" role="group" aria-label="Vista"
+           style="margin-left:auto">
+        <button class="lac-segment__item" data-tab="resultados" aria-pressed="true">Resultados</button>
+        <button class="lac-segment__item" data-tab="metas" aria-pressed="false">Calibración de Objetivos</button>
+      </div>
+    </div>
+
+    <div id="repro-panel-resultados">
+      <div class="controls" style="margin-top:12px;gap:16px;flex-wrap:wrap">
+        <div class="controls" style="gap:5px">
+          <span class="aviso" style="font-weight:600">Rango 1</span>
+          <input type="date" id="repro-d1" style="padding:6px 8px">
+          <input type="date" id="repro-h1" style="padding:6px 8px">
+        </div>
+        <div class="controls" style="gap:5px">
+          <span class="aviso" style="font-weight:600">Rango 2</span>
+          <input type="date" id="repro-d2" style="padding:6px 8px">
+          <input type="date" id="repro-h2" style="padding:6px 8px">
+        </div>
+        <button class="secundario" id="repro-aplicar">Aplicar</button>
+      </div>
+      <p class="explica" style="margin-top:10px">
+        <b>Qué muestra.</b> Cada indicador reproductivo con su meta, y si el rodeo la cumple o no en
+        cada uno de los dos períodos. El triángulo verde es meta cumplida, el rojo no cumplida.
+        <br><b>Confianza del dato.</b> Al lado de cada valor va una marca:
+        <b>●</b> el dato sale del estado actual del rodeo y está verificado contra DelPro;
+        <b>◐</b> es un ratio calculado sobre eventos reproductivos, sirve para ver tendencia pero no
+        como número firme; <b>○</b> no se puede calcular con lo que hay en la base.
+        <br><b>Por qué hay marcas ◐ y ○.</b> Los eventos reproductivos de esta instalación están
+        incompletos: 796 de 1.715 animales marcados como preñados no tienen inseminación válida, y
+        <code>EventPregCheck.DaysFromInsemination</code> viene en 0 en toda la base. Por eso Tasa de
+        Concepción sale vacía — en el informe de DelPro también sale vacía, por la misma razón.
+        <br><b>Inventario.</b> Los ítems de inventario y días en leche son una <b>foto de hoy</b>, no
+        un promedio del período: la base no permite reconstruir la composición del rodeo en el pasado.
+        Por eso solo se llenan en el rango que termina hoy.
+      </p>
+      <div class="aviso" id="repro-info" style="margin-top:8px"></div>
+      <div class="kpis" id="repro-kpis" style="margin-top:10px"></div>
+      <div style="overflow-x:auto;margin-top:14px" id="repro-tabla"></div>
+    </div>
+
+    <div id="repro-panel-metas" hidden>
+      <p class="explica" style="margin-top:12px">
+        <b>Qué es.</b> Los objetivos del tambo para cada indicador reproductivo. Es la misma pantalla
+        de Metas de DelPro: un valor y una condición que define si se cumple.
+        <br><b>Cómo se usa.</b> La <b>condición</b> dice para qué lado hay que estar:
+        <code>&gt;=</code> significa que cumplir es llegar o pasar la meta (por ejemplo, % de preñez);
+        <code>&lt;=</code> que cumplir es no pasarla (por ejemplo, días en leche o % de abortos).
+        Una meta vacía deja al indicador sin evaluar: se muestra el valor pero sin semáforo.
+        <br>Los cambios se guardan en el servidor y quedan para todos.
+      </p>
+      <div class="aviso" id="repro-metas-info" style="margin-top:8px"></div>
+      <div style="display:flex;gap:10px;margin-top:10px">
+        <button class="secundario" id="repro-metas-guardar">Guardar objetivos</button>
+        <button class="secundario" id="repro-metas-revertir">Descartar cambios</button>
+      </div>
+      <div style="overflow-x:auto;margin-top:14px" id="repro-metas-tabla"></div>
+    </div>
+  </section>
   </div>
 
   <div class="page" id="page-entregas" hidden>
@@ -1975,6 +2052,155 @@ document.getElementById('proy-aplicar').addEventListener('click', cargarProyecci
 conectarSelectorTipo('proy-tipo', tipo => {
   proyTipo = tipo;
   if (proyDatos) pintarProyeccion(proyDatos);
+});
+
+// --- Análisis reproductivo ---------------------------------------------------
+let reproReintento = null, reproMetas = null, reproCambios = {};
+
+// Marca de confianza del dato. El objetivo es que nadie tome un número
+// orientativo por exacto: va pegada al valor, no escondida en una leyenda.
+const CONFIANZA = {
+  alta: { icono: '●', texto: 'Dato del estado actual del rodeo, verificado contra DelPro.' },
+  media: { icono: '◐', texto: 'Ratio sobre eventos reproductivos incompletos: sirve para tendencia, no como número firme.' },
+  sin_datos: { icono: '○', texto: 'No se puede calcular con los datos que hay en la base.' },
+};
+
+function celdaValor(valor, cumple, unidad, dec, confianza) {
+  if (valor == null) {
+    const c = CONFIANZA[confianza] || CONFIANZA.media;
+    return `<td class="num" title="${c.texto}"><span class="aviso">— ${c.icono}</span></td>`;
+  }
+  const txt = valor.toLocaleString('es-AR', { minimumFractionDigits: dec, maximumFractionDigits: dec }) + (unidad === '%' ? ' %' : '');
+  const sem = cumple === true ? '<span style="color:var(--good)">▲</span>'
+            : cumple === false ? '<span style="color:var(--critical)">▼</span>' : '';
+  const c = CONFIANZA[confianza] || CONFIANZA.media;
+  return `<td class="num" title="${c.texto}">${txt} ${sem} <span class="aviso">${c.icono}</span></td>`;
+}
+
+function pintarRepro(d) {
+  const r1 = d.rango1, r2 = d.rango2;
+  document.getElementById('repro-kpis').innerHTML = [
+    ['Rango 1', `${r1.desde} → ${r1.hasta}`],
+    ['Metas cumplidas · Rango 1', `${d.resumen1.cumplen} de ${d.resumen1.evaluados}`],
+    ['Rango 2', `${r2.desde} → ${r2.hasta}`],
+    ['Metas cumplidas · Rango 2', `${d.resumen2.cumplen} de ${d.resumen2.evaluados}`],
+  ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value" style="font-size:16px">${v}</div></div>`).join('');
+
+  let filas = '';
+  (d.secciones || []).forEach(sec => {
+    filas += `<tr class="repro-sec"><td colspan="5">${sec.seccion}</td></tr>`;
+    sec.subsecciones.forEach(sub => {
+      if (sub.subseccion) filas += `<tr class="repro-sub"><td colspan="5">${sub.subseccion}</td></tr>`;
+      sub.items.forEach(it => {
+        filas += `<tr><td style="padding-left:22px">${it.label}</td>` +
+          `<td class="num">${it.meta == null ? '<span class="aviso">—</span>' : fmt(it.meta)}</td>` +
+          `<td class="num">${it.condicion}</td>` +
+          celdaValor(it.rango1, it.cumple1, it.unidad, it.decimales, it.confianza) +
+          celdaValor(it.rango2, it.cumple2, it.unidad, it.decimales, it.confianza) + '</tr>';
+      });
+    });
+  });
+  document.getElementById('repro-tabla').innerHTML = `<table class="lac-table">
+    <thead><tr><th>Sección / Ítem</th><th class="num">Meta</th><th class="num">Objetivo</th>
+    <th class="num">Rango 1</th><th class="num">Rango 2</th></tr></thead>
+    <tbody>${filas}</tbody></table>`;
+  document.getElementById('repro-info').textContent =
+    `Rango 1: ${r1.desde} a ${r1.hasta} · Rango 2: ${r2.desde} a ${r2.hasta}. ` +
+    `Ciclo reproductivo de ${d.ciclo_dias} días, espera voluntaria de ${d.espera_voluntaria_dias} días.`;
+}
+
+async function cargarRepro() {
+  clearTimeout(reproReintento);
+  const info = document.getElementById('repro-info');
+  const hoy = new Date(), a = hoy.getFullYear();
+  const g = (id, def) => { const e = document.getElementById(id); if (!e.value) e.value = def; return e.value; };
+  const d1 = g('repro-d1', `${a - 1}-01-01`), h1 = g('repro-h1', `${a - 1}-12-31`);
+  const d2 = g('repro-d2', `${a}-01-01`), h2 = g('repro-h2', hoyISO());
+  info.textContent = 'Evaluando…';
+  try {
+    const d = await pedirJSON(`/api/reproduccion/resultados?desde1=${d1}&hasta1=${h1}` +
+      `&desde2=${d2}&hasta2=${h2}&tambo=${encodeURIComponent(tamboActual)}`);
+    pintarRepro(d);
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; reproReintento = setTimeout(cargarRepro, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+function pintarMetas() {
+  let filas = '', sec = null, sub = null;
+  reproMetas.forEach(m => {
+    if (m.seccion !== sec) { sec = m.seccion; sub = null; filas += `<tr class="repro-sec"><td colspan="4">${sec}</td></tr>`; }
+    if (m.subseccion !== sub) { sub = m.subseccion; if (sub) filas += `<tr class="repro-sub"><td colspan="4">${sub}</td></tr>`; }
+    const c = CONFIANZA[m.confianza] || CONFIANZA.media;
+    const opciones = (reproCondiciones || ['>=', '<=', '>', '<'])
+      .map(o => `<option value="${o}"${o === m.condicion ? ' selected' : ''}>${o}</option>`).join('');
+    filas += `<tr><td style="padding-left:22px" title="${c.texto}">${m.label} <span class="aviso">${c.icono}</span></td>` +
+      `<td class="num"><input type="number" step="any" class="repro-meta" data-clave="${m.clave}" ` +
+      `value="${m.meta == null ? '' : m.meta}" style="padding:5px 7px;width:90px;text-align:right"></td>` +
+      `<td><select class="repro-cond" data-clave="${m.clave}" style="padding:5px 7px">${opciones}</select></td>` +
+      `<td class="aviso">${m.unidad === '%' ? '%' : (m.unidad === 'd' ? 'días' : '')}</td></tr>`;
+  });
+  document.getElementById('repro-metas-tabla').innerHTML = `<table class="lac-table">
+    <thead><tr><th>Sección / Ítem</th><th class="num">Meta</th><th>Condición</th><th>Unidad</th></tr></thead>
+    <tbody>${filas}</tbody></table>`;
+  document.querySelectorAll('.repro-meta, .repro-cond').forEach(el =>
+    el.addEventListener('change', () => {
+      const clave = el.dataset.clave;
+      const e = reproCambios[clave] = reproCambios[clave] || {};
+      if (el.classList.contains('repro-meta')) e.meta = el.value;
+      else e.condicion = el.value;
+      document.getElementById('repro-metas-info').textContent =
+        `${Object.keys(reproCambios).length} indicador(es) con cambios sin guardar.`;
+    }));
+}
+
+let reproCondiciones = null;
+
+async function cargarMetas() {
+  const info = document.getElementById('repro-metas-info');
+  info.textContent = 'Cargando objetivos…';
+  try {
+    const d = await pedirJSON('/api/reproduccion/metas');
+    reproMetas = d.metas; reproCondiciones = d.condiciones; reproCambios = {};
+    pintarMetas();
+    info.textContent = `${reproMetas.length} indicadores.`;
+  } catch (e) {
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('repro-aplicar').addEventListener('click', cargarRepro);
+document.getElementById('repro-metas-revertir').addEventListener('click', cargarMetas);
+document.getElementById('repro-metas-guardar').addEventListener('click', async () => {
+  const info = document.getElementById('repro-metas-info');
+  if (!Object.keys(reproCambios).length) { info.textContent = 'No hay cambios para guardar.'; return; }
+  info.textContent = 'Guardando…';
+  try {
+    const d = await pedirJSON('/api/reproduccion/metas', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cambios: reproCambios }),
+    });
+    reproMetas = d.metas; reproCambios = {};
+    pintarMetas();
+    info.textContent = `Guardado. ${d.guardados} indicador(es) actualizado(s).`;
+    // Los resultados dependen de las metas: se recalculan al volver a la pestaña.
+    document.getElementById('repro-tabla').innerHTML = '';
+  } catch (e) {
+    info.textContent = 'Error al guardar: ' + e.message;
+  }
+});
+document.getElementById('repro-tabs').addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-tab]');
+  if (!btn) return;
+  document.querySelectorAll('#repro-tabs [data-tab]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b === btn)));
+  const esMetas = btn.dataset.tab === 'metas';
+  document.getElementById('repro-panel-metas').hidden = !esMetas;
+  document.getElementById('repro-panel-resultados').hidden = esMetas;
+  if (esMetas && !reproMetas) cargarMetas();
+  if (!esMetas && !document.getElementById('repro-tabla').innerHTML) cargarRepro();
 });
 
 async function cargarCanalesAlertas() {
@@ -3883,7 +4109,7 @@ document.getElementById('evolucion-info').textContent =
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'proyeccion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
+const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'proyeccion', 'repro', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -3899,6 +4125,7 @@ function cargarDatosDePagina(id) {
   else if (id === 'rutina') { cargarRutina(); cargarRendimiento(); }
   else if (id === 'flujos') cargarFlujos();
   else if (id === 'proyeccion') cargarProyeccion();
+  else if (id === 'repro') cargarRepro();
   else if (id === 'entregas') { cargarCicla(); cargarComparar(); cargarLaser(); }
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
@@ -3928,6 +4155,7 @@ function irAPagina(id) {
   // Ídem el reintento del análisis de flujos mientras el caché se calienta.
   if (id !== 'flujos') clearTimeout(fluReintento);
   if (id !== 'proyeccion') clearTimeout(proyReintento);
+  if (id !== 'repro') clearTimeout(reproReintento);
   // Cámaras y actividad en vivo de "Problemas podales": solo mientras se ve la página.
   if (id === 'salud') iniciarPodalVivo(); else detenerPodalVivo();
   // Estado en vivo de Monitoreo IoT: solo mientras se ve esa página.

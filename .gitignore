@@ -27,3 +27,4 @@ env/
 # Editor / SO
 .vscode/
 Thumbs.db
+metas_reproductivas.json
