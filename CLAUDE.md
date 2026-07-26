@@ -143,47 +143,83 @@ El objetivo es saber cuánto rinde cada vaca: ingreso por sólidos menos costo
 de alimento (IOFC), eficiencia de conversión (kg de sólidos por kg de materia
 seca) y potencial sin explotar (su pico contra el de su grupo y lactancia).
 
-**EMPEZAR POR LA CONCILIACIÓN DE GRUPOS.** Es lo que desbloquea todo y donde
-un error se propaga en silencio: si se mapea mal un rodeo, el costo por vaca
-da números plausibles y falsos. Medido el 26/07/2026:
+**CONCILIACIÓN DE GRUPOS: HECHA** (pestaña "🌾 Alimentación"). Módulos:
+`conciliacion.py` (dominio y mapeo guardado), `proveedores/haasten.py`.
 
-    Haasten            DelPro
-    Rodeo 1  392       Rodeo 1        410
-    Rodeo 2  347       Rodeo 2        325
-    Rodeo 3  358       Rodeo 3        354
-    Rodeo 4  122       Rodeo 4-Baja   120
-      —                Rodeo 5        347   ← Haasten no lo tiene
-      —                Rodeo 9         65   ← Haasten no lo tiene
-    total  1.219       total        1.621
+**El diagnóstico anterior estaba MAL, y conviene saber por qué.** Decía que
+Haasten tenía 4 lotes con 1.219 cabezas, que no tenía Rodeo 5 ni Rodeo 9, y
+que faltaban ~400 vacas de un lado. Nada de eso era cierto: se había mirado
+una pantalla filtrada. Contra la API, el mixer tiene **72 lotes (24 activos,
+4.069 cabezas)**, incluido Rodeo 5. Los rodeos de ordeñe concilian bien:
 
-No es solo desfasaje de fechas: faltan ~400 vacas de un lado. Y hay una
-coincidencia sospechosa — Haasten "Rodeo 2" tiene 347 y DelPro "Rodeo 5"
-tiene 347 exactos: los números de rodeo podrían estar corridos entre los dos
-sistemas. NO ADIVINAR: hay que armar una pantalla donde el tambo defina el
-mapeo una vez, guardarlo, y alertar cuando las cabezas difieran de más.
+    Haasten            DelPro              dif
+    Rodeo 1  392       Rodeo 1        410   -18   ok
+    Rodeo 2  347       Rodeo 2        325   +22   revisar
+    Rodeo 3  358       Rodeo 3        354    +4   ok
+    Rodeo 4  122       Rodeo 4-Baja   120    +2   ok
+    Rodeo 5  359       Rodeo 5        347   +12   ok
+    Enfermeria 39      Rodeo 9         65   -26   ← el "faltante"
 
-**La base DDM está atrasada, y desparejo.** Al 26/07: ordeños al 22/07 (4
-días), AnimalDaily al 25/07, eventos al 25/07, bajas al 20/07. Haasten tiene
-datos de hoy. Al cruzar hay que comparar SIEMPRE el mismo período, nunca "lo
-último de cada uno".
+La coincidencia 347 = 347 era casualidad: Haasten tiene Rodeo 2 con 347 Y
+Rodeo 5 con 359, son lotes distintos. Los números NO están corridos.
 
-**Arquitectura pedida** — el proveedor de alimentación tiene que ser
-intercambiable (mañana MixerOne, o DelPro si el tambo no tiene mixer):
+**`associatedMilkerIndex` es el mapeo declarado por el propio tambo dentro de
+Haasten**, y apunta al `AbstractGroup.Number` de DelPro. Está cargado en 8
+lotes y es el criterio más fuerte de la pantalla — es lo que emparejó el lote
+"Enfermeria" con el grupo "Rodeo 9", que por nombre no se encontraba nunca.
+Cuando aparezca un proveedor que no lo tenga, se cae a coincidencia de nombre.
 
-    alimentacion.py          el dominio: consumo, MS, costo, conversión
+**NO se sugiere por cantidad de cabezas.** Se probó y es puro ruido: con 25
+grupos y tolerancia ±10, "Chiquitas 2 LAP" (73) daba cuatro candidatos. Una
+sugerencia así es una moneda al aire disfrazada de respuesta. Las cabezas se
+muestran en el selector para comparar a ojo, pero elige el tambo.
+
+Lo que queda por mapear a mano son los lotes de recría y vaquillonas
+(Chiquitas 1-5, Servicio 1-2, Preñadas 1-5): 14 lotes sin grupo. Y hay
+diferencias grandes para revisar del lado del tambo, no del código: Recria 1
+(505 en Haasten contra 779 en DelPro), Preparto Vacas (94 contra 51).
+
+**La base DDM está atrasada, y desparejo.** Al 26/07: ordeños al 22/07,
+eventos al 25/07, bajas al 20/07. Y dos cosas medidas al armar la
+conciliación: **`AnimalDaily` está completo solo hasta el 21/07** (el 22 trae
+420 filas contra ~1.600 normales, y del 23 al 25 quedan restos de 20 a 40), y
+**`AnimalDaily` solo cubre vacas en ordeñe** — para secas, recría y crianza no
+hay ninguna fila. Por eso las cabezas por grupo salen de la membresía actual
+(`BasicAnimal.[Group]`), no de `AnimalDaily`. El último cambio de grupo
+registrado también es del 21/07: las cabezas de DelPro son de hace cinco días
+y la pantalla lo dice. Haasten tiene datos de hoy. Al cruzar hay que comparar
+SIEMPRE el mismo período, nunca "lo último de cada uno".
+
+**Arquitectura** — el proveedor de alimentación es intercambiable (mañana
+MixerOne, o DelPro si el tambo no tiene mixer):
+
+    proveedores/__init__.py  la interfaz y qué proveedor usa cada tambo
     proveedores/haasten.py   implementación actual (haasten.io)
-    conciliacion.py          el mapeo lote ↔ grupo
+    conciliacion.py          el mapeo lote ↔ grupo (hecho)
+    alimentacion.py          FALTA: consumo, MS, costo, conversión
 
 El proveedor expone siempre `ingredientes()`, `lotes()`, `consumos(desde, hasta)`.
 
-**Haasten** (haasten.io, credenciales en `HASTEN_USUARIO` / `HASTEN_PASSWORD`).
-Pantallas útiles: *Ingredientes* (%MS y precio por kg), *Lotes* (cabezas y kg
-MS por cabeza, con categoría) y *Consumos por Lote* (kg descargados por
-ingrediente y rango de fechas). OJO: **la columna PRECIO KG está en 0,00 para
-todos los ingredientes** — hay cantidades pero no precios, así que hoy no se
-puede calcular costo. Se cargan desde el botón "Editar ingrediente" de
-Haasten. Mientras tanto, la eficiencia de conversión SÍ se puede calcular: es
-una relación física y no necesita precios.
+**Haasten es una API REST con JSON**, no un sitio para scrapear (credenciales
+en `HASTEN_USUARIO` / `HASTEN_PASSWORD` — con UNA "a", aunque el sitio tenga
+dos). `POST /api/login` con `{username, password}` devuelve `{token, user}`; el
+token va en la cabecera `authorization` tal cual, sin "Bearer". **El login ya
+trae todo lo de los lotes**: `user.devices[].lots`, `.sipnStock` (ingredientes)
+y `.sipnConfiguration.lotCategories`. `GET /api/deviceData/get/unloads/{serie}`
+y `.../loads/{serie}` con `minDate`/`maxDate` traen descargas por lote y cargas
+por ingrediente. **`GET /api/device/all` se cuelga: no usarlo.** De los cinco
+equipos de la cuenta, el único mixer es el SIP-N 202616012; los GAC son de
+combustible y el DELPROSIPN no manda datos desde junio.
+
+**48 de los 72 lotes son de relleno** ("Corral 23" a "Corral 70", con
+`kgHeads = 0` y 100 cabezas fijas). Se marcan `activo=False` por el criterio
+físico de que sin kg de materia seca por cabeza no se alimenta a nadie — no
+por el nombre, y no se ocultan.
+
+**Los 70 ingredientes siguen con `price: 0`** — el tambo no los cargó (se hace
+desde "Editar ingrediente" en Haasten). El proveedor los traduce a `None`, no a
+0: un cero se propaga como costo real y miente. Sin precios no hay costo, pero
+la eficiencia de conversión SÍ se puede calcular: es una relación física.
 
 **En DelPro no hay nada de alimentación**: de 7.025 lactancias, 0 tienen
 consumo o costo cargado. Todo tiene que venir del proveedor externo.

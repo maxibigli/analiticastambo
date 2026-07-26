@@ -28,7 +28,7 @@ ROLES = ("admin", "operario")
 # corresponden y el backend además bloquea sus endpoints (ver requiere_rol).
 PAGINAS_POR_ROL = {
     "admin": ["dashboard", "ordeno", "rutina", "flujos", "evolucion", "proyeccion", "repro",
-              "entregas", "salud", "ficha", "iot", "tareas", "consultas"],
+              "alimentacion", "entregas", "salud", "ficha", "iot", "tareas", "consultas"],
     "operario": ["ordeno", "rutina", "tareas", "consultas"],
 }
 

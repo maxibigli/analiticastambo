@@ -355,6 +355,7 @@
     {% if 'evolucion' in paginas_visibles %}<button class="nav-item" data-pagina="evolucion">📈 <span>Evolución</span></button>{% endif %}
     {% if 'proyeccion' in paginas_visibles %}<button class="nav-item" data-pagina="proyeccion">🔮 <span>Proyección de Rebaños</span></button>{% endif %}
     {% if 'repro' in paginas_visibles %}<button class="nav-item" data-pagina="repro">🧬 <span>Análisis Reproductivo</span></button>{% endif %}
+    {% if 'alimentacion' in paginas_visibles %}<button class="nav-item" data-pagina="alimentacion">🌾 <span>Alimentación</span></button>{% endif %}
     {% if 'entregas' in paginas_visibles %}<button class="nav-item" data-pagina="entregas">🥛 <span>Entrega de Leche</span></button>{% endif %}
     {% if 'salud' in paginas_visibles %}<button class="nav-item" data-pagina="salud">🩺 <span>Salud del rodeo</span></button>{% endif %}
     {% if 'ficha' in paginas_visibles %}<button class="nav-item" data-pagina="ficha">🐄 <span>Ficha Animal</span></button>{% endif %}
@@ -898,6 +899,56 @@
         <button class="secundario" id="repro-metas-revertir">Descartar cambios</button>
       </div>
       <div style="overflow-x:auto;margin-top:14px" id="repro-metas-tabla"></div>
+    </div>
+  </section>
+  </div>
+
+  <div class="page" id="page-alimentacion" hidden>
+  <section class="card" id="conc-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🌾 Alimentación</h2>
+      <span class="aviso">Qué lote del mixer alimenta a qué grupo de DelPro.</span>
+      <div class="lac-segment" id="alim-tabs" role="group" aria-label="Vista" style="margin-left:auto">
+        <button class="lac-segment__item" data-tab="conciliacion" aria-pressed="true">Conciliación de grupos</button>
+      </div>
+    </div>
+
+    <div id="alim-panel-conciliacion">
+      <p class="explica" style="margin-top:12px">
+        <b>Para qué es.</b> El costo del alimento se mide por <b>lote</b> (lo que el mixer descarga
+        en un corral) y la producción se mide por <b>animal</b>, que en DelPro vive en un
+        <b>grupo</b>. Esta pantalla es el puente: define, una vez, qué lote alimenta a qué grupo.
+        <br><b>Por qué se define a mano.</b> Si un rodeo se mapea mal, el costo por vaca igual da un
+        número plausible y nadie se entera. Por eso la aplicación <b>propone</b> y vos
+        <b>confirmás</b>: no adivina. Las sugerencias dicen siempre de dónde salieron.
+        <br><b>Lo que viene después.</b> Con esto definido se puede calcular costo por vaca,
+        eficiencia de conversión e IOFC. Tené presente que el costo por animal va a ser un
+        <b>reparto del costo del grupo, no una medición</b>: no hay comederos individuales, el TMR
+        se entrega al corral. Nunca descartes una vaca creyendo que ese número se midió.
+      </p>
+
+      <div class="aviso" id="conc-info" style="margin-top:8px"></div>
+      <div id="conc-frescura" class="aviso" style="margin-top:6px"></div>
+      <section class="kpis" id="conc-kpis" style="margin-top:10px"></section>
+      <div id="conc-alertas" style="margin-top:10px"></div>
+
+      <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+        <button class="secundario" id="conc-guardar">Guardar mapeo</button>
+        <button class="secundario" id="conc-revertir">Descartar cambios</button>
+        <button class="secundario" id="conc-refrescar">Volver a leer del proveedor</button>
+      </div>
+
+      <div id="conc-sugerencias" style="margin-top:16px"></div>
+
+      <h3 class="g-titulo" style="margin-top:20px">Lotes del proveedor</h3>
+      <span class="aviso">Elegí para cada lote qué grupo o grupos de DelPro alimenta. Un grupo
+        puede estar en un solo lote: si lo asignás a otro, se saca del anterior.</span>
+      <div style="overflow-x:auto;margin-top:8px" id="conc-tabla-lotes"></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Grupos de DelPro</h3>
+      <span class="aviso">Los de ordeñe son los que tienen que tener lote sí o sí. Los demás solo
+        avisan si los marcás como alimentados desde el proveedor.</span>
+      <div style="overflow-x:auto;margin-top:8px" id="conc-tabla-grupos"></div>
     </div>
   </section>
   </div>
@@ -5438,13 +5489,251 @@ document.getElementById('evolucion-ver-mes').addEventListener('click', () => {
 document.getElementById('evolucion-info').textContent =
   'Elegí un rango de fechas o un mes y presioná "Aplicar" / "Ver mes completo" para calcularlo.';
 
+// --- Alimentación: conciliación de lotes con grupos --------------------------
+// `concEstado` es lo último que devolvió el servidor y `concMapeo` lo que el
+// usuario viene editando sin guardar. Se mantienen separados a propósito: así
+// "Descartar cambios" es volver a pedir, sin estado intermedio raro.
+let concEstado = null, concMapeo = null;
+
+const CONC_ESTADOS = {
+  ok: ['chip', 'Coincide'],
+  revisar: ['chip ambar', 'Revisar'],
+  grave: ['chip rojo', 'No coincide'],
+  sin_grupos: ['chip violeta', 'Sin grupo'],
+};
+
+// Qué grupo está en qué lote, según lo que se está editando ahora.
+function concLoteDeGrupo() {
+  const m = {};
+  (concMapeo.lotes || []).forEach(l => (l.grupos || []).forEach(o => { m[o] = l.lote; }));
+  return m;
+}
+
+// Asignar un grupo a un lote lo saca de cualquier otro: un grupo en dos lotes
+// dejaría su costo ambiguo, y el backend lo rechaza igual.
+function concAsignar(lote, oids) {
+  concMapeo.lotes.forEach(l => {
+    if (l.lote !== lote) l.grupos = (l.grupos || []).filter(o => !oids.includes(o));
+  });
+  let entrada = concMapeo.lotes.find(l => l.lote === lote);
+  if (!entrada) { entrada = { lote, grupos: [], nota: '' }; concMapeo.lotes.push(entrada); }
+  entrada.grupos = oids;
+  concMapeo.grupos_sin_alimentacion =
+    (concMapeo.grupos_sin_alimentacion || []).filter(o => !oids.includes(o));
+  concPintar(true);
+}
+
+function concPintar(sucio) {
+  const d = concEstado, r = d.resumen || {};
+  const asignado = concLoteDeGrupo();
+
+  document.getElementById('conc-kpis').innerHTML = [
+    ['Cabezas en DelPro', fmt(r.cabezas_delpro_total), `${r.grupos} grupos`],
+    ['Cabezas en el proveedor', fmt(r.cabezas_proveedor),
+      `${r.lotes} lotes activos` + (r.lotes_inactivos ? ` · ${r.lotes_inactivos} de relleno` : '')],
+    ['Vacas de ordeñe sin lote', fmt(r.cabezas_sin_lote),
+      r.grupos_sin_lote ? `${r.grupos_sin_lote} grupo(s)` : 'todos asignados'],
+    ['Lotes sin grupo', fmt(r.lotes_sin_grupo), 'su costo no se reparte'],
+  ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
+    `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
+
+  document.getElementById('conc-alertas').innerHTML = (d.alertas || []).length
+    ? (d.alertas || []).map(a =>
+        `<div class="aviso" style="padding:6px 0"><span class="${
+          a.nivel === 'grave' ? 'chip rojo' : 'chip ambar'}">${
+          a.nivel === 'grave' ? 'Grave' : 'Revisar'}</span> ${a.texto}</div>`).join('')
+    : '<div class="aviso">Sin diferencias por encima del umbral.</div>';
+
+  // Sugerencias: se aceptan de a una y cada una dice por qué se propone.
+  const sug = (d.sugerencias || []).filter(s => !(concMapeo.lotes || [])
+    .some(l => l.lote === s.lote && (l.grupos || []).length));
+  document.getElementById('conc-sugerencias').innerHTML = sug.length ? `
+    <h3 class="g-titulo">Sugerencias sin confirmar (${sug.length})</h3>
+    <span class="aviso">La aplicación no las aplica sola. Mirá el motivo y aceptá las que
+      correspondan.</span>
+    <div class="tabla-scroll" style="max-height:260px;margin-top:8px"><table class="lac-table">
+      <thead><tr><th>Lote</th><th>Se propone</th><th>Por qué</th><th></th></tr></thead>
+      <tbody>${sug.map(s => s.candidatos.map((c, i) => `<tr>
+        <td>${i === 0 ? s.lote : ''}</td>
+        <td>${c.nombre} <span class="aviso">(${fmt(c.cabezas)} cabezas)</span></td>
+        <td class="aviso">${c.motivo}${s.ambigua ? ' <span class="chip ambar">ambigua</span>' : ''}</td>
+        <td><button class="secundario conc-aceptar" data-lote="${encodeURIComponent(s.lote)}"
+             data-oid="${c.oid}">Aceptar</button></td>
+      </tr>`).join('')).join('')}</tbody></table></div>` : '';
+
+  // Selector de grupos por lote. Las cabezas van a la vista para comparar a ojo
+  // —que es lo que reemplaza a la sugerencia por cantidad, que se sacó por
+  // inventar emparejamientos.
+  const opciones = (oids) => (d.grupos || []).map(g => {
+    const otro = asignado[g.oid];
+    const ocupado = otro && !oids.includes(g.oid);
+    return `<option value="${g.oid}"${oids.includes(g.oid) ? ' selected' : ''}>` +
+      `${g.numero} · ${g.nombre} (${fmt(g.cabezas)})${g.es_ordene ? ' · ordeñe' : ''}` +
+      `${ocupado ? ' — ya está en ' + otro : ''}</option>`;
+  }).join('');
+
+  const lotes = (d.lotes || []).slice().sort((a, b) =>
+    (a.activo === b.activo ? 0 : (a.activo ? -1 : 1)) || a.lote.localeCompare(b.lote));
+  const activos = lotes.filter(l => l.activo), relleno = lotes.filter(l => !l.activo);
+  const filaLote = (f) => {
+    const oids = (concMapeo.lotes.find(l => l.lote === f.lote) || {}).grupos || [];
+    const cabDel = oids.reduce((s, o) => s + ((d.grupos.find(g => g.oid === o) || {}).cabezas || 0), 0);
+    const dif = f.cabezas_proveedor == null || !oids.length ? null : f.cabezas_proveedor - cabDel;
+    const pct = dif != null && cabDel ? (dif / cabDel * 100) : null;
+    // Mismo criterio que `_estado` en conciliacion.py. `dif` nulo con grupos
+    // asignados es el lote que desapareció del proveedor: no es "coincide".
+    const est = (!oids.length || dif == null) ? 'sin_grupos'
+      : (Math.abs(dif) <= r.umbral_cabezas || (pct != null && Math.abs(pct) <= r.umbral_pct)) ? 'ok'
+      : (pct == null || Math.abs(pct) > 2 * r.umbral_pct) ? 'grave' : 'revisar';
+    const [cls, txt] = CONC_ESTADOS[est];
+    return `<tr>
+      <td><b>${f.lote}</b>${f.en_proveedor ? '' : ' <span class="chip ambar">ya no está en el proveedor</span>'}
+        ${f.indice_ordene != null ? `<div class="aviso">Haasten lo asocia al grupo N° ${f.indice_ordene}</div>` : ''}</td>
+      <td class="aviso">${f.categoria || '—'}</td>
+      <td class="num">${f.cabezas_proveedor == null ? '—' : fmt(f.cabezas_proveedor)}</td>
+      <td class="num">${f.kg_ms_cabeza == null ? '—' : fmt(f.kg_ms_cabeza)}</td>
+      <td><select multiple size="4" class="conc-grupos" data-lote="${encodeURIComponent(f.lote)}"
+           style="min-width:250px;padding:4px">${opciones(oids)}</select></td>
+      <td class="num">${oids.length ? fmt(cabDel) : '—'}</td>
+      <td class="num">${dif == null ? '—' : (dif > 0 ? '+' : '') + fmt(dif) +
+        (pct == null ? '' : ` <span class="aviso">(${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)</span>`)}</td>
+      <td><span class="${cls}">${txt}</span></td></tr>`;
+  };
+  const cabecera = `<thead><tr><th>Lote</th><th>Categoría</th><th class="num">Cabezas prov.</th>
+      <th class="num">kg MS/cab</th><th>Grupos de DelPro</th><th class="num">Cabezas DelPro</th>
+      <th class="num">Diferencia</th><th>Estado</th></tr></thead>`;
+  document.getElementById('conc-tabla-lotes').innerHTML =
+    `<table class="lac-table">${cabecera}<tbody>${activos.map(filaLote).join('')}</tbody></table>` +
+    (relleno.length ? `<details style="margin-top:10px"><summary class="aviso">
+        ${relleno.length} lote(s) de relleno — sin kg de materia seca por cabeza, no alimentan a
+        nadie. Se listan por si alguno se empieza a usar.</summary>
+      <table class="lac-table" style="margin-top:6px">${cabecera}
+        <tbody>${relleno.map(filaLote).join('')}</tbody></table></details>` : '');
+
+  // Grupos: primero los de ordeñe, que son los que obligan.
+  const filaGrupo = (g) => {
+    const lote = asignado[g.oid];
+    const silenciado = (concMapeo.grupos_sin_alimentacion || []).includes(g.oid);
+    return `<tr${g.falta_lote && !lote ? ' class="pm-pisado"' : ''}>
+      <td class="num">${g.numero}</td><td>${g.nombre}</td>
+      <td class="num">${fmt(g.cabezas)}</td>
+      <td>${g.es_ordene ? '<span class="chip violeta">ordeñe</span>' : ''}</td>
+      <td>${lote ? lote : '<span class="aviso">sin asignar</span>'}</td>
+      <td><label class="aviso" style="display:flex;align-items:center;gap:5px">
+        <input type="checkbox" class="conc-silenciar" data-oid="${g.oid}"
+          ${silenciado ? 'checked' : ''}${lote ? ' disabled' : ''}> no se alimenta desde acá
+      </label></td></tr>`;
+  };
+  const grupos = (d.grupos || []).slice().sort((a, b) => a.numero - b.numero);
+  const ordene = grupos.filter(g => g.es_ordene), otros = grupos.filter(g => !g.es_ordene);
+  const cabG = `<thead><tr><th class="num">N°</th><th>Grupo</th><th class="num">Cabezas</th>
+      <th></th><th>Lote</th><th></th></tr></thead>`;
+  document.getElementById('conc-tabla-grupos').innerHTML =
+    `<table class="lac-table">${cabG}<tbody>${ordene.map(filaGrupo).join('')}</tbody></table>` +
+    `<details style="margin-top:10px"${otros.some(g => asignado[g.oid]) ? ' open' : ''}>
+      <summary class="aviso">${otros.length} grupo(s) que no son de ordeñe (secas, recría,
+        crianza, vaquillonas)</summary>
+      <table class="lac-table" style="margin-top:6px">${cabG}
+        <tbody>${otros.map(filaGrupo).join('')}</tbody></table></details>`;
+
+  document.querySelectorAll('.conc-grupos').forEach(sel => sel.addEventListener('change', () =>
+    concAsignar(decodeURIComponent(sel.dataset.lote),
+                [...sel.selectedOptions].map(o => Number(o.value)))));
+  document.querySelectorAll('.conc-aceptar').forEach(b => b.addEventListener('click', () => {
+    const lote = decodeURIComponent(b.dataset.lote);
+    const previos = (concMapeo.lotes.find(l => l.lote === lote) || {}).grupos || [];
+    concAsignar(lote, [...new Set([...previos, Number(b.dataset.oid)])]);
+  }));
+  document.querySelectorAll('.conc-silenciar').forEach(c => c.addEventListener('change', () => {
+    const oid = Number(c.dataset.oid);
+    const lista = new Set(concMapeo.grupos_sin_alimentacion || []);
+    c.checked ? lista.add(oid) : lista.delete(oid);
+    concMapeo.grupos_sin_alimentacion = [...lista];
+    concPintar(true);
+  }));
+
+  if (sucio) document.getElementById('conc-info').innerHTML =
+    '<b>Hay cambios sin guardar.</b> Las diferencias de arriba se recalculan al guardar.';
+}
+
+function concFrescura(d) {
+  const f = d.frescura || {};
+  const dias = (a, b) => (a && b) ? Math.round((new Date(b) - new Date(a)) / 86400000) : null;
+  const dCambio = dias(f.ultimo_cambio_grupo, f.hoy);
+  const eq = (d.proveedor || {}).equipos || [];
+  const ultProv = eq.map(e => e.ultimo_dato).filter(Boolean).sort().pop();
+  const dProv = dias(ultProv, f.hoy);
+  document.getElementById('conc-frescura').innerHTML =
+    `<b>Frescura de cada lado.</b> DelPro: último cambio de grupo registrado el ` +
+    `${f.ultimo_cambio_grupo ? f.ultimo_cambio_grupo.slice(0, 10) : '—'}` +
+    `${dCambio != null ? ` (hace ${dCambio} día${dCambio === 1 ? '' : 's'})` : ''}` +
+    `, último día completo de datos diarios el ${(f.animaldaily || {}).fecha || '—'}. ` +
+    `Proveedor: ${ultProv ? ultProv.slice(0, 10) : '—'}` +
+    `${dProv != null ? ` (hace ${dProv} día${dProv === 1 ? '' : 's'})` : ''}. ` +
+    (dCambio > 1
+      ? `<b>Las cabezas de DelPro no son de hoy</b>: son de la última vez que se registró un
+         movimiento. Parte de las diferencias de abajo pueden ser solo eso.`
+      : '');
+}
+
+async function cargarConciliacion(refrescar) {
+  const info = document.getElementById('conc-info');
+  info.textContent = refrescar ? 'Volviendo a leer del proveedor…' : 'Leyendo grupos y lotes…';
+  let d;
+  try {
+    d = await pedirJSON('/api/alimentacion/conciliacion?tambo=' +
+      encodeURIComponent(tamboActual) + (refrescar ? '&refrescar=1' : ''));
+  } catch (e) { info.textContent = 'Error: ' + e.message; return; }
+  concEstado = d;
+  concMapeo = {
+    lotes: (d.mapeo.lotes || []).map(l => ({ ...l, grupos: [...(l.grupos || [])] })),
+    grupos_sin_alimentacion: [...(d.mapeo.grupos_sin_alimentacion || [])],
+  };
+  concPintar(false);
+  concFrescura(d);
+  const err = (d.proveedor || {}).error;
+  const eq = (d.proveedor || {}).equipos || [];
+  info.innerHTML = err
+    ? `<span class="chip rojo">Sin datos del proveedor</span> ${err}<br>
+       Igual podés ver los grupos de DelPro y el mapeo que ya estaba guardado.`
+    : `${d.proveedor.nombre}: ${eq.map(e => `${e.alias || e.serial} (${e.tipo})`).join(', ') || '—'}` +
+      ` · mapeo guardado ${d.mapeo.actualizado
+        ? `el ${d.mapeo.actualizado.replace('T', ' ')}${d.mapeo.por ? ' por ' + d.mapeo.por : ''}`
+        : '<b>nunca</b> — todavía no se confirmó ninguna asignación'}.`;
+}
+
+document.getElementById('conc-revertir').addEventListener('click', () => cargarConciliacion(false));
+document.getElementById('conc-refrescar').addEventListener('click', () => cargarConciliacion(true));
+document.getElementById('conc-guardar').addEventListener('click', async () => {
+  const info = document.getElementById('conc-info');
+  info.textContent = 'Guardando…';
+  try {
+    const d = await pedirJSON('/api/alimentacion/conciliacion?tambo=' +
+      encodeURIComponent(tamboActual), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        // Se mandan solo los lotes con grupos: los vacíos no son un mapeo.
+        body: JSON.stringify({
+          lotes: concMapeo.lotes.filter(l => (l.grupos || []).length),
+          grupos_sin_alimentacion: concMapeo.grupos_sin_alimentacion,
+        }),
+      });
+    concEstado = d;
+    concMapeo = {
+      lotes: (d.mapeo.lotes || []).map(l => ({ ...l, grupos: [...(l.grupos || [])] })),
+      grupos_sin_alimentacion: [...(d.mapeo.grupos_sin_alimentacion || [])],
+    };
+    concPintar(false);
+    info.textContent = 'Mapeo guardado.';
+  } catch (e) { info.textContent = 'Error al guardar: ' + e.message; }
+});
+
 // ---------------------------------------------------------------------------
 // Navegación entre páginas (sidebar): cada sección carga sus datos recién la
 // primera vez que se visita — esta base SQL es lenta, no tiene sentido pedir
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'proyeccion', 'repro', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
+const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -5486,6 +5775,7 @@ function cargarDatosDePagina(id) {
   // es de 20 filas, así que la página abre al instante en vez de esperar las
   // consultas pesadas. Las demás cargan al entrar en ellas.
   else if (id === 'repro') cargarParametros();
+  else if (id === 'alimentacion') cargarConciliacion(false);
   else if (id === 'entregas') {
     activarAPedido('cicla-info', cargarCicla, 'las cargas de CICLA', DEMORA);
     activarAPedido('comparar-info', cargarComparar, 'la comparación con el comprador', DEMORA);

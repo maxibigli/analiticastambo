@@ -16,6 +16,7 @@ import os
 import ai
 import auth
 import cicla
+import conciliacion
 import config_alertas
 import correo
 import db
@@ -30,6 +31,7 @@ import performance
 import podal
 import preneces
 import parametros
+import proveedores
 import proyeccion
 import rebano
 import tasa_prenez
@@ -2601,6 +2603,99 @@ def api_alertas_probar():
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 502
     return jsonify({"ok": True})
+
+
+# --- Alimentación: conciliación de lotes con grupos --------------------------
+# El lado DelPro es barato (25 filas) pero el del proveedor implica un login
+# contra un sitio externo, así que se cachea igual que CICLA.
+CONCILIACION_CACHE_TTL_S = 600
+
+
+def _conciliacion_estado(tambo: str, refrescar: bool = False) -> dict:
+    """Los dos lados cruzados, más el estado del proveedor.
+
+    Si el proveedor falla —falta configuración, se cayó el sitio— NO se corta:
+    se devuelve igual el lado DelPro y el mapeo guardado, con el motivo en
+    `proveedor.error`. La pantalla tiene que servir para mirar los grupos
+    aunque el mixer esté incomunicado.
+    """
+    herd = rebano.por_defecto(tambo)
+    key = f"{tambo}:conciliacion_grupos:{herd}"
+    data, _ = _cache_get(key, allow_stale=True, ttl=CONCILIACION_CACHE_TTL_S)
+    if data is None or refrescar:
+        data = {
+            "grupos": db.run_query(conciliacion.sql_grupos(herd), tambo=tambo, max_rows=500),
+            "dias": db.run_query(conciliacion.sql_dias_animaldaily(herd), tambo=tambo, max_rows=60),
+            "cambio": db.run_query(conciliacion.sql_ultimo_cambio_grupo(herd),
+                                   tambo=tambo, max_rows=5),
+        }
+        _cache_set(key, data)
+
+    prov = proveedores.de(tambo)
+    key_prov = f"{tambo}:conciliacion_proveedor"
+    lotes, info = [], {"nombre": prov.NOMBRE, "error": None, "equipos": []}
+    guardado, _ = _cache_get(key_prov, allow_stale=True, ttl=CONCILIACION_CACHE_TTL_S)
+    if guardado is not None and not refrescar:
+        lotes, info = guardado["lotes"], guardado["info"]
+    else:
+        try:
+            lotes = prov.lotes()
+            info["equipos"] = [{k: v for k, v in e.items() if not k.startswith("_")}
+                               for e in prov.equipos()]
+            _cache_set(key_prov, {"lotes": lotes, "info": info})
+        except Exception as exc:  # noqa: BLE001
+            info["error"] = str(exc)
+
+    grupos = conciliacion.grupos_de(data["grupos"])
+    mapeo = conciliacion.mapeo_de(tambo)
+    salida = conciliacion.analizar(grupos, lotes, mapeo)
+    ultimo_cambio = (data["cambio"]["rows"] or [[None]])[0][0]
+    salida.update({
+        "tambo": tambo,
+        "tambo_nombre": tambos.TAMBOS.get(tambo, {}).get("nombre", tambo),
+        "mapeo": mapeo,
+        "proveedor": info,
+        "frescura": {
+            "ultimo_cambio_grupo": ultimo_cambio,
+            "animaldaily": conciliacion.ultimo_dia_completo(data["dias"]),
+            "hoy": datetime.date.today().isoformat(),
+        },
+    })
+    return salida
+
+
+@app.get("/api/alimentacion/conciliacion")
+@auth.requiere_rol("admin")
+def api_alimentacion_conciliacion():
+    """Lotes del proveedor de alimentación contra grupos de DelPro, con el mapeo
+    guardado, las diferencias de cabezas y las sugerencias. Ver `conciliacion.py`."""
+    tambo = _tambo_del_request()
+    refrescar = request.args.get("refrescar") in ("1", "true", "si")
+    try:
+        return jsonify(_conciliacion_estado(tambo, refrescar))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+
+
+@app.post("/api/alimentacion/conciliacion")
+@auth.requiere_rol("admin")
+def api_alimentacion_guardar_conciliacion():
+    """Guarda el mapeo lote↔grupo del tambo y devuelve el estado recalculado.
+
+    Body: {"lotes": [{"lote": str, "grupos": [oid], "nota": str}],
+           "grupos_sin_alimentacion": [oid], "umbral_pct": n, "umbral_cabezas": n}
+    """
+    tambo = _tambo_del_request()
+    try:
+        conciliacion.guardar_mapeo(tambo, request.json or {},
+                                   usuario=auth.usuario_actual(),
+                                   ahora=datetime.datetime.now().isoformat(timespec="seconds"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        return jsonify(_conciliacion_estado(tambo))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
 
 
 if __name__ == "__main__":
