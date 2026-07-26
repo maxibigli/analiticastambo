@@ -20,6 +20,7 @@ import config_alertas
 import correo
 import db
 import ficha_animal
+import iot_monitoreo
 import laserenisima
 import mantenimiento
 import podal
@@ -687,6 +688,20 @@ def api_salud_atencion_v2():
         return espera
     fichas = salud.calcular_atencion_v2(data["columns"], data["rows"])
     return jsonify({"vacas": fichas, "experimental": True})
+
+
+# --- Monitoreo IoT en tiempo real (gateway M300: lavado/barrido + sensores) -
+@app.get("/api/iot/estado")
+@auth.requiere_rol("admin")
+def api_iot_estado():
+    """Estado de 4 fases de la rotativa (ORDEÑO/LAVANDO/BARRIDO/APAGADO) +
+    últimas lecturas de los sensores de temperatura/humedad planeados
+    (aparecen como "sin instalar" hasta que haya datos reales)."""
+    tambo = _tambo_del_request()
+    return jsonify({
+        "sistema": iot_monitoreo.estado_sistema(tambo),
+        "sensores": iot_monitoreo.lecturas_actuales(),
+    })
 
 
 # --- Problemas podales (renguera por cámaras) -------------------------------

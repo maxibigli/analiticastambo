@@ -177,6 +177,20 @@
   .gauge-label { font-size: 11px; color: var(--text-secondary); font-weight: 650; margin-top: 1px; }
   .gauge-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
   .gauge.disabled .gauge-sub { font-weight: 600; }
+  /* Monitoreo IoT: estado de 4 fases de la rotativa */
+  .iot-estado { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 18px;
+    border-radius: 12px; border: 1px solid var(--border); }
+  .iot-estado.fase-ordeno { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: var(--accent); }
+  .iot-estado.fase-lavando { background: color-mix(in srgb, var(--warning) 14%, transparent); border-color: var(--warning); }
+  .iot-estado.fase-barrido { background: color-mix(in srgb, var(--violeta) 14%, transparent); border-color: var(--violeta); }
+  .iot-estado.fase-apagado { background: color-mix(in srgb, var(--muted) 12%, transparent); border-color: var(--muted); }
+  .iot-estado-punto { width: 16px; height: 16px; border-radius: 50%; flex-shrink: 0; }
+  .iot-estado.fase-ordeno .iot-estado-punto { background: var(--accent); animation: latido 1.4s infinite; }
+  .iot-estado.fase-lavando .iot-estado-punto { background: var(--warning); animation: latido 1.4s infinite; }
+  .iot-estado.fase-barrido .iot-estado-punto { background: var(--violeta); animation: latido 1.4s infinite; }
+  .iot-estado.fase-apagado .iot-estado-punto { background: var(--muted); }
+  .iot-estado-texto { font-size: 22px; font-weight: 800; }
+  .iot-estado-desde { font-size: 12.5px; color: var(--text-secondary); }
   /* Atención vacas v2 (experimental) */
   .aten2-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; margin-top: 12px; }
   .aten2-card { background: var(--page); border: 1px solid var(--border); border-radius: 11px; padding: 12px 14px; border-top: 3px solid var(--muted); }
@@ -290,6 +304,7 @@
     {% if 'evolucion' in paginas_visibles %}<button class="nav-item" data-pagina="evolucion">📈 <span>Evolución</span></button>{% endif %}
     {% if 'salud' in paginas_visibles %}<button class="nav-item" data-pagina="salud">🩺 <span>Salud del rodeo</span></button>{% endif %}
     {% if 'ficha' in paginas_visibles %}<button class="nav-item" data-pagina="ficha">🐄 <span>Ficha Animal</span></button>{% endif %}
+    {% if 'iot' in paginas_visibles %}<button class="nav-item" data-pagina="iot">📡 <span>Monitoreo IoT</span></button>{% endif %}
     {% if 'tareas' in paginas_visibles %}<button class="nav-item" data-pagina="tareas">✅ <span>Tareas pendientes</span></button>{% endif %}
     {% if 'consultas' in paginas_visibles %}<button class="nav-item" data-pagina="consultas">🔍 <span>Consultas e IA</span></button>{% endif %}
   </nav>
@@ -802,6 +817,22 @@
         <div id="ficha-eventos-cuerpo" style="margin-top:10px"></div>
       </section>
     </div>
+  </div>
+
+  <div class="page" id="page-iot" hidden>
+    <section class="card">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0">📡 Monitoreo IoT en tiempo real</h2>
+        <span class="aviso">Estado de la rotativa y sensores del tambo (gateway PUSR M300).</span>
+      </div>
+      <div id="iot-estado-cuerpo" style="margin-top:14px"></div>
+    </section>
+
+    <section class="card">
+      <h2 style="margin:0">Sensores</h2>
+      <span class="aviso">Temperatura, humedad y vacío por sector — se activan solos apenas se cablean, sin tocar nada acá.</span>
+      <div class="gauge-row" id="iot-sensores-cuerpo" style="margin-top:12px"></div>
+    </section>
   </div>
 
   <div class="page" id="page-tareas" hidden>
@@ -2320,6 +2351,60 @@ async function buscarFicha() {
 document.getElementById('ficha-buscar').addEventListener('click', buscarFicha);
 document.getElementById('ficha-rp').addEventListener('keydown', e => { if (e.key === 'Enter') buscarFicha(); });
 
+// --- Monitoreo IoT en tiempo real (gateway M300) ----------------------------
+const FASE_CLASE = { 'ORDEÑO': 'fase-ordeno', 'LAVANDO': 'fase-lavando',
+                     'BARRIDO': 'fase-barrido', 'APAGADO': 'fase-apagado' };
+const FASE_ICONO = { 'ORDEÑO': '🥛', 'LAVANDO': '🧼', 'BARRIDO': '💨', 'APAGADO': '⏻' };
+
+function pintarIotEstado(sistema) {
+  const cont = document.getElementById('iot-estado-cuerpo');
+  const cls = FASE_CLASE[sistema.estado] || 'fase-apagado';
+  const desde = sistema.desde ? `desde ${String(sistema.desde).replace('T', ' ').slice(0, 16)}` : '';
+  cont.innerHTML = `<div class="iot-estado ${cls}">
+    <div class="iot-estado-punto"></div>
+    <div>
+      <div class="iot-estado-texto">${FASE_ICONO[sistema.estado] || ''} ${sistema.estado}</div>
+      <div class="iot-estado-desde">${desde}</div>
+    </div>
+  </div>`;
+}
+
+function pintarIotSensores(sensores) {
+  const cont = document.getElementById('iot-sensores-cuerpo');
+  cont.innerHTML = (sensores || []).map(s => {
+    if (s.valor == null) {
+      return gaugeSVG({ disabled: true, label: s.label, sub: 'sin instalar' });
+    }
+    const pct = Math.max(0, Math.min(100, 100 * (s.valor - s.min) / (s.max - s.min)));
+    return gaugeSVG({ pct, valor: `${fmt(s.valor)}${s.unidad}`, label: s.label,
+      sub: s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : '' });
+  }).join('');
+}
+
+const IOT_REFRESCO_MS = 5000;
+let iotTimer = null;
+
+async function cargarIot() {
+  try {
+    const d = await pedirJSON('/api/iot/estado?tambo=' + encodeURIComponent(tamboActual));
+    pintarIotEstado(d.sistema);
+    pintarIotSensores(d.sensores);
+  } catch (e) {
+    document.getElementById('iot-estado-cuerpo').innerHTML =
+      `<div class="aviso">Error: ${e.message}</div>`;
+  }
+}
+
+function iniciarIotVivo() {
+  clearInterval(iotTimer);
+  cargarIot();
+  iotTimer = setInterval(cargarIot, IOT_REFRESCO_MS);
+}
+
+function detenerIotVivo() {
+  clearInterval(iotTimer);
+}
+
 function pintarSaludConductividad(d) {
   const idx = { fecha: d.columns.indexOf('fecha'), grupo: d.columns.indexOf('grupo'),
                 cond: d.columns.indexOf('cond_promedio') };
@@ -3219,7 +3304,7 @@ document.getElementById('evolucion-info').textContent =
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'evolucion', 'salud', 'ficha', 'tareas', 'consultas']
+const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'evolucion', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -3260,6 +3345,8 @@ function irAPagina(id) {
   if (id !== 'salud') clearTimeout(saludReintento);
   // Cámaras y actividad en vivo de "Problemas podales": solo mientras se ve la página.
   if (id === 'salud') iniciarPodalVivo(); else detenerPodalVivo();
+  // Estado en vivo de Monitoreo IoT: solo mientras se ve esa página.
+  if (id === 'iot') iniciarIotVivo(); else detenerIotVivo();
 }
 
 document.querySelectorAll('.nav-item').forEach(el =>
