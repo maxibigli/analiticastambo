@@ -410,8 +410,59 @@
       <div class="lac-segment" id="repro-tabs" role="group" aria-label="Vista"
            style="margin-left:auto">
         <button class="lac-segment__item" data-tab="resultados" aria-pressed="true">Resultados</button>
+        <button class="lac-segment__item" data-tab="preneces" aria-pressed="false">Indicadores de Preñez</button>
         <button class="lac-segment__item" data-tab="metas" aria-pressed="false">Calibración de Objetivos</button>
       </div>
+    </div>
+
+    <div id="repro-panel-preneces" hidden>
+      <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Tipo
+          <select id="pren-tipo" style="padding:6px 8px">
+            <option value="vacas" selected>Vacas</option>
+            <option value="vaquillonas">Vaquillonas</option>
+            <option value="ambas">Vacas y vaquillonas</option>
+          </select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Rebaño
+          <select id="pren-rebano" style="padding:6px 8px"></select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="pren-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="pren-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="pren-aplicar">Aplicar</button>
+        <div class="lac-segment" id="pren-dim" role="group" aria-label="Dimensión" style="margin-left:auto">
+          <button class="lac-segment__item" data-dim="deo" aria-pressed="true">Por DEO</button>
+          <button class="lac-segment__item" data-dim="mes" aria-pressed="false">Por mes</button>
+        </div>
+      </div>
+
+      <p class="explica" style="margin-top:10px">
+        <b>Qué busca.</b> Contestar <i>cuándo</i> se preña el rodeo. <b>Por DEO</b> muestra a
+        cuántos días de ordeñe quedó preñada cada vaca: si la barra de 0-100 domina, el rodeo se
+        preña temprano; si el peso se corre a la derecha, las vacas se están estirando y cada día
+        de más es leche que no se produce. <b>Por mes</b> muestra en qué meses se lograron las
+        preñeces, para detectar meses flojos de servicio (calor, falta de personal, un problema de
+        detección de celo).
+        <br><b>Cómo se calcula.</b> Se cuentan las <b>concepciones</b> del período. Cada chequeo de
+        preñez positivo apunta a la inseminación que quedó (<code>EffectiveInsemination</code>), y
+        esa es la fecha de concepción; se deduplica por animal e inseminación porque una preñez
+        suele tener varios chequeos. Los DEO salen de restarle a esa fecha el parto que abrió la
+        lactancia. Verificado contra el informe de DelPro del 26/07/2025 al 26/07/2026: 1.382
+        concepciones, 587 de L1 y 795 de L2+, y la vista por mes coincide fila por fila.
+        <br><b>L1 y L2+.</b> Primera lactancia contra el resto. Se separan porque la vaca de primer
+        parto es más difícil de preñar y mezclarlas esconde el problema.
+        <br><b>La curva acumulada</b> (línea) dice qué porcentaje del total de preñeces del período
+        ya se había logrado hasta ese tramo. Cuanto más rápido llega al 100%, más concentrada
+        estuvo la preñez.
+      </p>
+      <div class="aviso" id="pren-info" style="margin-top:8px"></div>
+      <div class="aviso" id="pren-aviso" style="margin-top:6px;color:var(--warning)"></div>
+      <div class="chart-box" style="height:320px;margin-top:12px"><canvas id="chart-preneces"></canvas></div>
+      <div style="overflow-x:auto;margin-top:14px" id="pren-tabla"></div>
     </div>
 
     <div id="repro-panel-resultados">
@@ -2235,16 +2286,125 @@ document.getElementById('repro-metas-guardar').addEventListener('click', async (
     info.textContent = 'Error al guardar: ' + e.message;
   }
 });
+// --- Indicadores de preñez ---------------------------------------------------
+let chartPreneces = null, prenDatos = null, prenDim = 'deo', prenReintento = null;
+
+const PREN_SERIES = {
+  l1: { label: '1ra lactancia (L1)', color: 0 },
+  l2: { label: '2da y más (L2+)', color: 2 },
+  vaquillonas: { label: 'Vaquillonas', color: 3 },
+};
+
+function pintarPreneces() {
+  if (!prenDatos) return;
+  const vista = prenDatos[prenDim];
+  const filas = vista.filas || [];
+  const series = vista.series || [];
+  const labels = filas.map(f => f.tramo);
+
+  const opts = baseOpts(true);
+  opts.interaction = { mode: 'index', intersect: false };
+  opts.scales.y.title = { display: true, text: '% de preñeces' };
+  opts.scales.x.title = { display: true, text: prenDim === 'deo' ? 'Días en ordeñe' : 'Mes' };
+  opts.scales.y1 = {
+    position: 'right', beginAtZero: true, max: 100,
+    grid: { drawOnChartArea: false }, border: { display: false },
+    title: { display: true, text: '% acumulado' },
+  };
+
+  const datasets = series.map(s => ({
+    type: 'bar', label: PREN_SERIES[s].label,
+    data: filas.map(f => f['pct_' + s]),
+    backgroundColor: SERIES[PREN_SERIES[s].color], borderWidth: 0,
+    maxBarThickness: 34, borderRadius: 3,
+  }));
+  datasets.push({
+    type: 'line', label: '% acumulado', yAxisID: 'y1',
+    data: filas.map(f => f.acumulado),
+    borderColor: SERIES[4], backgroundColor: SERIES[4],
+    borderWidth: 2, pointRadius: 3, tension: .2,
+  });
+
+  chartPreneces = dibujar('chart-preneces', chartPreneces, {
+    type: 'bar', data: { labels, datasets }, options: opts,
+  });
+
+  const t = vista.totales || {};
+  const col = (n, p) => `<td class="num">${fmt(n)}</td><td class="num">${p == null ? '—' : fmt(p) + ' %'}</td>`;
+  const cab = series.map(s => `<th class="num">${PREN_SERIES[s].label}</th><th class="num">%</th>`).join('');
+  const cuerpo = filas.map(f => `<tr><td>${f.tramo}</td>` +
+    series.map(s => col(f[s], f['pct_' + s])).join('') +
+    `<td class="num">${f.pct_total == null ? '—' : fmt(f.pct_total) + ' %'}</td>` +
+    `<td class="num">${fmt(f.acumulado)} %</td></tr>`).join('');
+  document.getElementById('pren-tabla').innerHTML = `<table class="lac-table">
+    <thead><tr><th>${prenDim === 'deo' ? 'DEO' : 'Mes'}</th>${cab}
+    <th class="num">% del total</th><th class="num">% acumulado</th></tr></thead>
+    <tbody>${cuerpo}</tbody>
+    <tfoot><tr><th>TOTAL</th>${series.map(s => `<th class="num">${fmt(t[s])}</th>` +
+      `<th class="num">${t['pct_' + s] == null ? '—' : fmt(t['pct_' + s]) + ' %'}</th>`).join('')}
+    <th class="num">${fmt(t.total)}</th><th class="num">100 %</th></tr></tfoot></table>`;
+
+  // El corte por DEO necesita el parto que abrió la lactancia; los que no lo
+  // tienen registrado caen en "sin dato" y hay que decirlo, no esconderlo.
+  const sinDato = filas.find(f => f.tramo === 'sin dato');
+  document.getElementById('pren-aviso').textContent =
+    (prenDim === 'deo' && sinDato && sinDato.total)
+      ? `⚠ ${fmt(sinDato.total)} de ${fmt(t.total)} concepciones quedaron en "sin dato": no está ` +
+        `registrado el parto que abrió esa lactancia, así que no se les puede calcular el DEO. ` +
+        `Los totales no se ven afectados, solo el reparto entre tramos.` : '';
+  document.getElementById('pren-info').textContent =
+    `${fmt(t.total)} concepciones entre ${prenDatos.desde} y ${prenDatos.hasta} · ${vista.tipo_label}.`;
+}
+
+async function cargarPreneces() {
+  clearTimeout(prenReintento);
+  const info = document.getElementById('pren-info');
+  await cargarRebanos();
+  const sel = document.getElementById('pren-rebano');
+  if (!sel.options.length && reproRebanos) {
+    const def = (reproRebanos.find(r => r.es_el_tambo) || {}).herd;
+    sel.innerHTML = reproRebanos.map(r =>
+      `<option value="${r.herd}"${r.herd === def ? ' selected' : ''}>${r.nombre}</option>`).join('');
+  }
+  const g = (id, def) => { const e = document.getElementById(id); if (!e.value) e.value = def; return e.value; };
+  const hasta = g('pren-hasta', hoyISO());
+  const desde = g('pren-desde', menosDias(hasta, 365));
+  const tipo = document.getElementById('pren-tipo').value;
+  info.textContent = 'Calculando…';
+  try {
+    prenDatos = await pedirJSON(`/api/reproduccion/preneces?desde=${desde}&hasta=${hasta}` +
+      `&tipo=${tipo}&rebano=${encodeURIComponent(sel.value)}&tambo=${encodeURIComponent(tamboActual)}`);
+    pintarPreneces();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; prenReintento = setTimeout(cargarPreneces, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('pren-aplicar').addEventListener('click', cargarPreneces);
+document.getElementById('pren-tipo').addEventListener('change', cargarPreneces);
+document.getElementById('pren-rebano').addEventListener('change', cargarPreneces);
+document.getElementById('pren-dim').addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-dim]');
+  if (!btn || btn.dataset.dim === prenDim) return;
+  prenDim = btn.dataset.dim;
+  document.querySelectorAll('#pren-dim [data-dim]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.dim === prenDim)));
+  pintarPreneces();   // las dos vistas vienen juntas: no vuelve a consultar
+});
+
 document.getElementById('repro-tabs').addEventListener('click', ev => {
   const btn = ev.target.closest('[data-tab]');
   if (!btn) return;
   document.querySelectorAll('#repro-tabs [data-tab]').forEach(b =>
     b.setAttribute('aria-pressed', String(b === btn)));
-  const esMetas = btn.dataset.tab === 'metas';
-  document.getElementById('repro-panel-metas').hidden = !esMetas;
-  document.getElementById('repro-panel-resultados').hidden = esMetas;
-  if (esMetas && !reproMetas) cargarMetas();
-  if (!esMetas && !document.getElementById('repro-tabla').innerHTML) cargarRepro();
+  const tab = btn.dataset.tab;
+  document.getElementById('repro-panel-resultados').hidden = tab !== 'resultados';
+  document.getElementById('repro-panel-preneces').hidden = tab !== 'preneces';
+  document.getElementById('repro-panel-metas').hidden = tab !== 'metas';
+  if (tab === 'metas' && !reproMetas) cargarMetas();
+  if (tab === 'preneces' && !prenDatos) cargarPreneces();
+  if (tab === 'resultados' && !document.getElementById('repro-tabla').innerHTML) cargarRepro();
+  if (tab !== 'preneces') clearTimeout(prenReintento);
 });
 
 async function cargarCanalesAlertas() {

@@ -25,6 +25,7 @@ import iot_monitoreo
 import laserenisima
 import mantenimiento
 import podal
+import preneces
 import proyeccion
 import rebano
 import reproduccion
@@ -1684,6 +1685,77 @@ def api_reproduccion_resultados():
         {"desde": rangos["r1"][0], "hasta": rangos["r1"][1], "rebano": herd1},
         {"desde": rangos["r2"][0], "hasta": rangos["r2"][1], "rebano": herd2})
     return jsonify(resultado)
+
+
+@app.get("/api/reproduccion/preneces")
+@auth.requiere_rol("admin")
+def api_reproduccion_preneces():
+    """"Indicadores de Preñez": cuándo quedan preñados los animales, por tramo
+    de días en ordeñe y por mes. Réplica del "Gráfico de preñez" de DelPro
+    (verificado: 1.382 concepciones en 26/07/2025-26/07/2026, 587 L1 y 795
+    L2+). Ver `preneces.py`."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    try:
+        hasta = (datetime.datetime.strptime(request.args["hasta"], "%Y-%m-%d").date()
+                 if request.args.get("hasta") else hoy)
+        desde = (datetime.datetime.strptime(request.args["desde"], "%Y-%m-%d").date()
+                 if request.args.get("desde") else hasta - datetime.timedelta(days=365))
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    if desde > hasta:
+        desde, hasta = hasta, desde
+    if (hasta - desde).days > preneces.RANGO_MAX_DIAS:
+        return jsonify({"error": f"El rango no puede superar {preneces.RANGO_MAX_DIAS} días."}), 400
+
+    tipo = (request.args.get("tipo") or preneces.TIPO_VACAS).lower()
+    if tipo not in preneces.TIPOS:
+        return jsonify({"error": f"Tipo inválido (esperado: {', '.join(preneces.TIPOS)})."}), 400
+    herd_param = (request.args.get("rebano") or "").strip()
+    if not herd_param:
+        herd = rebano.por_defecto(tambo)
+    elif herd_param.lower() == rebano.TODOS:
+        herd = rebano.TODOS
+    else:
+        try:
+            herd = int(herd_param)
+        except ValueError:
+            return jsonify({"error": f"Rebaño inválido: {herd_param!r}"}), 400
+
+    key = f"{tambo}:preneces:{desde}:{hasta}:{tipo}:{herd}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=REPRO_CACHE_TTL_S)
+    if data is None:
+        def worker(k=key):
+            with _cache_lock:
+                if k in _refreshing:
+                    return
+                _refreshing.add(k)
+
+            def run():
+                try:
+                    _cache_set(k, {
+                        dim: db.run_query(
+                            preneces.sql_concepciones(desde.isoformat(), hasta.isoformat(),
+                                                      tipo, dim, herd),
+                            tambo=tambo, max_rows=100)
+                        for dim in ("deo", "mes")})
+                except Exception:  # noqa: BLE001
+                    pass
+                finally:
+                    with _cache_lock:
+                        _refreshing.discard(k)
+
+            threading.Thread(target=run, daemon=True).start()
+        worker()
+        return jsonify({"calentando": True, "mensaje": "Calculando indicadores de preñez…"}), 202
+
+    return jsonify({
+        "desde": desde.isoformat(), "hasta": hasta.isoformat(),
+        "tipo": tipo, "rebano": herd,
+        "deo": preneces.analizar(data["deo"], "deo", tipo),
+        "mes": preneces.analizar(data["mes"], "mes", tipo),
+        "tramos_deo": [t[0] for t in preneces.TRAMOS_DEO],
+    })
 
 
 @app.get("/api/reproduccion/rebanos")
