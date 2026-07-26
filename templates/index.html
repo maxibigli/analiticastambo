@@ -163,14 +163,9 @@
     background: var(--baseline); overflow: hidden;
   }
   .podal-cam-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
-  /* Vúmetros de Salud del rodeo / Monitoreo IoT (contenedor; el SVG del
-     instrumento en sí es liviano y se arma en JS, ver _vumetroSVG). */
+  /* Indicadores de Salud del rodeo / Monitoreo IoT: fila de tarjetas .lac-metric
+     (etiqueta + cifra grande), sin gráfico — se prioriza velocidad. */
   .gauge-row { display: flex; flex-wrap: wrap; gap: 10px; }
-  /* Vúmetro de barra LED (ver _vumetroBarraHTML): panel siempre oscuro, como
-     cualquier instrumento de la paleta Lactia. */
-  .vu-barra { display: flex; gap: 3px; height: 26px; background: var(--lac-inst-well);
-    border-radius: 6px; padding: 4px 6px; }
-  .vu-barra i { flex: 1; border-radius: 2px; transition: background .05s ease, box-shadow .05s ease; }
   /* Monitoreo IoT: estado de 4 fases de la rotativa */
   .iot-estado { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 18px;
     border-radius: 12px; border: 1px solid var(--border); }
@@ -2169,8 +2164,8 @@ function pintarSaludBcs(d) {
 }
 
 function actualizarGaugeBcs(n) {
-  const g = _vumetros['bcs'];
-  if (g) g.set(n);   // el vúmetro todavía no se pintó (primera carga) si es null
+  const el = document.getElementById('vu-bcs-val');
+  if (el) el.textContent = fmt(n);   // sigue null si la tarjeta todavía no se pintó (primera carga)
 }
 
 function renderSaludBcs() {
@@ -2439,87 +2434,24 @@ function pintarSaludProduccion(d) {
     </tr>`).join('')).join('') + `</tbody></table></div>`;
 }
 
-// --- Vúmetros livianos (paleta de instrumento Lactia, SVG mínimo) -----------
-// Barra de LEDs tipo vúmetro de consola de audio: nada de SVG, solo <i> con
-// color de fondo — más liviana todavía que el dial de aguja (sin cálculo de
-// ángulos ni paths). Mismas 3 zonas de color por posición del segmento
-// (los últimos siempre son ámbar/rojo, estén prendidos o no, como en un
-// vúmetro real). _vumetros guarda una "instancia" liviana por clave (objeto
-// con .set()) para poder actualizarlas sin reconstruir la tarjeta entera
-// (ver pintarVumetros/actualizarGaugeBcs).
-const _vumetros = {};
-const VU_SEGMENTOS = 15;
-const VU_WARN_AT = 0.78, VU_DANGER_AT = 0.90;
-
-function _vumetroBarraHTML(pct) {
-  const p = Math.max(0, Math.min(100, pct || 0)) / 100;
-  const activos = Math.round(p * VU_SEGMENTOS);
-  let html = '';
-  for (let i = 1; i <= VU_SEGMENTOS; i++) {
-    const frac = i / VU_SEGMENTOS;
-    const color = frac > VU_DANGER_AT ? 'var(--lac-inst-zone-over)'
-                : frac > VU_WARN_AT ? 'var(--lac-inst-zone-high)'
-                : 'var(--lac-inst-zone-low)';
-    const on = i <= activos;
-    html += `<i style="background:${on ? color : 'var(--lac-inst-off)'}${on ? `;box-shadow:0 0 4px ${color}` : ''}"></i>`;
-  }
-  return html;
-}
-
-function vumetroHTML(key, { label, sub, target, disabled }) {
+// --- Indicadores: número grande, sin gráfico ---------------------------
+// Se probaron dos vúmetros gráficos (dial de aguja, barra de LEDs) y la app
+// se sentía pesada igual — se prioriza velocidad por sobre el gráfico:
+// misma tarjeta simple que ya se usa en el Dashboard (etiqueta + cifra
+// grande), nada de SVG ni de reconstrucción por refresco.
+function vumetroHTML(key, { valor, unidad, label, sub, target, disabled }) {
   const click = (!disabled && target)
     ? ` onclick="document.getElementById('${target}').scrollIntoView({behavior:'smooth',block:'start'})" style="cursor:pointer"`
     : '';
-  const cuerpo = disabled
-    ? `<div class="lac-caption" style="padding:20px 0">sin instalar</div>`
-    : `<div id="vu-${key}" class="vu-barra"></div>
-       <div class="lac-data lac-data-lg" id="vu-${key}-val" style="text-align:center;margin-top:6px"></div>`;
-  return `<div class="lac-card" style="text-align:center;padding:12px 10px;min-width:170px"${click}>
-    <div class="lac-eyebrow">${label}</div>
-    ${cuerpo}
-    <div class="lac-caption" id="vu-${key}-sub" style="margin-top:2px;min-height:14px">${sub || ''}</div>
+  return `<div class="lac-metric" style="min-width:160px"${click}>
+    <div class="lac-metric__label">${label}</div>
+    <div class="lac-metric__value" id="vu-${key}-val">${disabled ? '—' : fmt(valor) + (unidad || '')}</div>
+    <div class="lac-caption" id="vu-${key}-sub" style="margin-top:4px">${disabled ? 'sin instalar' : (sub || '')}</div>
   </div>`;
 }
 
-function vumetroIniciar(key, { valor, min, max, decimals, unidad }) {
-  const cont = document.getElementById('vu-' + key);
-  if (!cont) return;
-  decimals = decimals != null ? decimals : 0;
-  min = min != null ? min : 0; max = max != null ? max : 100;
-  const val = document.getElementById(`vu-${key}-val`);
-  const instancia = {
-    set(v) {
-      const pct = 100 * (v - min) / (max - min);
-      cont.innerHTML = _vumetroBarraHTML(pct);
-      if (val) val.textContent = v.toFixed(decimals) + (unidad || '');
-    },
-  };
-  instancia.set(valor);
-  _vumetros[key] = instancia;
-}
-
-const _vumetrosFirma = {};   // contId -> "clave:disabled|clave:disabled|..." del último render
-
-// Solo reconstruye el SVG de cada vúmetro cuando cambia la ESTRUCTURA (aparece,
-// desaparece o pasa de "sin instalar" a con dato, o viceversa). Si la
-// estructura es la misma que el refresco anterior (el caso normal, ej. cada
-// 5s en Monitoreo IoT), solo actualiza el valor con .set() — evita destruir y
-// recrear docenas de <line> SVG por segmento en cada refresco.
 function pintarVumetros(contId, specs) {
-  const firma = specs.map(s => s.key + ':' + (s.disabled ? 1 : 0)).join('|');
-  if (_vumetrosFirma[contId] !== firma) {
-    document.getElementById(contId).innerHTML = specs.map(s => vumetroHTML(s.key, s)).join('');
-    specs.forEach(s => { if (!s.disabled) vumetroIniciar(s.key, s); });
-    _vumetrosFirma[contId] = firma;
-    return;
-  }
-  specs.forEach(s => {
-    if (s.disabled) return;
-    const g = _vumetros[s.key];
-    if (g) g.set(s.valor);
-    const subEl = document.getElementById(`vu-${s.key}-sub`);
-    if (subEl && s.sub != null) subEl.textContent = s.sub;
-  });
+  document.getElementById(contId).innerHTML = specs.map(s => vumetroHTML(s.key, s)).join('');
 }
 
 function pintarSaludGauges(atencion, atencion2, rcsGrupo, bcs, podalEstado, podalVacas) {
