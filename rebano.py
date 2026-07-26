@@ -89,6 +89,25 @@ def filtro_por_animal(columna_oid: str, herd=None) -> str:
             f" WHERE b_tb.OID = {columna_oid} AND {cond})")
 
 
+def filtro_historico(alias_animal: str = "b", herd=None) -> str:
+    """Como `filtro`, pero para animales que YA SALIERON del rodeo.
+
+    Al dar de baja un animal, DelPro le deja el `[Group]` en NULL: de las 1.103
+    bajas de los últimos doce meses, las 1.103 quedaron sin grupo. O sea que
+    `filtro()` las excluye a todas y cualquier cuenta de salidas da cero.
+
+    Acá se resuelve mirando el historial: se busca si el animal alguna vez
+    tuvo un registro diario en un grupo del rebaño. Es más caro que `filtro()`,
+    así que se usa solo donde hace falta —consultas de bajas—, no en general.
+    """
+    cond = _condicion(herd)
+    if cond is None:
+        return "1 = 1"
+    return (f"EXISTS (SELECT 1 FROM AnimalDaily d_tb"
+            f" JOIN AnimalGroup g_tb ON g_tb.OID = d_tb.AnimalGroup"
+            f" WHERE d_tb.BasicAnimal = {alias_animal}.OID AND {cond})")
+
+
 def por_defecto(tambo_id: str):
     """Rebaño(s) que le corresponden a un tambo.
 

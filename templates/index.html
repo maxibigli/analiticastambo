@@ -93,6 +93,9 @@
     background: var(--brand-navy); color: #fff; font-weight: 600;
     font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
   }
+  /* Fila con dato vencido: se ve distinta pero no grita. */
+  .ps-vencido td { background: color-mix(in srgb, var(--warning) 14%, transparent); }
+  .tabla-interactiva thead th { position: sticky; top: 0; background: var(--surface-1); z-index: 1; }
   .repro-sub td {
     background: color-mix(in srgb, var(--accent) 16%, transparent);
     font-weight: 600; font-size: 12.5px; padding-left: 12px;
@@ -413,6 +416,74 @@
         <button class="lac-segment__item" data-tab="resultados" aria-pressed="false">Resultados</button>
         <button class="lac-segment__item" data-tab="preneces" aria-pressed="false">Indicadores de Preñez</button>
         <button class="lac-segment__item" data-tab="performance" aria-pressed="false">Performance</button>
+        <button class="lac-segment__item" data-tab="partos" aria-pressed="false">Partos y Secados</button>
+      </div>
+    </div>
+
+    <div id="repro-panel-partos" hidden>
+      <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Categoría
+          <select id="ps-categoria" style="padding:6px 8px">
+            <option value="todas" selected>Todas</option>
+            <option value="l0">L0 (vaquillonas)</option>
+            <option value="l1">L1</option>
+            <option value="l2+">L2+</option>
+            <option value="l1+">L1+ (todas las vacas)</option>
+          </select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Rebaño
+          <select id="ps-rebano" style="padding:6px 8px"></select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Meses
+          <input type="number" id="ps-meses" min="3" max="24" value="9" style="padding:6px 8px;width:70px">
+        </label>
+        <button class="secundario" id="ps-aplicar">Aplicar</button>
+      </div>
+      <p class="explica" style="margin-top:10px">
+        <b>Qué es.</b> Qué vaca va a parir, cuál hay que secar y cuándo, y cómo queda el número de
+        vacas en ordeñe mes a mes. Sirve para dos cosas distintas: llevar la lista al corral, y
+        anticipar los baches de producción con tiempo para hacer algo.
+        <br><b>Cómo se calcula.</b> Misma ecuación que Proyección de Rebaños, que quedó verificada
+        contra DelPro: <code>vacas en ordeñe = las del mes anterior + partos − secados − descarte</code>.
+        El parto esperado sale de la inseminación efectiva más 280 días de gestación, y el secado de
+        restarle 60. El <b>descarte</b> no es un número fijo: se estima con las bajas reales de los
+        últimos doce meses (DelPro usa un valor fijo cargado a mano).
+        <br><b>Las tablas se ordenan y se filtran.</b> Clic en el encabezado ordena por esa columna;
+        el casillero de abajo filtra. Se combinan: por ejemplo, filtrar <code>Lact. = 1</code> y
+        ordenar por días al secado da la lista de vaquillonas a secar en orden de urgencia.
+        <br><b>La columna "Leche 7d"</b> es el promedio de los últimos siete días. Sirve para
+        priorizar el secado: la que ya bajó a poco se seca sin costo, la que todavía produce bien se
+        puede estirar unos días.
+      </p>
+      <div class="aviso" id="ps-info" style="margin-top:8px"></div>
+      <div class="aviso" id="ps-aviso" style="margin-top:6px;color:var(--warning)"></div>
+      <div class="kpis" id="ps-kpis" style="margin-top:10px"></div>
+
+      <div style="margin-top:18px">
+        <h3 class="g-titulo">Partos y secados proyectados</h3>
+        <p class="explica">
+          Las barras son las entradas y salidas del ordeñe de cada mes; la línea, el número de vacas
+          en ordeñe que resulta. Donde la línea cae hay un bache que se puede anticipar: adelantar o
+          atrasar secados, o revisar el plan de servicio de unos meses antes.
+        </p>
+        <div class="chart-box" style="height:320px"><canvas id="chart-ps-proyeccion"></canvas></div>
+      </div>
+
+      <div style="margin-top:20px">
+        <h3 class="g-titulo">Proyección de vacas en ordeñe</h3>
+        <div style="overflow-x:auto" id="ps-tabla-vo"></div>
+      </div>
+
+      <div style="margin-top:20px">
+        <h3 class="g-titulo">Secados esperados</h3>
+        <p class="explica">Ordenada por urgencia. Los días negativos son secados que ya deberían
+          haber ocurrido.</p>
+        <div style="overflow-x:auto;max-height:460px;overflow-y:auto" id="ps-tabla-secados"></div>
+      </div>
+
+      <div style="margin-top:20px">
+        <h3 class="g-titulo">Partos esperados</h3>
+        <div style="overflow-x:auto;max-height:460px;overflow-y:auto" id="ps-tabla-partos"></div>
       </div>
     </div>
 
@@ -2506,6 +2577,196 @@ document.getElementById('pren-dim').addEventListener('click', ev => {
   pintarPreneces();   // las dos vistas vienen juntas: no vuelve a consultar
 });
 
+// --- Tabla con orden y filtro por columna ------------------------------------
+// Helper genérico: se le pasa el contenedor, la definición de columnas y las
+// filas, y devuelve una tabla donde se puede ordenar clickeando el encabezado
+// y filtrar escribiendo debajo de cada uno. El estado (orden y filtros) vive
+// en el propio contenedor, así que puede haber varias en la misma página sin
+// pisarse.
+//
+// columnas: [{clave, titulo, tipo: 'texto'|'num'|'bool', fmt?: v => string}]
+function tablaInteractiva(contId, columnas, filas, opciones) {
+  const cont = document.getElementById(contId);
+  if (!cont) return;
+  const op = opciones || {};
+  const st = cont._tabla = cont._tabla || { orden: op.orden || null, asc: true, filtros: {} };
+
+  function valor(f, c) {
+    const v = f[c.clave];
+    if (c.tipo === 'bool') return v ? 'sí' : 'no';
+    return v == null ? '' : v;
+  }
+  function texto(f, c) {
+    const v = f[c.clave];
+    if (v == null) return '—';
+    if (c.fmt) return c.fmt(v, f);
+    if (c.tipo === 'bool') return v ? '✓' : '';
+    if (c.tipo === 'num') return fmt(v);
+    return String(v);
+  }
+
+  let vistas = filas.filter(f => columnas.every(c => {
+    const q = (st.filtros[c.clave] || '').trim().toLowerCase();
+    if (!q) return true;
+    return String(valor(f, c)).toLowerCase().includes(q);
+  }));
+  if (st.orden) {
+    const c = columnas.find(x => x.clave === st.orden);
+    vistas = vistas.slice().sort((a, b) => {
+      const va = a[c.clave], vb = b[c.clave];
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;          // los vacíos siempre al final
+      if (vb == null) return -1;
+      const r = (c.tipo === 'num') ? va - vb : String(va).localeCompare(String(vb), 'es');
+      return st.asc ? r : -r;
+    });
+  }
+
+  const flecha = c => st.orden !== c.clave ? '' : (st.asc ? ' ▲' : ' ▼');
+  cont.innerHTML = `<table class="lac-table tabla-interactiva">
+    <thead>
+      <tr>${columnas.map(c =>
+        `<th class="${c.tipo === 'num' ? 'num' : ''}" data-orden="${c.clave}"
+             style="cursor:pointer;user-select:none" title="Clic para ordenar"
+        >${c.titulo}${flecha(c)}</th>`).join('')}</tr>
+      <tr>${columnas.map(c =>
+        `<th style="padding:3px 6px"><input data-filtro="${c.clave}" value="${st.filtros[c.clave] || ''}"
+             placeholder="filtrar" style="width:100%;min-width:60px;padding:3px 5px;font-size:11px"></th>`
+        ).join('')}</tr>
+    </thead>
+    <tbody>${vistas.map(f => `<tr${op.claseFila ? ' class="' + (op.claseFila(f) || '') + '"' : ''}>` +
+      columnas.map(c => `<td class="${c.tipo === 'num' ? 'num' : ''}">${texto(f, c)}</td>`).join('') +
+      '</tr>').join('')}</tbody>
+  </table>
+  <div class="aviso" style="margin-top:6px">${fmt(vistas.length)} de ${fmt(filas.length)} filas.</div>`;
+
+  cont.querySelectorAll('th[data-orden]').forEach(th => th.addEventListener('click', () => {
+    const k = th.dataset.orden;
+    if (st.orden === k) st.asc = !st.asc; else { st.orden = k; st.asc = true; }
+    tablaInteractiva(contId, columnas, filas, op);
+  }));
+  cont.querySelectorAll('input[data-filtro]').forEach(inp => {
+    inp.addEventListener('input', () => {
+      st.filtros[inp.dataset.filtro] = inp.value;
+      tablaInteractiva(contId, columnas, filas, op);
+      // Se vuelve a renderizar todo, así que hay que devolver el foco.
+      const nuevo = cont.querySelector(`input[data-filtro="${inp.dataset.filtro}"]`);
+      if (nuevo) { nuevo.focus(); nuevo.setSelectionRange(nuevo.value.length, nuevo.value.length); }
+    });
+  });
+}
+
+// --- Partos y secados proyectados --------------------------------------------
+let chartPsProy = null, psDatos = null, psReintento = null;
+
+function pintarPartosSecados() {
+  const d = psDatos;
+  if (!d) return;
+  const p = d.proyeccion || [], r = d.resumen || {};
+
+  document.getElementById('ps-kpis').innerHTML = [
+    ['Vacas en ordeñe hoy', fmt(r.vo_hoy)],
+    ['Preñeces vigentes', fmt(r.vigentes)],
+    ['Preñeces vencidas', fmt(r.vencidos)],
+    ['Descarte estimado', fmt(r.descarte_mensual) + '/mes'],
+    ['Bajas últimos 12 meses', fmt(r.bajas_12m)],
+  ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+
+  const o = baseOpts(true);
+  o.interaction = { mode: 'index', intersect: false };
+  o.scales.y.title = { display: true, text: 'partos / secados' };
+  o.scales.y1 = {
+    position: 'right', beginAtZero: false, grid: { drawOnChartArea: false },
+    border: { display: false }, title: { display: true, text: 'vacas en ordeñe' },
+  };
+  chartPsProy = dibujar('chart-ps-proyeccion', chartPsProy, {
+    type: 'bar',
+    data: { labels: p.map(x => etiquetaMes(x.mes)), datasets: [
+      { type: 'bar', label: 'Partos de vacas', data: p.map(x => x.partos_vacas),
+        backgroundColor: SERIES[0], borderWidth: 0, maxBarThickness: 30, borderRadius: 3, stack: 'p' },
+      { type: 'bar', label: 'Partos de vaquillonas', data: p.map(x => x.partos_vaquillonas),
+        backgroundColor: SERIES[1], borderWidth: 0, maxBarThickness: 30, borderRadius: 3, stack: 'p' },
+      { type: 'bar', label: 'Secados', data: p.map(x => x.secados),
+        backgroundColor: SERIES[3], borderWidth: 0, maxBarThickness: 30, borderRadius: 3, stack: 's' },
+      { type: 'line', label: 'Vacas en ordeñe', yAxisID: 'y1', data: p.map(x => x.vo_total),
+        borderColor: SERIES[2], backgroundColor: SERIES[2], borderWidth: 3, pointRadius: 4, tension: .2 },
+    ] },
+    options: o,
+  });
+
+  tablaInteractiva('ps-tabla-vo', [
+    { clave: 'mes', titulo: 'Mes', tipo: 'texto', fmt: v => etiquetaMes(v) },
+    { clave: 'partos_totales', titulo: 'Partos totales', tipo: 'num' },
+    { clave: 'partos_vacas', titulo: 'Partos vacas', tipo: 'num' },
+    { clave: 'partos_vaquillonas', titulo: 'Partos vaquillonas', tipo: 'num' },
+    { clave: 'secados', titulo: 'Secados', tipo: 'num' },
+    { clave: 'descarte', titulo: 'Descarte estimado', tipo: 'num' },
+    { clave: 'vo_total', titulo: 'Vacas en ordeñe', tipo: 'num' },
+  ], p, { orden: 'mes' });
+
+  const fecha = v => v || '—';
+  const comunes = [
+    // El RP es un identificador, no una cantidad: sin separador de miles.
+    { clave: 'rp', titulo: 'Vaca', tipo: 'num', fmt: v => String(v) },
+    { clave: 'lact', titulo: 'Lact.', tipo: 'num', fmt: v => String(v) },
+    { clave: 'deo', titulo: 'DEO', tipo: 'num', fmt: v => String(v) },
+  ];
+  const marcas = [
+    { clave: 'descartar', titulo: 'A descartar', tipo: 'bool' },
+    { clave: 'vencido', titulo: 'Dato vencido', tipo: 'bool' },
+  ];
+  const clase = f => f.vencido ? 'ps-vencido' : '';
+
+  tablaInteractiva('ps-tabla-secados', comunes.concat([
+    { clave: 'fecha', titulo: 'Secado esperado', tipo: 'texto', fmt: fecha },
+    { clave: 'dias', titulo: 'Días al secado', tipo: 'num' },
+    { clave: 'parto_esperado', titulo: 'Parto esperado', tipo: 'texto', fmt: fecha },
+    { clave: 'leche_7d', titulo: 'Leche 7d (kg)', tipo: 'num' },
+  ], marcas), d.secados || [], { orden: 'dias', claseFila: clase });
+
+  tablaInteractiva('ps-tabla-partos', comunes.concat([
+    { clave: 'fecha', titulo: 'Parto esperado', tipo: 'texto', fmt: fecha },
+    { clave: 'dias', titulo: 'Días al parto', tipo: 'num' },
+  ], marcas), d.partos || [], { orden: 'dias', claseFila: clase });
+
+  document.getElementById('ps-info').textContent =
+    `${fmt(r.vigentes)} preñeces vigentes proyectadas sobre ${fmt(p.length)} meses. ` +
+    `Descarte estimado en ${fmt(r.descarte_mensual)} por mes, sacado de las ${fmt(r.bajas_12m)} ` +
+    `bajas reales de los últimos doce meses.`;
+  document.getElementById('ps-aviso').innerHTML = r.vencidos
+    ? `⚠ <b>${fmt(r.vencidos)} preñeces tienen datos vencidos</b> (inseminación anterior al último ` +
+      `parto, o de hace más de 290 días: ese animal ya tendría que haber parido). Se listan en las ` +
+      `tablas marcadas en ámbar, pero <b>no</b> entran en la proyección mensual. Son las que hay que ` +
+      `ir a corregir en DelPro.` : '';
+}
+
+async function cargarPartosSecados() {
+  clearTimeout(psReintento);
+  const info = document.getElementById('ps-info');
+  await cargarRebanos();
+  const sel = document.getElementById('ps-rebano');
+  if (!sel.options.length && reproRebanos) {
+    const def = (reproRebanos.find(x => x.es_el_tambo) || {}).herd;
+    sel.innerHTML = reproRebanos.map(x =>
+      `<option value="${x.herd}"${x.herd === def ? ' selected' : ''}>${x.nombre}</option>`).join('');
+  }
+  const cat = document.getElementById('ps-categoria').value;
+  const meses = document.getElementById('ps-meses').value || 9;
+  info.textContent = 'Proyectando…';
+  try {
+    psDatos = await pedirJSON(`/api/reproduccion/partos_secados?categoria=${cat}` +
+      `&rebano=${encodeURIComponent(sel.value)}&meses=${meses}` +
+      `&tambo=${encodeURIComponent(tamboActual)}`);
+    pintarPartosSecados();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; psReintento = setTimeout(cargarPartosSecados, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('ps-aplicar').addEventListener('click', cargarPartosSecados);
+['ps-categoria', 'ps-rebano', 'ps-meses'].forEach(id =>
+  document.getElementById(id).addEventListener('change', cargarPartosSecados));
+
 // --- Performance -------------------------------------------------------------
 let chartPerfCurva = null, chartPerfPers = null, chartPerfDist = null, chartPerfConc = null;
 let perfDatos = null, perfDim = 'lactancia', perfReintento = null;
@@ -2690,7 +2951,10 @@ document.getElementById('repro-tabs').addEventListener('click', ev => {
   document.getElementById('repro-panel-resultados').hidden = tab !== 'resultados';
   document.getElementById('repro-panel-preneces').hidden = tab !== 'preneces';
   document.getElementById('repro-panel-performance').hidden = tab !== 'performance';
+  document.getElementById('repro-panel-partos').hidden = tab !== 'partos';
   document.getElementById('repro-panel-metas').hidden = tab !== 'metas';
+  if (tab === 'partos' && !psDatos) cargarPartosSecados();
+  if (tab !== 'partos') clearTimeout(psReintento);
   if (tab === 'metas' && !reproMetas) cargarMetas();
   if (tab === 'preneces' && !prenDatos) cargarPreneces();
   if (tab === 'performance' && !perfDatos) cargarPerformance();

@@ -189,7 +189,9 @@ def sql_salidas_reales(desde: str, hasta: str, herd=None) -> str:
         WHERE b.GCRecord IS NULL AND b.Number > 0 AND b.ExitDate IS NOT NULL
           AND b.ExitDate >= '{desde}-01'
           AND b.ExitDate < DATEADD(month, 1, '{hasta}-01')
-          AND {rebano.filtro('b', herd)}
+          -- Filtro histórico: al dar de baja un animal DelPro le borra el
+          -- grupo, así que el filtro normal las excluiría a todas.
+          AND {rebano.filtro_historico('b', herd)}
         GROUP BY FORMAT(b.ExitDate, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """

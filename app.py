@@ -24,6 +24,7 @@ import flujos
 import iot_monitoreo
 import laserenisima
 import mantenimiento
+import partos_secados
 import performance
 import podal
 import preneces
@@ -1851,6 +1852,70 @@ def api_reproduccion_performance():
         base.update(performance.armar_distribucion(
             {d: data[d] for d in ("lactancia", "grupo", "deo")}, data["concentracion"]))
     return jsonify(base)
+
+
+@app.get("/api/reproduccion/partos_secados")
+@auth.requiere_rol("admin")
+def api_partos_secados():
+    """"Partos y Secados Proyectados": qué vaca pare y cuál hay que secar, y la
+    proyección mensual de vacas en ordeñe que sale de ahí. Ver
+    `partos_secados.py`."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+
+    categoria = (request.args.get("categoria") or "todas").lower()
+    if categoria not in partos_secados.CATEGORIAS:
+        return jsonify({"error": f"Categoría inválida (esperado: "
+                                 f"{', '.join(partos_secados.CATEGORIAS)})."}), 400
+    herd_param = (request.args.get("rebano") or "").strip()
+    if not herd_param:
+        herd = rebano.por_defecto(tambo)
+    elif herd_param.lower() == rebano.TODOS:
+        herd = rebano.TODOS
+    else:
+        try:
+            herd = int(herd_param)
+        except ValueError:
+            return jsonify({"error": f"Rebaño inválido: {herd_param!r}"}), 400
+    try:
+        meses = max(3, min(24, int(request.args.get("meses") or 9)))
+        descarte = request.args.get("descarte")
+        descarte = int(descarte) if descarte not in (None, "") else None
+    except ValueError:
+        return jsonify({"error": "Parámetros numéricos inválidos."}), 400
+
+    key = f"{tambo}:partos_secados:{categoria}:{herd}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=PROYECCION_CACHE_TTL_S)
+    if data is None:
+        with _cache_lock:
+            arrancar = key not in _refreshing
+            if arrancar:
+                _refreshing.add(key)
+
+        def run(k=key):
+            try:
+                _cache_set(k, {
+                    "esperados": db.run_query(partos_secados.sql_esperados(categoria, herd),
+                                              tambo=tambo, max_rows=4000),
+                    "descarte": db.run_query(partos_secados.sql_descarte_mensual(herd),
+                                             tambo=tambo, max_rows=5),
+                    "vo": db.run_query(partos_secados.sql_vo_hoy(herd), tambo=tambo, max_rows=5),
+                })
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                with _cache_lock:
+                    _refreshing.discard(k)
+
+        if arrancar:
+            threading.Thread(target=run, daemon=True).start()
+        return jsonify({"calentando": True, "mensaje": "Proyectando partos y secados…"}), 202
+
+    resultado = partos_secados.analizar(data["esperados"], data["descarte"], data["vo"],
+                                        hoy, meses=meses, descarte_manual=descarte)
+    resultado.update({"categoria": categoria, "rebano": herd,
+                      "categorias": partos_secados.CATEGORIAS})
+    return jsonify(resultado)
 
 
 @app.get("/api/reproduccion/rebanos")
