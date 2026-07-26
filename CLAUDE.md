@@ -44,11 +44,61 @@ corrimiento en todas las fechas de parto y secado proyectadas. Se corrige
 cambiando el parámetro en DelPro, no en el código. La pestaña "Análisis de
 Gestación" lo muestra como advertencia.
 
-**Pendiente:** pestaña "Parámetros Reproductivos", PRIMERA de Análisis
-Reproductivo. El endpoint `/api/reproduccion/parametros` ya existe y devuelve
-los 20 parámetros con valor/defecto/mín/máx/activo y cuáles cambió el tambo;
-falta la página. Sumar también el bloque MilkMetric (descarte 24% anual,
-lat/long del tambo: -36.001618 / -62.778799), que NO está en la base.
+## Lo que sigue: costo de alimentación y potencial por animal
+
+El objetivo es saber cuánto rinde cada vaca: ingreso por sólidos menos costo
+de alimento (IOFC), eficiencia de conversión (kg de sólidos por kg de materia
+seca) y potencial sin explotar (su pico contra el de su grupo y lactancia).
+
+**EMPEZAR POR LA CONCILIACIÓN DE GRUPOS.** Es lo que desbloquea todo y donde
+un error se propaga en silencio: si se mapea mal un rodeo, el costo por vaca
+da números plausibles y falsos. Medido el 26/07/2026:
+
+    Haasten            DelPro
+    Rodeo 1  392       Rodeo 1        410
+    Rodeo 2  347       Rodeo 2        325
+    Rodeo 3  358       Rodeo 3        354
+    Rodeo 4  122       Rodeo 4-Baja   120
+      —                Rodeo 5        347   ← Haasten no lo tiene
+      —                Rodeo 9         65   ← Haasten no lo tiene
+    total  1.219       total        1.621
+
+No es solo desfasaje de fechas: faltan ~400 vacas de un lado. Y hay una
+coincidencia sospechosa — Haasten "Rodeo 2" tiene 347 y DelPro "Rodeo 5"
+tiene 347 exactos: los números de rodeo podrían estar corridos entre los dos
+sistemas. NO ADIVINAR: hay que armar una pantalla donde el tambo defina el
+mapeo una vez, guardarlo, y alertar cuando las cabezas difieran de más.
+
+**La base DDM está atrasada, y desparejo.** Al 26/07: ordeños al 22/07 (4
+días), AnimalDaily al 25/07, eventos al 25/07, bajas al 20/07. Haasten tiene
+datos de hoy. Al cruzar hay que comparar SIEMPRE el mismo período, nunca "lo
+último de cada uno".
+
+**Arquitectura pedida** — el proveedor de alimentación tiene que ser
+intercambiable (mañana MixerOne, o DelPro si el tambo no tiene mixer):
+
+    alimentacion.py          el dominio: consumo, MS, costo, conversión
+    proveedores/haasten.py   implementación actual (haasten.io)
+    conciliacion.py          el mapeo lote ↔ grupo
+
+El proveedor expone siempre `ingredientes()`, `lotes()`, `consumos(desde, hasta)`.
+
+**Haasten** (haasten.io, credenciales en `HASTEN_USUARIO` / `HASTEN_PASSWORD`).
+Pantallas útiles: *Ingredientes* (%MS y precio por kg), *Lotes* (cabezas y kg
+MS por cabeza, con categoría) y *Consumos por Lote* (kg descargados por
+ingrediente y rango de fechas). OJO: **la columna PRECIO KG está en 0,00 para
+todos los ingredientes** — hay cantidades pero no precios, así que hoy no se
+puede calcular costo. Se cargan desde el botón "Editar ingrediente" de
+Haasten. Mientras tanto, la eficiencia de conversión SÍ se puede calcular: es
+una relación física y no necesita precios.
+
+**En DelPro no hay nada de alimentación**: de 7.025 lactancias, 0 tienen
+consumo o costo cargado. Todo tiene que venir del proveedor externo.
+
+**El costo por animal es un REPARTO, no una medición.** El TMR se entrega al
+corral. Sin comederos individuales solo se puede repartir el costo del grupo,
+ponderado por consumo estimado. Tiene que decirlo la pantalla, para que nadie
+descarte una vaca creyendo que es un dato medido.
 
 ## Trampas del esquema DDM (ya corregidas, no reintroducir)
 
