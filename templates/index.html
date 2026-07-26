@@ -85,6 +85,8 @@
     border-left: 3px solid var(--border); padding-left: 10px;
   }
   .explica b { color: var(--text-primary); font-weight: 600; }
+  /* Meses proyectados: se distinguen de los reales sin gritar. */
+  .proy-futuro td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
   .explica code {
     font-family: ui-monospace, "Cascadia Mono", Menlo, monospace; font-size: 11.5px;
     background: var(--page); padding: 1px 4px; border-radius: 3px;
@@ -305,6 +307,7 @@
     {% if 'rutina' in paginas_visibles %}<button class="nav-item" data-pagina="rutina">⏱️ <span>Rutina de ordeño</span></button>{% endif %}
     {% if 'flujos' in paginas_visibles %}<button class="nav-item" data-pagina="flujos">💧 <span>Flujos de ordeño</span></button>{% endif %}
     {% if 'evolucion' in paginas_visibles %}<button class="nav-item" data-pagina="evolucion">📈 <span>Evolución</span></button>{% endif %}
+    {% if 'proyeccion' in paginas_visibles %}<button class="nav-item" data-pagina="proyeccion">🔮 <span>Proyección de Rebaños</span></button>{% endif %}
     {% if 'salud' in paginas_visibles %}<button class="nav-item" data-pagina="salud">🩺 <span>Salud del rodeo</span></button>{% endif %}
     {% if 'ficha' in paginas_visibles %}<button class="nav-item" data-pagina="ficha">🐄 <span>Ficha Animal</span></button>{% endif %}
     {% if 'iot' in paginas_visibles %}<button class="nav-item" data-pagina="iot">📡 <span>Monitoreo IoT</span></button>{% endif %}
@@ -726,6 +729,99 @@
         bimodalidad, y es el más accionable de los dos.
       </p>
       <div class="chart-box" style="height:300px"><canvas id="chart-flu-bimodal"></canvas></div>
+    </div>
+  </section>
+  </div>
+
+  <div class="page" id="page-proyeccion" hidden>
+  <section class="card" id="proyeccion-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Proyección de Rebaños</h2>
+      <span class="aviso">Vacas lactantes y producción, mes a mes, hacia atrás y hacia adelante.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="month" id="proy-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="month" id="proy-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="proy-aplicar">Aplicar</button>
+      </div>
+    </div>
+    <div class="controls" style="margin-top:10px;align-items:center">
+      <span class="aviso">Ver como</span>
+      <div class="lac-segment" id="proy-tipo" role="group" aria-label="Tipo de gráfico">
+        <button class="lac-segment__item" data-tipo="line" aria-pressed="true">Líneas</button>
+        <button class="lac-segment__item" data-tipo="bar" aria-pressed="false">Barras</button>
+        <button class="lac-segment__item" data-tipo="point" aria-pressed="false">Puntos</button>
+      </div>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Qué es.</b> Cómo va a evolucionar el rodeo en los próximos meses: cuántas vacas van a estar
+      en ordeñe y cuánta leche van a dar, partiendo de las preñeces que ya están confirmadas.
+      <br><b>Cómo se calcula.</b> Mes a mes, con la misma ecuación de balance que usa DelPro:
+      <code>lactantes = lactantes del mes anterior + vacas a parir + novillas a parir − secados − salidas</code>.
+      El punto de partida son las vacas lactantes de hoy en los tres rebaños de la base (animales
+      activos, con al menos un parto y sin marca de secado). Los partos previstos salen de la
+      inseminación efectiva más 280 días de gestación; los secados, de restarle 60 días al parto
+      esperado; las salidas, de la tasa de bajas del mismo mes del año pasado.
+      <br><b>La producción</b> es <code>vacas lactantes × kg por vaca y por día del año pasado × días del mes</code>,
+      igual que DelPro. Ojo: no es la leche realmente ordeñada, y las dos filas de producción usan el
+      mismo promedio diario — lo único que cambia entre ellas es la cantidad de vacas.
+    </p>
+    <div class="aviso" id="proy-alerta" style="margin-top:8px;color:var(--warning)"></div>
+    <div class="aviso" id="proy-info" style="margin-top:8px"></div>
+    <div class="kpis" id="proy-kpis" style="margin-top:10px"></div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Vacas lactantes</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> La curva de vacas en ordeñe contra la del mismo mes del año pasado.
+        Donde la línea baja hay un bache de partos que se puede anticipar.
+        <br><b>Cómo se calcula.</b> Balance mes a mes anclado en las vacas lactantes de hoy, que es
+        el único dato exacto. La tercera línea punteada es un conteo alternativo, hecho contando
+        partos reales de los últimos 330 días: da bastante más bajo porque <b>faltan eventos de
+        parto en la base</b> (2026 va a 203 partos por mes contra 241 en 2025). El valor real está
+        entre las dos líneas. En el informe de DelPro, para julio, esta comparación daba 2.813.
+      </p>
+      <div class="chart-box" style="height:300px"><canvas id="chart-proy-lactantes"></canvas></div>
+    </div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Producción de leche mensual</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> Los kilos de leche que se esperan cada mes, contra los del mismo mes del
+        año pasado. La diferencia entre las dos curvas es puro efecto de la cantidad de vacas: el
+        rendimiento por vaca que se usa es el mismo en ambas.
+        <br><b>Cómo se calcula.</b> <code>vacas lactantes × kg por vaca y por día × días del mes</code>.
+        El rendimiento por vaca sale de la leche realmente medida en <code>AnimalDaily</code> del año
+        anterior. Los meses sin lectura válida quedan en cero — en el informe de DelPro pasa lo mismo
+        de julio a octubre.
+      </p>
+      <div class="chart-box" style="height:300px"><canvas id="chart-proy-produccion"></canvas></div>
+    </div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Movimiento del rodeo</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> Las cuatro corrientes que mueven el número de vacas en ordeñe: las que
+        entran por parto (vacas y novillas) y las que salen por secado o por baja. Sirve para ver de
+        dónde viene cada subida o bajada de la curva anterior.
+        <br><b>Cómo se calcula.</b> Los partos, de las preñeces confirmadas más la gestación. Los
+        secados, restando el período seco al parto esperado, repartidos entre los meses que
+        corresponde. Las salidas, aplicando la tasa de bajas del mismo mes del año pasado a las
+        vacas del mes anterior.
+      </p>
+      <div class="chart-box" style="height:300px"><canvas id="chart-proy-movimiento"></canvas></div>
+    </div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Detalle mes a mes</h3>
+      <p class="explica">
+        Las mismas filas del informe de DelPro, con los meses hacia abajo. "AA" es el mismo mes del
+        año pasado. Los meses proyectados van marcados con <b>·proy</b>.
+      </p>
+      <div style="overflow-x:auto" id="proy-tabla"></div>
     </div>
   </section>
   </div>
@@ -1555,14 +1651,14 @@ let fluTipo = 'line', fluDatos = null;
 // Adapta una serie al tipo elegido. Las series del eje derecho (segundos) se
 // dejan SIEMPRE como línea: mezcladas de barras con las de kg/min o % el
 // gráfico se vuelve ilegible, y Chart.js soporta bien el combinado.
-function serieTipo(ds) {
+function serieTipo(ds, tipo) {
   if (ds.yAxisID === 'y1') return Object.assign({}, ds, { type: 'line' });
-  if (fluTipo === 'bar') {
+  if (tipo === 'bar') {
     return Object.assign({}, ds, {
       type: 'bar', borderWidth: 0, maxBarThickness: 26, borderRadius: 3, fill: false,
     });
   }
-  if (fluTipo === 'point') {
+  if (tipo === 'point') {
     return Object.assign({}, ds, {
       type: 'line', showLine: false, pointRadius: 4, pointHoverRadius: 6, fill: false,
     });
@@ -1570,13 +1666,28 @@ function serieTipo(ds) {
   return Object.assign({}, ds, { type: 'line' });
 }
 
-function graficoFlujos(canvasId, ref, labels, datasets, options) {
+// Dibuja respetando el tipo elegido en el selector de la página.
+function graficoTipado(canvasId, ref, labels, datasets, options, tipo) {
   return dibujar(canvasId, ref, {
-    type: fluTipo === 'bar' ? 'bar' : 'line',
-    data: { labels, datasets: datasets.map(serieTipo) },
+    type: tipo === 'bar' ? 'bar' : 'line',
+    data: { labels, datasets: datasets.map(ds => serieTipo(ds, tipo)) },
     options,
   });
 }
+
+// Conecta un selector Líneas/Barras/Puntos con la función que repinta.
+function conectarSelectorTipo(contId, alCambiar) {
+  document.getElementById(contId).addEventListener('click', ev => {
+    const btn = ev.target.closest('[data-tipo]');
+    if (!btn || btn.getAttribute('aria-pressed') === 'true') return;
+    document.querySelectorAll('#' + contId + ' [data-tipo]').forEach(b =>
+      b.setAttribute('aria-pressed', String(b === btn)));
+    alCambiar(btn.dataset.tipo);
+  });
+}
+
+const graficoFlujos = (canvasId, ref, labels, datasets, options) =>
+  graficoTipado(canvasId, ref, labels, datasets, options, fluTipo);
 
 const kgFlu = v => Number(v).toFixed(2).replace('.', ',');   // 0.6 -> "0,60"
 
@@ -1677,13 +1788,139 @@ async function cargarFlujos() {
   }
 }
 document.getElementById('flu-aplicar').addEventListener('click', cargarFlujos);
-document.getElementById('flu-tipo').addEventListener('click', ev => {
-  const btn = ev.target.closest('[data-tipo]');
-  if (!btn || btn.dataset.tipo === fluTipo) return;
-  fluTipo = btn.dataset.tipo;
-  document.querySelectorAll('#flu-tipo [data-tipo]').forEach(b =>
-    b.setAttribute('aria-pressed', String(b.dataset.tipo === fluTipo)));
+conectarSelectorTipo('flu-tipo', tipo => {
+  fluTipo = tipo;
   if (fluDatos) pintarFlujos(fluDatos);   // redibuja, no vuelve a consultar
+});
+
+// --- Proyección de rebaños ---------------------------------------------------
+let chartProyLact = null, chartProyProd = null, chartProyMov = null;
+let proyTipo = 'line', proyDatos = null, proyReintento = null;
+
+function etiquetaMes(clave) {
+  const MESES = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+  const [a, m] = clave.split('-');
+  return `${MESES[+m - 1]}-${a.slice(2)}`;
+}
+
+function pintarProyeccion(d) {
+  const meses = d.meses || [];
+  const info = document.getElementById('proy-info');
+  if (!meses.length) { info.textContent = 'Sin datos en este rango.'; return; }
+  const b = d.base || {}, t = d.totales || {}, p = d.promedios || {};
+  const labels = meses.map(x => etiquetaMes(x.mes));
+  const miles = n => n == null ? '—' : Math.round(n).toLocaleString('es-AR');
+
+  document.getElementById('proy-kpis').innerHTML = [
+    ['Vacas lactantes hoy', miles(b.lactantes_hoy)],
+    ['Vacas a parir', miles(t.vacas_parir)],
+    ['Novillas a parir', miles(t.novillas_parir)],
+    ['Secados previstos', miles(t.secados)],
+    ['Salidas previstas', miles(t.salidas)],
+    ['Producción del período', miles(t.produccion) + ' kg'],
+    ['Promedio kg/vaca/día', p.kg_vaca_dia_ant != null ? fmt(p.kg_vaca_dia_ant) : '—'],
+    ['Preñeces descartadas', miles(b.prenadas_descartadas) + ' de ' + miles(b.prenadas)],
+  ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+
+  const oLact = baseOpts(true);
+  oLact.interaction = { mode: 'index', intersect: false };
+  oLact.scales.y.title = { display: true, text: 'vacas' };
+  oLact.scales.y.beginAtZero = false;
+  chartProyLact = graficoTipado('chart-proy-lactantes', chartProyLact, labels, [
+    linea('Vacas lactantes', meses.map(x => x.lactantes), SERIES[0]),
+    linea('Mismo mes del año pasado', meses.map(x => x.lactantes_ant), SERIES[1]),
+    linea('Conteo medido por partos', meses.map(x => x.lactantes_medido), SERIES[4],
+          { borderDash: [4, 4], pointRadius: 0 }),
+  ], oLact, proyTipo);
+
+  const oProd = baseOpts(true);
+  oProd.interaction = { mode: 'index', intersect: false };
+  oProd.scales.y.title = { display: true, text: 'kg de leche' };
+  chartProyProd = graficoTipado('chart-proy-produccion', chartProyProd, labels, [
+    linea('Producción de leche', meses.map(x => x.produccion || null), SERIES[0]),
+    linea('Mismo mes del año pasado', meses.map(x => x.produccion_ant || null), SERIES[3]),
+  ], oProd, proyTipo);
+
+  const oMov = baseOpts(true);
+  oMov.interaction = { mode: 'index', intersect: false };
+  oMov.scales.y.title = { display: true, text: 'animales' };
+  chartProyMov = graficoTipado('chart-proy-movimiento', chartProyMov, labels, [
+    linea('Vacas a parir', meses.map(x => x.vacas_parir), SERIES[0]),
+    linea('Novillas a parir', meses.map(x => x.novillas_parir), SERIES[2]),
+    linea('Secados', meses.map(x => x.secados), SERIES[3]),
+    linea('Salidas', meses.map(x => x.salidas), SERIES[5]),
+  ], oMov, proyTipo);
+
+  const filas = meses.map(x => `<tr${x.futuro ? ' class="proy-futuro"' : ''}>
+    <td>${etiquetaMes(x.mes)}${x.futuro ? ' <span class="aviso">·proy</span>' : ''}</td>
+    <td class="num">${miles(x.vacas_parir)}</td><td class="num">${miles(x.novillas_parir)}</td>
+    <td class="num">${miles(x.secados)}</td><td class="num">${miles(x.salidas)}</td>
+    <td class="num">${x.tasa_salida_ant == null ? '—' : fmt(x.tasa_salida_ant) + '%'}</td>
+    <td class="num">${miles(x.lactantes)}</td><td class="num">${miles(x.lactantes_ant)}</td>
+    <td class="num">${x.cambio == null ? '—' : (x.cambio > 0 ? '+' : '') + miles(x.cambio)}</td>
+    <td class="num">${x.kg_vaca_dia_ant == null ? '—' : fmt(x.kg_vaca_dia_ant)}</td>
+    <td class="num">${miles(x.produccion)}</td><td class="num">${miles(x.produccion_ant)}</td>
+  </tr>`).join('');
+  document.getElementById('proy-tabla').innerHTML = `
+    <table class="lac-table">
+      <thead><tr><th>Mes</th><th class="num">Vacas a parir</th><th class="num">Novillas a parir</th>
+      <th class="num">Secados</th><th class="num">Salidas</th><th class="num">Tasa salida AA</th>
+      <th class="num">Lactantes</th><th class="num">Lactantes AA</th><th class="num">Cambio</th>
+      <th class="num">kg/vaca/día AA</th><th class="num">Producción</th><th class="num">Producción AA</th></tr></thead>
+      <tbody>${filas}</tbody>
+      <tfoot><tr><th>Suma</th><th class="num">${miles(t.vacas_parir)}</th>
+      <th class="num">${miles(t.novillas_parir)}</th><th class="num">${miles(t.secados)}</th>
+      <th class="num">${miles(t.salidas)}</th><th class="num">—</th><th class="num">—</th>
+      <th class="num">—</th><th class="num">—</th><th class="num">—</th>
+      <th class="num">${miles(t.produccion)}</th><th class="num">${miles(t.produccion_ant)}</th></tr>
+      <tr><th>Media</th><th class="num">—</th><th class="num">—</th><th class="num">—</th>
+      <th class="num">—</th><th class="num">${p.tasa_salida_ant == null ? '—' : fmt(p.tasa_salida_ant) + '%'}</th>
+      <th class="num">${miles(p.lactantes)}</th><th class="num">${miles(p.lactantes_ant)}</th>
+      <th class="num">${p.cambio == null ? '—' : fmt(p.cambio)}</th>
+      <th class="num">${p.kg_vaca_dia_ant == null ? '—' : fmt(p.kg_vaca_dia_ant)}</th>
+      <th class="num">${miles(p.produccion)}</th><th class="num">${miles(p.produccion_ant)}</th></tr></tfoot>
+    </table>`;
+
+  const desc = b.prenadas_descartadas || 0;
+  document.getElementById('proy-alerta').innerHTML = desc
+    ? `⚠ <b>${miles(desc)} de ${miles(b.prenadas)} preñeces quedaron fuera del cálculo de partos</b>
+       porque su inseminación es anterior al último parto o tiene más de ${d.parametros.gestacion_dias + 10}
+       días — ese animal ya tendría que haber parido. Mientras eso no se corrija en DelPro, los partos
+       previstos de acá van a quedar por debajo de los reales.` : '';
+
+  info.textContent = `${meses.length} meses entre ${d.desde} y ${d.hasta}. ` +
+    `Punto de partida: ${miles(b.lactantes_hoy)} vacas lactantes hoy.`;
+}
+
+async function cargarProyeccion() {
+  clearTimeout(proyReintento);
+  const info = document.getElementById('proy-info');
+  // Por defecto, la misma ventana que muestra DelPro: el mes en curso y los
+  // once siguientes, más unos meses hacia atrás para tener contexto.
+  const hoy = new Date();
+  const corrido = n => {
+    const t = hoy.getFullYear() * 12 + hoy.getMonth() + n;
+    return `${String(Math.floor(t / 12)).padStart(4, '0')}-${String(t % 12 + 1).padStart(2, '0')}`;
+  };
+  let desde = document.getElementById('proy-desde').value || corrido(-5);
+  let hasta = document.getElementById('proy-hasta').value || corrido(11);
+  if (desde > hasta) { const x = desde; desde = hasta; hasta = x; }
+  document.getElementById('proy-desde').value = desde;
+  document.getElementById('proy-hasta').value = hasta;
+  info.textContent = 'Calculando…';
+  try {
+    proyDatos = await pedirJSON(`/api/proyeccion/rebanos?desde=${desde}&hasta=${hasta}` +
+      `&tambo=${encodeURIComponent(tamboActual)}`);
+    pintarProyeccion(proyDatos);
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; proyReintento = setTimeout(cargarProyeccion, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('proy-aplicar').addEventListener('click', cargarProyeccion);
+conectarSelectorTipo('proy-tipo', tipo => {
+  proyTipo = tipo;
+  if (proyDatos) pintarProyeccion(proyDatos);
 });
 
 async function cargarCanalesAlertas() {
@@ -3588,7 +3825,7 @@ document.getElementById('evolucion-info').textContent =
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
+const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'proyeccion', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -3603,6 +3840,7 @@ function cargarDatosDePagina(id) {
   else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
   else if (id === 'rutina') { cargarRutina(); cargarRendimiento(); }
   else if (id === 'flujos') cargarFlujos();
+  else if (id === 'proyeccion') cargarProyeccion();
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
   else if (id === 'consultas') cargarPredefinidas();
@@ -3630,6 +3868,7 @@ function irAPagina(id) {
   if (id !== 'salud') clearTimeout(saludReintento);
   // Ídem el reintento del análisis de flujos mientras el caché se calienta.
   if (id !== 'flujos') clearTimeout(fluReintento);
+  if (id !== 'proyeccion') clearTimeout(proyReintento);
   // Cámaras y actividad en vivo de "Problemas podales": solo mientras se ve la página.
   if (id === 'salud') iniciarPodalVivo(); else detenerPodalVivo();
   // Estado en vivo de Monitoreo IoT: solo mientras se ve esa página.

@@ -25,6 +25,7 @@ import iot_monitoreo
 import laserenisima
 import mantenimiento
 import podal
+import proyeccion
 import resumen
 import rutina
 import salud
@@ -1448,6 +1449,93 @@ def api_flujos_analisis():
                                 data["umbrales"])
     resultado["desde"] = desde.isoformat()
     resultado["hasta"] = hasta.isoformat()
+    return jsonify(resultado)
+
+
+# --- Proyección de rebaños ---------------------------------------------------
+# Depende del estado reproductivo de hoy, que cambia de a poco: TTL largo.
+PROYECCION_CACHE_TTL_S = 3600  # 1 hora
+
+
+def _clave_proyeccion(tambo, desde, hasta):
+    return f"{tambo}:proyeccion:{desde}:{hasta}"
+
+
+def _refresh_proyeccion_async(tambo, desde, hasta):
+    key = _clave_proyeccion(tambo, desde, hasta)
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    # El histórico arranca antes de lo pedido para poder comparar contra el
+    # mismo mes del año pasado y para reconstruir el balance hacia atrás.
+    ini = proyeccion._sumar_meses(desde, -14)
+    fin_hist = proyeccion._mes(datetime.date.today())
+
+    def worker():
+        try:
+            data = {
+                "lact": db.run_query(proyeccion.SQL_LACTANTES_HOY, tambo=tambo, max_rows=5),
+                "partos_reales": db.run_query(proyeccion.sql_partos_reales(ini, fin_hist),
+                                              tambo=tambo, max_rows=200),
+                "partos_prev": db.run_query(proyeccion.SQL_PARTOS_PREVISTOS, tambo=tambo, max_rows=200),
+                "salidas": db.run_query(proyeccion.sql_salidas_reales(ini, fin_hist),
+                                        tambo=tambo, max_rows=200),
+                "kg": db.run_query(proyeccion.sql_kg_por_vaca(ini, fin_hist), tambo=tambo, max_rows=200),
+                "descartadas": db.run_query(proyeccion.SQL_PRENECES_DESCARTADAS, tambo=tambo, max_rows=5),
+                "lact_hist": db.run_query(proyeccion.sql_lactantes_historico(ini, fin_hist),
+                                          tambo=tambo, max_rows=200),
+            }
+            _cache_set(key, data)
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+@app.get("/api/proyeccion/rebanos")
+@auth.requiere_rol("admin")
+def api_proyeccion_rebanos():
+    """"Proyección de rebaños": evolución mensual de vacas lactantes y
+    producción, real hacia atrás y proyectada hacia adelante, con comparación
+    contra el mismo mes del año pasado. Réplica del informe de DelPro.
+
+    Ver `proyeccion.py` para el modelo: la ecuación de balance y la fórmula de
+    producción están verificadas contra el informe; los partos previstos salen
+    solo de preñeces confirmadas, así que a largo plazo quedan por debajo de
+    los de DelPro (que además simula preñeces futuras)."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    patron = "%Y-%m"
+    try:
+        desde = request.args.get("desde") or proyeccion._sumar_meses(proyeccion._mes(hoy), -5)
+        hasta = request.args.get("hasta") or proyeccion._sumar_meses(proyeccion._mes(hoy), 11)
+        datetime.datetime.strptime(desde, patron)
+        datetime.datetime.strptime(hasta, patron)
+    except ValueError:
+        return jsonify({"error": "Meses inválidos (se espera AAAA-MM)."}), 400
+    if desde > hasta:
+        desde, hasta = hasta, desde
+    if len(proyeccion.rango_meses(desde, hasta)) > proyeccion.RANGO_MESES_MAX:
+        return jsonify({"error": f"El rango no puede superar {proyeccion.RANGO_MESES_MAX} meses."}), 400
+
+    key = _clave_proyeccion(tambo, desde, hasta)
+    data, fresh = _cache_get(key, allow_stale=True, ttl=PROYECCION_CACHE_TTL_S)
+    if data is None:
+        _refresh_proyeccion_async(tambo, desde, hasta)
+        return jsonify({"calentando": True, "mensaje": "Calculando proyección de rebaños…"}), 202
+    if not fresh:
+        _refresh_proyeccion_async(tambo, desde, hasta)
+
+    resultado = proyeccion.analizar(data["lact"], data["partos_reales"], data["partos_prev"],
+                                    data["salidas"], data["kg"], data["descartadas"],
+                                    data["lact_hist"], desde, hasta, hoy)
+    resultado["desde"] = desde
+    resultado["hasta"] = hasta
     return jsonify(resultado)
 
 

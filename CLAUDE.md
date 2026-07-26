@@ -57,6 +57,27 @@ mismo con `setx`.
 - Umbrales de retirada: NO inventarlos ni hacerlos editables. Salen de
   `CMSMpcSetting.TakeoffLimit` (0,80 en este tambo) y la banda del informe es
   ±25% de ese valor → 0,60 y 1,00, que son las tres tarjetas de DelPro.
+- La base la comparten TRES rebaños (`Herd` tiene 3 filas). Los informes de
+  rodeo de DelPro los abarcan a los tres: filtrar por grupo de ordeñe da la
+  mitad. Vacas lactantes de los 3 = 3.253 (verificado contra DelPro).
+- Proyección de rebaños: la ecuación es
+  `lactantes[m] = lactantes[m-1] + partos - secados - salidas` y la producción
+  `lactantes × kg/vaca/día del año pasado × días del mes` (ambas verificadas
+  exactas). Los partos previstos NO se pueden replicar: DelPro simula preñeces
+  futuras. Detalle completo en `proyeccion.py`.
+
+## Problemas de datos en DDM (no son bugs del código)
+
+- **Preñeces sin inseminación válida**: 796 de 1.715 animales marcados
+  `IsPregnant` tienen la inseminación efectiva anterior a su último parto o de
+  hace más de 290 días (promedio 382). `EventPregCheck.DaysFromInsemination`
+  viene en 0 en TODA la base. Por eso la proyección de partos queda corta.
+- **Partos sin registrar**: 2026 va a ~203 partos/mes contra 241 en 2025, y
+  contar lactantes desde los eventos de parto da ~1.800 cuando el estado
+  reproductivo dice 3.253. Faltan eventos.
+- Consecuencia práctica: cualquier cálculo que dependa de eventos
+  reproductivos hay que darlo con la advertencia a la vista, no como número
+  firme.
 
 ## Entorno de desarrollo (esta PC)
 
