@@ -1,0 +1,223 @@
+/* ============================================================
+   LACTIA — Componentes
+   Requiere lactia-tokens.css cargado antes.
+   ============================================================ */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--lac-bg);
+  color: var(--lac-fg);
+  font-family: var(--lac-font-body);
+  font-size: var(--lac-size-md);
+  line-height: var(--lac-leading-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Tipografía ---------- */
+
+.lac-h1, .lac-h2, .lac-h3 {
+  font-family: var(--lac-font-display);
+  font-weight: var(--lac-weight-strong);
+  letter-spacing: var(--lac-track-tight);
+  line-height: var(--lac-leading-tight);
+  margin: 0;
+}
+.lac-h1 { font-size: var(--lac-size-3xl); }
+.lac-h2 { font-size: var(--lac-size-2xl); }
+.lac-h3 { font-size: var(--lac-size-xl); }
+
+.lac-eyebrow {
+  font-family: var(--lac-font-body);
+  font-size: var(--lac-size-2xs);
+  font-weight: var(--lac-weight-medium);
+  letter-spacing: var(--lac-track-eyebrow);
+  text-transform: uppercase;
+  color: var(--lac-fg-muted);
+  margin: 0;
+}
+
+.lac-lead  { font-size: var(--lac-size-lg); line-height: var(--lac-leading-snug); color: var(--lac-fg-muted); margin: 0; }
+.lac-body  { font-size: var(--lac-size-md); margin: 0; }
+.lac-small { font-size: var(--lac-size-sm); color: var(--lac-fg-muted); margin: 0; }
+.lac-caption { font-size: var(--lac-size-xs); color: var(--lac-fg-subtle); margin: 0; }
+
+/* Cifras: siempre mono con figuras tabulares.
+   Un caudal que salta de 9.9 a 10.0 no debe mover el layout. */
+.lac-data {
+  font-family: var(--lac-font-data);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  letter-spacing: var(--lac-track-tight);
+}
+.lac-data-lg { font-size: var(--lac-size-2xl); font-weight: var(--lac-weight-medium); }
+.lac-data-xl { font-size: var(--lac-size-read); font-weight: var(--lac-weight-medium); line-height: 1; }
+
+.lac-unit { font-size: .42em; color: var(--lac-fg-muted); margin-left: .3em; font-family: var(--lac-font-body); }
+
+/* ---------- Botones ---------- */
+
+.lac-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--lac-space-2);
+  height: var(--lac-control-h);
+  padding: 0 var(--lac-space-4);
+  border: 1.5px solid transparent;
+  border-radius: var(--lac-radius-control);
+  background: transparent;
+  color: var(--lac-fg);
+  font-family: var(--lac-font-body);
+  font-size: var(--lac-size-sm);
+  font-weight: var(--lac-weight-medium);
+  line-height: 1;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background var(--lac-dur-fast) var(--lac-ease),
+              border-color var(--lac-dur-fast) var(--lac-ease),
+              transform var(--lac-dur-fast) var(--lac-ease);
+}
+.lac-btn:focus-visible { outline: none; box-shadow: var(--lac-focus); }
+.lac-btn:active { transform: scale(.98); }
+.lac-btn:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+
+.lac-btn--primary   { background: var(--lac-accent); color: var(--lac-accent-fg); }
+.lac-btn--primary:hover:not(:disabled)   { background: var(--lac-accent-hover); }
+
+.lac-btn--secondary { border-color: var(--lac-accent); color: var(--lac-accent); }
+.lac-btn--secondary:hover:not(:disabled) { background: var(--lac-accent-soft); }
+
+.lac-btn--soft      { background: var(--lac-accent-soft); color: var(--lac-accent-soft-fg); }
+.lac-btn--soft:hover:not(:disabled)      { background: var(--lac-blue-100); }
+
+.lac-btn--ghost     { color: var(--lac-fg-muted); }
+.lac-btn--ghost:hover:not(:disabled)     { background: var(--lac-surface-sunken); color: var(--lac-fg); }
+
+.lac-btn--danger    { background: var(--lac-danger); color: var(--lac-danger-fg); }
+.lac-btn--danger:hover:not(:disabled)    { background: var(--lac-danger-hover); }
+
+.lac-btn--sm { height: var(--lac-control-h-sm); padding: 0 var(--lac-space-3); font-size: var(--lac-size-xs); }
+.lac-btn--lg { height: var(--lac-control-h-lg); padding: 0 var(--lac-space-5); font-size: var(--lac-size-md); }
+.lac-btn--icon { width: var(--lac-control-h); padding: 0; }
+.lac-btn--block { width: 100%; }
+
+/* Segmentado: selección exclusiva (bajada, turno, sala) */
+.lac-segment { display: inline-flex; gap: var(--lac-space-1); background: var(--lac-surface-sunken); padding: var(--lac-space-1); border-radius: var(--lac-radius-pill); }
+.lac-segment__item {
+  height: var(--lac-control-h-sm); padding: 0 var(--lac-space-4);
+  border: none; border-radius: var(--lac-radius-pill); background: transparent;
+  color: var(--lac-fg-muted); font-family: var(--lac-font-body);
+  font-size: var(--lac-size-sm); font-weight: var(--lac-weight-medium); cursor: pointer;
+  transition: background var(--lac-dur-fast) var(--lac-ease);
+}
+.lac-segment__item[aria-pressed="true"] { background: var(--lac-accent); color: var(--lac-accent-fg); }
+.lac-segment__item:focus-visible { outline: none; box-shadow: var(--lac-focus); }
+
+/* ---------- Superficies ---------- */
+
+.lac-card {
+  background: var(--lac-surface);
+  border: 1px solid var(--lac-border);
+  border-radius: var(--lac-radius-card);
+  padding: var(--lac-space-5);
+}
+.lac-card__header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--lac-space-3); margin-bottom: var(--lac-space-4); }
+
+/* Tarjeta de métrica: etiqueta chica arriba, cifra grande abajo */
+.lac-metric { background: var(--lac-surface); border: 1px solid var(--lac-border); border-radius: var(--lac-radius-card); padding: var(--lac-space-4); }
+.lac-metric__label { font-size: var(--lac-size-xs); color: var(--lac-fg-muted); margin: 0 0 var(--lac-space-2); }
+.lac-metric__value { font-family: var(--lac-font-data); font-variant-numeric: tabular-nums; font-size: var(--lac-size-2xl); font-weight: var(--lac-weight-medium); line-height: 1; margin: 0; }
+.lac-metric__delta { font-size: var(--lac-size-xs); margin: var(--lac-space-2) 0 0; }
+.lac-metric__delta--up   { color: var(--lac-ok-fg); }
+.lac-metric__delta--down { color: var(--lac-danger-soft-fg); }
+
+.lac-grid { display: grid; gap: var(--lac-space-4); }
+.lac-grid--auto { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+
+/* ---------- Estado ---------- */
+
+.lac-badge {
+  display: inline-flex; align-items: center; gap: var(--lac-space-2);
+  padding: 4px var(--lac-space-3); border-radius: var(--lac-radius-pill);
+  font-size: var(--lac-size-xs); font-weight: var(--lac-weight-medium); line-height: 1.4;
+}
+.lac-badge--info   { background: var(--lac-accent-soft); color: var(--lac-accent-soft-fg); }
+.lac-badge--ok     { background: var(--lac-ok-soft);     color: var(--lac-ok-fg); }
+.lac-badge--warn   { background: var(--lac-warn-soft);   color: var(--lac-warn-fg); }
+.lac-badge--danger { background: var(--lac-danger-soft); color: var(--lac-danger-soft-fg); }
+.lac-badge--idle   { background: var(--lac-surface-sunken); color: var(--lac-fg-muted); }
+
+.lac-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; flex: none; }
+.lac-dot--live { animation: lac-pulse 1.8s var(--lac-ease) infinite; }
+@keyframes lac-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* ---------- Formularios ---------- */
+
+.lac-field { display: flex; flex-direction: column; gap: var(--lac-space-2); }
+.lac-label { font-size: var(--lac-size-sm); font-weight: var(--lac-weight-medium); color: var(--lac-fg); }
+.lac-hint  { font-size: var(--lac-size-xs); color: var(--lac-fg-subtle); }
+
+.lac-input, .lac-select {
+  height: var(--lac-control-h);
+  padding: 0 var(--lac-space-3);
+  background: var(--lac-surface);
+  border: 1px solid var(--lac-border-strong);
+  border-radius: var(--lac-radius-control);
+  color: var(--lac-fg);
+  font-family: var(--lac-font-body);
+  font-size: var(--lac-size-md);
+  transition: border-color var(--lac-dur-fast) var(--lac-ease);
+}
+.lac-input:hover, .lac-select:hover { border-color: var(--lac-accent); }
+.lac-input:focus-visible, .lac-select:focus-visible { outline: none; border-color: var(--lac-accent); box-shadow: var(--lac-focus); }
+.lac-input::placeholder { color: var(--lac-fg-subtle); }
+
+.lac-range { -webkit-appearance: none; appearance: none; width: 100%; height: 20px; background: transparent; }
+.lac-range::-webkit-slider-runnable-track { height: 4px; background: var(--lac-border-strong); border-radius: 2px; }
+.lac-range::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 18px; margin-top: -7px; border-radius: 50%; background: var(--lac-accent); cursor: pointer; }
+.lac-range::-moz-range-track { height: 4px; background: var(--lac-border-strong); border-radius: 2px; }
+.lac-range::-moz-range-thumb { width: 18px; height: 18px; border: none; border-radius: 50%; background: var(--lac-accent); cursor: pointer; }
+.lac-range:focus-visible { outline: none; }
+.lac-range:focus-visible::-webkit-slider-thumb { box-shadow: var(--lac-focus); }
+
+/* ---------- Tabla ---------- */
+
+.lac-table { width: 100%; border-collapse: collapse; font-size: var(--lac-size-sm); }
+.lac-table th {
+  text-align: left; padding: var(--lac-space-3);
+  font-size: var(--lac-size-2xs); font-weight: var(--lac-weight-medium);
+  letter-spacing: var(--lac-track-eyebrow); text-transform: uppercase;
+  color: var(--lac-fg-muted); border-bottom: 1px solid var(--lac-border-strong);
+}
+.lac-table td { padding: var(--lac-space-3); border-bottom: 1px solid var(--lac-border); }
+.lac-table tbody tr:hover { background: var(--lac-surface-sunken); }
+.lac-table .num { text-align: right; font-family: var(--lac-font-data); font-variant-numeric: tabular-nums; }
+
+/* ---------- Panel de instrumento ---------- */
+
+.lac-panel {
+  background: var(--lac-inst-bg);
+  border-radius: var(--lac-radius-card);
+  padding: var(--lac-space-5);
+  color: var(--lac-inst-fg);
+}
+.lac-panel .lac-eyebrow { color: var(--lac-inst-fg-muted); }
+.lac-panel__readout { display: flex; align-items: baseline; }
+.lac-panel__readout .lac-unit { color: var(--lac-inst-zone-mid); }
+
+.lac-levelbar { display: flex; gap: 3px; height: 26px; }
+.lac-levelbar > i { flex: 1; border-radius: 2px; background: var(--lac-inst-off); transition: background 90ms linear; }
+
+/* ---------- Accesibilidad ---------- */
+
+.lac-sr {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

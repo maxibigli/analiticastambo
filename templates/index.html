@@ -5,28 +5,27 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LactIA — DDM</title>
 <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
+<link rel="stylesheet" href="/static/css/lactia-tokens.css">
+<link rel="stylesheet" href="/static/css/lactia-components.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+<script src="/static/js/lactia-gauge.js"></script>
 <style>
+  /* Paleta de la app: apunta a los tokens de static/css/lactia-tokens.css.
+     Un solo lugar para cambiar identidad visual — revertible con git si
+     hace falta volver atrás. El modo oscuro lo resuelve lactia-tokens.css
+     solo (sus --lac-* ya cambian de valor con prefers-color-scheme). */
   :root {
     color-scheme: light;
-    --surface-1: #fcfcfb; --page: #f9f9f7;
-    --text-primary: #0b0b0b; --text-secondary: #52514e; --muted: #898781;
-    --grid: #e1e0d9; --baseline: #c3c2b7; --border: rgba(11,11,11,0.10);
-    --accent: #1c5cb8; --good: #006300; --critical: #d03b3b;
-    --warning: #eda100; --violeta: #4a3aa7;
-    /* Paleta de marca (estilo DeLaval): navy para la barra lateral/tarjetas de marca. */
-    --brand-navy: #0f2f5c; --brand-navy-2: #163f76; --brand-ink: #ffffff;
+    --surface-1: var(--lac-surface); --page: var(--lac-bg);
+    --text-primary: var(--lac-fg); --text-secondary: var(--lac-fg-muted); --muted: var(--lac-fg-subtle);
+    --grid: var(--lac-border); --baseline: var(--lac-border-strong); --border: var(--lac-border);
+    --accent: var(--lac-accent); --good: var(--lac-ok); --critical: var(--lac-danger);
+    --warning: var(--lac-warn); --violeta: #4a3aa7;
+    /* Paleta de marca: navy para la barra lateral/tarjetas de marca (siempre oscuro, como los paneles de instrumento). */
+    --brand-navy: var(--lac-inst-bg); --brand-navy-2: var(--lac-blue-700); --brand-ink: #ffffff;
   }
   @media (prefers-color-scheme: dark) {
-    :root {
-      color-scheme: dark;
-      --surface-1: #1a1a19; --page: #0d0d0d;
-      --text-primary: #ffffff; --text-secondary: #c3c2b7; --muted: #898781;
-      --grid: #2c2c2a; --baseline: #383835; --border: rgba(255,255,255,0.10);
-      --accent: #4f97e8; --good: #0ca30c; --critical: #e66767;
-      --warning: #c98500; --violeta: #9085e9;
-      --brand-navy: #0b2245; --brand-navy-2: #123563; --brand-ink: #ffffff;
-    }
+    :root { color-scheme: dark; }
   }
   * { box-sizing: border-box; }
   body {
@@ -165,18 +164,9 @@
     background: var(--baseline); overflow: hidden;
   }
   .podal-cam-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
-  /* Vúmetros de Salud del rodeo */
-  .gauge-row { display: flex; flex-wrap: wrap; gap: 6px; }
-  .gauge { width: 128px; text-align: center; cursor: pointer; padding: 8px 4px 10px; border-radius: 10px; transition: background .15s; }
-  .gauge:hover { background: var(--baseline); }
-  .gauge.disabled { cursor: default; opacity: .42; }
-  .gauge-svg { width: 100%; height: auto; display: block; }
-  .gauge-needle { stroke: var(--text-primary); stroke-width: 2.6; stroke-linecap: round; transform-origin: 50px 55px; transition: transform .5s ease; }
-  .gauge-hub { fill: var(--text-primary); }
-  .gauge-value { font-size: 19px; font-weight: 800; margin-top: 1px; }
-  .gauge-label { font-size: 11px; color: var(--text-secondary); font-weight: 650; margin-top: 1px; }
-  .gauge-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
-  .gauge.disabled .gauge-sub { font-weight: 600; }
+  /* Vúmetros de Salud del rodeo / Monitoreo IoT (contenedor; el instrumento
+     en sí lo dibuja Lactia.gauge dentro de un .lac-card, ver static/js/lactia-gauge.js) */
+  .gauge-row { display: flex; flex-wrap: wrap; gap: 10px; }
   /* Monitoreo IoT: estado de 4 fases de la rotativa */
   .iot-estado { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 18px;
     border-radius: 12px; border: 1px solid var(--border); }
@@ -2175,10 +2165,8 @@ function pintarSaludBcs(d) {
 }
 
 function actualizarGaugeBcs(n) {
-  const actual = document.getElementById('gauge-bcs');
-  if (!actual) return;   // el vúmetro todavía no se pintó (primera carga)
-  actual.outerHTML = gaugeSVG({ id: 'gauge-bcs', pct: Math.min(100, n / 30 * 100), valor: n,
-    label: 'Fuera de score (BCS)', sub: 'vacas', target: 'salud-bcs-card' });
+  const g = _vumetros['bcs'];
+  if (g) g.set(n);   // el vúmetro todavía no se pintó (primera carga) si es null
 }
 
 function renderSaludBcs() {
@@ -2370,15 +2358,12 @@ function pintarIotEstado(sistema) {
 }
 
 function pintarIotSensores(sensores) {
-  const cont = document.getElementById('iot-sensores-cuerpo');
-  cont.innerHTML = (sensores || []).map(s => {
-    if (s.valor == null) {
-      return gaugeSVG({ disabled: true, label: s.label, sub: 'sin instalar' });
-    }
-    const pct = Math.max(0, Math.min(100, 100 * (s.valor - s.min) / (s.max - s.min)));
-    return gaugeSVG({ pct, valor: `${fmt(s.valor)}${s.unidad}`, label: s.label,
-      sub: s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : '' });
-  }).join('');
+  const specs = (sensores || []).map(s => ({
+    key: 'iot-' + s.clave, valor: s.valor, min: s.min, max: s.max, unidad: s.unidad,
+    label: s.label, disabled: s.valor == null,
+    sub: s.valor == null ? '' : (s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : ''),
+  }));
+  pintarVumetros('iot-sensores-cuerpo', specs);
 }
 
 const IOT_REFRESCO_MS = 5000;
@@ -2453,65 +2438,89 @@ function pintarSaludProduccion(d) {
 // Vúmetro semicircular: pct 0-100 = qué tan cerca del extremo "malo" (rojo) está.
 // Clic → hace scroll a la tarjeta correspondiente. disabled=true = placeholder
 // sin dato todavía (sensores que no están instalados/conectados).
-function gaugeSVG({ pct, valor, label, sub, target, disabled, id }) {
-  const p = Math.max(0, Math.min(100, pct || 0));
-  const rot = (p / 100) * 180 - 90;
-  const click = (!disabled && target) ? ` onclick="document.getElementById('${target}').scrollIntoView({behavior:'smooth',block:'start'})"` : '';
-  const idAttr = id ? ` id="${id}"` : '';
-  return `<div class="gauge${disabled ? ' disabled' : ''}"${idAttr}${click}>
-    <svg class="gauge-svg" viewBox="0 0 100 58">
-      <path d="M8,55 A42,42 0 0 1 29,18.63" fill="none" stroke="var(--good)" stroke-width="9" stroke-linecap="round"/>
-      <path d="M29,18.63 A42,42 0 0 1 71,18.63" fill="none" stroke="var(--warning)" stroke-width="9" stroke-linecap="round"/>
-      <path d="M71,18.63 A42,42 0 0 1 92,55" fill="none" stroke="var(--critical)" stroke-width="9" stroke-linecap="round"/>
-      ${disabled ? '' : `<line x1="50" y1="55" x2="50" y2="17" class="gauge-needle" style="transform:rotate(${rot}deg)"/><circle cx="50" cy="55" r="4" class="gauge-hub"/>`}
-    </svg>
-    <div class="gauge-value">${disabled ? '—' : fmt(valor)}</div>
-    <div class="gauge-label">${label}</div>
-    ${sub ? `<div class="gauge-sub">${sub}</div>` : ''}
+// --- Vúmetros (kit Lactia: static/js/lactia-gauge.js) -----------------------
+// Cada vúmetro es una instancia Lactia.gauge persistente (se actualiza con
+// .set(), no se reconstruye en cada refresco). _vumetros guarda esas
+// instancias por clave para poder actualizarlas desde otro lado (ver
+// actualizarGaugeBcs). Los "sin instalar" son un placeholder simple, no un
+// instrumento — no tiene sentido animar una aguja sin dato real.
+const _vumetros = {};
+
+function vumetroHTML(key, { label, sub, target, disabled }) {
+  const click = (!disabled && target)
+    ? ` onclick="document.getElementById('${target}').scrollIntoView({behavior:'smooth',block:'start'})" style="cursor:pointer"`
+    : '';
+  const cuerpo = disabled
+    ? `<div class="lac-caption" style="padding:38px 0">sin instalar</div>`
+    : `<div id="vu-${key}" style="width:170px;margin:2px auto 0"></div>
+       <div class="lac-data lac-data-lg" id="vu-${key}-val" style="text-align:center"></div>`;
+  return `<div class="lac-card" style="text-align:center;padding:12px 8px;min-width:180px"${click}>
+    <div class="lac-eyebrow">${label}</div>
+    ${cuerpo}
+    <div class="lac-caption" style="margin-top:2px;min-height:14px">${sub || ''}</div>
   </div>`;
 }
 
+function vumetroIniciar(key, { valor, min, max, decimals, unidad, label, warnAt, dangerAt }) {
+  const cont = document.getElementById('vu-' + key);
+  if (!cont) return;
+  decimals = decimals != null ? decimals : 0;
+  min = min != null ? min : 0; max = max != null ? max : 100;
+  const g = Lactia.gauge(cont, {
+    min, max, decimals, unit: unidad || '', label,
+    warnAt: warnAt != null ? warnAt : 0.78, dangerAt: dangerAt != null ? dangerAt : 0.90,
+  });
+  const val = document.getElementById(`vu-${key}-val`);
+  g.mirror(v => { if (val) val.textContent = v.toFixed(decimals) + (unidad || ''); });
+  g.set(valor);
+  _vumetros[key] = g;
+}
+
+function pintarVumetros(contId, specs) {
+  document.getElementById(contId).innerHTML = specs.map(s => vumetroHTML(s.key, s)).join('');
+  specs.forEach(s => { if (!s.disabled) vumetroIniciar(s.key, s); });
+}
+
 function pintarSaludGauges(atencion, atencion2, rcsGrupo, bcs, podalEstado, podalVacas) {
-  const cont = document.getElementById('salud-kpis');
-  const gauges = [];
+  const specs = [];
   if (atencion) {
     const n = (atencion.vacas || []).length;
-    gauges.push(gaugeSVG({ pct: Math.min(100, n / 15 * 100), valor: n,
-      label: 'Atención (clásico)', sub: 'vacas a revisar', target: 'salud-atencion-card' }));
+    specs.push({ key: 'salud-atencion', valor: n, min: 0, max: 15,
+      label: 'Atención (clásico)', sub: 'vacas a revisar', target: 'salud-atencion-card' });
   }
   if (atencion2) {
     const n = (atencion2.vacas || []).length;
-    gauges.push(gaugeSVG({ pct: Math.min(100, n / 15 * 100), valor: n,
-      label: 'Atención (experimental)', sub: 'en validación de campo', target: 'salud-atencion2-card' }));
+    specs.push({ key: 'salud-atencion2', valor: n, min: 0, max: 15,
+      label: 'Atención (experimental)', sub: 'en validación de campo', target: 'salud-atencion2-card' });
   }
   if (rcsGrupo && rcsGrupo.filas) {
     const tot = rcsGrupo.filas.reduce((a, f) => a + (f.vacas || 0), 0);
     const altas = rcsGrupo.filas.reduce((a, f) => a + (f.altas_ultimo || 0), 0);
     const nuevas = rcsGrupo.filas.reduce((a, f) => a + (f.nuevas || 0), 0);
     const pctAltas = tot ? Math.round(100 * altas / tot) : 0;
-    gauges.push(gaugeSVG({ pct: pctAltas, valor: `${pctAltas}%`,
-      label: 'RCS > 300.000', sub: `${altas} vacas`, target: 'salud-rcs-grupo-card' }));
-    gauges.push(gaugeSVG({ pct: Math.min(100, nuevas / 30 * 100), valor: nuevas,
-      label: 'Casos nuevos RCS', sub: 'vs. control anterior', target: 'salud-rcs-grupo-card' }));
+    specs.push({ key: 'salud-rcs-pct', valor: pctAltas, min: 0, max: 100, unidad: '%',
+      label: 'RCS > 300.000', sub: `${altas} vacas`, target: 'salud-rcs-grupo-card' });
+    specs.push({ key: 'salud-rcs-nuevas', valor: nuevas, min: 0, max: 30,
+      label: 'Casos nuevos RCS', sub: 'vs. control anterior', target: 'salud-rcs-grupo-card' });
   }
   if (bcs && bcs.vacas) {
     const min = parseFloat(document.getElementById('bcs-min').value) || bcs.bcs_bajo;
     const max = parseFloat(document.getElementById('bcs-max').value) || bcs.bcs_alto;
     const n = bcs.vacas.filter(v => v.score < min || v.score > max).length;
-    gauges.push(gaugeSVG({ id: 'gauge-bcs', pct: Math.min(100, n / 30 * 100), valor: n,
-      label: 'Fuera de score (BCS)', sub: 'vacas', target: 'salud-bcs-card' }));
+    specs.push({ key: 'bcs', valor: n, min: 0, max: 30,
+      label: 'Fuera de score (BCS)', sub: 'vacas', target: 'salud-bcs-card' });
   }
   // Placeholders: sensores todavía no instalados/conectados en este tambo.
-  gauges.push(gaugeSVG({ disabled: true, label: 'Rumia', sub: 'collar DeLaval (a conectar)' }));
-  gauges.push(gaugeSVG({ disabled: true, label: 'Ingesta', sub: 'collar DeLaval (a conectar)' }));
+  specs.push({ key: 'rumia', disabled: true, label: 'Rumia', sub: 'collar DeLaval (a conectar)' });
+  specs.push({ key: 'ingesta', disabled: true, label: 'Ingesta', sub: 'collar DeLaval (a conectar)' });
   if (podalEstado && podalEstado.habilitado) {
     const n = (podalVacas || []).length;
-    gauges.push(gaugeSVG({ pct: Math.min(100, n / 10 * 100), valor: n,
-      label: 'Problemas podales', sub: 'vacas con alerta', target: 'salud-podal-card' }));
+    specs.push({ key: 'podal', valor: n, min: 0, max: 10,
+      label: 'Problemas podales', sub: 'vacas con alerta', target: 'salud-podal-card' });
   } else {
-    gauges.push(gaugeSVG({ disabled: true, label: 'Problemas podales', sub: 'cámaras rotativa (a instalar)' }));
+    specs.push({ key: 'podal', disabled: true, label: 'Problemas podales', sub: 'cámaras rotativa (a instalar)' });
   }
-  cont.innerHTML = gauges.join('');
+  pintarVumetros('salud-kpis', specs);
 }
 
 function pintarPodalCamaras(estado) {

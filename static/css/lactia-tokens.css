@@ -1,0 +1,195 @@
+/* ============================================================
+   LACTIA — Design tokens
+   Inteligencia predictiva para tambo
+   v1.0
+   ------------------------------------------------------------
+   Capa 1: paleta cruda (no usar directo en componentes)
+   Capa 2: tokens semánticos (usar SIEMPRE estos)
+   Capa 3: tokens de instrumento (siempre oscuros, en los 2 modos)
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Inter:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ---------- Capa 1 · paleta cruda ---------- */
+  --lac-blue-900: #001B2B;
+  --lac-blue-800: #00263A;
+  --lac-blue-700: #003C5C;
+  --lac-blue-600: #005596;
+  --lac-blue-500: #0072CE;  /* azul DeLaval, primario */
+  --lac-blue-400: #2E96E0;
+  --lac-blue-300: #4FC3E8;
+  --lac-blue-200: #A9DCF2;
+  --lac-blue-100: #D6ECFA;
+  --lac-blue-050: #E6F1FB;
+
+  --lac-slate-900: #0E1720;
+  --lac-slate-700: #2E3A44;
+  --lac-slate-500: #63666A;  /* gris corporativo DeLaval */
+  --lac-slate-400: #8A9199;
+  --lac-slate-300: #C3C9CE;
+  --lac-slate-200: #E1E5E8;
+  --lac-slate-100: #F0F3F5;
+  --lac-slate-050: #F7F9FA;
+
+  --lac-amber-600: #A86F00;
+  --lac-amber-500: #F2A900;
+  --lac-amber-100: #FDF0D4;
+
+  --lac-red-600: #A3001F;
+  --lac-red-500: #E4002B;
+  --lac-red-100: #FBE0E5;
+
+  --lac-green-600: #006B46;
+  --lac-green-500: #00875A;
+  --lac-green-100: #DCF2EA;
+
+  /* ---------- Capa 2 · semánticos (modo claro) ---------- */
+  --lac-bg:              var(--lac-slate-050);
+  --lac-surface:         #FFFFFF;
+  --lac-surface-sunken:  var(--lac-slate-100);
+  --lac-border:          var(--lac-slate-200);
+  --lac-border-strong:   var(--lac-slate-300);
+
+  --lac-fg:              var(--lac-slate-900);
+  --lac-fg-muted:        var(--lac-slate-500);
+  --lac-fg-subtle:       var(--lac-slate-400);
+
+  --lac-accent:          var(--lac-blue-500);
+  --lac-accent-hover:    var(--lac-blue-600);
+  --lac-accent-fg:       #FFFFFF;
+  --lac-accent-soft:     var(--lac-blue-050);
+  --lac-accent-soft-fg:  var(--lac-blue-700);
+
+  --lac-warn:            var(--lac-amber-500);
+  --lac-warn-soft:       var(--lac-amber-100);
+  --lac-warn-fg:         var(--lac-amber-600);
+
+  --lac-danger:          var(--lac-red-500);
+  --lac-danger-hover:    var(--lac-red-600);
+  --lac-danger-fg:       #FFFFFF;
+  --lac-danger-soft:     var(--lac-red-100);
+  --lac-danger-soft-fg:  var(--lac-red-600);
+
+  --lac-ok:              var(--lac-green-500);
+  --lac-ok-soft:         var(--lac-green-100);
+  --lac-ok-fg:           var(--lac-green-600);
+
+  --lac-focus:           0 0 0 3px rgba(0, 114, 206, .35);
+
+  /* ---------- Capa 3 · instrumento ----------
+     No cambian con el tema. Un vúmetro en la sala de ordeñe
+     se lee igual a las 4 AM que a mediodía. */
+  --lac-inst-bg:         #00263A;
+  --lac-inst-well:       #001B2B;
+  --lac-inst-off:        #0B3A55;
+  --lac-inst-off-warn:   #3A2E12;
+  --lac-inst-off-danger: #3A1420;
+  --lac-inst-fg:         #FFFFFF;
+  --lac-inst-fg-muted:   #5B8CA8;
+  --lac-inst-zone-low:   var(--lac-blue-500);
+  --lac-inst-zone-mid:   var(--lac-blue-300);
+  --lac-inst-zone-high:  var(--lac-amber-500);
+  --lac-inst-zone-over:  var(--lac-red-500);
+
+  /* ---------- Tipografía ---------- */
+  --lac-font-display: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+  --lac-font-body:    'Inter', system-ui, -apple-system, sans-serif;
+  --lac-font-data:    'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --lac-size-2xs:  11px;
+  --lac-size-xs:   12px;
+  --lac-size-sm:   13px;
+  --lac-size-md:   15px;
+  --lac-size-lg:   17px;
+  --lac-size-xl:   21px;
+  --lac-size-2xl:  27px;
+  --lac-size-3xl:  34px;
+  --lac-size-read: clamp(36px, 6vw, 56px);   /* lectura de instrumento */
+
+  --lac-weight-regular: 400;
+  --lac-weight-medium:  500;
+  --lac-weight-strong:  600;
+
+  --lac-leading-tight: 1.15;
+  --lac-leading-snug:  1.35;
+  --lac-leading-body:  1.6;
+
+  --lac-track-tight:  -0.02em;
+  --lac-track-normal:  0;
+  --lac-track-eyebrow: 0.09em;
+
+  /* ---------- Espaciado (base 4) ---------- */
+  --lac-space-1:  4px;
+  --lac-space-2:  8px;
+  --lac-space-3:  12px;
+  --lac-space-4:  16px;
+  --lac-space-5:  24px;
+  --lac-space-6:  32px;
+  --lac-space-7:  48px;
+  --lac-space-8:  64px;
+
+  /* ---------- Forma ---------- */
+  --lac-radius-control: 8px;
+  --lac-radius-card:    12px;
+  --lac-radius-pill:    999px;
+  --lac-control-h:      40px;   /* táctil: 40px mínimo con guantes */
+  --lac-control-h-sm:   32px;
+  --lac-control-h-lg:   48px;
+
+  /* ---------- Movimiento ---------- */
+  --lac-dur-fast: 120ms;
+  --lac-dur-base: 200ms;
+  --lac-dur-slow: 400ms;
+  --lac-ease:     cubic-bezier(.2, .8, .2, 1);
+}
+
+/* ---------- Modo oscuro ---------- */
+:root[data-theme="dark"] {
+  --lac-bg:             #0A1219;
+  --lac-surface:        #111C25;
+  --lac-surface-sunken: #0A1219;
+  --lac-border:         #1E2D39;
+  --lac-border-strong:  #2E4150;
+
+  --lac-fg:             #EAF1F5;
+  --lac-fg-muted:       #93A4B1;
+  --lac-fg-subtle:      #6B7E8C;
+
+  --lac-accent:         var(--lac-blue-400);
+  --lac-accent-hover:   var(--lac-blue-300);
+  --lac-accent-fg:      #001B2B;
+  --lac-accent-soft:    #0C2E45;
+  --lac-accent-soft-fg: var(--lac-blue-200);
+
+  --lac-warn-soft:      #3A2E12;
+  --lac-warn-fg:        #F5CE84;
+  --lac-danger-soft:    #3F1219;
+  --lac-danger-soft-fg: #F5A9A9;
+  --lac-ok-soft:        #0C3226;
+  --lac-ok-fg:          #7FD9B8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --lac-bg:             #0A1219;
+    --lac-surface:        #111C25;
+    --lac-surface-sunken: #0A1219;
+    --lac-border:         #1E2D39;
+    --lac-border-strong:  #2E4150;
+    --lac-fg:             #EAF1F5;
+    --lac-fg-muted:       #93A4B1;
+    --lac-fg-subtle:      #6B7E8C;
+    --lac-accent:         var(--lac-blue-400);
+    --lac-accent-hover:   var(--lac-blue-300);
+    --lac-accent-fg:      #001B2B;
+    --lac-accent-soft:    #0C2E45;
+    --lac-accent-soft-fg: var(--lac-blue-200);
+    --lac-warn-soft:      #3A2E12;
+    --lac-warn-fg:        #F5CE84;
+    --lac-danger-soft:    #3F1219;
+    --lac-danger-soft-fg: #F5A9A9;
+    --lac-ok-soft:        #0C3226;
+    --lac-ok-fg:          #7FD9B8;
+  }
+}
