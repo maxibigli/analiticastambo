@@ -1366,12 +1366,12 @@ def api_rutina_rendimiento():
 FLUJOS_CACHE_TTL_S = 1800  # 30 min
 
 
-def _clave_flujos(tambo, desde, hasta, rmin, rmax):
-    return f"{tambo}:flujos:{desde.isoformat()}:{hasta.isoformat()}:{rmin:.2f}:{rmax:.2f}"
+def _clave_flujos(tambo, desde, hasta):
+    return f"{tambo}:flujos:{desde.isoformat()}:{hasta.isoformat()}"
 
 
-def _refresh_flujos_async(tambo, desde, hasta, rmin, rmax):
-    key = _clave_flujos(tambo, desde, hasta, rmin, rmax)
+def _refresh_flujos_async(tambo, desde, hasta):
+    key = _clave_flujos(tambo, desde, hasta)
     with _cache_lock:
         if key in _refreshing:
             return
@@ -1381,9 +1381,20 @@ def _refresh_flujos_async(tambo, desde, hasta, rmin, rmax):
 
     def worker():
         try:
+            # Los umbrales de retirada NO son elegibles: salen de la
+            # configuración de la rotativa. Se leen primero porque la consulta
+            # diaria los necesita, y se guardan junto a los datos para que la
+            # página muestre exactamente con qué valores se calculó.
+            try:
+                cfg = db.run_query(flujos.SQL_CONFIG_RETIRADA, tambo=tambo, max_rows=5)
+            except Exception:  # noqa: BLE001
+                cfg = None
+            umbrales = flujos.umbrales_retirada(cfg)
+            rmin, rmax = umbrales["retirada_min"], umbrales["retirada_max"]
             # En serie a propósito: db.py ya serializa por servidor, y lanzarlas
             # en paralelo solo agregaría presión de memoria sobre SQL Express.
             data = {
+                "umbrales": umbrales,
                 "dia": db.run_query(flujos.sql_por_dia(d, h, rmin, rmax), tambo=tambo,
                                     max_rows=flujos.RANGO_FLUJOS_MAX_DIAS + 2),
                 "grupo": db.run_query(flujos.sql_por_grupo(d, h), tambo=tambo, max_rows=100),
@@ -1405,7 +1416,11 @@ def _refresh_flujos_async(tambo, desde, hasta, rmin, rmax):
 def api_flujos_analisis():
     """"Análisis de flujos de ordeño": curva de flujo por tramos, problemas de
     retirada, distribución de flujo promedio/pico y bimodalidad por DEO, para
-    un rango de fechas amplio. Réplica de los informes de flujo de DelPro."""
+    un rango de fechas amplio. Réplica de los informes de flujo de DelPro.
+
+    Los umbrales de retirada no se reciben por parámetro: se leen de la
+    configuración de la rotativa (`CMSMpcSetting.TakeoffLimit`) dentro del
+    refresco, y viajan en la respuesta para que la página los muestre."""
     tambo = _tambo_del_request()
     hoy = datetime.date.today()
     try:
@@ -1421,23 +1436,16 @@ def api_flujos_analisis():
         return jsonify({"error": f"El rango no puede superar {flujos.RANGO_FLUJOS_MAX_DIAS} días "
                                  "(la consulta escanea todos los ordeños del período)."}), 400
 
-    try:
-        rmin = float(request.args.get("retirada_min", flujos.RETIRADA_MIN_DEFECTO))
-        rmax = float(request.args.get("retirada_max", flujos.RETIRADA_MAX_DEFECTO))
-    except ValueError:
-        return jsonify({"error": "Umbrales de retirada inválidos."}), 400
-    if not (0 <= rmin < rmax <= 20):
-        return jsonify({"error": "Umbrales de retirada fuera de rango (0 ≤ mín < máx ≤ 20)."}), 400
-
-    key = _clave_flujos(tambo, desde, hasta, rmin, rmax)
+    key = _clave_flujos(tambo, desde, hasta)
     data, fresh = _cache_get(key, allow_stale=True, ttl=FLUJOS_CACHE_TTL_S)
     if data is None:
-        _refresh_flujos_async(tambo, desde, hasta, rmin, rmax)
+        _refresh_flujos_async(tambo, desde, hasta)
         return jsonify({"calentando": True, "mensaje": "Analizando flujos de ordeño…"}), 202
     if not fresh:
-        _refresh_flujos_async(tambo, desde, hasta, rmin, rmax)
+        _refresh_flujos_async(tambo, desde, hasta)
 
-    resultado = flujos.analizar(data["dia"], data["grupo"], data["dist"], data["deo"], rmin, rmax)
+    resultado = flujos.analizar(data["dia"], data["grupo"], data["dist"], data["deo"],
+                                data["umbrales"])
     resultado["desde"] = desde.isoformat()
     resultado["hasta"] = hasta.isoformat()
     return jsonify(resultado)

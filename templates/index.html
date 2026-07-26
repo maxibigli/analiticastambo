@@ -622,23 +622,23 @@
         <button class="secundario" id="flu-aplicar">Aplicar</button>
       </div>
     </div>
-    <div class="controls" style="margin-top:8px">
-      <label class="aviso" style="display:flex;align-items:center;gap:5px"
-             title="Por debajo de este flujo, retirar la pezonera es tardío: la vaca queda sobreordeñada.">
-        Flujo de retirada mín (kg/min)
-        <input type="number" id="flu-rmin" step="0.05" min="0" max="20" value="0.60" style="padding:6px 8px;width:80px">
-      </label>
-      <label class="aviso" style="display:flex;align-items:center;gap:5px"
-             title="Por encima de este flujo, la retirada es prematura: queda leche en la ubre.">
-        máx (kg/min)
-        <input type="number" id="flu-rmax" step="0.05" min="0" max="20" value="1.00" style="padding:6px 8px;width:80px">
-      </label>
+    <div class="controls" style="margin-top:10px;align-items:center">
+      <span class="aviso">Ver como</span>
+      <div class="lac-segment" id="flu-tipo" role="group" aria-label="Tipo de gráfico">
+        <button class="lac-segment__item" data-tipo="line" aria-pressed="true">Líneas</button>
+        <button class="lac-segment__item" data-tipo="bar" aria-pressed="false">Barras</button>
+        <button class="lac-segment__item" data-tipo="point" aria-pressed="false">Puntos</button>
+      </div>
+      <span class="aviso" id="flu-umbrales" style="margin-left:auto"></span>
     </div>
     <p class="explica" style="margin-top:10px">
-      Los dos umbrales de arriba son los mismos que muestra el informe de DelPro y definen qué
-      cuenta como retirada tardía o prematura en el primer gráfico. Cambiarlos recalcula todo.
-      El rango puede ser de hasta 120 días; cada rango nuevo tarda unos segundos la primera vez
-      y después queda en memoria media hora.
+      <b>Umbrales de retirada.</b> No se eligen a mano: salen de la configuración de la propia
+      rotativa (<code>CMSMpcSetting.TakeoffLimit</code>), igual que el "Flujo de retirada DelPro"
+      del informe. La banda de tolerancia que separa retirada tardía de prematura es de ±25%
+      alrededor de ese valor. Si en la máquina se cambia el límite, acá cambia solo.
+      <br><b>Rango y velocidad.</b> Hasta 120 días. Cada rango nuevo tarda unos segundos la
+      primera vez y después queda en memoria media hora. Cambiar el tipo de gráfico no vuelve a
+      consultar la base: redibuja lo que ya está cargado.
     </p>
     <div class="aviso" id="flu-info" style="margin-top:8px"></div>
     <p class="explica" style="margin-top:10px">
@@ -655,8 +655,8 @@
         pezón y es la puerta de entrada a la mastitis. <b>Prematura</b> es soltarla con leche
         todavía bajando: queda leche en la ubre y cae la producción.
         <br><b>Cómo se calcula.</b> De cada ordeño individual se lee <code>TakeOffFlow</code>, el
-        flujo en kg/min en el instante exacto en que se retiró. Se cuentan los que quedaron por
-        debajo del mínimo y por encima del máximo que fijaste arriba, sobre los ordeños del día
+        flujo en kg/min en el instante exacto en que se retiró. Se cuentan los que quedaron fuera
+        de la banda de tolerancia del límite configurado en la rotativa, sobre los ordeños del día
         que tienen esa lectura. <b>Retirada forzada</b>, <b>modo manual</b> y <b>retiro manual</b>
         son banderas que graba la propia máquina (<code>ForcedRetract</code>,
         <code>ManualMode</code>, <code>ManualDetach</code>) y van sobre el total del día: las dos
@@ -1548,6 +1548,115 @@ function optsDobleEje(tituloIzq, tituloDer) {
   return o;
 }
 
+// Tipo de gráfico elegido: 'line' | 'bar' | 'point'. Se guarda la última
+// respuesta para poder redibujar al cambiarlo sin volver a consultar la base.
+let fluTipo = 'line', fluDatos = null;
+
+// Adapta una serie al tipo elegido. Las series del eje derecho (segundos) se
+// dejan SIEMPRE como línea: mezcladas de barras con las de kg/min o % el
+// gráfico se vuelve ilegible, y Chart.js soporta bien el combinado.
+function serieTipo(ds) {
+  if (ds.yAxisID === 'y1') return Object.assign({}, ds, { type: 'line' });
+  if (fluTipo === 'bar') {
+    return Object.assign({}, ds, {
+      type: 'bar', borderWidth: 0, maxBarThickness: 26, borderRadius: 3, fill: false,
+    });
+  }
+  if (fluTipo === 'point') {
+    return Object.assign({}, ds, {
+      type: 'line', showLine: false, pointRadius: 4, pointHoverRadius: 6, fill: false,
+    });
+  }
+  return Object.assign({}, ds, { type: 'line' });
+}
+
+function graficoFlujos(canvasId, ref, labels, datasets, options) {
+  return dibujar(canvasId, ref, {
+    type: fluTipo === 'bar' ? 'bar' : 'line',
+    data: { labels, datasets: datasets.map(serieTipo) },
+    options,
+  });
+}
+
+const kgFlu = v => Number(v).toFixed(2).replace('.', ',');   // 0.6 -> "0,60"
+
+function pintarFlujos(d) {
+  const dias = d.dias || [];
+  const info = document.getElementById('flu-info');
+  if (!dias.length) {
+    info.textContent = 'Sin ordeños registrados en este rango.';
+    document.getElementById('flu-kpis').innerHTML = '';
+    return;
+  }
+  const r = d.resumen || {}, u = d.umbrales || {};
+  const pct = v => v != null ? fmt(v) + '%' : '—';
+
+  document.getElementById('flu-umbrales').textContent =
+    `Retirada según DelPro: ${kgFlu(u.retirada_delpro)} kg/min ` +
+    `(banda ${kgFlu(u.retirada_min)}–${kgFlu(u.retirada_max)}, ±${u.tolerancia_pct}%)`;
+
+  document.getElementById('flu-kpis').innerHTML = [
+    ['Ordeños analizados', fmt(r.ordenos)],
+    ['Flujo promedio', r.f_prom != null ? fmt(r.f_prom) + ' kg/min' : '—'],
+    ['Flujo pico', r.f_pico != null ? fmt(r.f_pico) + ' kg/min' : '—'],
+    ['Duración de ordeño', r.dur_seg != null ? fmt(Math.round(r.dur_seg)) + ' s' : '—'],
+    ['Tiempo de colocación', r.coloc_seg != null ? fmt(r.coloc_seg) + ' s' : '—'],
+    [`Retirada < ${kgFlu(u.retirada_min)} kg/min`, pct(r.pct_bajo_min)],
+    ['Retirada forzada', pct(r.pct_forzada)],
+    ['Arranque lento', pct(r.pct_arranque_lento)],
+  ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+
+  const labels = dias.map(x => etiquetaDia(x.fecha));
+
+  const oRet = baseOpts(true);
+  oRet.interaction = { mode: 'index', intersect: false };
+  oRet.scales.y.title = { display: true, text: '% de ordeños' };
+  chartFluRetirada = graficoFlujos('chart-flu-retirada', chartFluRetirada, labels, [
+    linea(`< ${kgFlu(u.retirada_min)} kg/min (tardía)`, dias.map(x => x.pct_bajo_min), SERIES[0]),
+    linea(`> ${kgFlu(u.retirada_max)} kg/min (prematura)`, dias.map(x => x.pct_sobre_max), SERIES[2]),
+    linea('Retirada forzada', dias.map(x => x.pct_forzada), SERIES[7]),
+    linea('Modo manual', dias.map(x => x.pct_manual), SERIES[1]),
+    linea('Retiro manual', dias.map(x => x.pct_retiro_manual), SERIES[6]),
+  ], oRet);
+
+  const pnt = { yAxisID: 'y1', borderDash: [5, 4], pointRadius: 0 };
+  chartFluRutina = graficoFlujos('chart-flu-rutina', chartFluRutina, labels, [
+    linea('0-15 s', dias.map(x => x.f_0_15), SERIES[1]),
+    linea('15-30 s', dias.map(x => x.f_15_30), SERIES[2]),
+    linea('30-60 s', dias.map(x => x.f_30_60), SERIES[3]),
+    linea('60-120 s', dias.map(x => x.f_60_120), SERIES[6]),
+    linea('Duración de ordeño (s)', dias.map(x => x.dur_seg), SERIES[7], pnt),
+    linea('Tiempo de colocación (s)', dias.map(x => x.coloc_seg), SERIES[4], pnt),
+  ], optsDobleEje('kg/min', 'segundos'));
+
+  const oGru = baseOpts(true);
+  oGru.scales.y.title = { display: true, text: 'kg/min' };
+  chartFluGrupo = graficoFlujos('chart-flu-grupo', chartFluGrupo, d.tramos || [],
+    (d.grupos || []).map((g, i) => linea(g.grupo, g.curva, SERIES[i % SERIES.length])), oGru);
+
+  const dist = d.distribucion || { bins: [] };
+  const oDis = baseOpts(true);
+  oDis.interaction = { mode: 'index', intersect: false };
+  oDis.scales.y.title = { display: true, text: '% de ordeños' };
+  oDis.scales.x.title = { display: true, text: 'kg/min' };
+  // El relleno solo tiene sentido con líneas; en barras y puntos lo apaga serieTipo.
+  chartFluDist = graficoFlujos('chart-flu-distribucion', chartFluDist, dist.bins, [
+    linea('Flujo promedio', dist.promedio_pct, SERIES[0], { fill: true, backgroundColor: SERIES[0] + '33' }),
+    linea('Flujo pico', dist.pico_pct, SERIES[3], { fill: true, backgroundColor: SERIES[3] + '33' }),
+  ], oDis);
+
+  const deo = d.deo || [];
+  chartFluBimodal = graficoFlujos('chart-flu-bimodal', chartFluBimodal, deo.map(x => x.deo), [
+    linea('% bimodalidad (caída de flujo)', deo.map(x => x.pct_bimodal), SERIES[0]),
+    linea(`% arranque lento (< ${kgFlu(u.arranque_lento)} kg/min en 0-15 s)`,
+          deo.map(x => x.pct_arranque_lento), SERIES[3]),
+    linea('Duración de ordeño (s)', deo.map(x => x.dur_seg), SERIES[7], pnt),
+    linea('Tiempo de colocación (s)', deo.map(x => x.coloc_seg), SERIES[4], pnt),
+  ], optsDobleEje('% de ordeños', 'segundos'));
+
+  info.textContent = `${fmt(r.ordenos)} ordeños entre ${d.desde} y ${d.hasta} (${dias.length} día(s)).`;
+}
+
 async function cargarFlujos() {
   clearTimeout(fluReintento);
   const info = document.getElementById('flu-info');
@@ -1557,109 +1666,25 @@ async function cargarFlujos() {
   if (!desde) desde = menosDias(hasta, 29);
   document.getElementById('flu-desde').value = desde;
   document.getElementById('flu-hasta').value = hasta;
-  const rmin = document.getElementById('flu-rmin').value || '0.60';
-  const rmax = document.getElementById('flu-rmax').value || '1.00';
   info.textContent = 'Analizando…';
   try {
-    const d = await pedirJSON(`/api/flujos/analisis?desde=${desde}&hasta=${hasta}` +
-      `&retirada_min=${rmin}&retirada_max=${rmax}&tambo=${encodeURIComponent(tamboActual)}`);
-    const dias = d.dias || [];
-    if (!dias.length) {
-      info.textContent = 'Sin ordeños registrados en este rango.';
-      document.getElementById('flu-kpis').innerHTML = '';
-      return;
-    }
-    const r = d.resumen || {}, u = d.umbrales || {};
-    const pct = v => v != null ? fmt(v) + '%' : '—';
-    const kg = v => Number(v).toFixed(2).replace('.', ',');   // 0.6 -> "0,60"
-
-    document.getElementById('flu-kpis').innerHTML = [
-      ['Ordeños analizados', fmt(r.ordenos)],
-      ['Flujo promedio', r.f_prom != null ? fmt(r.f_prom) + ' kg/min' : '—'],
-      ['Flujo pico', r.f_pico != null ? fmt(r.f_pico) + ' kg/min' : '—'],
-      ['Duración de ordeño', r.dur_seg != null ? fmt(Math.round(r.dur_seg)) + ' s' : '—'],
-      ['Tiempo de colocación', r.coloc_seg != null ? fmt(r.coloc_seg) + ' s' : '—'],
-      [`Retirada < ${kg(u.retirada_min)} kg/min`, pct(r.pct_bajo_min)],
-      ['Retirada forzada', pct(r.pct_forzada)],
-      ['Arranque lento', pct(r.pct_arranque_lento)],
-    ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
-
-    const labels = dias.map(x => etiquetaDia(x.fecha));
-
-    const oRet = baseOpts(true);
-    oRet.interaction = { mode: 'index', intersect: false };
-    oRet.scales.y.title = { display: true, text: '% de ordeños' };
-    chartFluRetirada = dibujar('chart-flu-retirada', chartFluRetirada, {
-      type: 'line',
-      data: { labels, datasets: [
-        linea(`< ${kg(u.retirada_min)} kg/min (tardía)`, dias.map(x => x.pct_bajo_min), SERIES[0]),
-        linea(`> ${kg(u.retirada_max)} kg/min (prematura)`, dias.map(x => x.pct_sobre_max), SERIES[2]),
-        linea('Retirada forzada', dias.map(x => x.pct_forzada), SERIES[7]),
-        linea('Modo manual', dias.map(x => x.pct_manual), SERIES[1]),
-        linea('Retiro manual', dias.map(x => x.pct_retiro_manual), SERIES[6]),
-      ] },
-      options: oRet,
-    });
-
-    const pnt = { yAxisID: 'y1', borderDash: [5, 4], pointRadius: 0 };
-    chartFluRutina = dibujar('chart-flu-rutina', chartFluRutina, {
-      type: 'line',
-      data: { labels, datasets: [
-        linea('0-15 s', dias.map(x => x.f_0_15), SERIES[1]),
-        linea('15-30 s', dias.map(x => x.f_15_30), SERIES[2]),
-        linea('30-60 s', dias.map(x => x.f_30_60), SERIES[3]),
-        linea('60-120 s', dias.map(x => x.f_60_120), SERIES[6]),
-        linea('Duración de ordeño (s)', dias.map(x => x.dur_seg), SERIES[7], pnt),
-        linea('Tiempo de colocación (s)', dias.map(x => x.coloc_seg), SERIES[4], pnt),
-      ] },
-      options: optsDobleEje('kg/min', 'segundos'),
-    });
-
-    const oGru = baseOpts(true);
-    oGru.scales.y.title = { display: true, text: 'kg/min' };
-    chartFluGrupo = dibujar('chart-flu-grupo', chartFluGrupo, {
-      type: 'line',
-      data: { labels: d.tramos || [], datasets: (d.grupos || []).map((g, i) =>
-        linea(g.grupo, g.curva, SERIES[i % SERIES.length])) },
-      options: oGru,
-    });
-
-    const dist = d.distribucion || { bins: [] };
-    const oDis = baseOpts(true);
-    oDis.interaction = { mode: 'index', intersect: false };
-    oDis.scales.y.title = { display: true, text: '% de ordeños' };
-    oDis.scales.x.title = { display: true, text: 'kg/min' };
-    chartFluDist = dibujar('chart-flu-distribucion', chartFluDist, {
-      type: 'line',
-      data: { labels: dist.bins, datasets: [
-        linea('Flujo promedio', dist.promedio_pct, SERIES[0], { fill: true, backgroundColor: SERIES[0] + '33' }),
-        linea('Flujo pico', dist.pico_pct, SERIES[3], { fill: true, backgroundColor: SERIES[3] + '33' }),
-      ] },
-      options: oDis,
-    });
-
-    const deo = d.deo || [];
-    chartFluBimodal = dibujar('chart-flu-bimodal', chartFluBimodal, {
-      type: 'line',
-      data: { labels: deo.map(x => x.deo), datasets: [
-        linea('% bimodalidad (caída de flujo)', deo.map(x => x.pct_bimodal), SERIES[0]),
-        linea(`% arranque lento (< ${kg(u.arranque_lento)} kg/min en 0-15 s)`,
-              deo.map(x => x.pct_arranque_lento), SERIES[3]),
-        linea('Duración de ordeño (s)', deo.map(x => x.dur_seg), SERIES[7], pnt),
-        linea('Tiempo de colocación (s)', deo.map(x => x.coloc_seg), SERIES[4], pnt),
-      ] },
-      options: optsDobleEje('% de ordeños', 'segundos'),
-    });
-
-    info.textContent = `${fmt(r.ordenos)} ordeños entre ${desde} y ${hasta} (${dias.length} día(s)).`;
+    fluDatos = await pedirJSON(`/api/flujos/analisis?desde=${desde}&hasta=${hasta}` +
+      `&tambo=${encodeURIComponent(tamboActual)}`);
+    pintarFlujos(fluDatos);
   } catch (e) {
     if (e.calentando) { info.textContent = e.message; fluReintento = setTimeout(cargarFlujos, 4000); return; }
     info.textContent = 'Error: ' + e.message;
   }
 }
 document.getElementById('flu-aplicar').addEventListener('click', cargarFlujos);
-['flu-rmin', 'flu-rmax'].forEach(id =>
-  document.getElementById(id).addEventListener('change', cargarFlujos));
+document.getElementById('flu-tipo').addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-tipo]');
+  if (!btn || btn.dataset.tipo === fluTipo) return;
+  fluTipo = btn.dataset.tipo;
+  document.querySelectorAll('#flu-tipo [data-tipo]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.tipo === fluTipo)));
+  if (fluDatos) pintarFlujos(fluDatos);   // redibuja, no vuelve a consultar
+});
 
 async function cargarCanalesAlertas() {
   const cont = document.getElementById('alertas-canales');

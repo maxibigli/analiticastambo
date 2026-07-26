@@ -34,11 +34,45 @@ tramos promediados, así que acá se calcula con dos criterios complementarios:
 # visitas una por una — lo que cuesta es el escaneo, no el transporte.
 RANGO_FLUJOS_MAX_DIAS = 120
 
-# Umbrales de flujo de retirada (kg/min). Son los mismos que muestra el informe
-# de DelPro como tarjetas; se pueden cambiar desde la interfaz.
-RETIRADA_MIN_DEFECTO = 0.60
-RETIRADA_MAX_DEFECTO = 1.00
-RETIRADA_DELPRO_DEFECTO = 0.80   # el valor configurado en la máquina (referencia)
+# Umbrales de flujo de retirada (kg/min). NO se eligen a mano: salen de la
+# configuración de la propia rotativa, en `CMSMpcSetting.TakeoffLimit` (el
+# "Flujo de retirada DelPro"). La banda de tolerancia es ±25% de ese valor:
+# con el 0,80 configurado en La Ponderosa da 0,60 y 1,00, que son exactamente
+# las tres tarjetas del informe de DelPro.
+TOLERANCIA_RETIRADA = 0.25
+
+# Valor de respaldo por si la consulta de configuración falla o la tabla viene
+# vacía: es el que tiene configurado el tambo hoy.
+RETIRADA_DELPRO_DEFECTO = 0.80
+
+
+SQL_CONFIG_RETIRADA = """
+    SELECT TOP 1 TakeoffLimit AS takeoff_limit, LowFlowLimit AS low_flow_limit
+    FROM CMSMpcSetting
+    ORDER BY OID
+"""
+
+
+def umbrales_retirada(data_config) -> dict:
+    """Convierte la fila de `CMSMpcSetting` en los tres valores del informe.
+
+    `data_config`: resultado de `db.run_query(SQL_CONFIG_RETIRADA)`, o None si
+    no se pudo leer (se cae al valor de respaldo).
+    """
+    limite = RETIRADA_DELPRO_DEFECTO
+    bajo_flujo = None
+    filas = _filas(data_config) if data_config else []
+    if filas and filas[0].get("takeoff_limit"):
+        limite = round(float(filas[0]["takeoff_limit"]), 2)
+        bajo_flujo = filas[0].get("low_flow_limit")
+    return {
+        "retirada_delpro": limite,
+        "retirada_min": round(limite * (1 - TOLERANCIA_RETIRADA), 2),
+        "retirada_max": round(limite * (1 + TOLERANCIA_RETIRADA), 2),
+        "low_flow_limit": round(float(bajo_flujo), 2) if bajo_flujo is not None else None,
+        "tolerancia_pct": int(TOLERANCIA_RETIRADA * 100),
+        "arranque_lento": ARRANQUE_LENTO_UMBRAL,
+    }
 
 # kg/min en los primeros 15 s por debajo de los cuales se considera que la vaca
 # todavía no había bajado la leche cuando se enganchó la pezonera.
@@ -199,8 +233,7 @@ def _num(v, dec=2):
     return None if v is None else round(float(v), dec)
 
 
-def analizar(data_dia, data_grupo, data_dist, data_deo,
-             retirada_min: float, retirada_max: float) -> dict:
+def analizar(data_dia, data_grupo, data_dist, data_deo, umbrales: dict) -> dict:
     """Arma el JSON que consume la página, ya redondeado y ordenado."""
     dias = []
     for f in _filas(data_dia):
@@ -286,11 +319,6 @@ def analizar(data_dia, data_grupo, data_dist, data_deo,
         "distribucion": distribucion,
         "deo": deo,
         "resumen": resumen,
-        "umbrales": {
-            "retirada_min": retirada_min,
-            "retirada_max": retirada_max,
-            "retirada_delpro": RETIRADA_DELPRO_DEFECTO,
-            "arranque_lento": ARRANQUE_LENTO_UMBRAL,
-        },
+        "umbrales": umbrales,
         "tramos": ["0-15 s", "15-30 s", "30-60 s", "60-120 s", "Retirada"],
     }

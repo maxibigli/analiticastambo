@@ -49,6 +49,14 @@ mismo con `setx`.
 - Sesiones de ordeño: el tope de fusión de bloques usa
   `CMSGroupMilkSetting.NumberOfMilkings` (real para este tambo: 3/día), nunca
   un número fijo asumido.
+- Flujos de ordeño: la curva viene resumida en `CMSMilkYield` en cuatro tramos
+  promediados (`Flow0To15`/`Flow15To30`/`Flow30To60`/`Flow60To120`), NO segundo
+  a segundo. Por eso la bimodalidad calculada acá da bastante más baja que la
+  de DelPro (la tendencia sí coincide). `LowFlowDurationInSec` es el "tiempo de
+  colocación" e `IsoDuration` la duración del ordeño, ambos en segundos.
+- Umbrales de retirada: NO inventarlos ni hacerlos editables. Salen de
+  `CMSMpcSetting.TakeoffLimit` (0,80 en este tambo) y la banda del informe es
+  ±25% de ese valor → 0,60 y 1,00, que son las tres tarjetas de DelPro.
 
 ## Entorno de desarrollo (esta PC)
 
