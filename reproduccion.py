@@ -218,7 +218,7 @@ PERIODO_SECO_DIAS = 60
 LACTANCIA_MAX_DIAS = 700
 
 
-def sql_inventario_historico(fechas: list, herd=None) -> str:
+def sql_inventario_historico(fechas: list, herd=None, periodo_seco: int = None) -> str:
     """Composición del rodeo en cada una de las fechas dadas.
 
     Reconstruye el estado de cada animal a una fecha pasada a partir de sus
@@ -241,7 +241,8 @@ def sql_inventario_historico(fechas: list, herd=None) -> str:
     # informe de DelPro para 2025: con esta regla da 2.627 vacas en ordeñe
     # contra 2.678, y 216 días en leche contra 217; con la regla estricta daba
     # 2.242 y 176.
-    seca = (f"CASE WHEN l.sig IS NOT NULL AND DATEDIFF(day, f.d, l.sig) <= {PERIODO_SECO_DIAS}"
+    periodo_seco = periodo_seco or PERIODO_SECO_DIAS
+    seca = (f"CASE WHEN l.sig IS NOT NULL AND DATEDIFF(day, f.d, l.sig) <= {periodo_seco}"
             f" THEN 1 ELSE 0 END")
     return f"""
         WITH fechas AS ({lista}),
@@ -336,7 +337,7 @@ def sql_prenez_por_del(desde: str, hasta: str, herd=None) -> str:
     """
 
 
-def sql_servicios_por_ciclo(hasta: str, ciclos: int, herd=None) -> str:
+def sql_servicios_por_ciclo(hasta: str, ciclos: int, herd=None, ciclo_dias: int = None) -> str:
     """Servicios (inseminaciones) y preñeces confirmadas por ciclo de 21 días
     hacia atrás desde `hasta`, separando primera lactancia del resto.
 
@@ -344,12 +345,13 @@ def sql_servicios_por_ciclo(hasta: str, ciclos: int, herd=None) -> str:
     último ciclo (0), promedio de los últimos 3 (0-2) y de los últimos 12
     meses (todos los ciclos que entren en 365 días).
     """
-    dias = ciclos * CICLO_DIAS
+    ciclo_dias = ciclo_dias or CICLO_DIAS
+    dias = ciclos * ciclo_dias
     return f"""
         WITH ev AS (
             SELECT ae.BasicAnimal AS animal, ae.DateAndTime AS fecha,
                    ae.LactationNumber AS lact,
-                   DATEDIFF(day, ae.DateAndTime, '{hasta}') / {CICLO_DIAS} AS ciclo,
+                   DATEDIFF(day, ae.DateAndTime, '{hasta}') / {ciclo_dias} AS ciclo,
                    CASE WHEN i.OID IS NOT NULL THEN 1 ELSE 0 END AS es_servicio,
                    CASE WHEN p.OID IS NOT NULL AND p.Result = 1 THEN 1 ELSE 0 END AS es_prenez
             FROM AbstractAnimalEvent ae
@@ -505,7 +507,8 @@ def valores_de_rango(data_inv, data_pren, data_prenez, data_ciclos_1, data_ciclo
     return v
 
 
-def armar(valores_r1: dict, valores_r2: dict, rango1: dict, rango2: dict) -> dict:
+def armar(valores_r1: dict, valores_r2: dict, rango1: dict, rango2: dict,
+          espera_voluntaria: int = None, ciclo_dias: int = None) -> dict:
     """Arma el árbol de secciones con meta, condición, los dos valores medidos
     y si cada uno cumple."""
     vigentes = metas()
@@ -550,6 +553,6 @@ def armar(valores_r1: dict, valores_r2: dict, rango1: dict, rango2: dict) -> dic
         "rango1": rango1, "rango2": rango2,
         "resumen1": contar("cumple1"), "resumen2": contar("cumple2"),
         "condiciones": list(CONDICIONES),
-        "espera_voluntaria_dias": ESPERA_VOLUNTARIA_DIAS,
-        "ciclo_dias": CICLO_DIAS,
+        "espera_voluntaria_dias": espera_voluntaria or ESPERA_VOLUNTARIA_DIAS,
+        "ciclo_dias": ciclo_dias or CICLO_DIAS,
     }

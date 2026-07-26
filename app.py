@@ -1471,6 +1471,10 @@ def _clave_proyeccion(tambo, desde, hasta):
 
 def _refresh_proyeccion_async(tambo, desde, hasta):
     herd = rebano.por_defecto(tambo)
+    # Los dias de gestacion y el periodo seco salen de lo que tiene
+    # configurado el tambo en DelPro, no de constantes del codigo.
+    gestacion = parametros.valor("dias_gestacion", tambo)
+    seco = parametros.valor("dias_secado", tambo)
     key = _clave_proyeccion(tambo, desde, hasta)
     with _cache_lock:
         if key in _refreshing:
@@ -1488,7 +1492,7 @@ def _refresh_proyeccion_async(tambo, desde, hasta):
                 "lact": db.run_query(proyeccion.sql_lactantes_hoy(herd), tambo=tambo, max_rows=5),
                 "partos_reales": db.run_query(proyeccion.sql_partos_reales(ini, fin_hist, herd),
                                               tambo=tambo, max_rows=200),
-                "partos_prev": db.run_query(proyeccion.sql_partos_previstos(herd), tambo=tambo, max_rows=200),
+                "partos_prev": db.run_query(proyeccion.sql_partos_previstos(herd, gestacion), tambo=tambo, max_rows=200),
                 "salidas": db.run_query(proyeccion.sql_salidas_reales(ini, fin_hist, herd),
                                         tambo=tambo, max_rows=200),
                 "kg": db.run_query(proyeccion.sql_kg_por_vaca(ini, fin_hist, herd), tambo=tambo, max_rows=200),
@@ -1542,7 +1546,9 @@ def api_proyeccion_rebanos():
 
     resultado = proyeccion.analizar(data["lact"], data["partos_reales"], data["partos_prev"],
                                     data["salidas"], data["kg"], data["descartadas"],
-                                    data["lact_hist"], desde, hasta, hoy)
+                                    data["lact_hist"], desde, hasta, hoy,
+                                    gestacion=parametros.valor("dias_gestacion", tambo),
+                                    periodo_seco=parametros.valor("dias_secado", tambo))
     resultado["desde"] = desde
     resultado["hasta"] = hasta
     return jsonify(resultado)
@@ -1588,14 +1594,16 @@ def _refresh_repro_async(tambo, rangos, key):
                 # trimestre, no el de un día suelto.
                 data[f"{nombre}:inv"] = db.run_query(
                     reproduccion.sql_inventario_historico(
-                        reproduccion.fechas_muestra(desde, hasta), herd),
+                        reproduccion.fechas_muestra(desde, hasta), herd,
+                        parametros.valor("dias_secado", tambo)),
                     tambo=tambo, max_rows=40)
                 data[f"{nombre}:prenez"] = db.run_query(
                     reproduccion.sql_prenez_por_del(desde, hasta, herd), tambo=tambo, max_rows=20)
                 # Ventanas de ciclos, contadas hacia atrás desde el fin del rango.
                 for suf, ciclos in (("c1", 1), ("c3", 3), ("c12", 18)):
                     data[f"{nombre}:{suf}"] = db.run_query(
-                        reproduccion.sql_servicios_por_ciclo(hasta, ciclos, herd),
+                        reproduccion.sql_servicios_por_ciclo(
+                            hasta, ciclos, herd, parametros.valor("ciclo_celo", tambo)),
                         tambo=tambo, max_rows=200)
                 data[f"{nombre}:ab3c"] = db.run_query(
                     reproduccion.sql_abortos(
@@ -1688,7 +1696,9 @@ def api_reproduccion_resultados():
     resultado = reproduccion.armar(
         valores("r1"), valores("r2"),
         {"desde": rangos["r1"][0], "hasta": rangos["r1"][1], "rebano": herd1},
-        {"desde": rangos["r2"][0], "hasta": rangos["r2"][1], "rebano": herd2})
+        {"desde": rangos["r2"][0], "hasta": rangos["r2"][1], "rebano": herd2},
+        espera_voluntaria=parametros.valor("espera_voluntaria", tambo),
+        ciclo_dias=parametros.valor("ciclo_celo", tambo))
     return jsonify(resultado)
 
 
@@ -1898,7 +1908,9 @@ def api_partos_secados():
         def run(k=key):
             try:
                 _cache_set(k, {
-                    "esperados": db.run_query(partos_secados.sql_esperados(categoria, herd),
+                    "esperados": db.run_query(partos_secados.sql_esperados(
+                        categoria, herd, parametros.valor("dias_gestacion", tambo),
+                        parametros.valor("dias_secado", tambo)),
                                               tambo=tambo, max_rows=4000),
                     "descarte": db.run_query(partos_secados.sql_descarte_mensual(herd),
                                              tambo=tambo, max_rows=5),

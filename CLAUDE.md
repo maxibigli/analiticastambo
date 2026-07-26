@@ -32,36 +32,23 @@ mismo con `setx`.
 
 ## Dónde quedamos (26/07/2026)
 
-**BUG ACTIVO, arreglar primero.** `parametros.py` ya lee los parámetros
-reproductivos reales de DelPro (tabla `ReproductionSetting`), pero los módulos
-de cálculo todavía usan constantes hardcodeadas. La que importa:
+**NUNCA hardcodear parámetros reproductivos.** Salen de DelPro
+(`ReproductionSetting`) vía `parametros.valor(clave, tambo)`. Este tambo tiene
+gestación 280, secado **50** (el defecto de DelPro es 60, y usarlo corría diez
+días la fecha de secado de cada vaca), espera voluntaria **53** y ciclo 21.
+Las constantes de módulo quedan solo como respaldo si falla la consulta.
 
-    Secado: el tambo usa 50 días, el código usa 60 (el defecto de DelPro).
+**Hallazgo sin resolver, del lado del tambo:** las gestaciones reales promedian
+**276,8 días** (1.532 partos) contra los 280 configurados. Son 3,2 días de
+corrimiento en todas las fechas de parto y secado proyectadas. Se corrige
+cambiando el parámetro en DelPro, no en el código. La pestaña "Análisis de
+Gestación" lo muestra como advertencia.
 
-Mueve la fecha de secado de cada vaca diez días, y con eso el reparto mensual
-de secados y la curva de vacas en ordeñe en Proyección de Rebaños, Análisis
-Reproductivo y Partos y Secados. Los partos, que son la entrada principal, no
-se ven afectados. También hay que pasar la espera voluntaria de 50 a 53.
-Requiere convertir las constantes de módulo en parámetros de función, porque
-ahora dependen del tambo.
-
-**Cola de secciones pendientes, en orden:**
-
-1. Enchufar `parametros.valor()` en `proyeccion.py`, `reproduccion.py`,
-   `partos_secados.py` y `preneces.py` (el bug de arriba).
-2. Pestaña "Parámetros Reproductivos", PRIMERA de Análisis Reproductivo: los
-   20 parámetros con valor/defecto/mín/máx/activo, marcando los que el tambo
-   cambió, más el bloque MilkMetric (descarte 24% anual, lat/long del tambo:
-   -36.001618 / -62.778799).
-3. "Tasa de preñez por ciclo y por mes". Fórmulas ya verificadas contra el
-   informe: %Celo = con celo/aptas, %Inseminación = inseminadas/aptas,
-   %Preñadas = preñadas/aptas, %Concepción = preñadas/inseminadas,
-   %Aborto = abortos/preñadas. Ciclos de 21 días corridos. Falta reconstruir
-   "aptas" (en ordeñe, pasada la espera voluntaria, no preñada al inicio del
-   ciclo) — misma técnica que el inventario histórico de `reproduccion.py`.
-4. "Análisis de Gestación" (última): duración real de las gestaciones por mes
-   de parto, L0 contra L1+. Sirve para contrastar los 280 días configurados
-   contra los reales (medidos: 276,5 de promedio).
+**Pendiente:** pestaña "Parámetros Reproductivos", PRIMERA de Análisis
+Reproductivo. El endpoint `/api/reproduccion/parametros` ya existe y devuelve
+los 20 parámetros con valor/defecto/mín/máx/activo y cuáles cambió el tambo;
+falta la página. Sumar también el bloque MilkMetric (descarte 24% anual,
+lat/long del tambo: -36.001618 / -62.778799), que NO está en la base.
 
 ## Trampas del esquema DDM (ya corregidas, no reintroducir)
 

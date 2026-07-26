@@ -56,21 +56,26 @@ def _filtro_categoria(cat: str) -> str:
     }.get(cat, "1 = 1")
 
 
-def sql_esperados(categoria: str = "todas", herd=None) -> str:
+def sql_esperados(categoria: str = "todas", herd=None,
+                  gestacion: int = None, periodo_seco: int = None) -> str:
     """Un renglón por animal preñado, con su parto y su secado esperados.
 
     El parto esperado sale de la inseminación efectiva más la gestación; el
     secado, de restarle el período seco. La leche de los últimos 7 días sirve
     para decidir el orden de secado: una vaca que ya bajó a poco se seca sin
     costo, una que todavía produce bien se puede estirar.
+
+    `gestacion` y `periodo_seco` salen de los parámetros del tambo en DelPro.
     """
+    gestacion = gestacion or GESTACION_DIAS
+    periodo_seco = periodo_seco or PERIODO_SECO_DIAS
     return f"""
         WITH pren AS (
             SELECT b.OID AS oid, b.Number AS rp, r.LactationNumber AS lact,
                    b.ToBeCulled AS descartar,
                    r.LastLactationChangeDate AS ult_parto,
                    ae.DateAndTime AS f_insem,
-                   DATEADD(day, {GESTACION_DIAS}, ae.DateAndTime) AS parto_esperado
+                   DATEADD(day, {gestacion}, ae.DateAndTime) AS parto_esperado
             FROM AnimalReproductionInfo r
             JOIN BasicAnimal b ON b.OID = r.Animal AND b.GCRecord IS NULL
                               AND b.ExitDate IS NULL AND b.Number > 0
@@ -85,9 +90,9 @@ def sql_esperados(categoria: str = "todas", herd=None) -> str:
                DATEDIFF(day, p.ult_parto, GETDATE()) AS deo,
                CONVERT(varchar(10), p.parto_esperado, 23) AS parto_esperado,
                DATEDIFF(day, GETDATE(), p.parto_esperado) AS dias_al_parto,
-               CONVERT(varchar(10), DATEADD(day, -{PERIODO_SECO_DIAS}, p.parto_esperado), 23)
+               CONVERT(varchar(10), DATEADD(day, -{periodo_seco}, p.parto_esperado), 23)
                    AS secado_esperado,
-               DATEDIFF(day, GETDATE(), DATEADD(day, -{PERIODO_SECO_DIAS}, p.parto_esperado))
+               DATEDIFF(day, GETDATE(), DATEADD(day, -{periodo_seco}, p.parto_esperado))
                    AS dias_al_secado,
                ISNULL(CAST(p.descartar AS int), 0) AS descartar,
                leche.kg7 AS leche_7d,

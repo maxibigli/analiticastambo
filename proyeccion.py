@@ -142,9 +142,10 @@ def sql_partos_reales(desde: str, hasta: str, herd=None) -> str:
 #   - inseminación anterior al último parto (dato viejo que quedó colgado);
 #   - inseminación de hace más de PRENEZ_MAX_DIAS (ese animal ya tendría que
 #     haber parido: la preñez está mal cargada).
-def sql_partos_previstos(herd=None) -> str:
+def sql_partos_previstos(herd=None, gestacion: int = None) -> str:
+    gestacion = gestacion or GESTACION_DIAS
     return f"""
-    SELECT FORMAT(DATEADD(day, {GESTACION_DIAS}, ae.DateAndTime), 'yyyy-MM') AS mes,
+    SELECT FORMAT(DATEADD(day, {gestacion}, ae.DateAndTime), 'yyyy-MM') AS mes,
            SUM(CASE WHEN r.LactationNumber = 0 THEN 0 ELSE 1 END) AS vacas,
            SUM(CASE WHEN r.LactationNumber = 0 THEN 1 ELSE 0 END) AS novillas
     FROM AnimalReproductionInfo r
@@ -156,7 +157,7 @@ def sql_partos_previstos(herd=None) -> str:
       AND (r.LastLactationChangeDate IS NULL OR ae.DateAndTime > r.LastLactationChangeDate)
       AND DATEDIFF(day, ae.DateAndTime, GETDATE()) BETWEEN 0 AND {PRENEZ_MAX_DIAS}
       AND {rebano.filtro('b', herd)}
-    GROUP BY FORMAT(DATEADD(day, {GESTACION_DIAS}, ae.DateAndTime), 'yyyy-MM')
+    GROUP BY FORMAT(DATEADD(day, {gestacion}, ae.DateAndTime), 'yyyy-MM')
 """
 
 
@@ -276,7 +277,7 @@ def _por_mes(data, *campos):
     return out
 
 
-def _secados_desde_partos(partos_por_mes: dict) -> dict:
+def _secados_desde_partos(partos_por_mes: dict, periodo_seco: int = None) -> dict:
     """Secados por mes, derivados de los partos.
 
     Una vaca que pare el día D se secó PERIODO_SECO_DIAS antes. A nivel mes,
@@ -284,6 +285,7 @@ def _secados_desde_partos(partos_por_mes: dict) -> dict:
     de parto entre los dos meses de secado que le corresponden, en proporción a
     cuántos días de ese mes caen en cada uno.
     """
+    periodo_seco = periodo_seco or PERIODO_SECO_DIAS
     secados = {}
     for mes, total in partos_por_mes.items():
         if not total:
@@ -293,7 +295,7 @@ def _secados_desde_partos(partos_por_mes: dict) -> dict:
         # Cada día del mes de parto aporta su secado a mes(día - período seco).
         reparto = {}
         for dia in range(ndias):
-            fecha_secado = d1 + datetime.timedelta(days=dia - PERIODO_SECO_DIAS)
+            fecha_secado = d1 + datetime.timedelta(days=dia - periodo_seco)
             reparto[_mes(fecha_secado)] = reparto.get(_mes(fecha_secado), 0) + 1
         for m, cuenta in reparto.items():
             secados[m] = secados.get(m, 0) + total * cuenta / ndias
@@ -302,8 +304,15 @@ def _secados_desde_partos(partos_por_mes: dict) -> dict:
 
 def analizar(data_lact_hoy, data_partos_reales, data_partos_prev, data_salidas,
              data_kg, data_descartadas, data_lact_hist, desde: str, hasta: str,
-             hoy: datetime.date) -> dict:
-    """Arma la serie mensual completa, real hacia atrás y proyectada hacia adelante."""
+             hoy: datetime.date, gestacion: int = None, periodo_seco: int = None) -> dict:
+    """Arma la serie mensual completa, real hacia atrás y proyectada hacia adelante.
+
+    `gestacion` y `periodo_seco` salen de los parámetros que tiene configurados
+    el tambo en DelPro (ver `parametros.py`); las constantes del módulo quedan
+    solo como respaldo.
+    """
+    gestacion = gestacion or GESTACION_DIAS
+    periodo_seco = periodo_seco or PERIODO_SECO_DIAS
     mes_actual = _mes(hoy)
 
     # La serie interna arranca 13 meses antes de lo pedido para poder calcular
@@ -326,7 +335,8 @@ def analizar(data_lact_hoy, data_partos_reales, data_partos_prev, data_salidas,
             v, n = previstos.get(m, (0, 0))
         partos[m] = (int(v or 0), int(n or 0))
 
-    secados = _secados_desde_partos({m: partos[m][0] + partos[m][1] for m in meses})
+    secados = _secados_desde_partos({m: partos[m][0] + partos[m][1] for m in meses},
+                                    periodo_seco)
 
     # Tasa de salida del mismo mes del año pasado, en % sobre las lactantes de
     # ese mes. Es lo que se usa para proyectar las salidas futuras.
@@ -422,7 +432,7 @@ def analizar(data_lact_hoy, data_partos_reales, data_partos_prev, data_salidas,
             "prenadas_descartadas": int(desc[0] or 0),
         },
         "parametros": {
-            "gestacion_dias": GESTACION_DIAS,
-            "periodo_seco_dias": PERIODO_SECO_DIAS,
+            "gestacion_dias": gestacion,
+            "periodo_seco_dias": periodo_seco,
         },
     }
