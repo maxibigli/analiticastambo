@@ -28,8 +28,10 @@ import partos_secados
 import performance
 import podal
 import preneces
+import parametros
 import proyeccion
 import rebano
+import tasa_prenez
 import reproduccion
 import resumen
 import rutina
@@ -1916,6 +1918,101 @@ def api_partos_secados():
     resultado.update({"categoria": categoria, "rebano": herd,
                       "categorias": partos_secados.CATEGORIAS})
     return jsonify(resultado)
+
+
+@app.get("/api/reproduccion/parametros")
+@auth.requiere_rol("admin")
+def api_reproduccion_parametros():
+    """Parámetros reproductivos configurados en DelPro (`ReproductionSetting`),
+    que son los que gobiernan todos los cálculos. Ver `parametros.py`."""
+    tambo = _tambo_del_request()
+    key = f"{tambo}:parametros_repro"
+    data, _ = _cache_get(key, allow_stale=True, ttl=1800)
+    if data is None:
+        try:
+            data = db.run_query(parametros.SQL, tambo=tambo, max_rows=60)
+            _cache_set(key, data)
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": str(exc)}), 502
+    return jsonify({"parametros": parametros.listado(data)})
+
+
+@app.get("/api/reproduccion/tasa_prenez")
+@auth.requiere_rol("admin")
+def api_tasa_prenez():
+    """"Tasa de preñez": el embudo aptas → celo → servicio → preñez, por ciclo
+    de 21 días o por mes. Ver `tasa_prenez.py`."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    try:
+        hasta = (datetime.datetime.strptime(request.args["hasta"], "%Y-%m-%d").date()
+                 if request.args.get("hasta") else hoy)
+        desde = (datetime.datetime.strptime(request.args["desde"], "%Y-%m-%d").date()
+                 if request.args.get("desde") else hasta - datetime.timedelta(days=365))
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    if desde > hasta:
+        desde, hasta = hasta, desde
+    if (hasta - desde).days > tasa_prenez.RANGO_MAX_DIAS:
+        return jsonify({"error": f"El rango no puede superar {tasa_prenez.RANGO_MAX_DIAS} días."}), 400
+
+    tipo = (request.args.get("tipo") or tasa_prenez.TIPO_VACA).lower()
+    if tipo not in tasa_prenez.TIPOS:
+        return jsonify({"error": f"Tipo inválido (esperado: {', '.join(tasa_prenez.TIPOS)})."}), 400
+    herd_param = (request.args.get("rebano") or "").strip()
+    if not herd_param:
+        herd = rebano.por_defecto(tambo)
+    elif herd_param.lower() == rebano.TODOS:
+        herd = rebano.TODOS
+    else:
+        try:
+            herd = int(herd_param)
+        except ValueError:
+            return jsonify({"error": f"Rebaño inválido: {herd_param!r}"}), 400
+
+    # Los umbrales salen de la configuración del tambo, no de constantes.
+    pev = parametros.valor("espera_voluntaria", tambo)
+    ciclo = parametros.valor("ciclo_celo", tambo)
+    edad = parametros.valor("novillas_primera_ia", tambo, 447)
+
+    key = f"{tambo}:tasa_prenez:{desde}:{hasta}:{tipo}:{herd}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=REPRO_CACHE_TTL_S)
+    if data is None:
+        with _cache_lock:
+            arrancar = key not in _refreshing
+            if arrancar:
+                _refreshing.add(key)
+
+        def run(k=key):
+            try:
+                salida = {}
+                for dim in (tasa_prenez.DIM_CICLO, tasa_prenez.DIM_MES):
+                    vs = tasa_prenez.ventanas(desde.isoformat(), hasta.isoformat(), dim, ciclo)
+                    salida[dim] = {
+                        "ventanas": vs,
+                        "datos": [db.run_query(
+                            tasa_prenez.sql_embudo(v, tipo, pev, edad, herd),
+                            tambo=tambo, max_rows=5) for v in vs],
+                    }
+                _cache_set(k, salida)
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                with _cache_lock:
+                    _refreshing.discard(k)
+
+        if arrancar:
+            threading.Thread(target=run, daemon=True).start()
+        return jsonify({"calentando": True, "mensaje": "Calculando el embudo reproductivo…"}), 202
+
+    return jsonify({
+        "desde": desde.isoformat(), "hasta": hasta.isoformat(),
+        "tipo": tipo, "rebano": herd,
+        "ciclo": tasa_prenez.analizar(data["ciclo"]["datos"], data["ciclo"]["ventanas"],
+                                      tipo, ciclo, pev),
+        "mes": tasa_prenez.analizar(data["mes"]["datos"], data["mes"]["ventanas"],
+                                    tipo, ciclo, pev),
+    })
 
 
 @app.get("/api/reproduccion/rebanos")

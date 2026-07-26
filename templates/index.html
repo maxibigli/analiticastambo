@@ -417,7 +417,59 @@
         <button class="lac-segment__item" data-tab="preneces" aria-pressed="false">Indicadores de Preñez</button>
         <button class="lac-segment__item" data-tab="performance" aria-pressed="false">Performance</button>
         <button class="lac-segment__item" data-tab="partos" aria-pressed="false">Partos y Secados</button>
+        <button class="lac-segment__item" data-tab="tasa" aria-pressed="false">Tasa de Preñez</button>
       </div>
+    </div>
+
+    <div id="repro-panel-tasa" hidden>
+      <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Animal
+          <select id="tp-tipo" style="padding:6px 8px">
+            <option value="vaca" selected>Vacas</option>
+            <option value="novilla">Novillas</option>
+            <option value="ambas">Vacas y novillas</option>
+          </select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Rebaño
+          <select id="tp-rebano" style="padding:6px 8px"></select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="tp-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="tp-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="tp-aplicar">Aplicar</button>
+        <div class="lac-segment" id="tp-dim" role="group" aria-label="Dimensión" style="margin-left:auto">
+          <button class="lac-segment__item" data-dim="ciclo" aria-pressed="true">Por ciclo</button>
+          <button class="lac-segment__item" data-dim="mes" aria-pressed="false">Por mes</button>
+        </div>
+      </div>
+      <p class="explica" style="margin-top:10px">
+        <b>Qué busca.</b> Es el embudo reproductivo: de todas las vacas que estaban en condiciones de
+        recibir servicio, a cuántas se les detectó celo, de esas a cuántas se inseminó, y de esas
+        cuántas quedaron. <b>Cada escalón que se pierde tiene una causa distinta y se arregla
+        distinto</b>:
+        <br>· <b>aptas → con celo</b> es detección de celo (observación, podómetros, collares);
+        <br>· <b>con celo → inseminada</b> es disponibilidad de inseminador, semen o una decisión;
+        <br>· <b>inseminada → preñada</b> es calidad de semen, momento del servicio o sanidad.
+        <br><b>Cómo se calcula.</b> Una vaca es <b>apta</b> en un ciclo si al terminar el ciclo ya
+        parió, pasó el período de espera voluntario, sigue en el rodeo y no estaba preñada al
+        empezar. El período de espera y la duración del ciclo <b>no están fijos en el código</b>:
+        salen de los parámetros que tiene configurados el tambo en DelPro.
+        <br><b>Verificación.</b> Contra el informe de DelPro, las aptas del primer ciclo dan 1.112
+        exacto, y el % de concepción queda a 1-3 puntos (40,7 contra 42; 41,9 contra 45). Celo e
+        inseminación quedan unos 4 puntos abajo por el faltante de eventos de esta base.
+      </p>
+      <div class="aviso" id="tp-info" style="margin-top:8px"></div>
+      <div class="aviso" style="margin-top:6px;color:var(--warning)">
+        ⚠ La columna <b>% Aborto</b> no cierra contra DelPro: da alrededor del triple (38% contra
+        14%). No se encontró qué criterio adicional aplica DelPro para contarlos. Se muestra igual,
+        pero <b>no la tomes como número firme</b> — el resto del embudo sí es confiable.
+      </div>
+      <div class="kpis" id="tp-kpis" style="margin-top:10px"></div>
+      <div class="chart-box" style="height:330px;margin-top:12px"><canvas id="chart-tasa-prenez"></canvas></div>
+      <div style="overflow-x:auto;margin-top:14px" id="tp-tabla"></div>
     </div>
 
     <div id="repro-panel-partos" hidden>
@@ -2767,6 +2819,106 @@ document.getElementById('ps-aplicar').addEventListener('click', cargarPartosSeca
 ['ps-categoria', 'ps-rebano', 'ps-meses'].forEach(id =>
   document.getElementById(id).addEventListener('change', cargarPartosSecados));
 
+// --- Tasa de preñez (embudo reproductivo) ------------------------------------
+let chartTasaPrenez = null, tpDatos = null, tpDim = 'ciclo', tpReintento = null;
+
+function pintarTasaPrenez() {
+  if (!tpDatos) return;
+  const v = tpDatos[tpDim], filas = v.filas || [], t = v.totales || {};
+  const etiqueta = f => tpDim === 'ciclo'
+    ? `${f.n}` : etiquetaMes(f.desde.slice(0, 7));
+
+  document.getElementById('tp-kpis').innerHTML = [
+    ['Aptas (suma)', fmt(t.aptas)],
+    ['Detección de celo', t.pct_celo == null ? '—' : fmt(t.pct_celo) + ' %'],
+    ['Tasa de servicio', t.pct_insem == null ? '—' : fmt(t.pct_insem) + ' %'],
+    ['Tasa de preñez', t.pct_prenadas == null ? '—' : fmt(t.pct_prenadas) + ' %'],
+    ['Tasa de concepción', t.pct_concepcion == null ? '—' : fmt(t.pct_concepcion) + ' %'],
+    ['Espera voluntaria', fmt(v.espera_voluntaria) + ' d'],
+  ].map(([l, x]) => `<div class="tile"><div class="label">${l}</div><div class="value">${x}</div></div>`).join('');
+
+  const o = baseOpts(true);
+  o.interaction = { mode: 'index', intersect: false };
+  o.scales.y.title = { display: true, text: '%' };
+  o.scales.y1 = {
+    position: 'right', beginAtZero: true, grid: { drawOnChartArea: false },
+    border: { display: false }, title: { display: true, text: 'conteos' },
+  };
+  chartTasaPrenez = dibujar('chart-tasa-prenez', chartTasaPrenez, {
+    type: 'bar',
+    data: { labels: filas.map(etiqueta), datasets: [
+      { type: 'bar', label: '% Inseminación', data: filas.map(f => f.pct_insem),
+        backgroundColor: SERIES[2], borderWidth: 0, maxBarThickness: 26, borderRadius: 3 },
+      { type: 'bar', label: '% Preñadas', data: filas.map(f => f.pct_prenadas),
+        backgroundColor: SERIES[1], borderWidth: 0, maxBarThickness: 26, borderRadius: 3 },
+      { type: 'bar', label: '% Aborto', data: filas.map(f => f.pct_aborto),
+        backgroundColor: SERIES[5], borderWidth: 0, maxBarThickness: 26, borderRadius: 3 },
+      { type: 'line', label: 'Aptas', yAxisID: 'y1', data: filas.map(f => f.aptas),
+        borderColor: SERIES[4], backgroundColor: SERIES[4], borderWidth: 2, pointRadius: 3, tension: .3 },
+      { type: 'line', label: 'Con celo', yAxisID: 'y1', data: filas.map(f => f.con_celo),
+        borderColor: SERIES[0], backgroundColor: SERIES[0], borderWidth: 2, pointRadius: 3, tension: .3 },
+    ] },
+    options: o,
+  });
+
+  tablaInteractiva('tp-tabla', [
+    { clave: 'n', titulo: tpDim === 'ciclo' ? 'Ciclo N°' : 'Mes N°', tipo: 'num', fmt: x => String(x) },
+    { clave: 'desde', titulo: 'Desde', tipo: 'texto' },
+    { clave: 'hasta', titulo: 'Hasta', tipo: 'texto' },
+    { clave: 'aptas', titulo: 'Aptas', tipo: 'num' },
+    { clave: 'con_celo', titulo: 'Con celo', tipo: 'num' },
+    { clave: 'pct_celo', titulo: '% Celo', tipo: 'num', fmt: x => fmt(x) + ' %' },
+    { clave: 'inseminadas', titulo: 'Inseminadas', tipo: 'num' },
+    { clave: 'pct_insem', titulo: '% Inseminación', tipo: 'num', fmt: x => fmt(x) + ' %' },
+    { clave: 'prenadas', titulo: 'Preñadas', tipo: 'num' },
+    { clave: 'pct_prenadas', titulo: '% Preñadas', tipo: 'num', fmt: x => fmt(x) + ' %' },
+    { clave: 'abortos', titulo: 'Abortos', tipo: 'num' },
+    { clave: 'pct_concepcion', titulo: '% Concepción', tipo: 'num', fmt: x => fmt(x) + ' %' },
+    { clave: 'pct_aborto', titulo: '% Aborto', tipo: 'num', fmt: x => fmt(x) + ' %' },
+  ], filas, { orden: 'n' });
+
+  document.getElementById('tp-info').textContent =
+    `${filas.length} ${tpDim === 'ciclo' ? 'ciclos de ' + v.ciclo_dias + ' días' : 'meses'} ` +
+    `entre ${tpDatos.desde} y ${tpDatos.hasta} · ${v.tipo_label}. ` +
+    `Espera voluntaria de ${v.espera_voluntaria} días, tomada de los parámetros de DelPro.`;
+}
+
+async function cargarTasaPrenez() {
+  clearTimeout(tpReintento);
+  const info = document.getElementById('tp-info');
+  await cargarRebanos();
+  const sel = document.getElementById('tp-rebano');
+  if (!sel.options.length && reproRebanos) {
+    const def = (reproRebanos.find(x => x.es_el_tambo) || {}).herd;
+    sel.innerHTML = reproRebanos.map(x =>
+      `<option value="${x.herd}"${x.herd === def ? ' selected' : ''}>${x.nombre}</option>`).join('');
+  }
+  const g = (id, def) => { const e = document.getElementById(id); if (!e.value) e.value = def; return e.value; };
+  const hasta = g('tp-hasta', hoyISO());
+  const desde = g('tp-desde', menosDias(hasta, 365));
+  const tipo = document.getElementById('tp-tipo').value;
+  info.textContent = 'Calculando el embudo…';
+  try {
+    tpDatos = await pedirJSON(`/api/reproduccion/tasa_prenez?desde=${desde}&hasta=${hasta}` +
+      `&tipo=${tipo}&rebano=${encodeURIComponent(sel.value)}&tambo=${encodeURIComponent(tamboActual)}`);
+    pintarTasaPrenez();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; tpReintento = setTimeout(cargarTasaPrenez, 5000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('tp-aplicar').addEventListener('click', cargarTasaPrenez);
+['tp-tipo', 'tp-rebano'].forEach(id =>
+  document.getElementById(id).addEventListener('change', cargarTasaPrenez));
+document.getElementById('tp-dim').addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-dim]');
+  if (!btn || btn.dataset.dim === tpDim) return;
+  tpDim = btn.dataset.dim;
+  document.querySelectorAll('#tp-dim [data-dim]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.dim === tpDim)));
+  pintarTasaPrenez();   // las dos vistas vienen juntas: no vuelve a consultar
+});
+
 // --- Performance -------------------------------------------------------------
 let chartPerfCurva = null, chartPerfPers = null, chartPerfDist = null, chartPerfConc = null;
 let perfDatos = null, perfDim = 'lactancia', perfReintento = null;
@@ -2952,9 +3104,12 @@ document.getElementById('repro-tabs').addEventListener('click', ev => {
   document.getElementById('repro-panel-preneces').hidden = tab !== 'preneces';
   document.getElementById('repro-panel-performance').hidden = tab !== 'performance';
   document.getElementById('repro-panel-partos').hidden = tab !== 'partos';
+  document.getElementById('repro-panel-tasa').hidden = tab !== 'tasa';
   document.getElementById('repro-panel-metas').hidden = tab !== 'metas';
   if (tab === 'partos' && !psDatos) cargarPartosSecados();
+  if (tab === 'tasa' && !tpDatos) cargarTasaPrenez();
   if (tab !== 'partos') clearTimeout(psReintento);
+  if (tab !== 'tasa') clearTimeout(tpReintento);
   if (tab === 'metas' && !reproMetas) cargarMetas();
   if (tab === 'preneces' && !prenDatos) cargarPreneces();
   if (tab === 'performance' && !perfDatos) cargarPerformance();
