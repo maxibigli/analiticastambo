@@ -5605,15 +5605,21 @@ function concPintar(sucio) {
              data-oid="${c.oid}">Aceptar</button></td>
       </tr>`).join('')).join('')}</tbody></table></div>` : '';
 
-  // Selector de grupos por lote. Las cabezas van a la vista para comparar a ojo
-  // —que es lo que reemplaza a la sugerencia por cantidad, que se sacó por
-  // inventar emparejamientos.
-  const opciones = (oids) => (d.grupos || []).map(g => {
+  // Selector de grupos por lote: CASILLAS, no un <select multiple>. Con el
+  // select, un clic simple reemplaza toda la selección y la primera opción de
+  // la lista es siempre "Rodeo 1": un clic de más lo sacaba de su propio lote
+  // sin que se notara. Pasó de verdad. Con casillas cada clic afecta a un solo
+  // grupo. Las cabezas van a la vista para comparar a ojo, que es lo que
+  // reemplaza a la sugerencia por cantidad (se sacó por inventar parejas).
+  const opciones = (lote, oids) => (d.grupos || []).map(g => {
     const otro = asignado[g.oid];
     const ocupado = otro && !oids.includes(g.oid);
-    return `<option value="${g.oid}"${oids.includes(g.oid) ? ' selected' : ''}>` +
-      `${g.numero} · ${g.nombre} (${fmt(g.cabezas)})${g.es_ordene ? ' · ordeñe' : ''}` +
-      `${ocupado ? ' — ya está en ' + otro : ''}</option>`;
+    return `<label style="display:block;white-space:nowrap;font-size:12.5px;padding:1px 0">
+      <input type="checkbox" class="conc-grupo" data-lote="${encodeURIComponent(lote)}"
+        value="${g.oid}"${oids.includes(g.oid) ? ' checked' : ''}>
+      ${g.numero} · ${g.nombre} <span class="aviso">(${fmt(g.cabezas)}${
+        g.es_ordene ? ' · ordeñe' : ''}${ocupado ? ' · ya está en ' + otro : ''})</span>
+    </label>`;
   }).join('');
 
   const lotes = (d.lotes || []).slice().sort((a, b) =>
@@ -5636,8 +5642,8 @@ function concPintar(sucio) {
       <td class="aviso">${f.categoria || '—'}</td>
       <td class="num">${f.cabezas_proveedor == null ? '—' : fmt(f.cabezas_proveedor)}</td>
       <td class="num">${f.kg_ms_cabeza == null ? '—' : fmt(f.kg_ms_cabeza)}</td>
-      <td><select multiple size="4" class="conc-grupos" data-lote="${encodeURIComponent(f.lote)}"
-           style="min-width:250px;padding:4px">${opciones(oids)}</select></td>
+      <td><div style="max-height:104px;overflow:auto;min-width:260px;padding:4px;
+           border:1px solid var(--border);border-radius:6px">${opciones(f.lote, oids)}</div></td>
       <td class="num">${oids.length ? fmt(cabDel) : '—'}</td>
       <td class="num">${dif == null ? '—' : (dif > 0 ? '+' : '') + fmt(dif) +
         (pct == null ? '' : ` <span class="aviso">(${pct > 0 ? '+' : ''}${pct.toFixed(1)}%)</span>`)}</td>
@@ -5680,25 +5686,40 @@ function concPintar(sucio) {
       <table class="lac-table" style="margin-top:6px">${cabG}
         <tbody>${otros.map(filaGrupo).join('')}</tbody></table></details>`;
 
-  document.querySelectorAll('.conc-grupos').forEach(sel => sel.addEventListener('change', () =>
-    concAsignar(decodeURIComponent(sel.dataset.lote),
-                [...sel.selectedOptions].map(o => Number(o.value)))));
-  document.querySelectorAll('.conc-aceptar').forEach(b => b.addEventListener('click', () => {
-    const lote = decodeURIComponent(b.dataset.lote);
-    const previos = (concMapeo.lotes.find(l => l.lote === lote) || {}).grupos || [];
-    concAsignar(lote, [...new Set([...previos, Number(b.dataset.oid)])]);
-  }));
-  document.querySelectorAll('.conc-silenciar').forEach(c => c.addEventListener('change', () => {
-    const oid = Number(c.dataset.oid);
-    const lista = new Set(concMapeo.grupos_sin_alimentacion || []);
-    c.checked ? lista.add(oid) : lista.delete(oid);
-    concMapeo.grupos_sin_alimentacion = [...lista];
-    concPintar(true);
-  }));
-
   if (sucio) document.getElementById('conc-info').innerHTML =
     '<b>Hay cambios sin guardar.</b> Las diferencias de arriba se recalculan al guardar.';
 }
+
+// Los listeners van UNA vez sobre los contenedores, no sobre cada control:
+// `concPintar` reescribe el innerHTML en cada cambio y volver a enganchar
+// cientos de casillas en cada repintado es tan lento como frágil.
+document.getElementById('conc-tabla-lotes').addEventListener('change', (ev) => {
+  const c = ev.target.closest('.conc-grupo');
+  if (!c) return;
+  const lote = decodeURIComponent(c.dataset.lote);
+  const previos = (concMapeo.lotes.find(l => l.lote === lote) || {}).grupos || [];
+  const oid = Number(c.value);
+  concAsignar(lote, c.checked ? [...new Set([...previos, oid])]
+                              : previos.filter(o => o !== oid));
+});
+
+document.getElementById('conc-sugerencias').addEventListener('click', (ev) => {
+  const b = ev.target.closest('.conc-aceptar');
+  if (!b) return;
+  const lote = decodeURIComponent(b.dataset.lote);
+  const previos = (concMapeo.lotes.find(l => l.lote === lote) || {}).grupos || [];
+  concAsignar(lote, [...new Set([...previos, Number(b.dataset.oid)])]);
+});
+
+document.getElementById('conc-tabla-grupos').addEventListener('change', (ev) => {
+  const c = ev.target.closest('.conc-silenciar');
+  if (!c) return;
+  const oid = Number(c.dataset.oid);
+  const lista = new Set(concMapeo.grupos_sin_alimentacion || []);
+  c.checked ? lista.add(oid) : lista.delete(oid);
+  concMapeo.grupos_sin_alimentacion = [...lista];
+  concPintar(true);
+});
 
 function concFrescura(d) {
   const f = d.frescura || {};
