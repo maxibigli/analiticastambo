@@ -21,6 +21,7 @@ import conciliacion
 import config_alertas
 import correo
 import db
+import clima
 import ficha_animal
 import flujos
 import gestacion
@@ -2117,6 +2118,89 @@ def api_reproduccion_gestacion():
 
     resultado = gestacion.analizar(data["mes"], data["dist"],
                                    parametros.valor("dias_gestacion", tambo))
+    resultado.update({"desde": desde.isoformat(), "hasta": hasta.isoformat(), "rebano": herd})
+    return jsonify(resultado)
+
+
+def sql_servicios_mensuales(desde, hasta, herd):
+    """Servicios y concepciones por mes. Una concepción es un servicio que
+    después tuvo un chequeo de preñez positivo apuntándole."""
+    return f"""
+        WITH serv AS (
+            SELECT FORMAT(ae.DateAndTime, 'yyyy-MM') AS mes,
+                   CASE WHEN EXISTS (SELECT 1 FROM EventPregCheck p
+                                     WHERE p.EffectiveInsemination = i.OID AND p.Result = 1)
+                        THEN 1 ELSE 0 END AS quedo
+            FROM EventInsemination i
+            JOIN AbstractAnimalEvent ae ON ae.OID = i.OID AND ae.GCRecord IS NULL
+            WHERE ae.DateAndTime >= '{desde}' AND ae.DateAndTime <= '{hasta}'
+              AND ae.LactationNumber >= 1
+              AND {rebano.filtro_por_animal('ae.BasicAnimal', herd)}
+        )
+        SELECT mes, COUNT(*) AS servicios, SUM(quedo) AS concepciones
+        FROM serv GROUP BY mes
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
+    """
+
+
+@app.get("/api/reproduccion/ith")
+@auth.requiere_rol("admin")
+def api_reproduccion_ith():
+    """Estrés calórico contra reproducción: servicios, concepción e ITH por mes.
+
+    Ver `clima.py` — el análisis mostró que la hipótesis simple ("el calor baja
+    la concepción") no se sostiene con estos datos, y que lo que se derrumba en
+    verano son los servicios. El gráfico está armado para que eso se lea."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    try:
+        hasta = (datetime.datetime.strptime(request.args["hasta"], "%Y-%m-%d").date()
+                 if request.args.get("hasta") else hoy)
+        desde = (datetime.datetime.strptime(request.args["desde"], "%Y-%m-%d").date()
+                 if request.args.get("desde") else hasta - datetime.timedelta(days=730))
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    if desde > hasta:
+        desde, hasta = hasta, desde
+
+    herd_param = (request.args.get("rebano") or "").strip()
+    if not herd_param:
+        herd = rebano.por_defecto(tambo)
+    elif herd_param.lower() == rebano.TODOS:
+        herd = rebano.TODOS
+    else:
+        try:
+            herd = int(herd_param)
+        except ValueError:
+            return jsonify({"error": f"Rebaño inválido: {herd_param!r}"}), 400
+
+    key = f"{tambo}:ith:{desde}:{hasta}:{herd}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=REPRO_CACHE_TTL_S)
+    if data is None:
+        with _cache_lock:
+            arrancar = key not in _refreshing
+            if arrancar:
+                _refreshing.add(key)
+
+        def run(k=key):
+            try:
+                _cache_set(k, {
+                    "servicios": db.run_query(
+                        sql_servicios_mensuales(desde.isoformat(), hasta.isoformat(), herd),
+                        tambo=tambo, max_rows=100),
+                    "diario": clima.ith_diario(desde.isoformat(), hasta.isoformat()),
+                })
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                with _cache_lock:
+                    _refreshing.discard(k)
+
+        if arrancar:
+            threading.Thread(target=run, daemon=True).start()
+        return jsonify({"calentando": True, "mensaje": "Trayendo el clima y cruzándolo…"}), 202
+
+    resultado = clima.armar(data["servicios"], data["diario"], hoy)
     resultado.update({"desde": desde.isoformat(), "hasta": hasta.isoformat(), "rebano": herd})
     return jsonify(resultado)
 
