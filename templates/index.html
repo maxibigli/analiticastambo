@@ -5891,16 +5891,12 @@ async function cargarConversion() {
   clearTimeout(cvReintento);
   const dias = document.getElementById('cv-dias').value;
   try {
-    const d = await pedirJSON('/api/alimentacion/conversion?tambo=' +
+    cvDatos = await pedirJSON('/api/alimentacion/conversion?tambo=' +
       encodeURIComponent(tamboActual) + '&dias=' + dias);
-    if (d.calentando) {
-      info.textContent = d.mensaje;
-      cvReintento = setTimeout(cargarConversion, 3000);
-      return;
-    }
-    cvDatos = d;
     pintarConversion();
   } catch (e) {
+    // El 202 ("todavía calculando") viene como excepción, no como respuesta.
+    if (e.calentando) { info.textContent = e.message; cvReintento = setTimeout(cargarConversion, 4000); return; }
     info.textContent = 'Error: ' + e.message;
   }
 }
