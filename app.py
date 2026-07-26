@@ -1700,11 +1700,17 @@ def api_entregas_comparar():
             return jsonify({"error": f"La Serenísima: {exc}"}), 502
 
     desde_s, hasta_s = desde.isoformat(), hasta.isoformat()
-    cicla_por_dia = {}
+    # Solo las cargas que salieron a La Serenísima. Las de guachera las mide el
+    # mismo caudalímetro pero no se venden: contarlas haría aparecer un desvío
+    # contra el comprador que no existe.
+    cargas_venta = cicla.solo_ventas(data_c["cargas"])
+    cicla_por_dia, excluidos_por_dia = {}, {}
     for c in data_c["cargas"]:
         clave = _fecha_ar_a_iso(c["fecha"].split(" ")[0])
-        if desde_s <= clave <= hasta_s and c["lts_cicla"] is not None:
-            cicla_por_dia[clave] = cicla_por_dia.get(clave, 0) + c["lts_cicla"]
+        if not (desde_s <= clave <= hasta_s) or c["lts_cicla"] is None:
+            continue
+        destino = excluidos_por_dia if not c.get("es_venta") else cicla_por_dia
+        destino[clave] = destino.get(clave, 0) + c["lts_cicla"]
 
     laser_por_dia = {}
     for e in data_l["entregas"]:
@@ -1720,12 +1726,19 @@ def api_entregas_comparar():
         dif_pct = round(dif / ll * 100, 1) if (dif is not None and ll) else None
         puntos.append({
             "fecha": dia, "lts_cicla": lc, "lts_serenisima": ll,
+            "lts_otros_destinos": excluidos_por_dia.get(dia),
             "diferencia": dif, "diferencia_pct": dif_pct,
             "alerta": dif_pct is not None and abs(dif_pct) > cicla.UMBRAL_DIF_PCT,
         })
 
+    resumen_c = cicla.resumen(data_c["cargas"])
     return jsonify({"desde": desde_s, "hasta": hasta_s, "dias": puntos,
-                    "cicla_incompleto": data_c.get("incompleto", False)})
+                    "cicla_incompleto": data_c.get("incompleto", False),
+                    "cargas_venta": len(cargas_venta),
+                    "cargas_totales": len(data_c["cargas"]),
+                    "lts_otros_destinos": round(sum(excluidos_por_dia.values())),
+                    "destinos": resumen_c["destinos"],
+                    "destinos_sin_clasificar": resumen_c["destinos_sin_clasificar"]})
 
 
 @app.post("/api/consulta")

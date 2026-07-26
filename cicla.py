@@ -33,6 +33,46 @@ REPORTE_URL = BASE + "/Application/Informes/EquiposTambo/"
 UMBRAL_DIF_PCT = 3.0   # % de diferencia Lts Cicla vs Declarados que dispara alerta
 UMBRAL_TEMP_C = 4.0    # temperatura de entrega (°C) que dispara alerta
 
+# --- Destino de cada carga ---------------------------------------------------
+# No todas las cargas que mide el caudalímetro se venden: algunas van a la
+# guachera (leche para los terneros). Para comparar contra la liquidación del
+# comprador hay que quedarse SOLO con las que salen a La Serenísima.
+#
+# CICLA no guarda el nombre del destino: lo único que trae es el código
+# numérico de la columna "Nro Cliente". Por eso el mapeo vive acá.
+#
+# Los códigos se identificaron por el tamaño de carga (3 semanas de julio 2026):
+#   5003 → 33 cargas, promedio  9.287 lts
+#   4613 → 31 cargas, promedio  8.724 lts
+#    702 →  7 cargas, promedio  5.389 lts
+#     23 → 31 cargas, promedio    653 lts   ← carga de guachera
+#     22 → 18 cargas, promedio    742 lts   ← carga de guachera
+# y el reparto entre venta y guachera lo confirmó el tambo.
+DESTINOS = {
+    "5003": "serenisima",
+    "4613": "serenisima",
+    "702": "serenisima",
+    "22": "guachera",
+    "23": "guachera",
+}
+
+# Un código que no esté en el mapeo NO se cuenta como venta. Es a propósito:
+# sumarlo por defecto inflaría la comparación contra el comprador y taparía
+# justamente el problema que se quiere detectar. Aparecen listados en el
+# resumen (`destinos_sin_clasificar`) para poder agregarlos acá.
+DESTINO_DESCONOCIDO = "sin_clasificar"
+
+ETIQUETAS_DESTINO = {
+    "serenisima": "La Serenísima",
+    "guachera": "Guachera",
+    DESTINO_DESCONOCIDO: "Sin clasificar",
+}
+
+
+def destino_de(nro_cliente) -> str:
+    """Destino de una carga según su 'Nro Cliente' de CICLA."""
+    return DESTINOS.get(str(nro_cliente or "").strip(), DESTINO_DESCONOCIDO)
+
 # Serializa el acceso: un solo login/consulta a CICLA a la vez, para no
 # golpear su servidor con pedidos concurrentes.
 _lock = threading.Lock()
@@ -142,9 +182,13 @@ def obtener_cargas(desde: datetime.date, hasta: datetime.date, usuario: str, pas
         lts_cicla, lts_decl = _num(tds[7]), _num(tds[8])
         diferencia, temp = _num(tds[9]), _num(tds[10])
         dif_pct = round(diferencia / lts_decl * 100, 1) if diferencia is not None and lts_decl else None
+        destino = destino_de(tds[6])
         cargas.append({
             "turno": tds[0], "carga": tds[1], "fecha": tds[2], "cliente": tds[3],
             "equipo": tds[4], "remito": tds[5], "nro_cliente": tds[6],
+            "destino": destino,
+            "destino_label": ETIQUETAS_DESTINO.get(destino, destino),
+            "es_venta": destino == "serenisima",
             "lts_cicla": lts_cicla, "lts_declarados": lts_decl, "diferencia": diferencia,
             "diferencia_pct": dif_pct, "temperatura": temp,
             "ph": _num(tds[11]) if len(tds) > 11 else None,
@@ -152,6 +196,12 @@ def obtener_cargas(desde: datetime.date, hasta: datetime.date, usuario: str, pas
             "alerta_temp": temp is not None and temp > UMBRAL_TEMP_C,
         })
     return cargas, incompleto
+
+
+def solo_ventas(cargas: list[dict]) -> list[dict]:
+    """Cargas que salieron a La Serenísima — las únicas comparables contra la
+    liquidación del comprador."""
+    return [c for c in cargas if c.get("es_venta")]
 
 
 MAX_PCT_PROMEDIABLE = 100  # cargas con % disparatado (carga parcial/error) igual
@@ -162,10 +212,39 @@ def resumen(cargas: list[dict]) -> dict:
     con_dif = [c for c in cargas if c["diferencia_pct"] is not None]
     razonables = [c for c in con_dif if abs(c["diferencia_pct"]) <= MAX_PCT_PROMEDIABLE]
     con_temp = [c for c in cargas if c["temperatura"] is not None]
+
+    # Reparto por destino: cuánto de lo que midió el caudalímetro se vende y
+    # cuánto se queda en el tambo.
+    por_destino = {}
+    for c in cargas:
+        d = por_destino.setdefault(c.get("destino", DESTINO_DESCONOCIDO), {
+            "destino": c.get("destino", DESTINO_DESCONOCIDO),
+            "label": c.get("destino_label", "?"),
+            "cargas": 0, "lts_cicla": 0.0, "codigos": set(),
+        })
+        d["cargas"] += 1
+        d["lts_cicla"] += c["lts_cicla"] or 0
+        d["codigos"].add(str(c.get("nro_cliente") or "?"))
+
+    total_lts = sum(d["lts_cicla"] for d in por_destino.values())
+    destinos = sorted(
+        ({**d, "codigos": sorted(d["codigos"]),
+          "pct": round(100.0 * d["lts_cicla"] / total_lts, 1) if total_lts else None}
+         for d in por_destino.values()),
+        key=lambda d: -d["lts_cicla"])
+
+    ventas = solo_ventas(cargas)
     return {
         "total_cargas": len(cargas),
         "alertas_diferencia": sum(1 for c in cargas if c["alerta_diferencia"]),
         "alertas_temperatura": sum(1 for c in cargas if c["alerta_temp"]),
         "dif_pct_promedio": round(sum(c["diferencia_pct"] for c in razonables) / len(razonables), 1) if razonables else None,
         "temp_promedio": round(sum(c["temperatura"] for c in con_temp) / len(con_temp), 1) if con_temp else None,
+        "lts_total": round(total_lts),
+        "lts_venta": round(sum(c["lts_cicla"] or 0 for c in ventas)),
+        "cargas_venta": len(ventas),
+        "destinos": destinos,
+        "destinos_sin_clasificar": sorted(
+            {str(c.get("nro_cliente") or "?") for c in cargas
+             if c.get("destino") == DESTINO_DESCONOCIDO}),
     }

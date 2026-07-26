@@ -395,7 +395,7 @@
   <section class="card" id="cicla-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">🥛 Entregas de leche (CICLA)</h2>
-      <span class="aviso">Litros medidos por el caudalímetro y temperatura de entrega, por carga.</span>
+      <span class="aviso">Litros medidos por el caudalímetro y temperatura de entrega, por carga y por destino.</span>
       <div class="controls" style="margin-left:auto">
         <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
           <input type="date" id="cicla-desde" style="padding:6px 8px">
@@ -411,6 +411,12 @@
       a qué temperatura salió la leche. Es el registro del tambo, antes de que el comprador pese.
       <br><b>Cómo se calcula.</b> Sale de la plataforma CICLA, no de la base de DelPro. El umbral de
       temperatura es 4 °C: por encima, la leche estuvo más caliente de lo que admite el frío.
+      <br><b>Destinos.</b> No todo lo que mide el caudalímetro se vende: parte va a la guachera. CICLA
+      no guarda el nombre del destino, solo el código de la columna <code>Nro Cliente</code>, así que
+      el reparto se hace con ese código. Hoy <b>5003, 4613 y 702</b> son entregas a La Serenísima y
+      <b>22 y 23</b> son guachera (cargas de ~700 L contra las de ~9.000 L). Un código nuevo aparece
+      como "sin clasificar" y <b>no</b> se cuenta como venta hasta asignarle destino — así un destino
+      desconocido nunca infla la comparación con el comprador.
     </p>
     <div class="aviso" id="cicla-info" style="margin-top:8px"></div>
     <div class="kpis" id="cicla-kpis" style="margin-top:10px"></div>
@@ -424,6 +430,7 @@
         <div class="chart-box" style="height:220px"><canvas id="chart-cicla-temp"></canvas></div>
       </div>
     </div>
+    <div id="cicla-destinos" style="margin-top:16px;overflow-x:auto"></div>
     <div id="cicla-hallazgos" style="margin-top:14px"></div>
   </section>
 
@@ -1494,11 +1501,27 @@ async function cargarCicla() {
     const litrosProm = litros.length ? Math.round(litros.reduce((a, b) => a + b, 0) / litros.length) : null;
     document.getElementById('cicla-kpis').innerHTML = [
       ['Cargas', r.total_cargas],
-      ['Litros totales', litros.length ? Math.round(litros.reduce((a, b) => a + b, 0)) : null],
+      ['Litros totales', r.lts_total],
+      ['Litros a La Serenísima', r.lts_venta],
+      ['Litros a otros destinos', (r.lts_total || 0) - (r.lts_venta || 0)],
       ['Litros promedio por carga', litrosProm],
       ['Alertas de temperatura (>4°C)', r.alertas_temperatura],
       ['Temperatura promedio', r.temp_promedio],
     ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
+
+    // Reparto por destino: no todo lo que mide el caudalímetro se vende.
+    const dest = r.destinos || [];
+    document.getElementById('cicla-destinos').innerHTML = dest.length
+      ? '<div class="aviso" style="margin-bottom:6px">Reparto por destino (columna "Nro Cliente" de CICLA)</div>' +
+        '<table class="lac-table"><thead><tr><th>Destino</th><th class="num">Cargas</th>' +
+        '<th class="num">Litros</th><th class="num">% del total</th><th>Códigos</th></tr></thead><tbody>' +
+        dest.map(x => `<tr><td>${x.label}</td><td class="num">${fmt(x.cargas)}</td>` +
+          `<td class="num">${fmt(Math.round(x.lts_cicla))}</td><td class="num">${x.pct == null ? '—' : fmt(x.pct) + '%'}</td>` +
+          `<td>${x.codigos.join(', ')}</td></tr>`).join('') + '</tbody></table>' +
+        ((r.destinos_sin_clasificar || []).length
+          ? `<div class="aviso" style="margin-top:6px;color:var(--warning)">⚠ Códigos sin clasificar: ` +
+            `${r.destinos_sin_clasificar.join(', ')}. No se cuentan como venta hasta asignarles destino.</div>` : '')
+      : '';
 
     const etiquetas = d.cargas.map(c => c.fecha.split(' ')[0]);
     chartCiclaDif = graficaUmbral('chart-cicla-dif', chartCiclaDif,
@@ -2013,7 +2036,11 @@ async function cargarComparar() {
       d.dias.map(p => p.diferencia_pct), etiquetas, d.dias.map(p => p.alerta), [3, -3], 'Diferencia %');
     const conDatos = d.dias.filter(p => p.diferencia_pct != null);
     const alertas = conDatos.filter(p => p.alerta).length;
-    info.textContent = `${conDatos.length} día(s) comparables entre ${desde} y ${hasta} · ${alertas} con desvío >3%.` +
+    const otros = d.lts_otros_destinos || 0;
+    info.textContent = `${conDatos.length} día(s) comparables entre ${desde} y ${hasta} · ${alertas} con desvío >3%. ` +
+      `Se comparan ${fmt(d.cargas_venta)} de ${fmt(d.cargas_totales)} cargas: ` +
+      (otros ? `quedan afuera ${fmt(otros)} L que no se venden (guachera y otros destinos).`
+             : 'todas las del rango salieron a La Serenísima.') +
       (d.cicla_incompleto ? ' ⚠ CICLA puede estar incompleto para este rango (ver tarjeta de arriba).' : '');
   } catch (e) {
     info.textContent = 'Error: ' + e.message;
