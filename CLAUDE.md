@@ -30,6 +30,39 @@ ver `tambos.py` e `INSTALL.md`). Si aparece un secreto en texto plano en
 algún archivo, es un error: sacarlo y pedirle al usuario que lo setee él
 mismo con `setx`.
 
+## Dónde quedamos (26/07/2026)
+
+**BUG ACTIVO, arreglar primero.** `parametros.py` ya lee los parámetros
+reproductivos reales de DelPro (tabla `ReproductionSetting`), pero los módulos
+de cálculo todavía usan constantes hardcodeadas. La que importa:
+
+    Secado: el tambo usa 50 días, el código usa 60 (el defecto de DelPro).
+
+Mueve la fecha de secado de cada vaca diez días, y con eso el reparto mensual
+de secados y la curva de vacas en ordeñe en Proyección de Rebaños, Análisis
+Reproductivo y Partos y Secados. Los partos, que son la entrada principal, no
+se ven afectados. También hay que pasar la espera voluntaria de 50 a 53.
+Requiere convertir las constantes de módulo en parámetros de función, porque
+ahora dependen del tambo.
+
+**Cola de secciones pendientes, en orden:**
+
+1. Enchufar `parametros.valor()` en `proyeccion.py`, `reproduccion.py`,
+   `partos_secados.py` y `preneces.py` (el bug de arriba).
+2. Pestaña "Parámetros Reproductivos", PRIMERA de Análisis Reproductivo: los
+   20 parámetros con valor/defecto/mín/máx/activo, marcando los que el tambo
+   cambió, más el bloque MilkMetric (descarte 24% anual, lat/long del tambo:
+   -36.001618 / -62.778799).
+3. "Tasa de preñez por ciclo y por mes". Fórmulas ya verificadas contra el
+   informe: %Celo = con celo/aptas, %Inseminación = inseminadas/aptas,
+   %Preñadas = preñadas/aptas, %Concepción = preñadas/inseminadas,
+   %Aborto = abortos/preñadas. Ciclos de 21 días corridos. Falta reconstruir
+   "aptas" (en ordeñe, pasada la espera voluntaria, no preñada al inicio del
+   ciclo) — misma técnica que el inventario histórico de `reproduccion.py`.
+4. "Análisis de Gestación" (última): duración real de las gestaciones por mes
+   de parto, L0 contra L1+. Sirve para contrastar los 280 días configurados
+   contra los reales (medidos: 276,5 de promedio).
+
 ## Trampas del esquema DDM (ya corregidas, no reintroducir)
 
 - `CMSGroupMilkSetting.EnableMilking = 1` es la única forma correcta de saber
