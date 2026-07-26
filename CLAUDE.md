@@ -44,7 +44,40 @@ corrimiento en todas las fechas de parto y secado proyectadas. Se corrige
 cambiando el parámetro en DelPro, no en el código. La pestaña "Análisis de
 Gestación" lo muestra como advertencia.
 
-## Lo que sigue: costo de alimentación y potencial por animal
+## Lo que sigue: ITH histórico cruzado con reproducción
+
+Hipótesis del tambo, y los datos la respaldan: los baches de preñez del verano
+son estrés calórico, no manejo. Falta cruzarlo y mostrarlo.
+
+**La fuente ya está probada y funciona.** Open-Meteo, gratis, sin credenciales,
+histórico horario desde 1940:
+
+    https://archive-api.open-meteo.com/v1/archive
+      ?latitude=-36.001618&longitude=-62.778799
+      &start_date=...&end_date=...
+      &hourly=temperature_2m,relative_humidity_2m
+      &timezone=America%2FArgentina%2FBuenos_Aires
+
+Devuelve las coordenadas exactas del tambo (elevación 92 m). El ITH se calcula
+con la fórmula que ya está en `iot_monitoreo.calcular_ith()`. Lo que manda para
+estrés es el **ITH MÁXIMO diario**, no el promedio.
+
+Medido en enero 2026: **26 de 31 días con ITH máx ≥ 72** (estrés moderado), y
+el 11 y 12 llegó a 80,4 y 81,7 (severo). En el mismo mes, la pestaña Tasa de
+Preñez da 8% de preñadas y 27% de concepción, contra 27% y 47% en agosto.
+
+**Qué hacer:** superponer el ITH como serie en los gráficos de Tasa de Preñez
+(por ciclo y por mes) y de Análisis de Gestación. Cachear fuerte: el clima
+pasado no cambia, se pide una vez por rango y se guarda.
+
+Umbrales: >68 leve, >72 moderado, >80 severo.
+
+**Los parámetros de MilkMetric también tienen que ser editables** (hoy están
+hardcodeados en la constante `MILKMETRIC` del template). No están en DDM, así
+que van al mismo `parametros_reproductivos.json` por tambo, con el mecanismo
+que ya existe. Ahí viven la latitud y longitud que alimentan lo de arriba.
+
+## Después: costo de alimentación y potencial por animal
 
 El objetivo es saber cuánto rinde cada vaca: ingreso por sólidos menos costo
 de alimento (IOFC), eficiencia de conversión (kg de sólidos por kg de materia
