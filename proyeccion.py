@@ -15,10 +15,14 @@ sus tres piezas:
    Agosto: 3307 + 170 + 106 - 184 - 148 = 3251  ✓ (DelPro: 3.251)
    ...y así los doce meses.
 
-2. PUNTO DE PARTIDA (exacto): la cantidad de vacas lactantes de hoy — animales
-   activos con al menos un parto y que no están en secado, en los TRES rebaños
-   que comparten esta base (el informe se llama "de rebaños", en plural). Da
-   3.253, que es exactamente el valor del que arranca DelPro.
+2. PUNTO DE PARTIDA: la cantidad de vacas lactantes de hoy — animales activos
+   con al menos un parto y que no están en secado.
+
+   OJO CON LOS REBAÑOS: esta base la comparten varios tambos (ver `rebano.py`).
+   Sumando los tres da 3.253, que es exactamente el punto de partida del
+   informe de DelPro... porque ese informe estaba en "Todos los rebaños". La
+   Ponderosa sola tiene 1.621. Acá se filtra por el rebaño del tambo, así que
+   los números NO coinciden con ese informe y está bien que no coincidan.
 
 3. PRODUCCIÓN (exacta, verificada):
 
@@ -38,11 +42,15 @@ en total. Acá los partos salen SOLO de preñeces confirmadas, así que a partir
 del mes ~9 (cuando se agota la gestación en curso) la proyección se queda
 corta contra DelPro. Está avisado en la página.
 
-Y hay un problema de datos que conviene mirar: 809 de los 1.715 animales
-marcados como preñados tienen su última inseminación hace más de 285 días
-(promedio 382), y `EventPregCheck.DaysFromInsemination` viene en 0 en toda la
-base. Eso ensucia el parto esperado de casi la mitad del plantel: esos
-animales se excluyen del cálculo por imposibles.
+SOBRE LA CALIDAD DE LOS DATOS — corregido al filtrar por rebaño. Sin filtrar,
+796 de 1.715 animales marcados como preñados (46%) no tenían inseminación
+válida, y parecía un problema grave de carga. Filtrando a La Ponderosa son
+19 de 920 (2%), con 176 días de preñez promedio: los datos del tambo están
+sanos. Aquel 46% era casi todo de los otros dos tambos de la base.
+
+Lo que sí es real y afecta a todos: `EventPregCheck.DaysFromInsemination`
+viene en 0 en toda la base, así que el parto esperado no se puede sacar del
+chequeo de preñez y sale de la inseminación efectiva más la gestación.
 """
 import calendar
 import datetime
@@ -97,19 +105,19 @@ def rango_meses(desde: str, hasta: str) -> list:
 # --- Consultas ---------------------------------------------------------------
 
 # Punto de partida: vacas lactantes de HOY. Una vaca cuenta como lactante si
-# está activa, ya parió al menos una vez y no está marcada en secado. Sin
-# filtrar por grupo de ordeñe a propósito: el informe abarca los tres rebaños.
-SQL_LACTANTES_HOY = f"""
+# está activa, ya parió al menos una vez y no está marcada en secado.
+def sql_lactantes_hoy(herd=None) -> str:
+    return f"""
     SELECT COUNT(*) AS lactantes
     FROM BasicAnimal b
     JOIN AnimalReproductionInfo r ON r.Animal = b.OID AND r.GCRecord IS NULL
     WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
       AND r.LactationNumber >= 1 AND ISNULL(r.IsDryingOff, 0) = 0
-      AND {rebano.filtro('b')}
+      AND {rebano.filtro('b', herd)}
 """
 
 
-def sql_partos_reales(desde: str, hasta: str) -> str:
+def sql_partos_reales(desde: str, hasta: str, herd=None) -> str:
     """Partos ya ocurridos, por mes, separando primer parto (novilla) del resto.
 
     `AbstractAnimalEvent.LactationNumber` en un parto es la lactancia que
@@ -123,7 +131,7 @@ def sql_partos_reales(desde: str, hasta: str) -> str:
         JOIN AbstractAnimalEvent ae ON ae.OID = c.OID AND ae.GCRecord IS NULL
         WHERE ae.DateAndTime >= '{desde}-01'
           AND ae.DateAndTime < DATEADD(month, 1, '{hasta}-01')
-          AND {rebano.filtro_por_animal('ae.BasicAnimal')}
+          AND {rebano.filtro_por_animal('ae.BasicAnimal', herd)}
         GROUP BY FORMAT(ae.DateAndTime, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
@@ -134,7 +142,8 @@ def sql_partos_reales(desde: str, hasta: str) -> str:
 #   - inseminación anterior al último parto (dato viejo que quedó colgado);
 #   - inseminación de hace más de PRENEZ_MAX_DIAS (ese animal ya tendría que
 #     haber parido: la preñez está mal cargada).
-SQL_PARTOS_PREVISTOS = f"""
+def sql_partos_previstos(herd=None) -> str:
+    return f"""
     SELECT FORMAT(DATEADD(day, {GESTACION_DIAS}, ae.DateAndTime), 'yyyy-MM') AS mes,
            SUM(CASE WHEN r.LactationNumber = 0 THEN 0 ELSE 1 END) AS vacas,
            SUM(CASE WHEN r.LactationNumber = 0 THEN 1 ELSE 0 END) AS novillas
@@ -146,14 +155,15 @@ SQL_PARTOS_PREVISTOS = f"""
     WHERE r.GCRecord IS NULL AND r.IsPregnant = 1
       AND (r.LastLactationChangeDate IS NULL OR ae.DateAndTime > r.LastLactationChangeDate)
       AND DATEDIFF(day, ae.DateAndTime, GETDATE()) BETWEEN 0 AND {PRENEZ_MAX_DIAS}
-      AND {rebano.filtro('b')}
+      AND {rebano.filtro('b', herd)}
     GROUP BY FORMAT(DATEADD(day, {GESTACION_DIAS}, ae.DateAndTime), 'yyyy-MM')
 """
 
 
 # Cuántas preñeces quedan afuera por dato imposible — se muestra en la página
 # como advertencia, no se esconde.
-SQL_PRENECES_DESCARTADAS = f"""  -- (filtrada al rebaño del tambo, ver abajo)
+def sql_preneces_descartadas(herd=None) -> str:
+    return f"""
     SELECT SUM(CASE WHEN ix.EffectiveInsemination IS NULL
                      OR ae.DateAndTime IS NULL
                      OR DATEDIFF(day, ae.DateAndTime, GETDATE()) > {PRENEZ_MAX_DIAS}
@@ -167,11 +177,11 @@ SQL_PRENECES_DESCARTADAS = f"""  -- (filtrada al rebaño del tambo, ver abajo)
     LEFT JOIN AnimalLatestHistoryIndex ix ON ix.Animal = r.Animal AND ix.GCRecord IS NULL
     LEFT JOIN AbstractAnimalEvent ae ON ae.OID = ix.EffectiveInsemination AND ae.GCRecord IS NULL
     WHERE r.GCRecord IS NULL AND r.IsPregnant = 1
-      AND {rebano.filtro('b')}
+      AND {rebano.filtro('b', herd)}
 """
 
 
-def sql_salidas_reales(desde: str, hasta: str) -> str:
+def sql_salidas_reales(desde: str, hasta: str, herd=None) -> str:
     """Bajas por mes (vacas que dejaron el rodeo)."""
     return f"""
         SELECT FORMAT(b.ExitDate, 'yyyy-MM') AS mes, COUNT(*) AS salidas
@@ -179,7 +189,7 @@ def sql_salidas_reales(desde: str, hasta: str) -> str:
         WHERE b.GCRecord IS NULL AND b.Number > 0 AND b.ExitDate IS NOT NULL
           AND b.ExitDate >= '{desde}-01'
           AND b.ExitDate < DATEADD(month, 1, '{hasta}-01')
-          AND {rebano.filtro('b')}
+          AND {rebano.filtro('b', herd)}
         GROUP BY FORMAT(b.ExitDate, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
@@ -192,7 +202,7 @@ def sql_salidas_reales(desde: str, hasta: str) -> str:
 LACTANCIA_DIAS = 330
 
 
-def sql_lactantes_historico(desde: str, hasta: str) -> str:
+def sql_lactantes_historico(desde: str, hasta: str, herd=None) -> str:
     """Vacas lactantes por mes, contadas desde los partos realmente ocurridos.
 
     Para el pasado NO se usa la ecuación de balance: arrastrar el balance hacia
@@ -223,13 +233,13 @@ def sql_lactantes_historico(desde: str, hasta: str) -> str:
                      AND p.fecha >= DATEADD(day, -{LACTANCIA_DIAS}, DATEADD(month, 1, m.m))
         JOIN BasicAnimal b ON b.OID = p.animal AND b.GCRecord IS NULL AND b.Number > 0
         WHERE (b.ExitDate IS NULL OR b.ExitDate >= DATEADD(month, 1, m.m))
-          AND {rebano.filtro('b')}
+          AND {rebano.filtro('b', herd)}
         GROUP BY FORMAT(m.m, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
     """
 
 
-def sql_kg_por_vaca(desde: str, hasta: str) -> str:
+def sql_kg_por_vaca(desde: str, hasta: str, herd=None) -> str:
     """Promedio de kg por vaca y por día, por mes.
 
     Es el único número del informe que sale de la leche realmente medida. Se
@@ -245,7 +255,7 @@ def sql_kg_por_vaca(desde: str, hasta: str) -> str:
         WHERE d.GCRecord IS NULL
           AND d.Date >= '{desde}-01'
           AND d.Date < DATEADD(month, 1, '{hasta}-01')
-          AND {rebano.filtro_por_animal('d.BasicAnimal')}
+          AND {rebano.filtro_por_animal('d.BasicAnimal', herd)}
         GROUP BY FORMAT(d.Date, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
     """

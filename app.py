@@ -1464,6 +1464,7 @@ def _clave_proyeccion(tambo, desde, hasta):
 
 
 def _refresh_proyeccion_async(tambo, desde, hasta):
+    herd = rebano.por_defecto(tambo)
     key = _clave_proyeccion(tambo, desde, hasta)
     with _cache_lock:
         if key in _refreshing:
@@ -1478,15 +1479,15 @@ def _refresh_proyeccion_async(tambo, desde, hasta):
     def worker():
         try:
             data = {
-                "lact": db.run_query(proyeccion.SQL_LACTANTES_HOY, tambo=tambo, max_rows=5),
-                "partos_reales": db.run_query(proyeccion.sql_partos_reales(ini, fin_hist),
+                "lact": db.run_query(proyeccion.sql_lactantes_hoy(herd), tambo=tambo, max_rows=5),
+                "partos_reales": db.run_query(proyeccion.sql_partos_reales(ini, fin_hist, herd),
                                               tambo=tambo, max_rows=200),
-                "partos_prev": db.run_query(proyeccion.SQL_PARTOS_PREVISTOS, tambo=tambo, max_rows=200),
-                "salidas": db.run_query(proyeccion.sql_salidas_reales(ini, fin_hist),
+                "partos_prev": db.run_query(proyeccion.sql_partos_previstos(herd), tambo=tambo, max_rows=200),
+                "salidas": db.run_query(proyeccion.sql_salidas_reales(ini, fin_hist, herd),
                                         tambo=tambo, max_rows=200),
-                "kg": db.run_query(proyeccion.sql_kg_por_vaca(ini, fin_hist), tambo=tambo, max_rows=200),
-                "descartadas": db.run_query(proyeccion.SQL_PRENECES_DESCARTADAS, tambo=tambo, max_rows=5),
-                "lact_hist": db.run_query(proyeccion.sql_lactantes_historico(ini, fin_hist),
+                "kg": db.run_query(proyeccion.sql_kg_por_vaca(ini, fin_hist, herd), tambo=tambo, max_rows=200),
+                "descartadas": db.run_query(proyeccion.sql_preneces_descartadas(herd), tambo=tambo, max_rows=5),
+                "lact_hist": db.run_query(proyeccion.sql_lactantes_historico(ini, fin_hist, herd),
                                           tambo=tambo, max_rows=200),
             }
             _cache_set(key, data)
@@ -1649,7 +1650,7 @@ def api_reproduccion_resultados():
     def leer_herd(nombre):
         v = (request.args.get(nombre) or "").strip()
         if not v:
-            return None
+            return rebano.por_defecto(tambo)
         if v.lower() == rebano.TODOS:
             return rebano.TODOS
         try:

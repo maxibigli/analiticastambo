@@ -22,9 +22,14 @@ y ninguno lo reproduce:
     preñez por DEL en 2025 (31/40/42/48/53 contra 24/33/36/40/48) pero queda
     ~6 puntos alto, y en 2026 se derrumba porque las lactancias en curso
     todavía no tienen el campo cargado.
-  * Los eventos de inseminación de 2026 van a la mitad del ritmo de 2025, y
-    796 de 1.715 animales marcados como preñados no tienen inseminación
-    válida (ver `proyeccion.py`).
+  * `EventPregCheck.DaysFromInsemination` viene en 0 en toda la base, así que
+    no se puede ligar cada servicio con su resultado (por eso Tasa de
+    Concepción sale vacía, igual que en el informe de DelPro).
+
+OJO con una conclusión anterior que quedó desmentida: sin filtrar por rebaño
+parecía que casi la mitad de las preñeces estaban mal cargadas (796 de 1.715).
+Filtrando a La Ponderosa son 19 de 920 — los datos del tambo están sanos, el
+problema era de los otros dos tambos que comparten la base.
 
 Por eso cada indicador declara su `confianza`:
 

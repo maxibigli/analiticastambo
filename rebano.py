@@ -40,41 +40,66 @@ TODOS = "todos"
 NOMBRES = {"LP": "La Ponderosa", "DG": "Don Germán", "SB": "SB"}
 
 
-def _destino(herd) -> str | None:
-    """Expresión SQL del rebaño a filtrar. None = sin filtro (todos)."""
+def _condicion(herd) -> str | None:
+    """Condición SQL sobre `g_tb.Herd`. None = sin filtro (todos los rebaños).
+
+    `herd` acepta:
+      - None            → el rebaño deducido (el que tiene los grupos de ordeñe)
+      - "todos"         → sin filtro
+      - un número       → ese rebaño
+      - una lista/tupla → varios rebaños (un tambo puede tener más de uno)
+    """
     if herd is None:
-        return SUB_HERD
+        return f"g_tb.Herd = {SUB_HERD}"
+    if isinstance(herd, (list, tuple, set)):
+        ids = sorted({int(h) for h in herd})
+        if not ids:
+            return f"g_tb.Herd = {SUB_HERD}"
+        if len(ids) == 1:
+            return f"g_tb.Herd = {ids[0]}"
+        return "g_tb.Herd IN (" + ", ".join(str(i) for i in ids) + ")"
     if str(herd).lower() == TODOS:
         return None
-    return str(int(herd))
+    return f"g_tb.Herd = {int(herd)}"
 
 
 def filtro(alias_animal: str = "b", herd=None) -> str:
-    """Condición SQL que deja solo los animales de un rebaño.
+    """Condición SQL que deja solo los animales de un rebaño (o de varios).
 
     `alias_animal`: alias de la tabla `BasicAnimal` en la consulta. Se usa
     `EXISTS` en vez de un JOIN para poder pegarlo en el WHERE de cualquier
     consulta sin cambiarle los JOIN ni arriesgar duplicar filas.
-    `herd`: OID del rebaño, "todos" para no filtrar, o None para el rebaño del
-    tambo (el que tiene los grupos de ordeñe).
     """
-    destino = _destino(herd)
-    if destino is None:
+    cond = _condicion(herd)
+    if cond is None:
         return "1 = 1"
     return (f"EXISTS (SELECT 1 FROM AnimalGroup g_tb"
-            f" WHERE g_tb.OID = {alias_animal}.[Group] AND g_tb.Herd = {destino})")
+            f" WHERE g_tb.OID = {alias_animal}.[Group] AND {cond})")
 
 
 def filtro_por_animal(columna_oid: str, herd=None) -> str:
     """Igual que `filtro`, pero cuando en la consulta no hay un alias de
     `BasicAnimal` a mano y solo se tiene el OID del animal (por ejemplo al
     partir de `AbstractAnimalEvent.BasicAnimal`)."""
-    destino = _destino(herd)
-    if destino is None:
+    cond = _condicion(herd)
+    if cond is None:
         return "1 = 1"
     return (f"EXISTS (SELECT 1 FROM BasicAnimal b_tb"
             f" JOIN AnimalGroup g_tb ON g_tb.OID = b_tb.[Group]"
-            f" WHERE b_tb.OID = {columna_oid} AND g_tb.Herd = {destino})")
+            f" WHERE b_tb.OID = {columna_oid} AND {cond})")
+
+
+def por_defecto(tambo_id: str):
+    """Rebaño(s) que le corresponden a un tambo.
+
+    Si `tambos.py` los declara, se usan esos: es lo correcto y lo explícito.
+    Si no, se cae a la deducción (None → el rebaño con los grupos de ordeñe),
+    que anda mientras haya un solo tambo ordeñando en la base pero elige uno
+    solo, en silencio, si hubiera más. Por eso conviene declararlos.
+    """
+    import tambos
+    declarados = tambos.rebanos_de(tambo_id)
+    return declarados or None
 
 
 SQL_LISTA = """

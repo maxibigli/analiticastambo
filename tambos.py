@@ -12,6 +12,20 @@ servidor y la base — el listbox de la aplicación se actualiza solo.
   database: nombre de la base (normalmente "DDM").
   auth:     "windows" usa la sesión de Windows (Trusted_Connection).
             "sql"     usa usuario y contraseña de SQL Server.
+  rebanos:  QUÉ REBAÑOS de esa base son de este tambo, como lista de OID de
+            `Herd`. Una misma base DDM puede tener VARIOS tambos adentro: la de
+            La Ponderosa tiene tres (rebaño 1 = La Ponderosa, 6 = Don Germán,
+            7 = SB). Sin esta clave, la aplicación deduce el rebaño mirando
+            dónde están los grupos de ordeñe, lo que anda mientras haya un solo
+            tambo ordeñando pero elige uno solo —y en silencio— si hubiera más.
+            Declararlo es siempre preferible.
+            Para separar los tambos de una misma base, se agrega un bloque por
+            cada uno con el mismo server/database y distintos `rebanos`:
+
+                "ponderosa":  { ..., "rebanos": [1] },
+                "don_german": { ..., "rebanos": [6] },
+
+            Un tambo puede tener más de un rebaño: "rebanos": [1, 4].
   produccion: True marca al tambo como base de producción EN VIVO. En ese caso la
             app BLOQUEA las preguntas por IA (lo único que ejecuta SQL generado):
             solo quedan disponibles el dashboard, la rotativa, las tareas y las
@@ -40,6 +54,10 @@ TAMBOS = {
         # Para usar el usuario de solo lectura en producción, reemplazar por:
          "auth": "sql",
          "user": "delpro_lectura",
+        # Esta base la comparten tres tambos; La Ponderosa es el rebaño 1.
+        # Don Germán (6) y SB (7) se pueden agregar como bloques aparte con el
+        # mismo server/database y su propio "rebanos".
+         "rebanos": [1],
         # (la contraseña va en la variable de entorno DELPRO_PWD_PONDEROSA)
     },
 
@@ -51,6 +69,7 @@ TAMBOS = {
         "server": "localhost\\DELPRO",
         "database": "DDM",
         "auth": "windows",
+        "rebanos": [1],
     },
 
     # --- Plantilla para agregar otro tambo (descomentar y completar) ---
@@ -67,6 +86,21 @@ TAMBOS = {
 
 # Tambo que se muestra por defecto al abrir la aplicación.
 DEFAULT_TAMBO = "ponderosa"
+
+
+def rebanos_de(tambo_id: str) -> list:
+    """OID de los rebaños (`Herd`) que son de este tambo.
+
+    Lista vacía = no está declarado, y quien llame decide qué hacer (ver
+    `rebano.por_defecto`, que en ese caso cae a deducirlo).
+    """
+    cfg = TAMBOS.get(tambo_id, {})
+    valor = cfg.get("rebanos") or cfg.get("rebano")
+    if valor is None:
+        return []
+    if isinstance(valor, (list, tuple, set)):
+        return [int(v) for v in valor]
+    return [int(valor)]
 
 
 def nombre_variable_password(tambo_id: str) -> str:

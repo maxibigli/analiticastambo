@@ -76,16 +76,19 @@ mismo con `setx`.
 
 ## Problemas de datos en DDM (no son bugs del código)
 
-- **Preñeces sin inseminación válida**: 796 de 1.715 animales marcados
-  `IsPregnant` tienen la inseminación efectiva anterior a su último parto o de
-  hace más de 290 días (promedio 382). `EventPregCheck.DaysFromInsemination`
-  viene en 0 en TODA la base. Por eso la proyección de partos queda corta.
-- **Partos sin registrar**: 2026 va a ~203 partos/mes contra 241 en 2025, y
-  contar lactantes desde los eventos de parto da ~1.800 cuando el estado
-  reproductivo dice 3.253. Faltan eventos.
-- Consecuencia práctica: cualquier cálculo que dependa de eventos
-  reproductivos hay que darlo con la advertencia a la vista, no como número
-  firme.
+- `EventPregCheck.DaysFromInsemination` viene en 0 en TODA la base: el parto
+  esperado no se puede sacar del chequeo de preñez, sale de la inseminación
+  efectiva más la gestación. Es lo que deja vacía la Tasa de Concepción (en el
+  informe de DelPro también sale vacía).
+- **Antes de dar por roto un dato, FILTRAR POR REBAÑO.** Sin filtrar parecía
+  que 796 de 1.715 preñeces estaban mal cargadas (46%) y que las
+  inseminaciones de 2026 iban a la mitad del ritmo. Filtrando a La Ponderosa
+  son 19 de 920 (2%), con 176 días de preñez promedio, y las inseminaciones
+  van 4.298 en 2025 contra 2.205 en 7 meses de 2026. Los datos del tambo están
+  sanos; el desastre era de los otros dos tambos de la base.
+- Faltan algunos eventos de parto: contar lactantes desde los partos da menos
+  que el estado reproductivo. Por eso el histórico se reconstruye despejando
+  el balance y se grafica al lado el conteo medido.
 
 ## Entorno de desarrollo (esta PC)
 
