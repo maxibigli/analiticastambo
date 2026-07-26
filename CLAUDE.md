@@ -44,6 +44,29 @@ corrimiento en todas las fechas de parto y secado proyectadas. Se corrige
 cambiando el parámetro en DelPro, no en el código. La pestaña "Análisis de
 Gestación" lo muestra como advertencia.
 
+## HASTA DÓNDE LLEGAN LOS DATOS (leer antes de cualquier análisis histórico)
+
+**La producción arranca en DICIEMBRE 2025.** `AnimalDaily` con leche: 0 en
+ago/sep/oct-2025, 1 en nov, 29.944 en dic. O sea que hay ~8 meses de datos de
+leche, no más. Todo lo que cruce producción —conversión, IOFC, potencial por
+animal, curvas de lactancia— no puede mirar más atrás de diciembre 2025.
+
+**Marzo y abril tienen CERO inseminaciones y CERO celos, los dos años**
+(2025 y 2026), mientras los chequeos y los partos siguen normales.
+CONFIRMADO POR EL TAMBO: en ese período no se insemina. Es una parada de
+servicio deliberada, no un hueco de carga.
+
+Consecuencia para cualquier análisis de estacionalidad: el rodeo tiene un
+patrón de servicio ESTACIONAL. La caída de servicios del verano es en parte
+un plan, no una falla. Los meses de parada hay que excluirlos o marcarlos, y
+no se puede comparar "servicios de verano contra servicios de invierno" como
+si ambos fueran períodos de servicio pleno.
+
+**Los eventos reproductivos de 2024 y principios de 2025 son de volumen
+bajo** (~100-350 inseminaciones/mes contra 300-1.000 después de mayo-2025).
+Puede ser rodeo más chico o carga parcial. NO comparar performance entre
+2024-25 y 2025-26 sin resolver esto primero.
+
 ## Lo que sigue: ITH histórico cruzado con reproducción
 
 Hipótesis del tambo, y los datos la respaldan: los baches de preñez del verano
@@ -75,15 +98,20 @@ jun-2026 da 11,4% de concepción y jul-2026 da 0,0%. NO ES REAL. El gráfico
 tiene que EXCLUIR o marcar como incompletos los últimos ~2 meses; si no,
 muestra un derrumbe inventado.
 
-TRAMPA 2 — los dos veranos se comportaron distinto con el mismo ITH:
+TRAMPA 2 — los dos veranos dan distinto con el mismo ITH:
 
-    verano 2024-25 (dic/ene/feb):  51,1%  39,2%  43,1%
-    verano 2025-26 (dic/ene/feb):  20,9%  30,4%  39,9%
+    verano 2024-25 (dic/ene/feb):  51,1%  39,2%  43,1%   (436 servicios)
+    verano 2025-26 (dic/ene/feb):  20,9%  30,4%  39,9%   (851 servicios)
 
-Si fuera solo calor serían iguales. Promediarlos hace que se cancelen: por eso
-un primer análisis por tramos de ITH dio PLANO (36,3% sin estrés contra 36,7%
-con estrés severo, y el estrés leve arriba de todo, que es absurdo — mide la
-estación, no el calor).
+Promediarlos hace que se cancelen: por eso un primer análisis por tramos de
+ITH dio PLANO (36,3% sin estrés contra 36,7% con estrés severo, y el estrés
+leve arriba de todo, que es absurdo — mide la estación, no el calor).
+
+OJO: el verano 2024-25 tiene la MITAD de servicios, así que esa diferencia
+puede ser carga incompleta y no performance (ver la sección de hasta dónde
+llegan los datos). Y como la producción arranca en dic-2025, en la práctica
+hay UN SOLO verano medible: con uno solo no se puede separar el calor de
+cualquier otra cosa que haya pasado ese año.
 
 LO QUE SÍ MUESTRA EL DATO, y es lo que le sirve al tambo: en verano se
 DERRUMBAN LOS SERVICIOS, no la concepción.
