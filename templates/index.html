@@ -439,9 +439,14 @@
         incompletos: 796 de 1.715 animales marcados como preñados no tienen inseminación válida, y
         <code>EventPregCheck.DaysFromInsemination</code> viene en 0 en toda la base. Por eso Tasa de
         Concepción sale vacía — en el informe de DelPro también sale vacía, por la misma razón.
-        <br><b>Inventario.</b> Los ítems de inventario y días en leche son una <b>foto de hoy</b>, no
-        un promedio del período: la base no permite reconstruir la composición del rodeo en el pasado.
-        Por eso solo se llenan en el rango que termina hoy.
+        <br><b>Inventario.</b> Se reconstruye el estado del rodeo en varias fechas repartidas dentro
+        del período y se promedia, así el inventario de un trimestre es el del trimestre y no el de
+        un día suelto. Cada vaca se ubica por sus partos: el parto anterior a la fecha abre la
+        lactancia, el siguiente la cierra, y está seca en los 60 días previos al próximo parto.
+        Contrastado contra el informe de DelPro para 2025 da 2.627 vacas en ordeñe contra 2.678, y
+        216 días en leche contra 217. Se usa el mismo método en los dos rangos aunque uno termine
+        hoy: comparar un número reconstruido contra uno exacto mediría la diferencia entre los dos
+        métodos además de la del rodeo.
       </p>
       <div class="aviso" id="repro-info" style="margin-top:8px"></div>
       <div class="kpis" id="repro-kpis" style="margin-top:10px"></div>

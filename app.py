@@ -1574,12 +1574,16 @@ def _refresh_repro_async(tambo, rangos, key):
         try:
             hoy = datetime.date.today().isoformat()
             data = {}
-            # El inventario es una foto del estado actual: una sola consulta
-            # para los dos rangos, no una por rango.
-            data["inv"] = db.run_query(reproduccion.SQL_INVENTARIO, tambo=tambo, max_rows=5)
             data["pren"] = db.run_query(reproduccion.SQL_PCT_PRENADAS, tambo=tambo, max_rows=5)
             data["no_insem"] = db.run_query(reproduccion.SQL_NO_INSEMINAR, tambo=tambo, max_rows=5)
             for nombre, (desde, hasta) in rangos.items():
+                # Inventario reconstruido a varias fechas del rango y luego
+                # promediado: el inventario de un trimestre es el promedio del
+                # trimestre, no el de un día suelto.
+                data[f"{nombre}:inv"] = db.run_query(
+                    reproduccion.sql_inventario_historico(
+                        reproduccion.fechas_muestra(desde, hasta)),
+                    tambo=tambo, max_rows=40)
                 data[f"{nombre}:prenez"] = db.run_query(
                     reproduccion.sql_prenez_por_del(desde, hasta), tambo=tambo, max_rows=20)
                 # Ventanas de ciclos, contadas hacia atrás desde el fin del rango.
@@ -1647,7 +1651,7 @@ def api_reproduccion_resultados():
 
     def valores(nombre):
         return reproduccion.valores_de_rango(
-            data["inv"], data["pren"], data[f"{nombre}:prenez"],
+            data[f"{nombre}:inv"], data["pren"], data[f"{nombre}:prenez"],
             data[f"{nombre}:c1"], data[f"{nombre}:c3"], data[f"{nombre}:c12"],
             data[f"{nombre}:ab3c"], data[f"{nombre}:ab12m"], data["no_insem"],
             es_actual=data.get(f"{nombre}:es_actual", False))

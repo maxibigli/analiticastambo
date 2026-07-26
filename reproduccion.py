@@ -28,7 +28,8 @@ y ninguno lo reproduce:
 
 Por eso cada indicador declara su `confianza`:
 
-  "alta"    — sale del estado actual del rodeo, verificado contra DelPro.
+  "alta"    — sale del estado actual del rodeo, leído directo y verificado
+              contra DelPro.
   "media"   — ratio calculado sobre eventos; el numerador y el denominador
               vienen de la misma fuente incompleta, así que la proporción es
               orientativa aunque los absolutos no lo sean.
@@ -53,16 +54,16 @@ import threading
 # unidad: "" (conteo), "%" o "d" (días).
 _C = [
     # --- INVENTARIO ---
-    ("INVENTARIO", "Vacas", "vacas_ordeno", "Vacas Ordeño", 5, ">=", "", 0, "alta"),
-    ("INVENTARIO", "Vacas", "vacas_secas", "Vacas Secas", 6, ">=", "", 0, "alta"),
-    ("INVENTARIO", "Vacas", "total_vacas", "Total Vacas", 7, ">=", "", 0, "alta"),
-    ("INVENTARIO", "Vacas", "pct_lactando", "% Lactando", 45, ">=", "%", 1, "alta"),
-    ("INVENTARIO", "Vacas", "pct_ordeno_l1", "% vacas en ordeño 1ra Lactancia", 42, ">=", "%", 1, "alta"),
-    ("INVENTARIO", "Vacas", "lactancias_prom", "Lactancias promedio", 6, ">=", "", 1, "alta"),
-    ("INVENTARIO", "Promedio días en leche", "del_prom", "Promedio Días en Leche (todas las vacas en ordeño)", 8, ">", "d", 0, "alta"),
-    ("INVENTARIO", "Promedio días en leche", "del_l1", "Promedio Días en Leche 1ra Lactancia", 175, "<=", "d", 0, "alta"),
-    ("INVENTARIO", "Promedio días en leche", "del_l2", "Promedio Días en Leche 2da Lactancia", 175, "<=", "d", 0, "alta"),
-    ("INVENTARIO", "Promedio días en leche", "del_l3", "Promedio Días en Leche 3ra+ lactancia", 175, "<=", "d", 0, "alta"),
+    ("INVENTARIO", "Vacas", "vacas_ordeno", "Vacas Ordeño", 5, ">=", "", 0, "media"),
+    ("INVENTARIO", "Vacas", "vacas_secas", "Vacas Secas", 6, ">=", "", 0, "media"),
+    ("INVENTARIO", "Vacas", "total_vacas", "Total Vacas", 7, ">=", "", 0, "media"),
+    ("INVENTARIO", "Vacas", "pct_lactando", "% Lactando", 45, ">=", "%", 1, "media"),
+    ("INVENTARIO", "Vacas", "pct_ordeno_l1", "% vacas en ordeño 1ra Lactancia", 42, ">=", "%", 1, "media"),
+    ("INVENTARIO", "Vacas", "lactancias_prom", "Lactancias promedio", 6, ">=", "", 1, "media"),
+    ("INVENTARIO", "Promedio días en leche", "del_prom", "Promedio Días en Leche (todas las vacas en ordeño)", 8, ">", "d", 0, "media"),
+    ("INVENTARIO", "Promedio días en leche", "del_l1", "Promedio Días en Leche 1ra Lactancia", 175, "<=", "d", 0, "media"),
+    ("INVENTARIO", "Promedio días en leche", "del_l2", "Promedio Días en Leche 2da Lactancia", 175, "<=", "d", 0, "media"),
+    ("INVENTARIO", "Promedio días en leche", "del_l3", "Promedio Días en Leche 3ra+ lactancia", 175, "<=", "d", 0, "media"),
 
     # --- PREÑEZ: % de lactancias que quedaron preñadas antes del día N ---
     ("PREÑEZ", "% Preñez lactancia 1", "prenez_100_l1", "% Preñez a 100 DEL - Lact = 1", 50, ">=", "%", 1, "media"),
@@ -228,6 +229,95 @@ SQL_INVENTARIO = """
     FROM v
 """
 
+# Período seco: se usa para decidir si una vaca estaba en ordeñe o seca en una
+# fecha pasada (está seca en los últimos PERIODO_SECO_DIAS antes de su próximo
+# parto). Mismo valor que usa `proyeccion.py`.
+PERIODO_SECO_DIAS = 60
+# Tope de días de lactancia que se considera: más que esto y el animal ya no
+# está en ese ciclo (o falta el parto siguiente).
+LACTANCIA_MAX_DIAS = 700
+
+
+def sql_inventario_historico(fechas: list) -> str:
+    """Composición del rodeo en cada una de las fechas dadas.
+
+    Reconstruye el estado de cada animal a una fecha pasada a partir de sus
+    partos: el parto anterior a la fecha abre la lactancia, el siguiente la
+    cierra, y la vaca está SECA en los últimos `PERIODO_SECO_DIAS` antes de ese
+    próximo parto. Los días en leche son los días desde el parto que abrió la
+    lactancia.
+
+    Es la única forma de tener inventario histórico: DDM no guarda una foto
+    diaria del rodeo, y `AnimalDaily` está poblada solo para una fracción de
+    los animales. Hereda el problema de fondo de esta base —hay partos que no
+    quedaron registrados— así que subestima el plantel; por eso estos ítems
+    viajan con confianza "media" cuando el rango no termina hoy.
+    """
+    lista = " UNION ALL ".join(f"SELECT CAST('{f}' AS date) AS d" for f in fechas)
+    # Una vaca está seca solo si tiene un parto siguiente REGISTRADO dentro del
+    # período seco. No se marca seca por llevar muchos días de lactancia sin
+    # parto posterior: en esta base faltan partos, así que esa regla mandaba a
+    # "seca" a cientos de vacas que estaban ordeñándose. Contrastado contra el
+    # informe de DelPro para 2025: con esta regla da 2.627 vacas en ordeñe
+    # contra 2.678, y 216 días en leche contra 217; con la regla estricta daba
+    # 2.242 y 176.
+    seca = (f"CASE WHEN l.sig IS NOT NULL AND DATEDIFF(day, f.d, l.sig) <= {PERIODO_SECO_DIAS}"
+            f" THEN 1 ELSE 0 END")
+    return f"""
+        WITH fechas AS ({lista}),
+        lact AS (
+            SELECT ae.BasicAnimal AS animal, ae.DateAndTime AS inicio,
+                   ae.LactationNumber AS lact,
+                   LEAD(ae.DateAndTime) OVER (PARTITION BY ae.BasicAnimal
+                                              ORDER BY ae.DateAndTime) AS sig
+            FROM EventCalving c
+            JOIN AbstractAnimalEvent ae ON ae.OID = c.OID AND ae.GCRecord IS NULL
+        ),
+        estado AS (
+            SELECT f.d, l.lact,
+                   DATEDIFF(day, l.inicio, f.d) AS del,
+                   {seca} AS seca
+            FROM fechas f
+            JOIN lact l ON l.inicio <= f.d AND (l.sig IS NULL OR l.sig > f.d)
+            JOIN BasicAnimal b ON b.OID = l.animal AND b.GCRecord IS NULL AND b.Number > 0
+            WHERE (b.ExitDate IS NULL OR b.ExitDate > f.d)
+              AND DATEDIFF(day, l.inicio, f.d) BETWEEN 0 AND 700
+        )
+        SELECT d,
+               SUM(CASE WHEN seca = 0 THEN 1 ELSE 0 END) AS vacas_ordeno,
+               SUM(CASE WHEN seca = 1 THEN 1 ELSE 0 END) AS vacas_secas,
+               COUNT(*) AS total_vacas,
+               AVG(CASE WHEN seca = 0 THEN lact * 1.0 END) AS lactancias_prom,
+               100.0 * SUM(CASE WHEN seca = 0 AND lact = 1 THEN 1 ELSE 0 END)
+                     / NULLIF(SUM(CASE WHEN seca = 0 THEN 1 ELSE 0 END), 0) AS pct_ordeno_l1,
+               AVG(CASE WHEN seca = 0 THEN del * 1.0 END) AS del_prom,
+               AVG(CASE WHEN seca = 0 AND lact = 1 THEN del * 1.0 END) AS del_l1,
+               AVG(CASE WHEN seca = 0 AND lact = 2 THEN del * 1.0 END) AS del_l2,
+               AVG(CASE WHEN seca = 0 AND lact >= 3 THEN del * 1.0 END) AS del_l3
+        FROM estado
+        GROUP BY d
+        ORDER BY d
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
+    """
+
+
+def fechas_muestra(desde: str, hasta: str, maximo: int = 12) -> list:
+    """Fechas donde se mide la composición del rodeo dentro de un rango.
+
+    Se toma una muestra repartida (hasta `maximo` puntos) y después se
+    promedia: el inventario de un trimestre es el promedio de ese trimestre,
+    no el valor de un día suelto.
+    """
+    d0 = datetime.date.fromisoformat(desde)
+    d1 = datetime.date.fromisoformat(hasta)
+    dias = (d1 - d0).days
+    if dias <= 0:
+        return [d1.isoformat()]
+    n = min(maximo, max(2, dias // 7))
+    paso = dias / (n - 1) if n > 1 else dias
+    return [(d0 + datetime.timedelta(days=round(i * paso))).isoformat() for i in range(n)]
+
+
 # % Preñadas sobre las vacas en ordeñe — estado actual.
 SQL_PCT_PRENADAS = """
     SELECT 100.0 * SUM(CASE WHEN r.IsPregnant = 1 THEN 1 ELSE 0 END)
@@ -338,28 +428,51 @@ def _r(v, dec=1):
     return None if v is None else round(float(v), dec)
 
 
+def _promedio_inventario(data_inv) -> dict:
+    """Promedia la composición del rodeo sobre las fechas de muestra del rango."""
+    filas = [dict(zip(data_inv["columns"], f)) for f in (data_inv.get("rows") or [])]
+    if not filas:
+        return {}
+
+    def prom(clave):
+        vals = [float(f[clave]) for f in filas if f.get(clave) is not None]
+        return sum(vals) / len(vals) if vals else None
+
+    return {k: prom(k) for k in ("vacas_ordeno", "vacas_secas", "total_vacas",
+                                 "lactancias_prom", "pct_ordeno_l1",
+                                 "del_prom", "del_l1", "del_l2", "del_l3")}
+
+
 def valores_de_rango(data_inv, data_pren, data_prenez, data_ciclos_1, data_ciclos_3,
                      data_ciclos_12, data_abortos_3c, data_abortos_12m, data_no_insem,
                      es_actual: bool) -> dict:
     """Calcula el valor medido de cada indicador para un rango.
 
-    `es_actual`: True si el rango termina hoy. Los ítems de inventario son una
-    foto del estado actual, así que en un rango cerrado en el pasado se dejan
-    vacíos en vez de mostrar el número de hoy como si fuera el de entonces.
+    El inventario se reconstruye con el MISMO método en los dos rangos, aunque
+    uno de ellos termine hoy y se pudiera leer el estado actual exacto. Es a
+    propósito: la pantalla existe para comparar dos períodos, y comparar un
+    número reconstruido contra uno exacto mediría la diferencia entre los dos
+    métodos además de la del rodeo.
+
+    `es_actual`: True si el rango termina hoy. Solo se usa para los indicadores
+    que son inherentemente del presente (% preñadas, % no inseminar): en un
+    rango cerrado en el pasado se dejan vacíos en vez de mostrar el valor de
+    hoy como si fuera el de entonces.
     """
     v = {}
 
-    if es_actual:
-        inv = _fila(data_inv)
-        v["vacas_ordeno"] = inv.get("vacas_ordeno")
-        v["vacas_secas"] = inv.get("vacas_secas")
-        v["total_vacas"] = inv.get("total_vacas")
+    inv = _promedio_inventario(data_inv)
+    if inv.get("total_vacas"):
+        v["vacas_ordeno"] = round(inv["vacas_ordeno"]) if inv.get("vacas_ordeno") else 0
+        v["vacas_secas"] = round(inv["vacas_secas"]) if inv.get("vacas_secas") else 0
+        v["total_vacas"] = round(inv["total_vacas"])
         v["lactancias_prom"] = _r(inv.get("lactancias_prom"))
         v["pct_ordeno_l1"] = _r(inv.get("pct_ordeno_l1"))
         for k in ("del_prom", "del_l1", "del_l2", "del_l3"):
             v[k] = _r(inv.get(k), 0)
-        if v.get("total_vacas"):
-            v["pct_lactando"] = _r(100.0 * (v["vacas_ordeno"] or 0) / v["total_vacas"])
+        v["pct_lactando"] = _r(100.0 * v["vacas_ordeno"] / v["total_vacas"])
+
+    if es_actual:
         v["pct_prenadas"] = _r(_fila(data_pren).get("pct_prenadas"))
         v["pct_no_inseminar"] = _r(_fila(data_no_insem).get("pct"))
 
