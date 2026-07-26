@@ -2457,7 +2457,7 @@ function vumetroHTML(key, { label, sub, target, disabled }) {
   return `<div class="lac-card" style="text-align:center;padding:12px 8px;min-width:180px"${click}>
     <div class="lac-eyebrow">${label}</div>
     ${cuerpo}
-    <div class="lac-caption" style="margin-top:2px;min-height:14px">${sub || ''}</div>
+    <div class="lac-caption" id="vu-${key}-sub" style="margin-top:2px;min-height:14px">${sub || ''}</div>
   </div>`;
 }
 
@@ -2476,9 +2476,28 @@ function vumetroIniciar(key, { valor, min, max, decimals, unidad, label, warnAt,
   _vumetros[key] = g;
 }
 
+const _vumetrosFirma = {};   // contId -> "clave:disabled|clave:disabled|..." del último render
+
+// Solo reconstruye el SVG de cada vúmetro cuando cambia la ESTRUCTURA (aparece,
+// desaparece o pasa de "sin instalar" a con dato, o viceversa). Si la
+// estructura es la misma que el refresco anterior (el caso normal, ej. cada
+// 5s en Monitoreo IoT), solo actualiza el valor con .set() — evita destruir y
+// recrear docenas de <line> SVG por segmento en cada refresco.
 function pintarVumetros(contId, specs) {
-  document.getElementById(contId).innerHTML = specs.map(s => vumetroHTML(s.key, s)).join('');
-  specs.forEach(s => { if (!s.disabled) vumetroIniciar(s.key, s); });
+  const firma = specs.map(s => s.key + ':' + (s.disabled ? 1 : 0)).join('|');
+  if (_vumetrosFirma[contId] !== firma) {
+    document.getElementById(contId).innerHTML = specs.map(s => vumetroHTML(s.key, s)).join('');
+    specs.forEach(s => { if (!s.disabled) vumetroIniciar(s.key, s); });
+    _vumetrosFirma[contId] = firma;
+    return;
+  }
+  specs.forEach(s => {
+    if (s.disabled) return;
+    const g = _vumetros[s.key];
+    if (g) g.set(s.valor);
+    const subEl = document.getElementById(`vu-${s.key}-sub`);
+    if (subEl && s.sub != null) subEl.textContent = s.sub;
+  });
 }
 
 function pintarSaludGauges(atencion, atencion2, rcsGrupo, bcs, podalEstado, podalVacas) {

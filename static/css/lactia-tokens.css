@@ -8,7 +8,11 @@
    Capa 3: tokens de instrumento (siempre oscuros, en los 2 modos)
    ============================================================ */
 
-@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600&family=Inter:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap');
+/* Sin @import de Google Fonts: en un tambo con internet intermitente, un
+   @import dentro de una hoja de estilos BLOQUEA el renderizado esperando la
+   red antes de seguir. Se usan directo las fuentes de sistema equivalentes
+   (ya estaban como fallback en --lac-font-*) — visualmente casi igual, sin
+   depender de que haya internet. */
 
 :root {
   /* ---------- Capa 1 · paleta cruda ---------- */
