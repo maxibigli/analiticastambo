@@ -420,17 +420,24 @@
           <span class="aviso" style="font-weight:600">Rango 1</span>
           <input type="date" id="repro-d1" style="padding:6px 8px">
           <input type="date" id="repro-h1" style="padding:6px 8px">
+          <select id="repro-r1" style="padding:6px 8px"></select>
         </div>
         <div class="controls" style="gap:5px">
           <span class="aviso" style="font-weight:600">Rango 2</span>
           <input type="date" id="repro-d2" style="padding:6px 8px">
           <input type="date" id="repro-h2" style="padding:6px 8px">
+          <select id="repro-r2" style="padding:6px 8px"></select>
         </div>
         <button class="secundario" id="repro-aplicar">Aplicar</button>
       </div>
       <p class="explica" style="margin-top:10px">
         <b>Qué muestra.</b> Cada indicador reproductivo con su meta, y si el rodeo la cumple o no en
         cada uno de los dos períodos. El triángulo verde es meta cumplida, el rojo no cumplida.
+        <br><b>Rebaño.</b> Esta base la comparten varios tambos: además de La Ponderosa están
+        Don Germán y SB. Cada rango tiene su propio selector, así que se puede comparar un tambo
+        contra otro además de un período contra otro. Por defecto viene La Ponderosa; el informe de
+        DelPro que se usó de referencia estaba en "Todos los rebaños", por eso sus números son
+        bastante más altos.
         <br><b>Confianza del dato.</b> Al lado de cada valor va una marca:
         <b>●</b> el dato sale del estado actual del rodeo y está verificado contra DelPro;
         <b>◐</b> es un ratio calculado sobre eventos reproductivos, sirve para ver tendencia pero no
@@ -2084,10 +2091,14 @@ function celdaValor(valor, cumple, unidad, dec, confianza) {
 
 function pintarRepro(d) {
   const r1 = d.rango1, r2 = d.rango2;
+  const nombreReb = h => {
+    const r = (reproRebanos || []).find(x => String(x.herd) === String(h));
+    return r ? r.nombre : (h == null ? 'La Ponderosa' : 'Rebaño ' + h);
+  };
   document.getElementById('repro-kpis').innerHTML = [
-    ['Rango 1', `${r1.desde} → ${r1.hasta}`],
+    ['Rango 1 · ' + nombreReb(r1.rebano), `${r1.desde} → ${r1.hasta}`],
     ['Metas cumplidas · Rango 1', `${d.resumen1.cumplen} de ${d.resumen1.evaluados}`],
-    ['Rango 2', `${r2.desde} → ${r2.hasta}`],
+    ['Rango 2 · ' + nombreReb(r2.rebano), `${r2.desde} → ${r2.hasta}`],
     ['Metas cumplidas · Rango 2', `${d.resumen2.cumplen} de ${d.resumen2.evaluados}`],
   ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value" style="font-size:16px">${v}</div></div>`).join('');
 
@@ -2114,17 +2125,41 @@ function pintarRepro(d) {
     `Ciclo reproductivo de ${d.ciclo_dias} días, espera voluntaria de ${d.espera_voluntaria_dias} días.`;
 }
 
+// La base está compartida con otros tambos, así que cada rango elige su
+// rebaño. Se cargan una sola vez: no cambian.
+let reproRebanos = null;
+
+async function cargarRebanos() {
+  if (reproRebanos) return;
+  try {
+    const d = await pedirJSON('/api/reproduccion/rebanos?tambo=' + encodeURIComponent(tamboActual));
+    reproRebanos = d.rebanos || [];
+  } catch (e) { reproRebanos = []; return; }
+  const porDefecto = (reproRebanos.find(r => r.es_el_tambo) || {}).herd;
+  ['repro-r1', 'repro-r2'].forEach(id => {
+    const sel = document.getElementById(id);
+    if (sel.options.length) return;
+    sel.innerHTML = reproRebanos.map(r =>
+      `<option value="${r.herd}"${r.herd === porDefecto ? ' selected' : ''}>` +
+      `${r.nombre} (${fmt(r.animales)})</option>`).join('');
+  });
+}
+
 async function cargarRepro() {
   clearTimeout(reproReintento);
   const info = document.getElementById('repro-info');
+  await cargarRebanos();
   const hoy = new Date(), a = hoy.getFullYear();
   const g = (id, def) => { const e = document.getElementById(id); if (!e.value) e.value = def; return e.value; };
   const d1 = g('repro-d1', `${a - 1}-01-01`), h1 = g('repro-h1', `${a - 1}-12-31`);
   const d2 = g('repro-d2', `${a}-01-01`), h2 = g('repro-h2', hoyISO());
+  const r1 = document.getElementById('repro-r1').value;
+  const r2 = document.getElementById('repro-r2').value;
   info.textContent = 'Evaluando…';
   try {
     const d = await pedirJSON(`/api/reproduccion/resultados?desde1=${d1}&hasta1=${h1}` +
-      `&desde2=${d2}&hasta2=${h2}&tambo=${encodeURIComponent(tamboActual)}`);
+      `&desde2=${d2}&hasta2=${h2}&rebano1=${encodeURIComponent(r1)}&rebano2=${encodeURIComponent(r2)}` +
+      `&tambo=${encodeURIComponent(tamboActual)}`);
     pintarRepro(d);
   } catch (e) {
     if (e.calentando) { info.textContent = e.message; reproReintento = setTimeout(cargarRepro, 4000); return; }

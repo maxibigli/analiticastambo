@@ -47,6 +47,8 @@ animales se excluyen del cálculo por imposibles.
 import calendar
 import datetime
 
+import rebano
+
 # Rango máximo, en meses, que se puede pedir de una vez.
 RANGO_MESES_MAX = 36
 
@@ -97,12 +99,13 @@ def rango_meses(desde: str, hasta: str) -> list:
 # Punto de partida: vacas lactantes de HOY. Una vaca cuenta como lactante si
 # está activa, ya parió al menos una vez y no está marcada en secado. Sin
 # filtrar por grupo de ordeñe a propósito: el informe abarca los tres rebaños.
-SQL_LACTANTES_HOY = """
+SQL_LACTANTES_HOY = f"""
     SELECT COUNT(*) AS lactantes
     FROM BasicAnimal b
     JOIN AnimalReproductionInfo r ON r.Animal = b.OID AND r.GCRecord IS NULL
     WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
       AND r.LactationNumber >= 1 AND ISNULL(r.IsDryingOff, 0) = 0
+      AND {rebano.filtro('b')}
 """
 
 
@@ -120,6 +123,7 @@ def sql_partos_reales(desde: str, hasta: str) -> str:
         JOIN AbstractAnimalEvent ae ON ae.OID = c.OID AND ae.GCRecord IS NULL
         WHERE ae.DateAndTime >= '{desde}-01'
           AND ae.DateAndTime < DATEADD(month, 1, '{hasta}-01')
+          AND {rebano.filtro_por_animal('ae.BasicAnimal')}
         GROUP BY FORMAT(ae.DateAndTime, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
@@ -142,13 +146,14 @@ SQL_PARTOS_PREVISTOS = f"""
     WHERE r.GCRecord IS NULL AND r.IsPregnant = 1
       AND (r.LastLactationChangeDate IS NULL OR ae.DateAndTime > r.LastLactationChangeDate)
       AND DATEDIFF(day, ae.DateAndTime, GETDATE()) BETWEEN 0 AND {PRENEZ_MAX_DIAS}
+      AND {rebano.filtro('b')}
     GROUP BY FORMAT(DATEADD(day, {GESTACION_DIAS}, ae.DateAndTime), 'yyyy-MM')
 """
 
 
 # Cuántas preñeces quedan afuera por dato imposible — se muestra en la página
 # como advertencia, no se esconde.
-SQL_PRENECES_DESCARTADAS = f"""
+SQL_PRENECES_DESCARTADAS = f"""  -- (filtrada al rebaño del tambo, ver abajo)
     SELECT SUM(CASE WHEN ix.EffectiveInsemination IS NULL
                      OR ae.DateAndTime IS NULL
                      OR DATEDIFF(day, ae.DateAndTime, GETDATE()) > {PRENEZ_MAX_DIAS}
@@ -162,6 +167,7 @@ SQL_PRENECES_DESCARTADAS = f"""
     LEFT JOIN AnimalLatestHistoryIndex ix ON ix.Animal = r.Animal AND ix.GCRecord IS NULL
     LEFT JOIN AbstractAnimalEvent ae ON ae.OID = ix.EffectiveInsemination AND ae.GCRecord IS NULL
     WHERE r.GCRecord IS NULL AND r.IsPregnant = 1
+      AND {rebano.filtro('b')}
 """
 
 
@@ -173,6 +179,7 @@ def sql_salidas_reales(desde: str, hasta: str) -> str:
         WHERE b.GCRecord IS NULL AND b.Number > 0 AND b.ExitDate IS NOT NULL
           AND b.ExitDate >= '{desde}-01'
           AND b.ExitDate < DATEADD(month, 1, '{hasta}-01')
+          AND {rebano.filtro('b')}
         GROUP BY FORMAT(b.ExitDate, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
@@ -215,7 +222,8 @@ def sql_lactantes_historico(desde: str, hasta: str) -> str:
         JOIN partos p ON p.fecha < DATEADD(month, 1, m.m)
                      AND p.fecha >= DATEADD(day, -{LACTANCIA_DIAS}, DATEADD(month, 1, m.m))
         JOIN BasicAnimal b ON b.OID = p.animal AND b.GCRecord IS NULL AND b.Number > 0
-        WHERE b.ExitDate IS NULL OR b.ExitDate >= DATEADD(month, 1, m.m)
+        WHERE (b.ExitDate IS NULL OR b.ExitDate >= DATEADD(month, 1, m.m))
+          AND {rebano.filtro('b')}
         GROUP BY FORMAT(m.m, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
     """
@@ -237,6 +245,7 @@ def sql_kg_por_vaca(desde: str, hasta: str) -> str:
         WHERE d.GCRecord IS NULL
           AND d.Date >= '{desde}-01'
           AND d.Date < DATEADD(month, 1, '{hasta}-01')
+          AND {rebano.filtro_por_animal('d.BasicAnimal')}
         GROUP BY FORMAT(d.Date, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
     """

@@ -44,6 +44,8 @@ import json
 import os
 import threading
 
+import rebano
+
 # --- Catálogo ----------------------------------------------------------------
 # Estructura: (seccion, subseccion, clave, etiqueta, meta_defecto, condicion,
 #             unidad, decimales, confianza)
@@ -202,33 +204,6 @@ def cumple(valor, meta, condicion) -> bool | None:
 
 # --- Consultas ---------------------------------------------------------------
 
-# Inventario y días en leche. Es una FOTO del estado actual del rodeo, no un
-# promedio del rango: la base no permite reconstruir la composición histórica
-# (ver la nota del encabezado). Vale para un rango que termina hoy; para rangos
-# cerrados en el pasado estos ítems se devuelven vacíos.
-SQL_INVENTARIO = """
-    WITH v AS (
-        SELECT r.LactationNumber AS lact,
-               ISNULL(r.IsDryingOff, 0) AS seca,
-               DATEDIFF(day, r.LastLactationChangeDate, GETDATE()) AS del
-        FROM BasicAnimal b
-        JOIN AnimalReproductionInfo r ON r.Animal = b.OID AND r.GCRecord IS NULL
-        WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
-          AND r.LactationNumber >= 1
-    )
-    SELECT SUM(CASE WHEN seca = 0 THEN 1 ELSE 0 END) AS vacas_ordeno,
-           SUM(CASE WHEN seca = 1 THEN 1 ELSE 0 END) AS vacas_secas,
-           COUNT(*) AS total_vacas,
-           AVG(CASE WHEN seca = 0 THEN lact * 1.0 END) AS lactancias_prom,
-           100.0 * SUM(CASE WHEN seca = 0 AND lact = 1 THEN 1 ELSE 0 END)
-                 / NULLIF(SUM(CASE WHEN seca = 0 THEN 1 ELSE 0 END), 0) AS pct_ordeno_l1,
-           AVG(CASE WHEN seca = 0 AND del BETWEEN 0 AND 1000 THEN del * 1.0 END) AS del_prom,
-           AVG(CASE WHEN seca = 0 AND lact = 1 AND del BETWEEN 0 AND 1000 THEN del * 1.0 END) AS del_l1,
-           AVG(CASE WHEN seca = 0 AND lact = 2 AND del BETWEEN 0 AND 1000 THEN del * 1.0 END) AS del_l2,
-           AVG(CASE WHEN seca = 0 AND lact >= 3 AND del BETWEEN 0 AND 1000 THEN del * 1.0 END) AS del_l3
-    FROM v
-"""
-
 # Período seco: se usa para decidir si una vaca estaba en ordeñe o seca en una
 # fecha pasada (está seca en los últimos PERIODO_SECO_DIAS antes de su próximo
 # parto). Mismo valor que usa `proyeccion.py`.
@@ -238,7 +213,7 @@ PERIODO_SECO_DIAS = 60
 LACTANCIA_MAX_DIAS = 700
 
 
-def sql_inventario_historico(fechas: list) -> str:
+def sql_inventario_historico(fechas: list, herd=None) -> str:
     """Composición del rodeo en cada una de las fechas dadas.
 
     Reconstruye el estado de cada animal a una fecha pasada a partir de sus
@@ -281,7 +256,8 @@ def sql_inventario_historico(fechas: list) -> str:
             JOIN lact l ON l.inicio <= f.d AND (l.sig IS NULL OR l.sig > f.d)
             JOIN BasicAnimal b ON b.OID = l.animal AND b.GCRecord IS NULL AND b.Number > 0
             WHERE (b.ExitDate IS NULL OR b.ExitDate > f.d)
-              AND DATEDIFF(day, l.inicio, f.d) BETWEEN 0 AND 700
+              AND DATEDIFF(day, l.inicio, f.d) BETWEEN 0 AND {LACTANCIA_MAX_DIAS}
+              AND {rebano.filtro('b', herd)}
         )
         SELECT d,
                SUM(CASE WHEN seca = 0 THEN 1 ELSE 0 END) AS vacas_ordeno,
@@ -319,17 +295,19 @@ def fechas_muestra(desde: str, hasta: str, maximo: int = 12) -> list:
 
 
 # % Preñadas sobre las vacas en ordeñe — estado actual.
-SQL_PCT_PRENADAS = """
+def sql_pct_prenadas(herd=None) -> str:
+    return f"""
     SELECT 100.0 * SUM(CASE WHEN r.IsPregnant = 1 THEN 1 ELSE 0 END)
                  / NULLIF(COUNT(*), 0) AS pct_prenadas
     FROM BasicAnimal b
     JOIN AnimalReproductionInfo r ON r.Animal = b.OID AND r.GCRecord IS NULL
     WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
       AND r.LactationNumber >= 1 AND ISNULL(r.IsDryingOff, 0) = 0
+      AND {rebano.filtro('b', herd)}
 """
 
 
-def sql_prenez_por_del(desde: str, hasta: str) -> str:
+def sql_prenez_por_del(desde: str, hasta: str, herd=None) -> str:
     """% de lactancias iniciadas en el rango que quedaron preñadas antes del
     día N de lactancia.
 
@@ -347,12 +325,13 @@ def sql_prenez_por_del(desde: str, hasta: str) -> str:
         FROM HistoryAnimalLactationInfo h
         WHERE h.LactationNumber >= 1
           AND h.StartDate >= '{desde}' AND h.StartDate < DATEADD(day, 1, '{hasta}')
+          AND {rebano.filtro_por_animal('h.Animal', herd)}
         GROUP BY CASE WHEN h.LactationNumber = 1 THEN 'l1' ELSE 'l2' END
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
 
 
-def sql_servicios_por_ciclo(hasta: str, ciclos: int) -> str:
+def sql_servicios_por_ciclo(hasta: str, ciclos: int, herd=None) -> str:
     """Servicios (inseminaciones) y preñeces confirmadas por ciclo de 21 días
     hacia atrás desde `hasta`, separando primera lactancia del resto.
 
@@ -375,6 +354,7 @@ def sql_servicios_por_ciclo(hasta: str, ciclos: int) -> str:
               AND ae.DateAndTime > DATEADD(day, -{dias}, '{hasta}')
               AND ae.DateAndTime <= '{hasta}'
               AND (i.OID IS NOT NULL OR p.OID IS NOT NULL)
+              AND {rebano.filtro_por_animal('ae.BasicAnimal', herd)}
         )
         SELECT ciclo,
                CASE WHEN lact <= 1 THEN 'l1' ELSE 'l2' END AS grupo,
@@ -387,7 +367,7 @@ def sql_servicios_por_ciclo(hasta: str, ciclos: int) -> str:
     """
 
 
-def sql_abortos(desde: str, hasta: str) -> str:
+def sql_abortos(desde: str, hasta: str, herd=None) -> str:
     """Abortos sobre partos del mismo período, separando primera lactancia."""
     return f"""
         SELECT CASE WHEN ae.LactationNumber <= 1 THEN 'l1' ELSE 'l2' END AS grupo,
@@ -399,19 +379,22 @@ def sql_abortos(desde: str, hasta: str) -> str:
         WHERE ae.GCRecord IS NULL
           AND ae.DateAndTime >= '{desde}' AND ae.DateAndTime < DATEADD(day, 1, '{hasta}')
           AND (a.OID IS NOT NULL OR c.OID IS NOT NULL)
+          AND {rebano.filtro_por_animal('ae.BasicAnimal', herd)}
         GROUP BY CASE WHEN ae.LactationNumber <= 1 THEN 'l1' ELSE 'l2' END
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
 
 
 # Vacas marcadas para no inseminar, sobre las vacas en ordeñe.
-SQL_NO_INSEMINAR = """
+def sql_no_inseminar(herd=None) -> str:
+    return f"""
     SELECT 100.0 * SUM(CASE WHEN b.ToBeCulled = 1 THEN 1 ELSE 0 END)
                  / NULLIF(COUNT(*), 0) AS pct
     FROM BasicAnimal b
     JOIN AnimalReproductionInfo r ON r.Animal = b.OID AND r.GCRecord IS NULL
     WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
       AND r.LactationNumber >= 1 AND ISNULL(r.IsDryingOff, 0) = 0
+      AND {rebano.filtro('b', herd)}
 """
 
 

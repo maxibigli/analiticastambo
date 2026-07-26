@@ -57,9 +57,17 @@ mismo con `setx`.
 - Umbrales de retirada: NO inventarlos ni hacerlos editables. Salen de
   `CMSMpcSetting.TakeoffLimit` (0,80 en este tambo) y la banda del informe es
   ±25% de ese valor → 0,60 y 1,00, que son las tres tarjetas de DelPro.
-- La base la comparten TRES rebaños (`Herd` tiene 3 filas). Los informes de
-  rodeo de DelPro los abarcan a los tres: filtrar por grupo de ordeñe da la
-  mitad. Vacas lactantes de los 3 = 3.253 (verificado contra DelPro).
+- **La base la comparten TRES tambos** (`Herd` tiene 3 filas):
+  rebaño 1 = La Ponderosa (grupos `... LP` + Rodeo 1..9), 6 = Don Germán
+  (`... DG`), 7 = SB. Toda consulta de rodeo DEBE filtrar con
+  `rebano.filtro()` / `rebano.filtro_por_animal()`, que deducen el rebaño del
+  tambo de dónde están los grupos de ordeñe (nunca hardcodear el 1). Sin
+  filtrar hay 3.253 vacas lactantes; La Ponderosa sola tiene 1.621.
+  Las consultas que filtran por `CMSGroupMilkSetting.EnableMilking = 1` ya
+  quedan acotadas al tambo de rebote, porque solo el rebaño 1 tiene grupos de
+  ordeñe — pero no hay que confiarse en eso.
+- Los informes de DelPro que sirvieron de referencia estaban en "Todos los
+  rebaños": por eso sus números son ~2x los de La Ponderosa sola.
 - Proyección de rebaños: la ecuación es
   `lactantes[m] = lactantes[m-1] + partos - secados - salidas` y la producción
   `lactantes × kg/vaca/día del año pasado × días del mes` (ambas verificadas

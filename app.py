@@ -26,6 +26,7 @@ import laserenisima
 import mantenimiento
 import podal
 import proyeccion
+import rebano
 import reproduccion
 import resumen
 import rutina
@@ -1574,33 +1575,36 @@ def _refresh_repro_async(tambo, rangos, key):
         try:
             hoy = datetime.date.today().isoformat()
             data = {}
-            data["pren"] = db.run_query(reproduccion.SQL_PCT_PRENADAS, tambo=tambo, max_rows=5)
-            data["no_insem"] = db.run_query(reproduccion.SQL_NO_INSEMINAR, tambo=tambo, max_rows=5)
-            for nombre, (desde, hasta) in rangos.items():
+            for nombre, (desde, hasta, herd) in rangos.items():
                 # Inventario reconstruido a varias fechas del rango y luego
                 # promediado: el inventario de un trimestre es el promedio del
                 # trimestre, no el de un día suelto.
                 data[f"{nombre}:inv"] = db.run_query(
                     reproduccion.sql_inventario_historico(
-                        reproduccion.fechas_muestra(desde, hasta)),
+                        reproduccion.fechas_muestra(desde, hasta), herd),
                     tambo=tambo, max_rows=40)
                 data[f"{nombre}:prenez"] = db.run_query(
-                    reproduccion.sql_prenez_por_del(desde, hasta), tambo=tambo, max_rows=20)
+                    reproduccion.sql_prenez_por_del(desde, hasta, herd), tambo=tambo, max_rows=20)
                 # Ventanas de ciclos, contadas hacia atrás desde el fin del rango.
                 for suf, ciclos in (("c1", 1), ("c3", 3), ("c12", 18)):
                     data[f"{nombre}:{suf}"] = db.run_query(
-                        reproduccion.sql_servicios_por_ciclo(hasta, ciclos),
+                        reproduccion.sql_servicios_por_ciclo(hasta, ciclos, herd),
                         tambo=tambo, max_rows=200)
                 data[f"{nombre}:ab3c"] = db.run_query(
                     reproduccion.sql_abortos(
                         (datetime.date.fromisoformat(hasta)
                          - datetime.timedelta(days=3 * reproduccion.CICLO_DIAS)).isoformat(),
-                        hasta), tambo=tambo, max_rows=20)
+                        hasta, herd), tambo=tambo, max_rows=20)
                 data[f"{nombre}:ab12m"] = db.run_query(
                     reproduccion.sql_abortos(
                         (datetime.date.fromisoformat(hasta)
                          - datetime.timedelta(days=365)).isoformat(),
-                        hasta), tambo=tambo, max_rows=20)
+                        hasta, herd), tambo=tambo, max_rows=20)
+                # Indicadores del presente: dependen del rebaño, no del rango.
+                data[f"{nombre}:pren"] = db.run_query(
+                    reproduccion.sql_pct_prenadas(herd), tambo=tambo, max_rows=5)
+                data[f"{nombre}:no_insem"] = db.run_query(
+                    reproduccion.sql_no_inseminar(herd), tambo=tambo, max_rows=5)
                 data[f"{nombre}:es_actual"] = hasta >= hoy
             _cache_set(key, data)
         except Exception:  # noqa: BLE001
@@ -1640,8 +1644,26 @@ def api_reproduccion_resultados():
     if d2 > h2:
         d2, h2 = h2, d2
 
-    rangos = {"r1": (d1.isoformat(), h1.isoformat()), "r2": (d2.isoformat(), h2.isoformat())}
-    key = f"{tambo}:repro:{d1}:{h1}:{d2}:{h2}"
+    # Rebaño por rango: la base la comparten varios tambos (ver `rebano.py`).
+    # Por defecto, el del tambo; "todos" para no filtrar.
+    def leer_herd(nombre):
+        v = (request.args.get(nombre) or "").strip()
+        if not v:
+            return None
+        if v.lower() == rebano.TODOS:
+            return rebano.TODOS
+        try:
+            return int(v)
+        except ValueError:
+            raise ValueError(f"Rebaño inválido: {v!r}")
+    try:
+        herd1, herd2 = leer_herd("rebano1"), leer_herd("rebano2")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    rangos = {"r1": (d1.isoformat(), h1.isoformat(), herd1),
+              "r2": (d2.isoformat(), h2.isoformat(), herd2)}
+    key = f"{tambo}:repro:{d1}:{h1}:{herd1}:{d2}:{h2}:{herd2}"
     data, fresh = _cache_get(key, allow_stale=True, ttl=REPRO_CACHE_TTL_S)
     if data is None:
         _refresh_repro_async(tambo, rangos, key)
@@ -1651,16 +1673,33 @@ def api_reproduccion_resultados():
 
     def valores(nombre):
         return reproduccion.valores_de_rango(
-            data[f"{nombre}:inv"], data["pren"], data[f"{nombre}:prenez"],
+            data[f"{nombre}:inv"], data[f"{nombre}:pren"], data[f"{nombre}:prenez"],
             data[f"{nombre}:c1"], data[f"{nombre}:c3"], data[f"{nombre}:c12"],
-            data[f"{nombre}:ab3c"], data[f"{nombre}:ab12m"], data["no_insem"],
+            data[f"{nombre}:ab3c"], data[f"{nombre}:ab12m"], data[f"{nombre}:no_insem"],
             es_actual=data.get(f"{nombre}:es_actual", False))
 
     resultado = reproduccion.armar(
         valores("r1"), valores("r2"),
-        {"desde": rangos["r1"][0], "hasta": rangos["r1"][1]},
-        {"desde": rangos["r2"][0], "hasta": rangos["r2"][1]})
+        {"desde": rangos["r1"][0], "hasta": rangos["r1"][1], "rebano": herd1},
+        {"desde": rangos["r2"][0], "hasta": rangos["r2"][1], "rebano": herd2})
     return jsonify(resultado)
+
+
+@app.get("/api/reproduccion/rebanos")
+@auth.requiere_rol("admin")
+def api_reproduccion_rebanos():
+    """Rebaños de la base, para el desplegable de cada rango. La base está
+    compartida con otros tambos: ver `rebano.py`."""
+    tambo = _tambo_del_request()
+    key = f"{tambo}:rebanos"
+    data, _ = _cache_get(key, allow_stale=True, ttl=3600)
+    if data is None:
+        try:
+            data = db.run_query(rebano.SQL_LISTA, tambo=tambo, max_rows=20)
+            _cache_set(key, data)
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": str(exc)}), 502
+    return jsonify({"rebanos": rebano.listar(data)})
 
 
 @app.get("/api/cicla/cargas")
