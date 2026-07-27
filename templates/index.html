@@ -125,6 +125,12 @@
   .pm-pisado td { background: color-mix(in srgb, var(--warning) 16%, transparent); }
   /* Fila con dato vencido: se ve distinta pero no grita. */
   .ps-vencido td { background: color-mix(in srgb, var(--warning) 14%, transparent); }
+  /* Advertencia sobre el dato mismo: no es que falte un número, es que el que
+     hay no significa lo que parece. Va antes de los gráficos, no al pie. */
+  .alerta-caja {
+    border-left: 3px solid var(--warning); border-radius: 6px; padding: 10px 14px;
+    background: color-mix(in srgb, var(--warning) 10%, transparent); font-size: 13px;
+  }
   .tabla-interactiva thead th { position: sticky; top: 0; background: var(--surface-1); z-index: 1; }
   .repro-sub td {
     background: color-mix(in srgb, var(--accent) 16%, transparent);
@@ -934,7 +940,73 @@
       <div class="lac-segment" id="alim-tabs" role="group" aria-label="Vista" style="margin-left:auto">
         <button class="lac-segment__item" data-tab="conciliacion" aria-pressed="true">Conciliación de grupos</button>
         <button class="lac-segment__item" data-tab="conversion" aria-pressed="false">Eficiencia de conversión</button>
+        <button class="lac-segment__item" data-tab="historica" aria-pressed="false">Conversión histórica</button>
       </div>
+    </div>
+
+    <div id="alim-panel-historica" hidden>
+      <p class="explica" style="margin-top:12px">
+        <b>Qué contesta.</b> La pestaña anterior dice <b>cuánto</b> convierte hoy cada rodeo. Esta
+        dice si <b>viene mejorando o empeorando</b>, que es lo único que permite saber si un cambio
+        de ración sirvió.
+        <br><b>Dos indicadores, a propósito.</b> No es lo mismo lo que se puede medir seguido que lo
+        que importa económicamente:
+        <br>· <b>Litros por kg de materia seca — semanal.</b> Todo medido, sin interpolar: la leche
+        es diaria y la comida se descarga varias veces por día. Se cambia la ración un lunes y a la
+        semana siguiente ya se ve.
+        <br>· <b>Sólidos por kg de materia seca — mensual.</b> Es el que importa, porque al tambo le
+        pagan por grasa y proteína, no por litros. Pero eso se mide <b>una vez por mes</b>, el día
+        del control lechero. Cada punto del gráfico mensual es un control real.
+        <br><b>Lo que a propósito NO se hace.</b> No se calcula una conversión de sólidos semanal
+        arrastrando el último control. Lo único que se movería es la leche multiplicada por una
+        composición vieja: un gráfico que se mueve todos los días sin significar nada es peor que no
+        tenerlo.
+        <br><b>Por qué semanal y no diario.</b> Un día suelto puede tener dos descargas de mixer o
+        ninguna según cuándo cargaron. Eso es ruido del registro, no del rodeo.
+        <br><b>Se usa el grupo del día</b>, no el actual: 2.467 vacas cambiaron de rodeo en 2026, y
+        atribuirles la comida del rodeo donde están hoy sería falso para casi todas.
+      </p>
+      <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="ch-desde" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="ch-aplicar">Aplicar</button>
+        <span class="lac-segment" id="ch-tipo" role="group" aria-label="Tipo de gráfico">
+          <button class="lac-segment__item" data-tipo="line" aria-pressed="true">Líneas</button>
+          <button class="lac-segment__item" data-tipo="bar" aria-pressed="false">Barras</button>
+          <button class="lac-segment__item" data-tipo="point" aria-pressed="false">Puntos</button>
+        </span>
+      </div>
+      <div class="aviso" id="ch-info" style="margin-top:8px"></div>
+      <div id="ch-diagnostico" style="margin-top:10px"></div>
+      <section class="kpis" id="ch-kpis" style="margin-top:10px"></section>
+
+      <h3 class="g-titulo" style="margin-top:20px">Semana a semana — litros por kg de materia seca</h3>
+      <span class="aviso">Mirá siempre las tres líneas juntas. Si la conversión sube mientras la
+        materia seca baja y la leche no se mueve, no mejoró el rodeo: se cargó menos comida.</span>
+      <div class="chart-box" style="height:300px;margin-top:8px"><canvas id="chart-ch-sem"></canvas></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Cobertura del rodeo por semana</h3>
+      <span class="aviso">Qué parte de las vacas en ordeñe entró en el cálculo de esa semana. Un
+        lote al que no le registraron descargas se cae del número y se lleva sus vacas: por debajo
+        del 85% la semana queda marcada como parcial, porque es la conversión de los otros rodeos,
+        no la del tambo.</span>
+      <div class="chart-box" style="height:200px;margin-top:8px"><canvas id="chart-ch-cob"></canvas></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Mes a mes — sólidos por kg de materia seca</h3>
+      <span class="aviso">Un punto por control lechero. Es el indicador que se traduce en plata.</span>
+      <div class="chart-box" style="height:260px;margin-top:8px"><canvas id="chart-ch-mes"></canvas></div>
+      <div style="overflow-x:auto;margin-top:10px" id="ch-tabla-meses"></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Por lote</h3>
+      <span class="aviso">La misma conversión semanal abierta por rodeo. Sirve para ver si el
+        movimiento del tambo lo explica un lote solo.</span>
+      <div class="chart-box" style="height:280px;margin-top:8px"><canvas id="chart-ch-lotes"></canvas></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Semanas, en detalle</h3>
+      <div style="overflow-x:auto;margin-top:8px" id="ch-tabla-semanas"></div>
+
+      <div id="ch-excluidos" style="margin-top:16px"></div>
     </div>
 
     <div id="alim-panel-conversion" hidden>
@@ -6029,6 +6101,237 @@ document.getElementById('cv-aplicar').addEventListener('click', () => {
   cargarConversion();
 });
 
+// ---------------------------------------------------------------------------
+// Conversión histórica. Ver `conversion_historica.py`: dos indicadores con
+// frecuencias distintas a propósito (litros/MS semanal, sólidos/MS mensual).
+// ---------------------------------------------------------------------------
+let chDatos = null, chReintento = null, chTipo = 'line';
+// `dibujar()` recibe el Chart ANTERIOR para destruirlo: si se le pasa un
+// string, al repintar revienta con `.destroy is not a function`.
+let chartChSem = null, chartChCob = null, chartChMes = null, chartChLotes = null;
+
+// Decimales con coma, que es como se escriben los números acá. `fmt()` recorta
+// a un decimal y una conversión de 1,656 quedaría en 1,7 — se pierde justo lo
+// que se quiere comparar entre semanas.
+function fmtDec(v, dec) {
+  return v == null ? '—' : Number(v).toFixed(dec == null ? 3 : dec).replace('.', ',');
+}
+
+async function cargarConversionHistorica() {
+  const info = document.getElementById('ch-info');
+  clearTimeout(chReintento);
+  const desde = document.getElementById('ch-desde').value;
+  try {
+    chDatos = await pedirJSON('/api/alimentacion/conversion-historica?tambo=' +
+      encodeURIComponent(tamboActual) + (desde ? '&desde=' + desde : ''));
+    pintarConversionHistorica();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; chReintento = setTimeout(cargarConversionHistorica, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+const graficoCH = (canvasId, ref, labels, datasets, options) =>
+  graficoTipado(canvasId, ref, labels, datasets, options, chTipo);
+
+function pintarConversionHistorica() {
+  const d = chDatos;
+  if (!d) return;
+  const sem = d.semanas || [], meses = d.meses || [];
+  const recortadas = d.semanas_recortadas || [];
+  document.getElementById('ch-info').textContent =
+    `${sem.length} semanas entre ${d.desde} y ${d.hasta}. ` +
+    `La comida se cruza con la leche del mismo lote y día; la historia arranca en ` +
+    `${d.inicio_alimentacion} porque antes no hay descargas registradas.` +
+    (recortadas.length ? ` Quedaron afuera ${recortadas.join(', ')}: cortadas al medio por el ` +
+      `borde del rango, con muy pocos días de datos para representar la semana.` : '');
+
+  // El diagnóstico va ARRIBA de todo y antes que ningún número: si la serie
+  // está midiendo el registro de descargas en vez del rodeo, leer la tendencia
+  // como "mejoró" es exactamente el error que hay que evitar.
+  const dg = d.diagnostico || {};
+  const cajaDg = document.getElementById('ch-diagnostico');
+  if (dg.motivo && !dg.confiable) {
+    cajaDg.innerHTML = `<div class="alerta-caja">
+      <b>⚠ Esta serie todavía no mide el rodeo, mide cómo se cargaron las descargas.</b>
+      <div style="margin-top:6px">Sobre ${dg.semanas} semanas completas, la conversión se mueve
+      junto con los <b>kg de materia seca cargados</b> (r = ${fmtDec(dg.corr_ms)}) y casi nada con
+      los <b>litros producidos</b> (r = ${fmtDec(dg.corr_leche)}). Cuando el gráfico sube, en
+      general no es que las vacas rindieran más: es que se registró menos comida.</div>
+      <div style="margin-top:6px">Se arregla del lado de Haasten, no acá: hay que registrar todas
+      las descargas de todos los lotes, todos los días. Mientras tanto, mirá el nivel general y la
+      comparación entre lotes, no el sube-y-baja semana a semana.</div>
+    </div>`;
+  } else if (dg.semanas < 4) {
+    cajaDg.innerHTML = `<div class="aviso">Con ${dg.semanas} semana(s) completa(s) todavía no se
+      puede decir si la serie es confiable. Hacen falta al menos cuatro.</div>`;
+  } else {
+    cajaDg.innerHTML = `<div class="aviso">La conversión sigue a la leche producida
+      (r = ${fmtDec(dg.corr_leche)}) más que a la materia seca cargada
+      (r = ${fmtDec(dg.corr_ms)}): la variación semanal es del rodeo, se puede leer como tendencia.</div>`;
+  }
+
+  const comp = sem.filter(s => !s.parcial);
+  const t = d.tendencia || {};
+  const ult = comp.length ? comp[comp.length - 1] : null;
+  const solUlt = meses.length ? meses[meses.length - 1] : null;
+  document.getElementById('ch-kpis').innerHTML = [
+    ['Última semana completa', ult ? fmtDec(ult.conversion) : '—',
+      ult ? `${ult.semana} · litros por kg de MS` : 'sin semanas completas'],
+    ['Promedio últimas 4', t.ultimas4 == null ? '—' : fmtDec(t.ultimas4),
+      t.previas4 == null ? 'faltan semanas para comparar'
+        : `contra ${fmtDec(t.previas4)} en las 4 anteriores` +
+          (dg.confiable ? '' : ' — ver la advertencia de arriba')],
+    ['Sólidos por kg de MS', solUlt ? fmtDec(solUlt.conversion_solidos, 4) : '—',
+      solUlt ? `control del ${solUlt.control}` : 'sin control lechero en el rango'],
+    ['Semanas completas', String(comp.length),
+      `de ${sem.length} con datos · ${meses.length} controles lecheros`],
+  ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
+    `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
+
+  // --- Semanal: las tres series juntas, que es como se lee -----------------
+  // La conversión sola no dice nada: hay que poder ver si la movió la leche o
+  // la materia seca. Por eso van en el mismo gráfico, con la conversión en su
+  // propio eje.
+  const et = sem.map(s => s.semana);
+  const gris = sem.map(s => s.parcial);
+  chartChSem = graficoCH('chart-ch-sem', chartChSem, et, [
+    { label: 'Litros por vaca', data: sem.map(s => s.litros_vaca),
+      borderColor: '#38bdf8', backgroundColor: '#38bdf8', tension: .25, yAxisID: 'y' },
+    { label: 'kg de MS por vaca', data: sem.map(s => s.ms_vaca),
+      borderColor: '#f59e0b', backgroundColor: '#f59e0b', tension: .25, yAxisID: 'y' },
+    { label: 'Conversión (L / kg MS)', data: sem.map(s => s.conversion),
+      borderColor: '#22c55e', backgroundColor: '#22c55e', tension: .25, yAxisID: 'y1',
+      borderWidth: 3,
+      // Las semanas parciales se marcan en el punto, no se esconden: sacarlas
+      // dejaría un hueco sin explicación.
+      pointRadius: sem.map((s, i) => gris[i] ? 6 : 3),
+      pointStyle: sem.map((s, i) => gris[i] ? 'triangle' : 'circle') },
+  ], {
+    responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+    scales: {
+      y: { title: { display: true, text: 'por vaca y día' } },
+      y1: { position: 'right', grid: { drawOnChartArea: false },
+            title: { display: true, text: 'litros / kg MS' } },
+    },
+    plugins: { tooltip: { callbacks: { afterBody: (it) => {
+      const s = sem[it[0].dataIndex];
+      return `${s.desde} a ${s.hasta} · ${s.vacas_prom} vacas · ${s.dias} día(s) con datos\n` +
+             `cobertura ${fmtDec(s.cobertura, 1)}%` + (s.parcial ? ' · SEMANA PARCIAL' : '');
+    } } } },
+  });
+
+  // --- Cobertura -----------------------------------------------------------
+  chartChCob = dibujar('chart-ch-cob', chartChCob, {
+    type: 'bar',
+    data: { labels: et, datasets: [{
+      label: '% del rodeo en ordeñe incluido', data: sem.map(s => s.cobertura),
+      backgroundColor: sem.map(s => s.parcial ? '#f87171' : '#4ade80'),
+      borderWidth: 0, borderRadius: 3, maxBarThickness: 26,
+    }] },
+    options: { responsive: true, maintainAspectRatio: false,
+      scales: { y: { suggestedMax: 100, title: { display: true, text: '%' } } },
+      plugins: { legend: { display: false } } },
+  });
+
+  // --- Mensual -------------------------------------------------------------
+  chartChMes = graficoCH('chart-ch-mes', chartChMes, meses.map(m => m.mes), [
+    { label: 'kg sólidos / kg MS', data: meses.map(m => m.conversion_solidos),
+      borderColor: '#a78bfa', backgroundColor: '#a78bfa', tension: .25, yAxisID: 'y' },
+    { label: 'Grasa %', data: meses.map(m => m.grasa),
+      borderColor: '#fbbf24', backgroundColor: '#fbbf24', tension: .25, yAxisID: 'y1' },
+    { label: 'Proteína %', data: meses.map(m => m.proteina),
+      borderColor: '#60a5fa', backgroundColor: '#60a5fa', tension: .25, yAxisID: 'y1' },
+  ], {
+    responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+    scales: {
+      y: { title: { display: true, text: 'kg sólidos / kg MS' } },
+      y1: { position: 'right', grid: { drawOnChartArea: false },
+            title: { display: true, text: '% del control' } },
+    },
+    plugins: { tooltip: { callbacks: { afterBody: (it) => {
+      const m = meses[it[0].dataIndex];
+      return `control del ${m.control} · ${fmt(m.vacas_control)} vacas\n` +
+             `${fmt(m.kg_solidos)} kg de sólidos sobre ${fmt(m.kg_ms)} kg de MS`;
+    } } } },
+  });
+
+  tablaInteractiva('ch-tabla-meses', [
+    { clave: 'mes', titulo: 'Mes' },
+    { clave: 'control', titulo: 'Fecha del control' },
+    { clave: 'vacas_control', titulo: 'Vacas controladas', tipo: 'num' },
+    { clave: 'grasa', titulo: 'Grasa %', fmt: v => fmtDec(v, 2) },
+    { clave: 'proteina', titulo: 'Proteína %', fmt: v => fmtDec(v, 2) },
+    { clave: 'kg_solidos', titulo: 'kg de sólidos', tipo: 'num' },
+    { clave: 'kg_ms', titulo: 'kg de MS', tipo: 'num' },
+    { clave: 'conversion_solidos', titulo: 'Sólidos / MS', fmt: v => fmtDec(v, 4) },
+    { clave: 'conversion_leche', titulo: 'Litros / MS', fmt: v => fmtDec(v) },
+    { clave: 'cobertura', titulo: 'Cobertura %', fmt: v => fmtDec(v, 1) },
+  ], meses, { orden: 'mes' });
+
+  // --- Por lote ------------------------------------------------------------
+  const COLORES = ['#38bdf8', '#22c55e', '#f59e0b', '#a78bfa', '#f472b6', '#fbbf24', '#2dd4bf'];
+  const lotes = Object.keys(d.lotes || {}).sort();
+  chartChLotes = graficoCH('chart-ch-lotes', chartChLotes, et,
+    lotes.map((l, i) => {
+      const porSem = Object.fromEntries((d.lotes[l] || []).map(x => [x.semana, x.conversion]));
+      return { label: l, data: et.map(s => porSem[s] ?? null),
+               borderColor: COLORES[i % COLORES.length],
+               backgroundColor: COLORES[i % COLORES.length], tension: .25, spanGaps: false };
+    }), {
+      responsive: true, maintainAspectRatio: false,
+      scales: { y: { title: { display: true, text: 'litros / kg MS' } } },
+    });
+
+  tablaInteractiva('ch-tabla-semanas', [
+    { clave: 'semana', titulo: 'Semana' },
+    { clave: 'desde', titulo: 'Desde' },
+    { clave: 'hasta', titulo: 'Hasta' },
+    { clave: 'vacas_prom', titulo: 'Vacas', tipo: 'num' },
+    { clave: 'litros_vaca', titulo: 'Litros/vaca', fmt: v => fmtDec(v, 1) },
+    { clave: 'ms_vaca', titulo: 'kg MS/vaca', fmt: v => fmtDec(v, 1) },
+    { clave: 'conversion', titulo: 'Conversión', fmt: v => fmtDec(v) },
+    { clave: 'cobertura', titulo: 'Cobertura %', fmt: v => fmtDec(v, 1) },
+    { clave: 'dias', titulo: 'Días con datos', tipo: 'num' },
+    { clave: 'parcial', titulo: 'Parcial', tipo: 'bool' },
+  ], sem, { orden: 'semana' });
+
+  // --- Lo que quedó afuera, con el motivo ----------------------------------
+  // Son problemas de carga del tambo, no del código. Si no se muestran, la
+  // pantalla parece decir que cubre todo el rodeo cuando no lo hace.
+  const partes = [];
+  if ((d.descartes || []).length) {
+    partes.push('<h3 class="g-titulo">Lotes que quedaron fuera de alguna semana</h3>' +
+      '<span class="aviso">Se excluyen para que no distorsionen el número: un lote al que le ' +
+      'faltan descargas baja la materia seca y la conversión sale inflada. Esto se arregla en el ' +
+      'sistema de alimentación.</span><ul style="margin-top:8px">' +
+      d.descartes.map(x => `<li><b>${x.lote}</b> — ${x.semanas} semana(s): ${x.motivo}</li>`).join('') +
+      '</ul>');
+  }
+  if ((d.fuera_ordene || []).length) {
+    partes.push('<h3 class="g-titulo" style="margin-top:16px">Grupos que no ordeñan</h3>' +
+      '<span class="aviso">Comen pero no producen leche, así que no pueden entrar en una ' +
+      'conversión. Aparecían con leche porque tienen alguna vaca recién parida sin mover todavía, ' +
+      'y su ración —la de todo el lote, secas incluidas— se repartía entre ese puñado: daba 236 kg ' +
+      'de materia seca por vaca.</span><div style="margin-top:6px">' +
+      d.fuera_ordene.map(x => `<span class="chip">${x}</span>`).join(' ') + '</div>');
+  }
+  if ((d.sin_mapear || []).length) {
+    partes.push('<h3 class="g-titulo" style="margin-top:16px">Grupos sin lote asignado</h3>' +
+      '<span class="aviso">Producen leche pero no se sabe qué lote los alimenta, así que no entran ' +
+      'en el cálculo. Se asignan en la pestaña «Conciliación de grupos».</span>' +
+      '<div style="margin-top:6px">' +
+      d.sin_mapear.map(x => `<span class="chip">${x}</span>`).join(' ') + '</div>');
+  }
+  document.getElementById('ch-excluidos').innerHTML = partes.join('');
+}
+
+document.getElementById('ch-aplicar').addEventListener('click', () => {
+  chDatos = null;
+  cargarConversionHistorica();
+});
+conectarSelectorTipo('ch-tipo', t => { chTipo = t; pintarConversionHistorica(); });
+
 // Pestañas de Alimentación.
 document.getElementById('alim-tabs').addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-tab]');
@@ -6038,7 +6341,9 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
     x.setAttribute('aria-pressed', String(x.dataset.tab === tab)));
   document.getElementById('alim-panel-conciliacion').hidden = tab !== 'conciliacion';
   document.getElementById('alim-panel-conversion').hidden = tab !== 'conversion';
+  document.getElementById('alim-panel-historica').hidden = tab !== 'historica';
   if (tab === 'conversion' && !cvDatos) cargarConversion();
+  if (tab === 'historica' && !chDatos) cargarConversionHistorica();
 });
 
 // ---------------------------------------------------------------------------

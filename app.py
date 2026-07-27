@@ -18,6 +18,7 @@ import alimentacion
 import auth
 import cicla
 import conciliacion
+import conversion_historica
 import config_alertas
 import correo
 import db
@@ -2881,6 +2882,97 @@ def api_alimentacion_conversion():
         data["prod_dia"], data["prod_vaca"], data["solidos"], ms,
         conciliacion.grupos_de(data["grupos"]), mapeo, data["diagnostico"])
     salida.update({"desde": data["desde"], "hasta": data["hasta"], "dias": dias})
+    return jsonify(salida)
+
+
+@app.get("/api/alimentacion/conversion-historica")
+@auth.requiere_rol("admin")
+def api_alimentacion_conversion_historica():
+    """Cómo varió la conversión semana a semana, y los sólidos mes a mes.
+
+    Ver `conversion_historica.py`. La pestaña hermana («Eficiencia de
+    conversión») contesta cuánto convierte hoy cada rodeo; esta contesta si
+    viene mejorando, que es lo que dice si un cambio de ración sirvió.
+    """
+    tambo = _tambo_del_request()
+    herd = rebano.por_defecto(tambo)
+    hoy = datetime.date.today()
+    try:
+        desde = datetime.date.fromisoformat(
+            request.args.get("desde") or conversion_historica.INICIO_ALIMENTACION)
+    except ValueError:
+        return jsonify({"error": "Fecha de inicio inválida."}), 400
+    # Antes de que arrancara el sistema de alimentación no hay con qué cruzar
+    # la leche: pedir más atrás devolvería semanas vacías, no historia.
+    desde = max(desde, datetime.date.fromisoformat(
+        conversion_historica.INICIO_ALIMENTACION))
+    desde = max(desde, hoy - datetime.timedelta(days=conversion_historica.RANGO_MAX_DIAS))
+
+    mapeo = conciliacion.lote_de_grupo(tambo)
+    if not mapeo:
+        return jsonify({"error": "Todavía no hay ningún lote asignado a un grupo. "
+                                 "Definí el mapeo en la pestaña «Conciliación de grupos» "
+                                 "y volvé acá."}), 409
+
+    key = f"{tambo}:alim_conv_hist:{herd}:{desde.isoformat()}"
+    data, _ = _cache_get(key, allow_stale=True, ttl=CONVERSION_CACHE_TTL_S)
+    if data is None:
+        with _cache_lock:
+            arrancar = key not in _refreshing
+            if arrancar:
+                _refreshing.add(key)
+
+        def run(k=key):
+            try:
+                # Se corta en el último día COMPLETO de AnimalDaily. Los dos
+                # sistemas no van al día parejo —DelPro queda unos cinco días
+                # atrás y Haasten tiene lo de hoy—, así que la última semana
+                # sale calculada contra dos días de leche y da una barra que no
+                # significa nada.
+                d_dias = db.run_query(conciliacion.sql_dias_animaldaily(herd),
+                                      tambo=tambo, max_rows=60)
+                ultimo = conciliacion.ultimo_dia_completo(d_dias)
+                hasta = (datetime.date.fromisoformat(ultimo["fecha"]) if ultimo["fecha"]
+                         else hoy)
+                consumos = proveedores.de(tambo).consumos(desde, hasta)
+                ms, _diag = alimentacion.ms_por_lote_dia(consumos)
+                _cache_set(k, {
+                    "desde": desde.isoformat(), "hasta": hasta.isoformat(),
+                    "ms": {f"{l}|{f.isoformat()}": v for (l, f), v in ms.items()},
+                    "prod_dia": db.run_query(
+                        alimentacion.sql_produccion_grupo_dia(desde, hasta, herd),
+                        tambo=tambo, max_rows=20000),
+                    "solidos": db.run_query(
+                        conversion_historica.sql_solidos_por_control(desde, hasta, herd),
+                        tambo=tambo, max_rows=200),
+                    "ordene": db.run_query(
+                        conversion_historica.sql_grupos_ordene(herd),
+                        tambo=tambo, max_rows=200),
+                })
+            except Exception as exc:  # noqa: BLE001
+                _cache_set(k, {"error": str(exc)})
+            finally:
+                with _cache_lock:
+                    _refreshing.discard(k)
+
+        if arrancar:
+            threading.Thread(target=run, daemon=True).start()
+        return jsonify({"calentando": True,
+                        "mensaje": "Reconstruyendo la historia de conversión "
+                                   "(leche diaria y descargas de mixer)…"}), 202
+
+    if data.get("error"):
+        return jsonify({"error": data["error"]}), 502
+
+    ms = {}
+    for clave, v in data["ms"].items():
+        lote, fecha = clave.rsplit("|", 1)
+        ms[(lote, datetime.date.fromisoformat(fecha))] = v
+    salida = conversion_historica.armar(
+        data["prod_dia"], ms, mapeo, data["solidos"],
+        datetime.date.fromisoformat(data["hasta"]),
+        [f[0] for f in data["ordene"]["rows"]])
+    salida.update({"desde": data["desde"], "hasta": data["hasta"]})
     return jsonify(salida)
 
 
