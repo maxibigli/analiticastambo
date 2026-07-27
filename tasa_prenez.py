@@ -103,44 +103,57 @@ def _cond_tipo(tipo: str, alias: str = "ae") -> str:
     return "1 = 1"
 
 
-def sql_embudo(ventana: dict, tipo: str, pev: int, edad_novilla: int = 447, herd=None) -> str:
-    """El embudo completo de una ventana, en una sola consulta.
+def sql_embudo(ventanas_lista: list, tipo: str, pev: int,
+               edad_novilla: int = 447, herd=None) -> str:
+    """El embudo de TODAS las ventanas, en una sola consulta.
 
     `pev`: período de espera voluntario en días (parámetro del tambo).
     `edad_novilla`: edad a la que una novilla entra a servicio (parámetro
     "Novillas de primera inseminación").
+
+    POR QUÉ TODAS JUNTAS. La primera versión hacía una consulta por ventana y
+    tardaba 5,4 segundos cada una: con 18 ciclos más 13 meses eran 31
+    consultas y unos 166 segundos de espera. El costo no estaba en contar los
+    eventos de la ventana sino en armar el CTE `prenez`, que recorre los 25.789
+    chequeos de preñez buscando para cada uno el parto que cierra esa preñez —
+    y eso se recalculaba entero 31 veces para devolver siempre lo mismo.
+
+    Acá los CTE caros (`prenez`, `partos`) se arman UNA vez y las ventanas
+    entran como una tabla contra la que se cruzan.
     """
-    d0, d1 = ventana["desde"], ventana["hasta"]
-    # Fin exclusivo, para no perder los eventos del último día.
-    fin = "DATEADD(day, 1, '%s')" % d1
-    # La elegibilidad se evalúa al FIN del ciclo (ver encabezado del módulo).
-    ref = f"DATEADD(day, 1, '{d1}')"
+    filas = ", ".join(
+        "(%d, '%s', '%s')" % (v["n"], v["desde"], v["hasta"]) for v in ventanas_lista)
+    if not filas:
+        filas = "(0, '1900-01-01', '1900-01-01')"
 
-    # No estaba preñada al empezar el ciclo: si ya lo estaba, no era candidata
-    # a recibir servicio.
-    libre = (f"NOT EXISTS (SELECT 1 FROM prenez pz WHERE pz.animal = {{col}}"
-             f" AND pz.concep < '{d0}' AND (pz.parto IS NULL OR pz.parto > '{d0}'))")
+    # Elegibilidad al FIN de la ventana (ver encabezado del módulo).
+    ref = "DATEADD(day, 1, v.hasta)"
+    # No estaba preñada al empezar: si ya lo estaba, no era candidata.
+    libre = ("NOT EXISTS (SELECT 1 FROM prenez pz WHERE pz.animal = {col}"
+             " AND pz.concep < v.desde AND (pz.parto IS NULL OR pz.parto > v.desde))")
 
-    # Vaca: ya parió y pasó el período de espera voluntario desde el parto.
+    # Vaca: ya parió y pasó el período de espera desde el parto.
     aptas_vaca = f"""
-        SELECT u.animal
-        FROM ult_parto u
-        JOIN BasicAnimal b ON b.OID = u.animal AND b.GCRecord IS NULL AND b.Number > 0
-        WHERE (b.ExitDate IS NULL OR b.ExitDate >= '{d0}')
-          AND DATEDIFF(day, u.f, {ref}) >= {pev}
-          AND {libre.format(col='u.animal')}
+        SELECT v.n, b.OID AS animal
+        FROM ventanas v
+        JOIN BasicAnimal b ON b.GCRecord IS NULL AND b.Number > 0
+                          AND (b.ExitDate IS NULL OR b.ExitDate >= v.desde)
+        CROSS APPLY (SELECT MAX(pa.fecha) AS f FROM partos pa
+                     WHERE pa.animal = b.OID AND pa.fecha < {ref}) up
+        WHERE up.f IS NOT NULL
+          AND DATEDIFF(day, up.f, {ref}) >= {pev}
+          AND {libre.format(col='b.OID')}
           AND {rebano.filtro('b', herd)}
     """
-    # Novilla: no parió nunca, así que no hay espera voluntaria que contar —
-    # es apta por EDAD, con el parámetro "Novillas de primera inseminación"
-    # de DelPro (447 días en este tambo).
+    # Novilla: no parió nunca, así que es apta por EDAD.
     aptas_novilla = f"""
-        SELECT b.OID AS animal
-        FROM BasicAnimal b
+        SELECT v.n, b.OID AS animal
+        FROM ventanas v
+        JOIN BasicAnimal b ON b.GCRecord IS NULL AND b.Number > 0
+                          AND (b.ExitDate IS NULL OR b.ExitDate >= v.desde)
         JOIN AnimalReproductionInfo r ON r.Animal = b.OID AND r.GCRecord IS NULL
-        WHERE b.GCRecord IS NULL AND b.Number > 0
-          AND (b.ExitDate IS NULL OR b.ExitDate >= '{d0}')
-          AND r.LactationNumber = 0 AND b.BirthDate IS NOT NULL
+                                     AND r.LactationNumber = 0
+        WHERE b.BirthDate IS NOT NULL
           AND DATEDIFF(day, b.BirthDate, {ref}) >= {edad_novilla}
           AND {libre.format(col='b.OID')}
           AND {rebano.filtro('b', herd)}
@@ -152,64 +165,82 @@ def sql_embudo(ventana: dict, tipo: str, pev: int, edad_novilla: int = 447, herd
     else:
         aptas = aptas_vaca + "\n            UNION\n" + aptas_novilla
 
+    # NO acotar por fecha los CTE `partos` y `prenez`. Se probó recortarlos al
+    # período analizado para que no recorran toda la historia: no mejoró el
+    # tiempo y CAMBIÓ los números (aptas 365 contra 361 en el primer ciclo).
+    # La razón es que esta base tiene preñeces viejas que siguen figurando
+    # abiertas; al recortarlas, esas vacas dejan de detectarse como preñadas y
+    # pasan a contarse como aptas.
     return f"""
-        WITH prenez AS (
+        WITH ventanas(n, desde, hasta) AS (
+            SELECT n, CAST(d AS date), CAST(h AS date)
+            FROM (VALUES {filas}) AS t(n, d, h)
+        ), partos AS (
+            SELECT ae.BasicAnimal AS animal, ae.DateAndTime AS fecha
+            FROM EventCalving c
+            JOIN AbstractAnimalEvent ae ON ae.OID = c.OID AND ae.GCRecord IS NULL
+        ), prenez AS (
             -- Cada preñez, desde la concepción hasta el parto que la cierra.
+            -- Es el CTE caro: se arma una sola vez para todas las ventanas.
             SELECT DISTINCT pc.BasicAnimal AS animal, ins.DateAndTime AS concep,
-                   (SELECT MIN(c2.DateAndTime) FROM EventCalving cc
-                     JOIN AbstractAnimalEvent c2 ON c2.OID = cc.OID AND c2.GCRecord IS NULL
-                    WHERE c2.BasicAnimal = pc.BasicAnimal
-                      AND c2.DateAndTime > ins.DateAndTime) AS parto
+                   (SELECT MIN(pa2.fecha) FROM partos pa2
+                    WHERE pa2.animal = pc.BasicAnimal
+                      AND pa2.fecha > ins.DateAndTime) AS parto
             FROM EventPregCheck p
             JOIN AbstractAnimalEvent pc ON pc.OID = p.OID AND pc.GCRecord IS NULL
             JOIN AbstractAnimalEvent ins ON ins.OID = p.EffectiveInsemination
                                         AND ins.GCRecord IS NULL
             WHERE p.Result = 1
-        ), ult_parto AS (
-            SELECT ae.BasicAnimal AS animal, MAX(ae.DateAndTime) AS f
-            FROM EventCalving c
-            JOIN AbstractAnimalEvent ae ON ae.OID = c.OID AND ae.GCRecord IS NULL
-            WHERE ae.DateAndTime < {ref}
-            GROUP BY ae.BasicAnimal
         ), aptas AS ({aptas})
-        SELECT
-          (SELECT COUNT(*) FROM aptas) AS aptas,
+        SELECT v.n,
+          (SELECT COUNT(*) FROM aptas a WHERE a.n = v.n) AS aptas,
           (SELECT COUNT(DISTINCT ae.BasicAnimal) FROM EventHeat h
             JOIN AbstractAnimalEvent ae ON ae.OID = h.OID AND ae.GCRecord IS NULL
-           WHERE ae.DateAndTime >= '{d0}' AND ae.DateAndTime < {fin}
-             AND ae.BasicAnimal IN (SELECT animal FROM aptas)) AS con_celo,
+           WHERE ae.DateAndTime >= v.desde AND ae.DateAndTime < DATEADD(day, 1, v.hasta)
+             AND EXISTS (SELECT 1 FROM aptas a WHERE a.n = v.n
+                         AND a.animal = ae.BasicAnimal)) AS con_celo,
           (SELECT COUNT(DISTINCT ae.BasicAnimal) FROM EventInsemination i
             JOIN AbstractAnimalEvent ae ON ae.OID = i.OID AND ae.GCRecord IS NULL
-           WHERE ae.DateAndTime >= '{d0}' AND ae.DateAndTime < {fin}
-             AND ae.BasicAnimal IN (SELECT animal FROM aptas)) AS inseminadas,
+           WHERE ae.DateAndTime >= v.desde AND ae.DateAndTime < DATEADD(day, 1, v.hasta)
+             AND EXISTS (SELECT 1 FROM aptas a WHERE a.n = v.n
+                         AND a.animal = ae.BasicAnimal)) AS inseminadas,
           (SELECT COUNT(DISTINCT pz.animal) FROM prenez pz
-           WHERE pz.concep >= '{d0}' AND pz.concep < {fin}
-             AND pz.animal IN (SELECT animal FROM aptas)) AS prenadas,
-          -- Abortos DE las preñeces logradas en esta ventana: de las que
-          -- quedaron, cuántas se perdieron después.
-          --
-          -- El aborto tiene que caer DESPUÉS de esa concepción y ANTES de que
-          -- la gestación llegara a término. Sin esa ventana se cuentan también
-          -- abortos de otras preñeces del mismo animal, y el porcentaje se va
-          -- al triple (38,8% contra el 14% del informe).
-          (SELECT COUNT(DISTINCT ae.BasicAnimal) FROM EventAbortion a
-            JOIN AbstractAnimalEvent ae ON ae.OID = a.OID AND ae.GCRecord IS NULL
-           WHERE EXISTS (
-               SELECT 1 FROM prenez pz
-               WHERE pz.animal = ae.BasicAnimal
-                 AND pz.concep >= '{d0}' AND pz.concep < {fin}
-                 AND ae.DateAndTime > pz.concep
-                 AND ae.DateAndTime <= DATEADD(day, {GESTACION_MAX}, pz.concep))
+           WHERE pz.concep >= v.desde AND pz.concep < DATEADD(day, 1, v.hasta)
+             AND EXISTS (SELECT 1 FROM aptas a WHERE a.n = v.n
+                         AND a.animal = pz.animal)) AS prenadas,
+          -- Abortos DE las preñeces logradas en la ventana. El aborto tiene que
+          -- caer después de esa concepción y antes de que la gestación llegara
+          -- a término; sin esa ventana se cuentan abortos de otras preñeces del
+          -- mismo animal y el porcentaje se va al triple.
+          (SELECT COUNT(DISTINCT ae.BasicAnimal) FROM EventAbortion ab
+            JOIN AbstractAnimalEvent ae ON ae.OID = ab.OID AND ae.GCRecord IS NULL
+           WHERE EXISTS (SELECT 1 FROM prenez pz
+                         WHERE pz.animal = ae.BasicAnimal
+                           AND pz.concep >= v.desde
+                           AND pz.concep < DATEADD(day, 1, v.hasta)
+                           AND ae.DateAndTime > pz.concep
+                           AND ae.DateAndTime <= DATEADD(day, {GESTACION_MAX}, pz.concep))
           ) AS abortos
-        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
+        FROM ventanas v
+        ORDER BY v.n
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 30)
     """
 
 
-def analizar(resultados: list, ventanas_lista: list, tipo: str, ciclo_dias: int, pev: int) -> dict:
-    """Arma las filas del embudo con sus porcentajes."""
+def analizar(data, ventanas_lista: list, tipo: str, ciclo_dias: int, pev: int) -> dict:
+    """Arma las filas del embudo con sus porcentajes.
+
+    `data`: el resultado ÚNICO de `sql_embudo`, con una fila por ventana
+    identificada por su número (ver por qué en el docstring de esa función).
+    """
+    por_n = {}
+    for fila in (data.get("rows") or []):
+        d = dict(zip(data["columns"], fila))
+        por_n[int(d["n"])] = d
+
     filas = []
-    for v, data in zip(ventanas_lista, resultados):
-        f = dict(zip(data["columns"], data["rows"][0])) if data.get("rows") else {}
+    for v in ventanas_lista:
+        f = por_n.get(v["n"], {})
         aptas = int(f.get("aptas") or 0)
         celo = int(f.get("con_celo") or 0)
         insem = int(f.get("inseminadas") or 0)
