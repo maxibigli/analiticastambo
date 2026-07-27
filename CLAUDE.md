@@ -30,7 +30,30 @@ ver `tambos.py` e `INSTALL.md`). Si aparece un secreto en texto plano en
 algún archivo, es un error: sacarlo y pedirle al usuario que lo setee él
 mismo con `setx`.
 
-## Dónde quedamos (26/07/2026)
+## Dónde quedamos (27/07/2026)
+
+**Alimentación quedó implementada**: conciliación de grupos y eficiencia de
+conversión, más el gráfico de ITH reconectado. Detalle abajo en sus secciones.
+Lo que sigue es el costo por vaca (IOFC), y está **bloqueado por dos precios
+que no están en ningún sistema conectado**: los 70 ingredientes de Haasten
+tienen `price: 0` y La Serenísima solo publica datos físicos, sin importes.
+Los carga el tambo, no el código. Mientras tanto la conversión física ya
+ordena el rodeo y el IOFC se va a apoyar en lo que calcula `alimentacion.py`.
+
+**Dos cosas para arreglar en Haasten, no en el código.** El lote "Rodeo 4" no
+recibe una descarga desde julio (120 cabezas) y "Enfermeria" las registra
+incompletas (7,5 kg de MS por vaca, imposible). Por eso la conversión cubre el
+89% del rodeo en ordeñe y no el 100%. La pantalla lo dice con nombre y motivo.
+
+**CUIDADO CON DOS SESIONES A LA VEZ.** El 26/07 dos sesiones editaron `app.py`
+e `index.html` en paralelo y se pisaron: una commiteó por error el trabajo de
+ITH de la otra, la otra revirtió los dos archivos a un estado viejo —borrando
+su propio endpoint y el trabajo ajeno— y dejó `clima.py` como código muerto.
+Costó tres commits de arreglo. Si se trabaja en paralelo, que sea sobre
+archivos distintos, y **nunca `git add` de un archivo entero**: mirar el diff
+antes de commitear.
+
+## Cómo quedó (26/07/2026)
 
 **NUNCA hardcodear parámetros reproductivos.** Salen de DelPro
 (`ReproductionSetting`) vía `parametros.valor(clave, tambo)`. Este tambo tiene
