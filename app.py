@@ -14,11 +14,14 @@ import datetime
 import os
 
 import ai
+import alimentacion
 import auth
 import cicla
+import conciliacion
 import config_alertas
 import correo
 import db
+import clima
 import ficha_animal
 import flujos
 import gestacion
@@ -30,6 +33,7 @@ import performance
 import podal
 import preneces
 import parametros
+import proveedores
 import proyeccion
 import rebano
 import tasa_prenez
@@ -2118,6 +2122,89 @@ def api_reproduccion_gestacion():
     return jsonify(resultado)
 
 
+def sql_servicios_mensuales(desde, hasta, herd):
+    """Servicios y concepciones por mes. Una concepción es un servicio que
+    después tuvo un chequeo de preñez positivo apuntándole."""
+    return f"""
+        WITH serv AS (
+            SELECT FORMAT(ae.DateAndTime, 'yyyy-MM') AS mes,
+                   CASE WHEN EXISTS (SELECT 1 FROM EventPregCheck p
+                                     WHERE p.EffectiveInsemination = i.OID AND p.Result = 1)
+                        THEN 1 ELSE 0 END AS quedo
+            FROM EventInsemination i
+            JOIN AbstractAnimalEvent ae ON ae.OID = i.OID AND ae.GCRecord IS NULL
+            WHERE ae.DateAndTime >= '{desde}' AND ae.DateAndTime <= '{hasta}'
+              AND ae.LactationNumber >= 1
+              AND {rebano.filtro_por_animal('ae.BasicAnimal', herd)}
+        )
+        SELECT mes, COUNT(*) AS servicios, SUM(quedo) AS concepciones
+        FROM serv GROUP BY mes
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
+    """
+
+
+@app.get("/api/reproduccion/ith")
+@auth.requiere_rol("admin")
+def api_reproduccion_ith():
+    """Estrés calórico contra reproducción: servicios, concepción e ITH por mes.
+
+    Ver `clima.py` — el análisis mostró que la hipótesis simple ("el calor baja
+    la concepción") no se sostiene con estos datos, y que lo que se derrumba en
+    verano son los servicios. El gráfico está armado para que eso se lea."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    try:
+        hasta = (datetime.datetime.strptime(request.args["hasta"], "%Y-%m-%d").date()
+                 if request.args.get("hasta") else hoy)
+        desde = (datetime.datetime.strptime(request.args["desde"], "%Y-%m-%d").date()
+                 if request.args.get("desde") else hasta - datetime.timedelta(days=730))
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    if desde > hasta:
+        desde, hasta = hasta, desde
+
+    herd_param = (request.args.get("rebano") or "").strip()
+    if not herd_param:
+        herd = rebano.por_defecto(tambo)
+    elif herd_param.lower() == rebano.TODOS:
+        herd = rebano.TODOS
+    else:
+        try:
+            herd = int(herd_param)
+        except ValueError:
+            return jsonify({"error": f"Rebaño inválido: {herd_param!r}"}), 400
+
+    key = f"{tambo}:ith:{desde}:{hasta}:{herd}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=REPRO_CACHE_TTL_S)
+    if data is None:
+        with _cache_lock:
+            arrancar = key not in _refreshing
+            if arrancar:
+                _refreshing.add(key)
+
+        def run(k=key):
+            try:
+                _cache_set(k, {
+                    "servicios": db.run_query(
+                        sql_servicios_mensuales(desde.isoformat(), hasta.isoformat(), herd),
+                        tambo=tambo, max_rows=100),
+                    "diario": clima.ith_diario(desde.isoformat(), hasta.isoformat()),
+                })
+            except Exception:  # noqa: BLE001
+                pass
+            finally:
+                with _cache_lock:
+                    _refreshing.discard(k)
+
+        if arrancar:
+            threading.Thread(target=run, daemon=True).start()
+        return jsonify({"calentando": True, "mensaje": "Trayendo el clima y cruzándolo…"}), 202
+
+    resultado = clima.armar(data["servicios"], data["diario"], hoy)
+    resultado.update({"desde": desde.isoformat(), "hasta": hasta.isoformat(), "rebano": herd})
+    return jsonify(resultado)
+
+
 @app.get("/api/reproduccion/rebanos")
 @auth.requiere_rol("admin")
 def api_reproduccion_rebanos():
@@ -2601,6 +2688,198 @@ def api_alertas_probar():
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 502
     return jsonify({"ok": True})
+
+
+# --- Alimentación: conciliación de lotes con grupos --------------------------
+# El lado DelPro es barato (25 filas) pero el del proveedor implica un login
+# contra un sitio externo, así que se cachea igual que CICLA.
+CONCILIACION_CACHE_TTL_S = 600
+
+# Ventana para decidir si un lote se usa. Un mes: alcanza para que un lote real
+# aparezca aunque se descargue día por medio, y es corto como para que uno que
+# se dejó de usar salga de la lista sin que haya que borrarlo en Haasten.
+CONCILIACION_DIAS_USO = 30
+
+
+def _conciliacion_estado(tambo: str, refrescar: bool = False) -> dict:
+    """Los dos lados cruzados, más el estado del proveedor.
+
+    Si el proveedor falla —falta configuración, se cayó el sitio— NO se corta:
+    se devuelve igual el lado DelPro y el mapeo guardado, con el motivo en
+    `proveedor.error`. La pantalla tiene que servir para mirar los grupos
+    aunque el mixer esté incomunicado.
+    """
+    herd = rebano.por_defecto(tambo)
+    key = f"{tambo}:conciliacion_grupos:{herd}"
+    data, _ = _cache_get(key, allow_stale=True, ttl=CONCILIACION_CACHE_TTL_S)
+    if data is None or refrescar:
+        data = {
+            "grupos": db.run_query(conciliacion.sql_grupos(herd), tambo=tambo, max_rows=500),
+            "dias": db.run_query(conciliacion.sql_dias_animaldaily(herd), tambo=tambo, max_rows=60),
+            "cambio": db.run_query(conciliacion.sql_ultimo_cambio_grupo(herd),
+                                   tambo=tambo, max_rows=5),
+        }
+        _cache_set(key, data)
+
+    prov = proveedores.de(tambo)
+    key_prov = f"{tambo}:conciliacion_proveedor"
+    lotes, kg_lote = [], None
+    info = {"nombre": prov.NOMBRE, "error": None, "equipos": [],
+            "dias_uso": CONCILIACION_DIAS_USO}
+    guardado, _ = _cache_get(key_prov, allow_stale=True, ttl=CONCILIACION_CACHE_TTL_S)
+    if guardado is not None and not refrescar:
+        lotes, kg_lote, info = guardado["lotes"], guardado["kg_lote"], guardado["info"]
+    else:
+        try:
+            lotes = prov.lotes()
+            info["equipos"] = [{k: v for k, v in e.items() if not k.startswith("_")}
+                               for e in prov.equipos()]
+            # Qué lotes RECIBEN comida de verdad. Sin esto, los catorce lotes que
+            # el tambo dejó configurados y no usa piden grupo y generan catorce
+            # alertas falsas que tapan las verdaderas.
+            hoy = datetime.date.today()
+            kg_lote = conciliacion.kg_por_lote(
+                prov.consumos(hoy - datetime.timedelta(days=CONCILIACION_DIAS_USO), hoy))
+            _cache_set(key_prov, {"lotes": lotes, "kg_lote": kg_lote, "info": info})
+        except Exception as exc:  # noqa: BLE001
+            info["error"] = str(exc)
+
+    grupos = conciliacion.grupos_de(data["grupos"])
+    mapeo = conciliacion.mapeo_de(tambo)
+    salida = conciliacion.analizar(grupos, lotes, mapeo, kg_lote)
+    ultimo_cambio = (data["cambio"]["rows"] or [[None]])[0][0]
+    salida.update({
+        "tambo": tambo,
+        "tambo_nombre": tambos.TAMBOS.get(tambo, {}).get("nombre", tambo),
+        "mapeo": mapeo,
+        "proveedor": info,
+        "frescura": {
+            "ultimo_cambio_grupo": ultimo_cambio,
+            "animaldaily": conciliacion.ultimo_dia_completo(data["dias"]),
+            "hoy": datetime.date.today().isoformat(),
+        },
+    })
+    return salida
+
+
+@app.get("/api/alimentacion/conciliacion")
+@auth.requiere_rol("admin")
+def api_alimentacion_conciliacion():
+    """Lotes del proveedor de alimentación contra grupos de DelPro, con el mapeo
+    guardado, las diferencias de cabezas y las sugerencias. Ver `conciliacion.py`."""
+    tambo = _tambo_del_request()
+    refrescar = request.args.get("refrescar") in ("1", "true", "si")
+    try:
+        return jsonify(_conciliacion_estado(tambo, refrescar))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+
+
+@app.post("/api/alimentacion/conciliacion")
+@auth.requiere_rol("admin")
+def api_alimentacion_guardar_conciliacion():
+    """Guarda el mapeo lote↔grupo del tambo y devuelve el estado recalculado.
+
+    Body: {"lotes": [{"lote": str, "grupos": [oid], "nota": str}],
+           "grupos_sin_alimentacion": [oid], "umbral_pct": n, "umbral_cabezas": n}
+    """
+    tambo = _tambo_del_request()
+    try:
+        conciliacion.guardar_mapeo(tambo, request.json or {},
+                                   usuario=auth.usuario_actual(),
+                                   ahora=datetime.datetime.now().isoformat(timespec="seconds"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    try:
+        return jsonify(_conciliacion_estado(tambo))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+
+
+CONVERSION_CACHE_TTL_S = 1800
+
+
+@app.get("/api/alimentacion/conversion")
+@auth.requiere_rol("admin")
+def api_alimentacion_conversion():
+    """Eficiencia de conversión: kg de sólidos por kg de materia seca, por grupo
+    y por vaca. Ver `alimentacion.py` — es una medida de GRUPO, la materia seca
+    por vaca es un reparto del corral."""
+    tambo = _tambo_del_request()
+    herd = rebano.por_defecto(tambo)
+    try:
+        dias = min(int(request.args.get("dias") or alimentacion.DIAS_DEFECTO),
+                   alimentacion.RANGO_MAX_DIAS)
+    except ValueError:
+        return jsonify({"error": "Cantidad de días inválida."}), 400
+
+    mapeo = conciliacion.lote_de_grupo(tambo)
+    if not mapeo:
+        return jsonify({"error": "Todavía no hay ningún lote asignado a un grupo. "
+                                 "Definí el mapeo en la pestaña «Conciliación de grupos» "
+                                 "y volvé acá."}), 409
+
+    key = f"{tambo}:alim_conversion:{herd}:{dias}"
+    data, _ = _cache_get(key, allow_stale=True, ttl=CONVERSION_CACHE_TTL_S)
+    if data is None:
+        with _cache_lock:
+            arrancar = key not in _refreshing
+            if arrancar:
+                _refreshing.add(key)
+
+        def run(k=key):
+            try:
+                # El período termina en el último día COMPLETO de AnimalDaily, no
+                # en hoy: los últimos días vienen a medio cargar y hundirían los
+                # promedios (ver `conciliacion.ultimo_dia_completo`).
+                d_dias = db.run_query(conciliacion.sql_dias_animaldaily(herd),
+                                      tambo=tambo, max_rows=60)
+                ultimo = conciliacion.ultimo_dia_completo(d_dias)
+                hasta = (datetime.date.fromisoformat(ultimo["fecha"]) if ultimo["fecha"]
+                         else datetime.date.today())
+                desde = hasta - datetime.timedelta(days=dias - 1)
+                consumos = proveedores.de(tambo).consumos(desde, hasta)
+                ms, diag = alimentacion.ms_por_lote_dia(consumos)
+                _cache_set(k, {
+                    "desde": desde.isoformat(), "hasta": hasta.isoformat(),
+                    "ms": {f"{l}|{f.isoformat()}": v for (l, f), v in ms.items()},
+                    "diagnostico": diag,
+                    "prod_dia": db.run_query(
+                        alimentacion.sql_produccion_grupo_dia(desde, hasta, herd),
+                        tambo=tambo, max_rows=4000),
+                    "prod_vaca": db.run_query(
+                        alimentacion.sql_produccion_vaca(desde, hasta, herd),
+                        tambo=tambo, max_rows=5000),
+                    "solidos": db.run_query(
+                        alimentacion.sql_solidos_vaca(desde, hasta, herd),
+                        tambo=tambo, max_rows=5000),
+                    "grupos": db.run_query(conciliacion.sql_grupos(herd),
+                                           tambo=tambo, max_rows=500),
+                })
+            except Exception as exc:  # noqa: BLE001
+                _cache_set(k, {"error": str(exc)})
+            finally:
+                with _cache_lock:
+                    _refreshing.discard(k)
+
+        if arrancar:
+            threading.Thread(target=run, daemon=True).start()
+        return jsonify({"calentando": True,
+                        "mensaje": "Calculando la conversión (leche, sólidos y "
+                                   "materia seca de las últimas semanas)…"}), 202
+
+    if data.get("error"):
+        return jsonify({"error": data["error"]}), 502
+
+    ms = {}
+    for clave, v in data["ms"].items():
+        lote, fecha = clave.rsplit("|", 1)
+        ms[(lote, datetime.date.fromisoformat(fecha))] = v
+    salida = alimentacion.analizar(
+        data["prod_dia"], data["prod_vaca"], data["solidos"], ms,
+        conciliacion.grupos_de(data["grupos"]), mapeo, data["diagnostico"])
+    salida.update({"desde": data["desde"], "hasta": data["hasta"], "dias": dias})
+    return jsonify(salida)
 
 
 if __name__ == "__main__":

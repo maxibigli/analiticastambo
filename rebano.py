@@ -40,27 +40,40 @@ TODOS = "todos"
 NOMBRES = {"LP": "La Ponderosa", "DG": "Don Germán", "SB": "SB"}
 
 
-def _condicion(herd) -> str | None:
-    """Condición SQL sobre `g_tb.Herd`. None = sin filtro (todos los rebaños).
+def condicion_herd(alias: str = "g_tb", herd=None) -> str | None:
+    """Condición SQL sobre `<alias>.Herd`. None = sin filtro (todos los rebaños).
 
     `herd` acepta:
       - None            → el rebaño deducido (el que tiene los grupos de ordeñe)
       - "todos"         → sin filtro
       - un número       → ese rebaño
       - una lista/tupla → varios rebaños (un tambo puede tener más de uno)
+
+    Los `filtro*()` de abajo la usan con su propio alias dentro del EXISTS. Se
+    expone aparte porque hay consultas que YA parten de `AnimalGroup` —la de
+    grupos de `conciliacion.py`, por ejemplo— y no necesitan el EXISTS: les
+    alcanza con la condición sobre su propia tabla. Sin esto tendrían que
+    rearmar la lógica de `SUB_HERD` a mano, que es justo lo que termina en un
+    rebaño hardcodeado.
     """
+    col = f"{alias}.Herd"
     if herd is None:
-        return f"g_tb.Herd = {SUB_HERD}"
+        return f"{col} = {SUB_HERD}"
     if isinstance(herd, (list, tuple, set)):
         ids = sorted({int(h) for h in herd})
         if not ids:
-            return f"g_tb.Herd = {SUB_HERD}"
+            return f"{col} = {SUB_HERD}"
         if len(ids) == 1:
-            return f"g_tb.Herd = {ids[0]}"
-        return "g_tb.Herd IN (" + ", ".join(str(i) for i in ids) + ")"
+            return f"{col} = {ids[0]}"
+        return f"{col} IN (" + ", ".join(str(i) for i in ids) + ")"
     if str(herd).lower() == TODOS:
         return None
-    return f"g_tb.Herd = {int(herd)}"
+    return f"{col} = {int(herd)}"
+
+
+def _condicion(herd) -> str | None:
+    """La condición con el alias que usan los `filtro*()` de este módulo."""
+    return condicion_herd("g_tb", herd)
 
 
 def filtro(alias_animal: str = "b", herd=None) -> str:

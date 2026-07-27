@@ -324,6 +324,26 @@ setx LASER_PASSWORD "tu_contraseña_de_la_serenisima"
 Trae litros, grasa, proteínas, U.F.C. y temperatura oficiales por entrega
 (tarjeta "Calidad de leche"), y alimenta la comparación diaria contra CICLA.
 
+### Haasten (computadora del mixer — sección "🌾 Alimentación")
+
+```powershell
+setx HASTEN_USUARIO "tu_usuario_de_haasten"
+setx HASTEN_PASSWORD "tu_contraseña_de_haasten"
+```
+
+**Ojo con el nombre: `HASTEN_`, con una sola "a"**, aunque el sitio se llame
+haasten.io. Si lo "corregís" a `HAASTEN_` la aplicación deja de encontrarlas.
+
+Trae los lotes del mixer con sus cabezas, los ingredientes y las descargas por
+lote. Es lo que alimenta la **conciliación de grupos**: qué lote del mixer
+corresponde a qué grupo de DelPro, que es el puente para poder calcular después
+costo por vaca y eficiencia de conversión.
+
+Como todas las variables de entorno de esta app, `setx` las guarda pero **los
+procesos que ya estaban abiertos no las ven**: hay que reiniciar la aplicación
+(en el servidor, `actualizar.bat` como Administrador) para que las tome. Si no,
+la pantalla va a seguir diciendo que faltan las variables aunque ya estén.
+
 ### Alertas — tres canales, cada uno se tilda/destilda desde la tarjeta "🔔 Alertas"
 
 Se puede tener más de uno activo a la vez (manda por todos los que estén
