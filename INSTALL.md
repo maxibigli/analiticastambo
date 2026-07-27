@@ -202,6 +202,61 @@ Por defecto la app escucha **solo en esa PC** (`127.0.0.1`). Para abrirla a la r
   la rotativa, ventanas de tiempo), `tareas.py` (umbrales de las tareas
   pendientes), `tambos.py` (tambos y conexiones).
 
+### 9.1 Precalentar los cachés — IMPORTANTE
+
+Las secciones de análisis guardan su resultado en memoria por 30 a 60 minutos.
+El cálculo en sí no es el problema: el problema es que **el primero que entra
+después de que el caché vence se come toda la espera**. La peor es Tasa de
+Preñez, con unos 75 segundos.
+
+`precalentar.bat` pide esas secciones desde afuera para que el caché ya esté
+lleno. Medido: después de una pasada, **todas responden en ~120 ms**.
+
+**Probarlo a mano** (con el servidor andando, doble clic en `precalentar.bat`):
+
+```
+[04:00:12] precalentando http://127.0.0.1:5310 (tambo=ponderosa, rebaño=1)
+  ok  Tasa de Preñez                 39.2 s
+  ok  Análisis Reproductivo           3.0 s
+  ok  Performance · peak              3.0 s
+  ...
+```
+
+**Dejarlo corriendo solo** (recomendado — mantiene los cachés siempre calientes,
+no solo a la mañana):
+
+1. Programador de tareas → Crear tarea → nombre `LactIA precalentar`.
+2. Desencadenador: **Al iniciar el equipo**, con unos minutos de retraso para
+   que el servidor ya esté arriba.
+3. Acción → Iniciar un programa:
+   - Programa: `precalentar.bat` (ruta completa)
+   - Agregar argumentos: `--loop`
+   - Iniciar en: la carpeta de la aplicación, **sin comillas**.
+4. Propiedades → *Ejecutar tanto si el usuario inició sesión como si no*.
+5. Propiedades → Configuración → **destildar** *Detener la tarea si se ejecuta
+   durante más de...* (si no, Windows lo mata a las 3 días).
+
+La alternativa más simple es una pasada diaria a las 04:00 sin `--loop`, pero
+solo cubre la primera entrada del día.
+
+**Si se agrega una sección nueva**, hay que sumarla a la lista `rutas()` de
+`precalentar.py` — y con cuidado, porque acá está la trampa:
+
+> La clave del caché **incluye los parámetros de la consulta**. El script tiene
+> que pedir EXACTAMENTE lo mismo que pide la pantalla, si no calienta un caché
+> que nadie usa y desde afuera parece que funciona.
+>
+> El caso concreto que lo rompe: la pantalla manda `rebano=1`; si el script no
+> manda nada, el servidor usa su valor por defecto, que es la **lista** `[1]`, y
+> la clave queda `...:[1]` contra `...:1`. Por eso el script arranca
+> preguntando cuál es el rebaño del tambo y lo manda igual que la pantalla.
+
+**Cómo verificar que quedó bien:** correr `precalentar.bat`, después abrir esa
+sección en el navegador. Tiene que aparecer al instante. Si sale el cartel de
+"calculando", la clave no coincide.
+
+Detalle completo en `PRECALENTAR.md`.
+
 ---
 
 ## 10. Problemas frecuentes

@@ -2031,11 +2031,13 @@ def api_tasa_prenez():
                 salida = {}
                 for dim in (tasa_prenez.DIM_CICLO, tasa_prenez.DIM_MES):
                     vs = tasa_prenez.ventanas(desde.isoformat(), hasta.isoformat(), dim, ciclo)
+                    # Una sola consulta para todas las ventanas: antes era una
+                    # por ventana y tardaba ~166 s en total.
                     salida[dim] = {
                         "ventanas": vs,
-                        "datos": [db.run_query(
-                            tasa_prenez.sql_embudo(v, tipo, pev, edad, herd),
-                            tambo=tambo, max_rows=5) for v in vs],
+                        "datos": db.run_query(
+                            tasa_prenez.sql_embudo(vs, tipo, pev, edad, herd),
+                            tambo=tambo, max_rows=100),
                     }
                 _cache_set(k, salida)
             except Exception:  # noqa: BLE001
