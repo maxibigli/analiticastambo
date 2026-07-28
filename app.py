@@ -41,6 +41,8 @@ import tasa_prenez
 import reproduccion
 import resumen
 import rutina
+import sala_convencional
+import salas
 import salud
 import simulador
 import tambos
@@ -124,8 +126,9 @@ _SQL["ordeno_vivo"] = ORDENO_VIVO_SQL
 _SQL["ordeno_inc"] = ORDENO_INC_SQL
 _SQL["ordeno_alarmas"] = ORDENO_ALARMAS_SQL
 _SQL["mantenimiento"] = mantenimiento.MANTENIMIENTO_SQL
-_SQL["rutina_grupos"] = rutina.SQL_GRUPOS
-_SQL["rutina_ordenos_dia"] = rutina.SQL_ORDENOS_POR_DIA
+# "rutina_grupos"/"rutina_ordenos_dia" NO se registran acá: dependen del tipo
+# de sala del tambo (ver salas/), así que todo llamador pasa el SQL armado en
+# el momento con `salas.de(tambo)` — nunca caen al registro fijo de `_SQL`.
 _SQL["rutina_grupos_nombres"] = rutina.SQL_GRUPOS_NOMBRES
 _SQL["salud_rcs_grupo"] = salud.SQL_RCS_POR_GRUPO
 _SQL["salud_rcs_vacas"] = salud.SQL_RCS_VACAS
@@ -211,8 +214,13 @@ def _clave(tambo: str, consulta_id: str) -> str:
     return f"{tambo}:{consulta_id}"
 
 
-def _refresh_async(tambo: str, consulta_id: str):
-    """Refresca una consulta en segundo plano (una sola vez a la vez)."""
+def _refresh_async(tambo: str, consulta_id: str, sql: str | None = None):
+    """Refresca una consulta en segundo plano (una sola vez a la vez).
+
+    `sql`: None = la registrada en `_SQL[consulta_id]` (el caso normal, un
+    texto fijo para todos los tambos). Algunas pocas consultas SÍ varían según
+    el tipo de sala del tambo (p.ej. "qué grupos ordeñan de verdad" — ver
+    `salas/__init__.py`), y ahí el llamador arma el texto en el momento."""
     key = _clave(tambo, consulta_id)
     with _cache_lock:
         if key in _refreshing:
@@ -221,7 +229,7 @@ def _refresh_async(tambo: str, consulta_id: str):
 
     def worker():
         try:
-            _cache_set(key, db.run_query(_SQL[consulta_id], tambo=tambo))
+            _cache_set(key, db.run_query(sql if sql is not None else _SQL[consulta_id], tambo=tambo))
         except Exception:  # noqa: BLE001
             pass
         finally:
@@ -231,16 +239,16 @@ def _refresh_async(tambo: str, consulta_id: str):
     threading.Thread(target=worker, daemon=True).start()
 
 
-def _run_consulta(consulta_id: str, tambo: str) -> dict:
+def _run_consulta(consulta_id: str, tambo: str, sql: str | None = None) -> dict:
     # Si hay dato (aunque esté vencido) se sirve al instante; si venció,
-    # se refresca en segundo plano para la próxima vez.
+    # se refresca en segundo plano para la próxima vez. `sql`: ver _refresh_async.
     key = _clave(tambo, consulta_id)
     value, fresh = _cache_get(key, allow_stale=True)
     if value is not None:
         if not fresh:
-            _refresh_async(tambo, consulta_id)
+            _refresh_async(tambo, consulta_id, sql)
         return value
-    data = db.run_query(_SQL[consulta_id], tambo=tambo)
+    data = db.run_query(sql if sql is not None else _SQL[consulta_id], tambo=tambo)
     _cache_set(key, data)
     return data
 
@@ -313,12 +321,13 @@ def _refresh_resumen_animales_async(tambo: str):
 
 def _calcular_resumen_grupo(tambo: str) -> dict:
     """Producción media por grupo (30 días): SOLO los grupos de ordeño reales
-    (CMSGroupMilkSetting.EnableMilking, misma lista que usa Rutina/Evolución
-    — ver rutina.SQL_GRUPOS) + el promedio general del tambo como referencia.
-    Antes se elegían "los más numerosos" por volumen en AnimalDaily, una
-    heurística que por coincidencia solía dar el mismo resultado pero no
-    garantizaba excluir corrales que no son de ordeño."""
-    grupos_data = db.run_query(rutina.SQL_GRUPOS, tambo=tambo)
+    + el promedio general del tambo como referencia. "Grupo de ordeño real"
+    depende del tipo de sala del tambo — ver `salas/`: en una rotativa sale de
+    `CMSGroupMilkSetting.EnableMilking` (la única fuente correcta ahí, porque
+    esa base puede compartir instalación con otro tambo); en una convencional,
+    de la producción real en `AnimalDaily` (esa base es de un solo tambo, sin
+    riesgo de mezclar corrales ajenos)."""
+    grupos_data = db.run_query(salas.de(tambo).sql_grupos_resumen(), tambo=tambo)
     grupos = [r[0] for r in grupos_data["rows"]]
     grupos_set = set(grupos)
     todo = db.run_query(resumen.SQL_PRODUCCION_GRUPO_30D, tambo=tambo)
@@ -354,7 +363,8 @@ def _refresh_resumen_grupo_async(tambo: str):
 
 def _refresh_rutina_async(tambo: str, fecha: str):
     """Recalcula la rutina de ordeño de un día en segundo plano (consulta
-    parametrizada por fecha, no vive en el registro fijo _SQL)."""
+    parametrizada por fecha, no vive en el registro fijo _SQL). La consulta
+    depende del tipo de sala del tambo — ver `salas/`."""
     key = _clave(tambo, f"rutina:{fecha}")
     with _cache_lock:
         if key in _refreshing:
@@ -363,7 +373,7 @@ def _refresh_rutina_async(tambo: str, fecha: str):
 
     def worker():
         try:
-            _cache_set(key, db.run_query(rutina.sql_rutina(fecha), tambo=tambo,
+            _cache_set(key, db.run_query(salas.de(tambo).sql_rutina(fecha), tambo=tambo,
                                           max_rows=rutina.MAX_FILAS_DIA))
         except Exception:  # noqa: BLE001
             pass
@@ -397,7 +407,10 @@ def _warmup(tambo: str):
     restantes = [c for c in CONSULTAS if c not in prioridad]
     for consulta_id in prioridad + restantes:
         try:
-            _run_consulta(consulta_id, tambo)
+            # "rutina_grupos" depende del tipo de sala (ver salas/); el resto
+            # de las IDs son consultas fijas para todos los tambos.
+            sql = salas.de(tambo).sql_grupos() if consulta_id == "rutina_grupos" else None
+            _run_consulta(consulta_id, tambo, sql)
         except Exception:  # noqa: BLE001
             pass
 
@@ -413,11 +426,17 @@ _calentados_lock = threading.Lock()
 
 def _tambo_del_request() -> str:
     """Lee el tambo del request (query param o body) y lo valida. Además,
-    dispara el warmup del tambo la primera vez que se lo usa."""
-    tambo = ""
-    if request.method == "GET":
-        tambo = request.args.get("tambo", "")
-    else:
+    dispara el warmup del tambo la primera vez que se lo usa.
+
+    El query param se mira SIEMPRE, incluso en POST: varias pantallas mandan
+    `?tambo=...` en la URL también para guardar (parámetros reproductivos,
+    configuración de sala). Nunca se notó que un POST sin `tambo` en el body
+    caía en el tambo por defecto porque hasta ahora el único tambo real era
+    "ponderosa" — que ES el default. Con un segundo tambo (San José) guardar
+    su configuración terminaba escribiendo silenciosamente sobre "ponderosa".
+    """
+    tambo = request.args.get("tambo", "")
+    if not tambo and request.method != "GET":
         tambo = (request.json or {}).get("tambo", "")
     tambo = tambos.resolver(tambo)
     with _calentados_lock:
@@ -537,13 +556,64 @@ def api_resumen_animales():
     })
 
 
+def _refresh_duraciones_directo_async(tambo: str):
+    """Para salas que SÍ tienen la duración de cada sesión medida en una tabla
+    propia (convencional: `ParlorHistoricalData`) en vez de tener que
+    reconstruirla desde visitas individuales (`rutina.py`, solo la rotativa).
+    Ver `salas.de(tambo).sql_duraciones_dia`."""
+    key = _clave(tambo, "resumen_duraciones_directo")
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            sala = salas.de(tambo)
+            data = db.run_query(sala.sql_duraciones_dia(resumen.PRODUCCION_DIAS),
+                                tambo=tambo, max_rows=500)
+            filas = [{"fecha": r[0], "sesion": r[1], "duracion_min": r[2]} for r in data["rows"]]
+            _cache_set(key, sala.armar_duraciones(filas, resumen.PRODUCCION_DIAS))
+        except Exception as exc:  # noqa: BLE001
+            _cache_set(key, {"error": str(exc)})
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 @app.get("/api/resumen/duraciones")
 @auth.requiere_rol("admin")
 def api_resumen_duraciones():
     """Duración (min) de cada sesión de ordeño de los últimos días, para el
     gráfico de barras agrupadas 'Duraciones de ordeño' del home de DelPro.
-    Reutiliza el mismo caché por día que ya usan Rutina/Evolución."""
+
+    La rotativa reutiliza el mismo caché por día que ya usan Rutina/Evolución
+    (reconstruye la sesión desde visitas individuales, no tiene otra forma).
+    Una sala con la duración de sesión ya medida en una tabla propia (`ver
+    salas.de(tambo).sql_duraciones_dia`) usa esa directo — más simple y más
+    barato. `NotImplementedError` es la señal de "esta sala no tiene eso":
+    la rotativa la levanta a propósito (`salas/rotativa.py`)."""
     tambo = _tambo_del_request()
+    tiene_duraciones_propias = True
+    try:
+        salas.de(tambo).sql_duraciones_dia(resumen.PRODUCCION_DIAS)
+    except NotImplementedError:
+        tiene_duraciones_propias = False
+
+    if tiene_duraciones_propias:
+        key = _clave(tambo, "resumen_duraciones_directo")
+        data, fresh = _cache_get(key, allow_stale=True)
+        if data is None:
+            _refresh_duraciones_directo_async(tambo)
+            return jsonify({"calentando": True, "mensaje": "Calculando duraciones…"}), 202
+        if not fresh:
+            _refresh_duraciones_directo_async(tambo)
+        if data.get("error"):
+            return jsonify({"error": data["error"]}), 502
+        return jsonify(data)
+
     kpis, _ = _cache_get(_clave(tambo, "__kpis__"), allow_stale=True)
     if not kpis or not kpis.get("fecha_dato"):
         return jsonify({"calentando": True, "mensaje": "Calculando fecha por defecto…"}), 202
@@ -1059,11 +1129,13 @@ def _nombres_grupos(tambo: str) -> dict:
 
 
 def _max_sesiones(tambo: str) -> int:
-    """Ordeños por día que tiene declarados el tambo (CMSGroupMilkSetting).
-    Es el tope de sesiones que puede dar el análisis de un día; si la config
-    no se puede leer, se usa el valor habitual."""
+    """Ordeños por día que tiene declarados el tambo. Es el tope de sesiones
+    que puede dar el análisis de un día; si la config no se puede leer, se usa
+    el valor habitual. La consulta depende del tipo de sala (ver `salas/`):
+    la rotativa lo lee de `CMSGroupMilkSetting`, la convencional de
+    `ParlorHistoricalData` (no tiene esa tabla)."""
     try:
-        data = _run_consulta("rutina_ordenos_dia", tambo)
+        data = _run_consulta("rutina_ordenos_dia", tambo, salas.de(tambo).sql_ordenos_por_dia())
         if data["rows"] and data["rows"][0][0]:
             return int(data["rows"][0][0])
     except Exception:  # noqa: BLE001
@@ -1076,13 +1148,14 @@ def _grupos_pesos_de_request(tambo: str):
     comas, ej. "2,5,7") y `pesos` (JSON, ej. {"prep_90s":40,...}).
     `pesos` ausente/inválido => se usan los pesos base.
     `grupos` ausente => NO significa "todo el rodeo": se usan los grupos de
-    ordeño reales (CMSGroupMilkSetting.EnableMilking), para no mezclar en el
-    análisis corrales que ni pasan por la rotativa (secas, novillas, etc.)."""
+    ordeño reales de esta sala (ver `salas.de(tambo).sql_grupos()`), para no
+    mezclar en el análisis corrales que ni pasan por el ordeño (secas,
+    novillas, etc.)."""
     grupos_txt = request.args.get("grupos")
     if grupos_txt:
         grupos = grupos_txt.split(",")
     else:
-        datos_grupos = _run_consulta("rutina_grupos", tambo)
+        datos_grupos = _run_consulta("rutina_grupos", tambo, salas.de(tambo).sql_grupos())
         idx_grupo = datos_grupos["columns"].index("grupo")
         grupos = [r[idx_grupo] for r in datos_grupos["rows"]]
     pesos_txt = request.args.get("pesos")
@@ -1095,12 +1168,28 @@ def _grupos_pesos_de_request(tambo: str):
     return grupos, pesos
 
 
+UMBRAL_PREP_S_MIN, UMBRAL_PREP_S_MAX = 10, 600  # sanidad: rango razonable en segundos
+
+
+def _umbral_prep_de_request():
+    """Objetivo de colocación (segundos) pedido por la interfaz — ver el
+    selector nuevo en "Configurar análisis". Ausente/inválido => None (cada
+    sala usa su propio valor por defecto, ver rutina.UMBRAL_PREP_S)."""
+    valor = request.args.get("umbral_prep_s")
+    if not valor:
+        return None
+    try:
+        return max(UMBRAL_PREP_S_MIN, min(UMBRAL_PREP_S_MAX, round(float(valor))))
+    except (TypeError, ValueError):
+        return None
+
+
 @app.get("/api/rutina/grupos")
 def api_rutina_grupos():
     """Grupos activos hoy (con cantidad de animales), para el selector de
     'qué grupos incluir' en el análisis de rutina."""
     tambo = _tambo_del_request()
-    data = _run_consulta("rutina_grupos", tambo)
+    data = _run_consulta("rutina_grupos", tambo, salas.de(tambo).sql_grupos())
     return jsonify(data)
 
 
@@ -1110,6 +1199,7 @@ def api_rutina():
     un día completo, separado en sesiones y puntuado 0-100%."""
     tambo = _tambo_del_request()
     grupos, pesos = _grupos_pesos_de_request(tambo)
+    umbral_prep_s = _umbral_prep_de_request()
     fecha = request.args.get("fecha")
     if not fecha:
         kpis, _ = _cache_get(_clave(tambo, "__kpis__"), allow_stale=True)
@@ -1132,9 +1222,10 @@ def api_rutina():
         _refresh_rutina_async(tambo, fecha)
 
     try:
-        resultado = rutina.analizar_dia(data["columns"], data["rows"], fecha, grupos, pesos,
-                                         max_sesiones=_max_sesiones(tambo),
-                                         nombres=_nombres_grupos(tambo))
+        resultado = salas.de(tambo).analizar_dia(tambo, data["columns"], data["rows"], fecha,
+                                                 grupos, pesos, max_sesiones=_max_sesiones(tambo),
+                                                 nombres=_nombres_grupos(tambo),
+                                                 umbral_prep_s=umbral_prep_s)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
     resultado["incompleto"] = data.get("truncated", False)
@@ -1156,6 +1247,7 @@ def api_rutina_evolucion():
     progresivamente en segundo plano."""
     tambo = _tambo_del_request()
     grupos, pesos = _grupos_pesos_de_request(tambo)
+    umbral_prep_s = _umbral_prep_de_request()
 
     hasta = request.args.get("hasta")
     if hasta:
@@ -1205,8 +1297,9 @@ def api_rutina_evolucion():
         if data.get("truncated"):
             dias_incompletos.append(fecha)
         try:
-            punto = rutina.resumen_dia(data["columns"], data["rows"], fecha, grupos, pesos,
-                                        max_sesiones=tope, nombres=nombres_grupos)
+            punto = salas.de(tambo).resumen_dia(tambo, data["columns"], data["rows"], fecha, grupos, pesos,
+                                                max_sesiones=tope, nombres=nombres_grupos,
+                                                umbral_prep_s=umbral_prep_s)
         except Exception:  # noqa: BLE001
             punto = None
         if punto:
@@ -1325,7 +1418,7 @@ def _refresh_rendimiento_async(tambo, desde, hasta):
 
     def worker():
         try:
-            data = db.run_query(rutina.sql_rendimiento(desde.isoformat(), hasta.isoformat()),
+            data = db.run_query(salas.de(tambo).sql_rendimiento(desde.isoformat(), hasta.isoformat()),
                                  tambo=tambo, max_rows=rutina.MAX_FILAS_DIA * rutina.RANGO_RENDIMIENTO_MAX_DIAS)
             _cache_set(key, data)
         except Exception:  # noqa: BLE001
@@ -1366,9 +1459,9 @@ def api_rutina_rendimiento():
     if not fresh:
         _refresh_rendimiento_async(tambo, desde, hasta)
 
-    sesiones = rutina.analizar_rendimiento(data["columns"], data["rows"],
-                                            desde.isoformat(), hasta.isoformat(),
-                                            max_sesiones=_max_sesiones(tambo))
+    sesiones = salas.de(tambo).analizar_rendimiento(tambo, data["columns"], data["rows"],
+                                                    desde.isoformat(), hasta.isoformat(),
+                                                    max_sesiones=_max_sesiones(tambo))
     return jsonify({"desde": desde.isoformat(), "hasta": hasta.isoformat(), "sesiones": sesiones,
                     "truncated": data.get("truncated", False)})
 
@@ -2579,12 +2672,12 @@ def _revisar_rutina_whatsapp(tambo: str):
     if data is None:
         _refresh_rutina_async(tambo, hoy)
         return
-    grupos_data = _run_consulta("rutina_grupos", tambo)
+    grupos_data = _run_consulta("rutina_grupos", tambo, salas.de(tambo).sql_grupos())
     idx_grupo = grupos_data["columns"].index("grupo")
     grupos = [r[idx_grupo] for r in grupos_data["rows"]]
-    resultado = rutina.analizar_dia(data["columns"], data["rows"], hoy, grupos,
-                                     max_sesiones=_max_sesiones(tambo),
-                                     nombres=_nombres_grupos(tambo))
+    resultado = salas.de(tambo).analizar_dia(tambo, data["columns"], data["rows"], hoy, grupos,
+                                             max_sesiones=_max_sesiones(tambo),
+                                             nombres=_nombres_grupos(tambo))
     for s in resultado["sesiones"]:
         if s["score"] < ALERTA_RUTINA_SCORE_MIN:
             clave = f"rutina_score:{hoy}:{s['indice']}"
@@ -2948,6 +3041,9 @@ def api_alimentacion_conversion_historica():
                     "ordene": db.run_query(
                         conversion_historica.sql_grupos_ordene(herd),
                         tambo=tambo, max_rows=200),
+                    "lactancia": db.run_query(
+                        conversion_historica.sql_produccion_por_lactancia(desde, hasta, herd),
+                        tambo=tambo, max_rows=20000),
                 })
             except Exception as exc:  # noqa: BLE001
                 _cache_set(k, {"error": str(exc)})
@@ -2972,8 +3068,175 @@ def api_alimentacion_conversion_historica():
         data["prod_dia"], ms, mapeo, data["solidos"],
         datetime.date.fromisoformat(data["hasta"]),
         [f[0] for f in data["ordene"]["rows"]])
+    salida["por_lactancia"] = conversion_historica.lactancia(
+        data["lactancia"], datetime.date.fromisoformat(data["hasta"]))
     salida.update({"desde": data["desde"], "hasta": data["hasta"]})
     return jsonify(salida)
+
+
+def _refresh_sala_async(tambo: str, consulta_id: str, vivo: bool):
+    """Recalcula la sala convencional en segundo plano. No usa el registro
+    `_SQL` porque la consulta depende de tambo/ventana configurada, no es un
+    texto fijo como el resto de las consultas cacheadas."""
+    key = _clave(tambo, consulta_id)
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            sql = (sala_convencional.sql_sala_vivo(tambo) if vivo
+                   else sala_convencional.sql_sala_sesion())
+            _cache_set(key, db.run_query(sql, tambo=tambo, max_rows=3000))
+        except Exception as exc:  # noqa: BLE001
+            _cache_set(key, {"error": str(exc)})
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _refresh_sala_inc_async(tambo: str):
+    key = _clave(tambo, "sala_inc")
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            _cache_set(key, db.run_query(
+                sala_convencional.sql_sala_incidencias(), tambo=tambo, max_rows=500))
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _no_es_sala_convencional(tambo: str):
+    """None si el tambo es de sala convencional; si no, la respuesta de error
+    lista para devolver. Este módulo entero (`/api/sala*`) solo tiene sentido
+    para ese tipo de sala — evita disparar la consulta (SessionMilkYieldEx no
+    existe en una rotativa) y de paso devuelve un mensaje legible en vez de la
+    excepción cruda de ODBC. Puede pasar si el selector de tambo cambia a uno
+    rotativo mientras esta página sigue actualizándose sola de fondo."""
+    if tambos.tipo_sala(tambo) == "convencional":
+        return None
+    nombre = tambos.TAMBOS.get(tambo, {}).get("nombre", tambo)
+    return jsonify({"error": f"«Ordeño en Vivo Sala CMS» es solo para salas convencionales — "
+                             f"{nombre} es una sala rotativa. Usá «Ordeño en vivo» en su lugar.",
+                    "no_aplica": True}), 409
+
+
+@app.get("/api/sala/config")
+def api_sala_config():
+    """Configuración vigente de la sala convencional (lados, puestos por lado,
+    ventana en vivo). Ver `sala_convencional.py`."""
+    tambo = _tambo_del_request()
+    error = _no_es_sala_convencional(tambo)
+    if error:
+        return error
+    return jsonify(sala_convencional.configuracion(tambo))
+
+
+@app.post("/api/sala/config")
+@auth.requiere_rol("admin")
+def api_sala_guardar_config():
+    tambo = _tambo_del_request()
+    error = _no_es_sala_convencional(tambo)
+    if error:
+        return error
+    try:
+        cfg = sala_convencional.guardar_configuracion(tambo, request.json or {})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    # La ventana "en vivo" está adentro de la consulta cacheada: si cambió,
+    # los cachés viejos quedan con datos de una ventana que ya no es la
+    # vigente y hay que tirarlos, no esperar a que venzan solos.
+    with _cache_lock:
+        for k in [k for k in _cache if k.startswith(f"{tambo}:sala_")]:
+            _cache.pop(k, None)
+    return jsonify(cfg)
+
+
+@app.get("/api/sala")
+def api_sala():
+    """Vacas de la sala convencional (espina de pescado). modo=vivo → última
+    visita por (lado, puesto) dentro de la ventana configurada; si no, la
+    sesión completa (último ordeño). Ver `sala_convencional.py`."""
+    tambo = _tambo_del_request()
+    error = _no_es_sala_convencional(tambo)
+    if error:
+        return error
+    vivo = request.args.get("modo") == "vivo"
+    cfg = sala_convencional.configuracion(tambo)
+    # La clave incluye la ventana vigente: si el tambo la cambia, la consulta
+    # vieja queda en otra clave y no se sirve por error (misma lección que
+    # documenta PRECALENTAR.md sobre parámetros y claves de caché).
+    consulta_id = f"sala_vivo:{cfg['ventana_vivo_min']}" if vivo else "sala_sesion"
+    key = _clave(tambo, consulta_id)
+
+    if vivo:
+        data, fresh = _cache_get(key, allow_stale=True, ttl=_VIVO_TTL_S)
+        if data is None:
+            _refresh_sala_async(tambo, consulta_id, vivo=True)
+            return jsonify({"calentando": True, "mensaje": "Cargando la sala en vivo…"}), 202
+        if not fresh:
+            _refresh_sala_async(tambo, consulta_id, vivo=True)
+    else:
+        data, _ = _cache_get(key, allow_stale=True)
+        if data is None:
+            _refresh_sala_async(tambo, consulta_id, vivo=False)
+            return jsonify({"calentando": True, "mensaje": "Cargando datos de la sala…"}), 202
+
+    if data.get("error"):
+        return jsonify({"error": data["error"]}), 502
+
+    columns = list(data["columns"])
+    rows = [list(r) for r in data["rows"]]
+    momento = rows[0][0] if rows else None
+    if columns and columns[0] == "momento_ordeno":
+        columns = columns[1:]
+        rows = [r[1:] for r in rows]
+
+    # Incidencias del equipo por puesto: consulta aparte, TTL largo (cambian
+    # de a poco), se pegan por (lado, puesto).
+    inc_data, _ = _cache_get(_clave(tambo, "sala_inc"), allow_stale=True)
+    if inc_data is None:
+        _refresh_sala_inc_async(tambo)
+    mapa_inc = {}
+    if inc_data:
+        di = {c: i for i, c in enumerate(inc_data["columns"])}
+        for r in inc_data["rows"]:
+            mapa_inc[(r[di["lado"]], r[di["puesto"]])] = [r[di[c]] for c in sala_convencional.INC_COLS]
+    il, ip = columns.index("lado"), columns.index("puesto")
+    columns = columns + sala_convencional.INC_COLS
+    defecto_inc = [0] * len(sala_convencional.INC_COLS)
+    rows = [r + (mapa_inc.get((r[il], r[ip])) or defecto_inc) for r in rows]
+
+    en_vivo, hace, ordenando = False, "", False
+    if momento:
+        try:
+            t = datetime.datetime.strptime(momento, "%Y-%m-%d %H:%M:%S")
+            minutos = int((datetime.datetime.now() - t).total_seconds() // 60)
+            en_vivo = minutos <= 20
+            ordenando = minutos <= sala_convencional.VIVO_LIMITE_MIN
+            hace = _hace_texto(minutos)
+        except (ValueError, TypeError):
+            pass
+
+    return jsonify({
+        "modo": "vivo" if vivo else "sesion",
+        "momento": momento, "en_vivo": en_vivo, "hace": hace, "ordenando": ordenando,
+        "vacas": len(rows), "columns": columns, "rows": rows,
+        "config": cfg,
+        "truncated": data.get("truncated", False),
+    })
 
 
 if __name__ == "__main__":

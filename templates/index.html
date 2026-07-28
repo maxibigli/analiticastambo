@@ -192,6 +192,25 @@
   #rotativa .puesto-foco { cursor: pointer; }
   .rotativa-col { flex: 1 1 280px; min-width: 250px; max-width: 400px; display: flex; flex-direction: column; gap: 10px; }
   #rotativa-detalle { display: flex; flex-direction: column; gap: 7px; }
+
+  /* Sala convencional (espina de pescado): dos filas de puestos, una por
+     lado, en vez de la plataforma circular de la rotativa. */
+  .sala-layout { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; margin-top: 12px; }
+  #sala-grafica { flex: 2 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+  .sala-col { flex: 1 1 280px; min-width: 250px; max-width: 400px; }
+  .sala-lado-titulo { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; font-weight: 600; }
+  .sala-puestos { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
+  .sala-puesto {
+    border: 1.5px solid var(--muted); border-radius: 6px; padding: 5px 2px; text-align: center;
+    font-size: 11px; cursor: pointer; background: transparent; line-height: 1.35; color: var(--text-secondary);
+  }
+  .sala-puesto .n { font-weight: 700; font-size: 13px; color: var(--text-primary); display: block; }
+  .sala-puesto.vacio { border-style: dashed; }
+  .sala-puesto.ocupado { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .sala-puesto.tratamiento { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, transparent); }
+  .sala-puesto.alerta { border-color: var(--critical); background: color-mix(in srgb, var(--critical) 18%, transparent); border-width: 2px; }
+  .sala-puesto.seleccionado { outline: 2px solid var(--text-primary); outline-offset: 1px; }
+  #sala-detalle { display: flex; flex-direction: column; gap: 7px; }
   #panel-alarmas:empty { display: none; }
   .panel-alarmas {
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
@@ -356,6 +375,7 @@
     <div class="sidebar-brand"><img src="/static/img/logo.svg" alt="">LactIA</div>
     {% if 'dashboard' in paginas_visibles %}<button class="nav-item" data-pagina="dashboard">📊 <span>Dashboard</span></button>{% endif %}
     {% if 'ordeno' in paginas_visibles %}<button class="nav-item" data-pagina="ordeno">🔄 <span>Ordeño en vivo</span></button>{% endif %}
+    {% if 'sala_cms' in paginas_visibles %}<button class="nav-item" data-pagina="sala_cms">🐟 <span>Ordeño en Vivo Sala CMS</span></button>{% endif %}
     {% if 'rutina' in paginas_visibles %}<button class="nav-item" data-pagina="rutina">⏱️ <span>Rutina de ordeño</span></button>{% endif %}
     {% if 'flujos' in paginas_visibles %}<button class="nav-item" data-pagina="flujos">💧 <span>Flujos de ordeño</span></button>{% endif %}
     {% if 'evolucion' in paginas_visibles %}<button class="nav-item" data-pagina="evolucion">📈 <span>Evolución</span></button>{% endif %}
@@ -424,12 +444,14 @@
   <section class="card" id="resumen-duraciones-card">
     <h2 style="margin:0">Duraciones de ordeño — últimos 7 días</h2>
     <span class="aviso">Minutos por sesión (hasta 3 por día).</span>
+    <div class="aviso" id="resumen-duraciones-error" style="color:var(--critical);margin-top:6px"></div>
     <div class="chart-box" style="height:260px;margin-top:10px"><canvas id="chart-resumen-duraciones"></canvas></div>
   </section>
 
   <section class="card" id="resumen-grupo-card">
     <h2 style="margin:0">Producción media por grupo — últimos 30 días</h2>
     <span class="aviso">Kg/vaca/día de los grupos más numerosos, con el promedio general del tambo (línea punteada).</span>
+    <div class="aviso" id="resumen-grupo-error" style="color:var(--critical);margin-top:6px"></div>
     <div class="chart-box" style="height:280px;margin-top:10px"><canvas id="chart-resumen-grupo"></canvas></div>
   </section>
 
@@ -1003,6 +1025,27 @@
         movimiento del tambo lo explica un lote solo.</span>
       <div class="chart-box" style="height:280px;margin-top:8px"><canvas id="chart-ch-lotes"></canvas></div>
 
+      <h3 class="g-titulo" style="margin-top:22px">Vacas en ordeñe por lactancia</h3>
+      <p class="explica">
+        <b>Para qué sirve.</b> Una vaquillona de primera cría da menos leche que una de 2da o 3ra
+        lactancia — no porque algo esté mal, es biología. Si en un período entraron muchas vacas de
+        primera, el litros por vaca del <b>tambo entero</b> puede caer o amesetarse aunque cada vaca,
+        dentro de su propia categoría, esté dando igual o más que antes. Este gráfico separa esas dos
+        cosas: cuántas vacas hay de cada lactancia, y cuánto da cada categoría por separado.
+        <br><b>L1</b> es primera lactancia (vacas de primera cría), <b>L2</b> segunda, <b>L3+</b>
+        tercera o más. Sale de <code>AnimalDaily</code>, no depende de las descargas de Haasten:
+        una semana puede estar completa acá aunque en los gráficos de arriba esté marcada parcial.
+      </p>
+      <div class="chart-box" style="height:260px;margin-top:8px"><canvas id="chart-ch-lact-vacas"></canvas></div>
+
+      <h4 style="margin-top:18px;margin-bottom:4px">Litros por vaca, según lactancia</h4>
+      <span class="aviso">Las tres líneas por separado. Si el tambo se amesetó pero las tres líneas
+        siguen subiendo o se mantienen, la explicación no es que las vacas rindan menos: es que
+        cambió la mezcla.</span>
+      <div class="chart-box" style="height:240px;margin-top:8px"><canvas id="chart-ch-lact-litros"></canvas></div>
+
+      <div id="ch-lact-diagnostico" style="margin-top:14px"></div>
+
       <h3 class="g-titulo" style="margin-top:22px">Semanas, en detalle</h3>
       <div style="overflow-x:auto;margin-top:8px" id="ch-tabla-semanas"></div>
 
@@ -1288,6 +1331,77 @@
   </section>
   </div>
 
+  <div class="page" id="page-sala_cms" hidden>
+  <section class="card" id="sala-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🐟 Ordeño en Vivo — Sala CMS</h2>
+      <span id="sala-badge" class="badge historico">—</span>
+      <span id="sala-info" class="aviso"></span>
+      <div class="segmentado" style="margin-left:auto">
+        <button id="sala-vista-grafica" class="seg activa">Sala</button>
+        <button id="sala-vista-tabla" class="seg">Tabla</button>
+      </div>
+      <label class="aviso" style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="sala-vivo" checked> En vivo
+      </label>
+      <button class="secundario" id="sala-config-toggle">⚙ Configurar</button>
+      <button class="secundario" id="sala-refrescar">Actualizar</button>
+    </div>
+
+    <p class="explica" style="margin-top:10px">
+      <b>Sala convencional (espina de pescado), no rotativa.</b> Las vacas entran por <b>tanda</b>:
+      mientras un lado está ordeñando, el otro lado se llena. Cada tanda alterna de lado — se ve en el
+      número de <b>bloque</b> de cada puesto.
+      <br><b>"En vivo"</b> muestra la última visita de cada puesto dentro de la ventana configurada
+      (por defecto cubre un ciclo completo de ida y vuelta del mismo lado). Sin esa marca, se ve la
+      sesión completa del último ordeño.
+      <br><b>Lo que este módulo NO tiene</b>, porque la base de este tambo no lo registra: la bandera
+      de "no ordeñar" / "descartar leche" que sí tiene la rotativa, y el apartado en vivo (acá solo
+      queda un registro histórico de apartados ya hechos, no una bandera pendiente).
+    </p>
+
+    <div id="sala-config" hidden style="margin-top:10px;padding:12px;border:1px solid var(--border);border-radius:8px">
+      <div class="controls">
+        <label class="aviso">Lados
+          <input type="number" id="sala-cfg-lados" min="1" max="4" style="width:56px">
+        </label>
+        <label class="aviso">Puestos por lado
+          <input type="number" id="sala-cfg-puestos" min="1" max="100" style="width:64px">
+        </label>
+        <label class="aviso">Ventana "en vivo" (min)
+          <input type="number" id="sala-cfg-ventana" min="5" max="60" style="width:64px">
+        </label>
+        <button class="secundario" id="sala-cfg-guardar">Guardar</button>
+      </div>
+      <span class="aviso" style="display:block;margin-top:6px">La ventana tiene que cubrir un ciclo
+        completo ida y vuelta del mismo lado: si un lado no aparece en la sala, agrandala. Puestos por
+        lado es solo para dibujar la grilla — no filtra datos, así que un número de menos simplemente
+        no muestra algunos puestos con vacas reales.</span>
+    </div>
+
+    <div id="sala-resumen" class="resumen-inc" style="margin-top:10px"></div>
+
+    <div id="sala-grafica-wrap">
+      <div class="sala-layout">
+        <div id="sala-grafica"></div>
+        <div class="sala-col">
+          <div id="sala-detalle"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="sala-tabla-wrap" hidden>
+      <div class="controls" style="margin-top:12px">
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="sala-alertas"> Solo con alerta
+        </label>
+        <input type="text" id="sala-buscar" placeholder="Buscar RP…" style="width:120px">
+      </div>
+      <div class="tabla-scroll" style="max-height:440px;margin-top:12px"><table id="sala-tabla"></table></div>
+    </div>
+  </section>
+  </div>
+
   <div class="page" id="page-rutina" hidden>
   <section class="card" id="rutina-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -1303,6 +1417,11 @@
     <div id="rutina-config-panel" hidden style="margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:9px">
       <div class="aviso" style="margin-bottom:6px">Grupos a incluir en el análisis</div>
       <div id="rutina-grupos-check" style="display:flex;flex-wrap:wrap;gap:12px"></div>
+      <div class="aviso" style="margin:14px 0 6px">Objetivo de colocación de pezonera</div>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px;width:fit-content">
+        Segundos desde la identificación
+        <input type="number" min="10" max="600" id="rutina-umbral-prep" style="width:90px;padding:5px 7px">
+      </label>
       <div class="aviso" style="margin:14px 0 6px">Peso de cada componente en el score (%)</div>
       <div id="rutina-pesos-inputs" style="display:flex;flex-wrap:wrap;gap:14px"></div>
       <div style="margin-top:14px;display:flex;gap:10px">
@@ -2140,8 +2259,10 @@ async function cargarResumenAnimales() {
 }
 
 async function cargarResumenDuraciones() {
+  const errBox = document.getElementById('resumen-duraciones-error');
   try {
     const d = await pedirJSON('/api/resumen/duraciones?tambo=' + encodeURIComponent(tamboActual));
+    errBox.textContent = '';
     const puntos = d.puntos || [];
     const maxSesiones = Math.max(1, ...puntos.map(p => p.duraciones.length));
     const colores = [SERIES[2], css('--warning'), SERIES[4], SERIES[5], SERIES[6]];
@@ -2167,13 +2288,20 @@ async function cargarResumenDuraciones() {
     });
     if (d.calculando) setTimeout(cargarResumenDuraciones, 4000);
   } catch (e) {
-    if (e.calentando) setTimeout(cargarResumenDuraciones, 4000);
+    if (e.calentando) { setTimeout(cargarResumenDuraciones, 4000); return; }
+    // Error real (no "todavía calculando"): se limpia el gráfico viejo en vez
+    // de dejarlo — mostrar el dato de otro tambo como si fuera el actual es
+    // peor que no mostrar nada.
+    if (chartResumenDuraciones) { chartResumenDuraciones.destroy(); chartResumenDuraciones = null; }
+    errBox.textContent = 'No disponible para este tambo: ' + e.message;
   }
 }
 
 async function cargarResumenGrupo() {
+  const errBox = document.getElementById('resumen-grupo-error');
   try {
     const d = await pedirJSON('/api/resumen/produccion_grupo?tambo=' + encodeURIComponent(tamboActual));
+    errBox.textContent = '';
     const detalle = d.detalle || { columns: [], rows: [] };
     const idx = { fecha: detalle.columns.indexOf('fecha'), grupo: detalle.columns.indexOf('grupo'),
                   promedio_kg: detalle.columns.indexOf('promedio_kg') };
@@ -2214,7 +2342,9 @@ async function cargarResumenGrupo() {
     });
     if (d.calculando) setTimeout(cargarResumenGrupo, 4000);
   } catch (e) {
-    if (e.calentando) setTimeout(cargarResumenGrupo, 4000);
+    if (e.calentando) { setTimeout(cargarResumenGrupo, 4000); return; }
+    if (chartResumenGrupo) { chartResumenGrupo.destroy(); chartResumenGrupo = null; }
+    errBox.textContent = 'No disponible para este tambo: ' + e.message;
   }
 }
 
@@ -5222,6 +5352,14 @@ async function cargarTambos() {
       cargarDatosDePagina(paginaActual);
       // La evolución NO se recarga sola: es pesada, se dispara solo con
       // "Aplicar" o "Ver mes completo".
+      // Reanuda el auto-refresco de Sala CMS si un tambo incompatible lo
+      // había frenado (ver el catch de cargarSala) y se volvió a uno bueno.
+      if (paginaActual === 'sala_cms') reprogramarRefrescoSala();
+      // Si el panel de "Configurar análisis" está abierto, refrescarlo: el
+      // input de "ocupación" se muestra u oculta según el tipo de sala del
+      // tambo activo (ver salaEsConvencional).
+      const panelCfg = document.getElementById('rutina-config-panel');
+      if (panelCfg && !panelCfg.hidden) { rutinaGruposDisponibles = []; cargarGruposRutina(); pintarPesosRutina(); }
     });
   } catch (e) {
     sel.innerHTML = '<option>—</option>';
@@ -5280,11 +5418,13 @@ const RUTINA_PESOS_LABELS = {
 const RUTINA_CONFIG_KEY = 'delpro_rutina_config_v1';
 let rutinaGruposDisponibles = [];
 
+const UMBRAL_PREP_S_DEFECTO = 90;
+
 function leerConfigRutina() {
   try {
     const raw = localStorage.getItem(RUTINA_CONFIG_KEY);
-    return raw ? JSON.parse(raw) : { grupos: null, pesos: null };
-  } catch (e) { return { grupos: null, pesos: null }; }
+    return raw ? JSON.parse(raw) : { grupos: null, pesos: null, umbral_prep_s: null };
+  } catch (e) { return { grupos: null, pesos: null, umbral_prep_s: null }; }
 }
 function guardarConfigRutina(cfg) { localStorage.setItem(RUTINA_CONFIG_KEY, JSON.stringify(cfg)); }
 
@@ -5294,6 +5434,7 @@ function paramsRutinaConfig() {
   let extra = '';
   if (cfg.grupos && cfg.grupos.length) extra += '&grupos=' + encodeURIComponent(cfg.grupos.join(','));
   if (cfg.pesos) extra += '&pesos=' + encodeURIComponent(JSON.stringify(cfg.pesos));
+  if (cfg.umbral_prep_s) extra += '&umbral_prep_s=' + encodeURIComponent(cfg.umbral_prep_s);
   return extra;
 }
 
@@ -5321,15 +5462,34 @@ async function cargarGruposRutina() {
   }
 }
 
+// La sala convencional no tiene un equivalente real de "ocupación de la
+// plataforma" (ver salas/convencional.py._sin_ocupacion): el backend ya
+// excluye ese componente del score sea cual sea el peso pedido, así que se
+// oculta el input acá para no ofrecer un control que no hace nada.
+function salaEsConvencional() {
+  return (tambosInfo[tamboActual] || {}).sala === 'convencional';
+}
+
 function pintarPesosRutina() {
   const cont = document.getElementById('rutina-pesos-inputs');
   if (!cont) return;
-  const pesos = leerConfigRutina().pesos || RUTINA_PESOS_DEFECTO;
-  cont.innerHTML = Object.keys(RUTINA_PESOS_DEFECTO).map(clave => `
+  const cfg = leerConfigRutina();
+  const pesos = cfg.pesos || RUTINA_PESOS_DEFECTO;
+  const umbralPrep = cfg.umbral_prep_s || UMBRAL_PREP_S_DEFECTO;
+  const convencional = salaEsConvencional();
+  cont.innerHTML = Object.keys(RUTINA_PESOS_DEFECTO)
+    .filter(clave => clave !== 'ocupacion' || !convencional)
+    .map(clave => `
     <label class="aviso" style="display:flex;flex-direction:column;gap:3px">
-      ${RUTINA_PESOS_LABELS[clave]}
+      ${clave === 'prep_90s' ? `Colocación ≤${umbralPrep}s` : RUTINA_PESOS_LABELS[clave]}
       <input type="number" min="0" max="100" data-peso="${clave}" value="${pesos[clave]}" style="width:80px;padding:5px 7px">
     </label>`).join('');
+}
+
+function pintarUmbralPrepRutina() {
+  const inp = document.getElementById('rutina-umbral-prep');
+  if (!inp) return;
+  inp.value = leerConfigRutina().umbral_prep_s || UMBRAL_PREP_S_DEFECTO;
 }
 
 document.getElementById('rutina-config-toggle').addEventListener('click', () => {
@@ -5338,6 +5498,7 @@ document.getElementById('rutina-config-toggle').addEventListener('click', () => 
   if (!panel.hidden) {
     if (!rutinaGruposDisponibles.length) cargarGruposRutina();
     pintarPesosRutina();
+    pintarUmbralPrepRutina();
   }
 });
 
@@ -5349,15 +5510,22 @@ document.getElementById('rutina-config-aplicar').addEventListener('click', () =>
   document.querySelectorAll('#rutina-pesos-inputs input[data-peso]').forEach(inp => {
     pesos[inp.dataset.peso] = Number(inp.value) || 0;
   });
+  // Si la sala convencional escondió el input de "ocupación", se conserva el
+  // peso por defecto para esa clave: no se puede editar y el backend la
+  // excluye de todos modos, así que no cuenta como un cambio real.
+  if (salaEsConvencional()) pesos.ocupacion = RUTINA_PESOS_DEFECTO.ocupacion;
   const esDefecto = JSON.stringify(pesos) === JSON.stringify(RUTINA_PESOS_DEFECTO);
-  guardarConfigRutina({ grupos, pesos: esDefecto ? null : pesos });
+  const umbralInp = Number(document.getElementById('rutina-umbral-prep').value) || UMBRAL_PREP_S_DEFECTO;
+  const umbral_prep_s = umbralInp === UMBRAL_PREP_S_DEFECTO ? null : umbralInp;
+  guardarConfigRutina({ grupos, pesos: esDefecto ? null : pesos, umbral_prep_s });
   cargarRutina(document.getElementById('rutina-fecha').value);
 });
 
 document.getElementById('rutina-config-reset').addEventListener('click', () => {
-  guardarConfigRutina({ grupos: null, pesos: null });
+  guardarConfigRutina({ grupos: null, pesos: null, umbral_prep_s: null });
   cargarGruposRutina();
   pintarPesosRutina();
+  pintarUmbralPrepRutina();
   cargarRutina(document.getElementById('rutina-fecha').value);
 });
 
@@ -5509,7 +5677,8 @@ document.addEventListener('mousemove', (e) => {
   const s = rutinaData.sesiones[rutinaSesionIdx];
   const v = s.visitas[Number(el.dataset.i)];
   const hora = iso => iso ? new Date(iso).toLocaleTimeString('es-AR') : '—';
-  const prep = v.prep_seg == null ? '—' : `${v.prep_seg}s ${v.cumple_90 ? '✓' : '⚠ objetivo ≤90s'}`;
+  const umbralPrep = leerConfigRutina().umbral_prep_s || UMBRAL_PREP_S_DEFECTO;
+  const prep = v.prep_seg == null ? '—' : `${v.prep_seg}s ${v.cumple_90 ? '✓' : `⚠ objetivo ≤${umbralPrep}s`}`;
   const nomGrupo = (s.grupos.find(g => g.grupo === v.grupo) || {}).nombre
                    || 'Grupo ' + (v.grupo ?? '—');
   tip.innerHTML = `<b>Puesto ${v.puesto}</b> · RP ${v.rp || '?'} · ${nomGrupo}<br>
@@ -5568,7 +5737,11 @@ async function cargarEvolucion() {
 
     const labels = d.puntos.map(p => new Date(p.fecha + 'T00:00:00')
       .toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: '2-digit' }));
-    const datasets = EVOLUCION_SERIES.map((s, k) => ({
+    // "Ocupación de la plataforma" no existe para una sala convencional (ver
+    // salaEsConvencional más arriba): la serie daría siempre null, así que se
+    // saca del todo en vez de mostrar una leyenda vacía.
+    const series = EVOLUCION_SERIES.filter(s => s.clave !== 'ocupacion' || !salaEsConvencional());
+    const datasets = series.map((s, k) => ({
       label: s.label, data: d.puntos.map(p => p[s.clave]),
       borderColor: SERIES[k % 8], backgroundColor: SERIES[k % 8],
       borderWidth: s.ancho || 1.6, pointRadius: d.total_puntos > 90 ? 0 : 3, tension: .25,
@@ -6108,7 +6281,8 @@ document.getElementById('cv-aplicar').addEventListener('click', () => {
 let chDatos = null, chReintento = null, chTipo = 'line';
 // `dibujar()` recibe el Chart ANTERIOR para destruirlo: si se le pasa un
 // string, al repintar revienta con `.destroy is not a function`.
-let chartChSem = null, chartChCob = null, chartChMes = null, chartChLotes = null;
+let chartChSem = null, chartChCob = null, chartChMes = null, chartChLotes = null,
+    chartChLactVacas = null, chartChLactLitros = null;
 
 // Decimales con coma, que es como se escriben los números acá. `fmt()` recorta
 // a un decimal y una conversión de 1,656 quedaría en 1,7 — se pierde justo lo
@@ -6283,6 +6457,9 @@ function pintarConversionHistorica() {
       scales: { y: { title: { display: true, text: 'litros / kg MS' } } },
     });
 
+  // --- Por lactancia: composición del rodeo y su efecto en el promedio ----
+  pintarLactanciaHistorica(d.por_lactancia || { semanas: [], descomposiciones: [] });
+
   tablaInteractiva('ch-tabla-semanas', [
     { clave: 'semana', titulo: 'Semana' },
     { clave: 'desde', titulo: 'Desde' },
@@ -6326,6 +6503,104 @@ function pintarConversionHistorica() {
   document.getElementById('ch-excluidos').innerHTML = partes.join('');
 }
 
+const COLORES_LACT = { 'L1': '#f472b6', 'L2': '#38bdf8', 'L3+': '#22c55e' };
+const NOMBRE_LACT = { 'L1': 'L1 · primera cría', 'L2': 'L2 · segunda lactancia', 'L3+': 'L3+ · tercera o más' };
+
+function pintarLactanciaHistorica(pl) {
+  const sem = pl.semanas || [];
+  const buckets = ['L1', 'L2', 'L3+'];
+  const et = sem.map(s => s.semana);
+
+  // --- Vacas por lactancia, apiladas, con el % de L1 como línea ------------
+  chartChLactVacas = dibujar('chart-ch-lact-vacas', chartChLactVacas, {
+    type: 'bar',
+    data: {
+      labels: et,
+      datasets: [
+        ...buckets.map(b => ({
+          type: 'bar', label: NOMBRE_LACT[b], stack: 'vacas',
+          data: sem.map(s => s.buckets[b].vacas),
+          backgroundColor: COLORES_LACT[b], borderWidth: 0, maxBarThickness: 26,
+        })),
+        { type: 'line', label: '% de primera cría (L1)', data: sem.map(s => s.pct_l1),
+          borderColor: '#f59e0b', backgroundColor: '#f59e0b', borderWidth: 3,
+          yAxisID: 'y1', tension: .25, pointRadius: 2 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { stacked: true },
+        y: { stacked: true, title: { display: true, text: 'vacas-día' } },
+        y1: { position: 'right', grid: { drawOnChartArea: false }, suggestedMax: 100,
+              title: { display: true, text: '% de L1' } },
+      },
+    },
+  });
+
+  // --- Litros por vaca, una línea por lactancia -----------------------------
+  chartChLactLitros = graficoCH('chart-ch-lact-litros', chartChLactLitros, et,
+    buckets.map(b => ({
+      label: NOMBRE_LACT[b], data: sem.map(s => s.buckets[b].litros_vaca),
+      borderColor: COLORES_LACT[b], backgroundColor: COLORES_LACT[b], tension: .25, spanGaps: true,
+    })), {
+      responsive: true, maintainAspectRatio: false,
+      scales: { y: { title: { display: true, text: 'litros / vaca / día' } } },
+    });
+
+  // --- Diagnóstico: mezcla vs. productividad real ---------------------------
+  const cont = document.getElementById('ch-lact-diagnostico');
+  const descs = pl.descomposiciones || [];
+  if (!descs.length) {
+    cont.innerHTML = '<div class="aviso">Todavía no hay suficientes semanas completas para '
+      + 'descomponer el cambio en mezcla y productividad (hacen falta al menos 8).</div>';
+    return;
+  }
+  const TITULOS = { 'todo el rango medido': 'En todo el rango medido',
+                    'desde el pico': 'Desde el mejor momento del rodeo hasta ahora' };
+  cont.innerHTML = descs.map(ds => {
+    const rango = `${ds.semanas_a[0]} a ${ds.semanas_a[ds.semanas_a.length-1]} → ` +
+                  `${ds.semanas_b[0]} a ${ds.semanas_b[ds.semanas_b.length-1]}`;
+    const mezclaDomina = Math.abs(ds.efecto_mezcla) >= Math.abs(ds.efecto_productividad);
+    let veredicto;
+    if (ds.delta_total <= 0 && ds.efecto_mezcla < 0 && mezclaDomina) {
+      veredicto = `<b>La caída está explicada, sobre todo, por la incorporación de vacas de ` +
+        `primera cría.</b> Dentro de cada lactancia la producción se mantuvo estable o mejoró ` +
+        `(efecto productividad ${fmtDec(ds.efecto_productividad, 2)}); lo que bajó el promedio ` +
+        `del tambo fue que hoy hay más L1 y menos L2/L3+ en el rodeo.`;
+    } else if (ds.delta_total > 0 && ds.efecto_mezcla < 0) {
+      veredicto = `A pesar de que la mezcla le restó ${fmtDec(Math.abs(ds.efecto_mezcla), 2)} ` +
+        `L/vaca (más vacas de primera cría), el promedio del tambo subió porque cada lactancia, ` +
+        `por separado, produjo más.`;
+    } else if (ds.efecto_mezcla >= 0) {
+      veredicto = `El cambio de mezcla no le restó al promedio — no explica ninguna caída en ` +
+        `este tramo.`;
+    } else {
+      veredicto = `La mezcla aportó ${fmtDec(ds.efecto_mezcla, 2)} L/vaca, pero el cambio ` +
+        `principal es la productividad dentro de cada lactancia.`;
+    }
+    const filas = buckets.map(b => {
+      const x = ds.detalle[b];
+      return `<tr><td>${NOMBRE_LACT[b]}</td>
+        <td>${fmtDec(x.share_a, 1)}% → ${fmtDec(x.share_b, 1)}%</td>
+        <td>${fmtDec(x.litros_vaca_a, 1)} → ${fmtDec(x.litros_vaca_b, 1)} L/vaca</td></tr>`;
+    }).join('');
+    return `<div class="alerta-caja" style="margin-top:10px">
+      <b>${TITULOS[ds.etiqueta] || ds.etiqueta}</b> (${rango})
+      <div style="margin-top:6px">Litros por vaca del tambo: ${fmtDec(ds.litros_vaca_a, 1)} →
+        ${fmtDec(ds.litros_vaca_b, 1)} (${ds.delta_total >= 0 ? '+' : ''}${fmtDec(ds.delta_total, 2)}).
+        Efecto mezcla ${ds.efecto_mezcla >= 0 ? '+' : ''}${fmtDec(ds.efecto_mezcla, 2)} ·
+        efecto productividad ${ds.efecto_productividad >= 0 ? '+' : ''}${fmtDec(ds.efecto_productividad, 2)}.</div>
+      <div style="margin-top:6px">${veredicto}</div>
+      <table style="margin-top:8px;width:100%;font-size:12.5px;border-collapse:collapse">
+        <thead><tr><th style="text-align:left">Lactancia</th><th style="text-align:left">Participación</th>
+          <th style="text-align:left">Litros/vaca</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+}
+
 document.getElementById('ch-aplicar').addEventListener('click', () => {
   chDatos = null;
   cargarConversionHistorica();
@@ -6352,7 +6627,7 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
+const PAGINAS = ['dashboard', 'ordeno', 'sala_cms', 'rutina', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -6376,6 +6651,245 @@ function activarAPedido(contId, fn, titulo, detalle) {
 
 const DEMORA = 'Consulta pesada: puede tardar un rato la primera vez, después queda en memoria.';
 
+// ---------------------------------------------------------------------------
+// Ordeño en Vivo — Sala CMS (espina de pescado). Módulo aparte de la
+// rotativa: acá las vacas entran por TANDA (bloque), alternando de lado, no
+// por una vuelta continua. Ver `sala_convencional.py`.
+// ---------------------------------------------------------------------------
+let salaData = null, salaConfig = null, salaTimer = null, salaReintento = null;
+let salaVista = 'grafica';
+let salaSeleccion = null;   // {lado, puesto} del puesto clickeado, para el detalle
+const SALA_REFRESCO_MS = 8000;
+
+function salaEsGrafica() { return salaVista === 'grafica'; }
+function salaEsVivo() { return document.getElementById('sala-vivo').checked; }
+
+function reprogramarRefrescoSala() {
+  clearInterval(salaTimer);
+  salaTimer = setInterval(cargarSala, SALA_REFRESCO_MS);
+}
+
+async function cargarSalaConfig() {
+  try {
+    salaConfig = await pedirJSON('/api/sala/config?tambo=' + encodeURIComponent(tamboActual));
+    document.getElementById('sala-cfg-lados').value = salaConfig.lados;
+    document.getElementById('sala-cfg-puestos').value = salaConfig.puestos_por_lado;
+    document.getElementById('sala-cfg-ventana').value = salaConfig.ventana_vivo_min;
+  } catch (e) { /* la config es secundaria: si falla, se sigue con lo que había */ }
+}
+
+async function guardarSalaConfig() {
+  const cambios = {
+    lados: document.getElementById('sala-cfg-lados').value,
+    puestos_por_lado: document.getElementById('sala-cfg-puestos').value,
+    ventana_vivo_min: document.getElementById('sala-cfg-ventana').value,
+  };
+  try {
+    salaConfig = await pedirJSON('/api/sala/config?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cambios),
+    });
+    cargarSala();
+  } catch (e) {
+    alert('No se pudo guardar: ' + e.message);
+  }
+}
+
+async function cargarSala() {
+  clearTimeout(salaReintento);
+  const modo = salaEsVivo() ? '&modo=vivo' : '';
+  try {
+    const d = await pedirJSON('/api/sala?tambo=' + encodeURIComponent(tamboActual) + modo);
+    salaData = d;
+    const badge = document.getElementById('sala-badge');
+    if (d.en_vivo) { badge.className = 'badge vivo'; badge.textContent = 'EN VIVO'; }
+    else { badge.className = 'badge historico'; badge.textContent = d.modo === 'vivo' ? 'Sin ordeño ahora' : 'Último ordeño'; }
+    document.getElementById('sala-info').textContent =
+      (d.momento ? `${d.momento} (${d.hace}) · ` : '') + `${d.vacas} vacas`;
+    renderSala();
+  } catch (e) {
+    if (e.calentando) {
+      document.getElementById('sala-badge').textContent = 'cargando…';
+      salaReintento = setTimeout(cargarSala, 3000);
+    } else {
+      // Error real (no "calentando"): no tiene sentido seguir reintentando
+      // cada 8s contra algo que no va a cambiar solo (p.ej. el selector de
+      // tambo pasó a uno rotativo mientras esta página seguía de fondo) — se
+      // frena el auto-refresco en vez de repetir el mismo error sin parar.
+      clearInterval(salaTimer);
+      const badge = document.getElementById('sala-badge');
+      badge.className = 'badge historico';
+      badge.textContent = 'No disponible';
+      document.getElementById('sala-info').textContent = e.message;
+      salaData = null;
+      document.getElementById('sala-grafica').innerHTML = '';
+      document.getElementById('sala-detalle').innerHTML = '';
+      document.getElementById('sala-resumen').innerHTML = '';
+    }
+  }
+}
+
+function salaEstado(fila, idx) {
+  if (!fila) return 'vacio';
+  if (fila[idx.a_baja] || fila[idx.a_cond] || fila[idx.a_sangre] || fila[idx.a_retirada]) return 'alerta';
+  if (fila[idx.tratamiento_det]) return 'tratamiento';
+  return 'ocupado';
+}
+
+function salaResumen() {
+  const d = salaData;
+  const cont = document.getElementById('sala-resumen');
+  if (!d || !d.rows.length) { cont.innerHTML = ''; return; }
+  const idx = Object.fromEntries(d.columns.map((c, i) => [c, i]));
+  const total = d.rows.length;
+  const conTrat = d.rows.filter(f => f[idx.tratamiento_det]).length;
+  const conAlerta = d.rows.filter(f =>
+    f[idx.a_baja] || f[idx.a_cond] || f[idx.a_sangre] || f[idx.a_retirada]).length;
+  const cfg = salaConfig || {};
+  const capacidad = (cfg.lados || 0) * (cfg.puestos_por_lado || 0);
+  cont.innerHTML =
+    `<b>${total}</b> vacas en sala` +
+    (capacidad ? ` de <b>${capacidad}</b> puestos configurados` : '') +
+    ` · <b class="${conTrat ? 'malo' : ''}">${conTrat}</b> con tratamiento` +
+    ` · <b class="${conAlerta ? 'malo' : ''}">${conAlerta}</b> con alerta`;
+}
+
+// El MPCNo real de este tambo numera CORRIDO entre lados (verificado: lado 1
+// = puestos 1-16, lado 2 = 17-32, sin superponerse) — por eso el puesto
+// "visual" p del lado L se busca en la fila real como (L-1)*puestos+p. Un
+// tambo nuevo con otra convención de numeración (p.ej. cada lado arrancando
+// de nuevo en 1) rompería este cálculo: revisar acá si la grilla sale vacía
+// en una instalación distinta a San José.
+function salaPuestoReal(lado, p, puestosPorLado) {
+  return (lado - 1) * puestosPorLado + p;
+}
+
+function pintarSalaGrafica() {
+  const d = salaData;
+  const cont = document.getElementById('sala-grafica');
+  if (!d) { cont.innerHTML = ''; return; }
+  const idx = Object.fromEntries(d.columns.map((c, i) => [c, i]));
+  const porPuesto = {};
+  d.rows.forEach(f => { porPuesto[`${f[idx.lado]}-${f[idx.puesto]}`] = f; });
+  const cfg = salaConfig || { lados: 2, puestos_por_lado: 16 };
+  let html = '';
+  for (let lado = 1; lado <= cfg.lados; lado++) {
+    html += `<div class="sala-lado"><div class="sala-lado-titulo">Lado ${lado}</div><div class="sala-puestos">`;
+    for (let p = 1; p <= cfg.puestos_por_lado; p++) {
+      const real = salaPuestoReal(lado, p, cfg.puestos_por_lado);
+      const fila = porPuesto[`${lado}-${real}`];
+      const clase = salaEstado(fila, idx);
+      const sel = salaSeleccion && salaSeleccion.lado === lado && salaSeleccion.puesto === real ? ' seleccionado' : '';
+      const rp = fila ? fila[idx.rp] : '';
+      const kg = fila && fila[idx.produccion_kg] != null ? fmtDec(fila[idx.produccion_kg], 1) + ' kg' : '';
+      html += `<button type="button" class="sala-puesto ${clase}${sel}" data-lado="${lado}" data-puesto="${real}">` +
+        `<span class="n">${real}</span>${rp || '—'}${kg ? '<br>' + kg : ''}</button>`;
+    }
+    html += `</div></div>`;
+  }
+  cont.innerHTML = html;
+  cont.querySelectorAll('.sala-puesto').forEach(b => b.addEventListener('click', () => {
+    salaSeleccion = { lado: Number(b.dataset.lado), puesto: Number(b.dataset.puesto) };
+    renderSala();
+  }));
+}
+
+function pintarSalaDetalle() {
+  const d = salaData;
+  const cont = document.getElementById('sala-detalle');
+  if (!d || !salaSeleccion) {
+    cont.innerHTML = '<div class="aviso">Tocá un puesto para ver la vaca.</div>';
+    return;
+  }
+  const idx = Object.fromEntries(d.columns.map((c, i) => [c, i]));
+  const fila = d.rows.find(f => f[idx.lado] === salaSeleccion.lado && f[idx.puesto] === salaSeleccion.puesto);
+  if (!fila) {
+    cont.innerHTML = `<div class="aviso">Lado ${salaSeleccion.lado}, puesto ${salaSeleccion.puesto}: vacío en esta ventana.</div>`;
+    return;
+  }
+  const v = c => fila[idx[c]];
+  const filas = [
+    ['RP', v('rp')], ['Grupo', v('grupo')], ['Bloque', v('bloque')],
+    ['Días', v('dias')], ['Producción', v('produccion_kg') != null ? fmtDec(v('produccion_kg'), 1) + ' kg' : '—'],
+    ['Esperada', v('esperada_kg') != null ? fmtDec(v('esperada_kg'), 1) + ' kg' : '—'],
+    ['Conductividad', v('conductividad') ?? '—'], ['SCC', v('scc') != null ? fmt(v('scc') * 1000) : '—'],
+    ['Reproductivo', v('reproductivo')],
+    ['Tratamiento', v('tratamiento_det') || 'Ninguno'],
+    ['Droga/dosis', v('droga_dosis') || '—'],
+    ['Retiro de leche hasta', v('retiro_leche') || '—'],
+    ['No faenar hasta', v('no_faenar') || '—'],
+    ['Último parto', v('ultimo_parto') || '—'],
+    ['Último tratamiento', v('ult_tratamiento') ? `${v('ult_tratamiento')} (${v('ult_tratamiento_fecha')})` : '—'],
+  ];
+  const alarmas = [];
+  if (v('a_baja')) alarmas.push('Producción baja');
+  if (v('a_cond')) alarmas.push('Conductividad');
+  if (v('a_sangre')) alarmas.push('Sangre');
+  if (v('a_retirada')) alarmas.push('Retirada forzada');
+  cont.innerHTML =
+    `<div style="font-weight:700;font-size:15px">RP ${v('rp')} · Lado ${salaSeleccion.lado}, puesto ${salaSeleccion.puesto}</div>` +
+    (alarmas.length ? `<div class="aviso" style="color:var(--critical)">⚠ ${alarmas.join(' · ')}</div>` : '') +
+    filas.slice(1).map(([l, val]) => `<div class="aviso"><b>${l}:</b> ${val ?? '—'}</div>`).join('');
+}
+
+function pintarSalaTabla() {
+  const d = salaData;
+  if (!d) return;
+  const idx = Object.fromEntries(d.columns.map((c, i) => [c, i]));
+  const soloAlerta = document.getElementById('sala-alertas').checked;
+  const buscar = (document.getElementById('sala-buscar').value || '').trim();
+  let filas = d.rows.map(f => Object.fromEntries(d.columns.map((c, i) => [c, f[i]])));
+  if (soloAlerta) filas = filas.filter(f => f.a_baja || f.a_cond || f.a_sangre || f.a_retirada);
+  if (buscar) filas = filas.filter(f => String(f.rp || '').includes(buscar));
+  tablaInteractiva('sala-tabla', [
+    { clave: 'lado', titulo: 'Lado', tipo: 'num' },
+    { clave: 'puesto', titulo: 'Puesto', tipo: 'num' },
+    { clave: 'bloque', titulo: 'Bloque', tipo: 'num' },
+    { clave: 'rp', titulo: 'RP', tipo: 'num' },
+    { clave: 'grupo', titulo: 'Grupo' },
+    { clave: 'dias', titulo: 'Días', tipo: 'num' },
+    { clave: 'produccion_kg', titulo: 'Kg', fmt: v => fmtDec(v, 1) },
+    { clave: 'esperada_kg', titulo: 'Esperada', fmt: v => fmtDec(v, 1) },
+    { clave: 'conductividad', titulo: 'Cond.', tipo: 'num' },
+    { clave: 'scc', titulo: 'SCC', tipo: 'num' },
+    { clave: 'reproductivo', titulo: 'Reproductivo' },
+    { clave: 'tratamiento_det', titulo: 'Tratamiento' },
+    { clave: 'retiro_leche', titulo: 'Retiro leche' },
+    { clave: 'a_baja', titulo: 'Baja', tipo: 'bool' },
+    { clave: 'a_cond', titulo: 'Cond.', tipo: 'bool' },
+    { clave: 'a_sangre', titulo: 'Sangre', tipo: 'bool' },
+    { clave: 'a_retirada', titulo: 'Retirada', tipo: 'bool' },
+  ], filas, { orden: 'lado' });
+}
+
+function renderSala() {
+  document.getElementById('sala-grafica-wrap').hidden = !salaEsGrafica();
+  document.getElementById('sala-tabla-wrap').hidden = salaEsGrafica();
+  salaResumen();
+  if (salaEsGrafica()) { pintarSalaGrafica(); pintarSalaDetalle(); } else { pintarSalaTabla(); }
+}
+
+document.getElementById('sala-vista-grafica').addEventListener('click', () => {
+  salaVista = 'grafica';
+  document.getElementById('sala-vista-grafica').classList.add('activa');
+  document.getElementById('sala-vista-tabla').classList.remove('activa');
+  renderSala();
+});
+document.getElementById('sala-vista-tabla').addEventListener('click', () => {
+  salaVista = 'tabla';
+  document.getElementById('sala-vista-tabla').classList.add('activa');
+  document.getElementById('sala-vista-grafica').classList.remove('activa');
+  renderSala();
+});
+document.getElementById('sala-vivo').addEventListener('change', cargarSala);
+document.getElementById('sala-refrescar').addEventListener('click', cargarSala);
+document.getElementById('sala-config-toggle').addEventListener('click', () => {
+  const c = document.getElementById('sala-config');
+  c.hidden = !c.hidden;
+});
+document.getElementById('sala-cfg-guardar').addEventListener('click', guardarSalaConfig);
+document.getElementById('sala-alertas').addEventListener('change', renderSala);
+document.getElementById('sala-buscar').addEventListener('input', renderSala);
+
 function cargarDatosDePagina(id) {
   if (paginasCargadas.has(id)) return;
   paginasCargadas.add(id);
@@ -6384,6 +6898,7 @@ function cargarDatosDePagina(id) {
     cargarResumenProduccion(); cargarResumenAnimales(); cargarResumenDuraciones(); cargarResumenGrupo();
   }
   else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
+  else if (id === 'sala_cms') { cargarSalaConfig().then(cargarSala); }
   else if (id === 'rutina') {
     cargarRutina();
     activarAPedido('rend-info', cargarRendimiento, 'rendimiento de sala', DEMORA);
@@ -6423,10 +6938,12 @@ function irAPagina(id) {
   cargarDatosDePagina(id);
   // El auto-refresco del ordeño solo tiene sentido con esa página a la vista.
   if (id === 'ordeno') reprogramarRefrescoOrdeno(); else clearInterval(ordenoTimer);
+  if (id === 'sala_cms') reprogramarRefrescoSala(); else clearInterval(salaTimer);
   // El reintento de Salud solo tiene sentido con esa página a la vista.
   if (id !== 'salud') clearTimeout(saludReintento);
   // Ídem el reintento del análisis de flujos mientras el caché se calienta.
   if (id !== 'flujos') clearTimeout(fluReintento);
+  if (id !== 'sala_cms') clearTimeout(salaReintento);
   if (id !== 'proyeccion') clearTimeout(proyReintento);
   if (id !== 'repro') clearTimeout(reproReintento);
   // Cámaras y actividad en vivo de "Problemas podales": solo mientras se ve la página.
