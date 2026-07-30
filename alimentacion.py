@@ -45,12 +45,28 @@ bien la mezcla. Los %MS por receta salen coherentes: ~50,5% las de los rodeos de
 ordeñe, 48,8% preparto vaquillonas, 39% preparto vacas y 90,1% recría (que come
 balanceado seco, no TMR).
 
-LO QUE FALTA PARA LLEGAR A LA PLATA. Los 70 ingredientes de Haasten tienen
-`price: 0` y La Serenísima solo publica datos físicos, sin importes. Faltan los
-dos precios —el del alimento y el del kg de sólidos— y ninguno está en un
-sistema conectado. Por eso acá no hay ni un peso: la conversión es física y no
-los necesita. Cuando estén, el IOFC se apoya en lo mismo que ya calcula este
-módulo.
+DE DÓNDE SALE LA PLATA. Los 70 ingredientes de Haasten tienen `price: 0` y La
+Serenísima solo publica datos físicos, sin importes: ninguno de los dos precios
+que hacen falta está en un sistema conectado. Los carga el tambo en una
+planilla y los lee `precios_alimentos.py`. Con eso este módulo calcula:
+
+    costo de la receta = Σ(kg del ingrediente × $/kg) / Σ(kg del ingrediente)
+    costo del lote/día = kg descargados × $/kg de la receta de esa operación
+    LITROS LIBRES      = litros producidos − costo del alimento / $ del litro
+
+LOS LITROS LIBRES SON EL MARGEN EXPRESADO EN LITROS, y solo descuentan el
+alimento: no hay mano de obra, sanidad, amortizaciones ni estructura. Es el
+"litros libres de alimentación" de siempre, no la rentabilidad del tambo.
+
+EL COSTO SE CALCULA SOBRE KG FRESCOS, no sobre materia seca: es como se carga
+el mixer, como se factura el insumo y como se descarga al lote. La materia seca
+se sigue usando para la conversión, que es otra cuenta.
+
+SI FALTA EL PRECIO DE UN INGREDIENTE, LA RECETA QUEDA SIN COSTO. No se le pone
+el promedio de los otros ni se lo cuenta como cero: las dos cosas darían un
+costo que parece completo y no lo es, y con eso alguien decide. Se informa qué
+proporción de los kg de cada receta tiene precio (`cobertura_precios`) y las
+recetas por debajo de `COBERTURA_MIN` no reportan costo.
 """
 import collections
 import datetime
@@ -81,6 +97,13 @@ MS_MAX_PLAUSIBLE = 35.0
 # (o un día sin descargar) mueve mucho el promedio.
 DIAS_DEFECTO = 28
 RANGO_MAX_DIAS = 120
+
+# Proporción mínima de los kg de una receta que tiene que tener precio para
+# reportar su costo. Con menos que esto el número sería una fracción de la
+# ración haciéndose pasar por la ración entera, y siempre para abajo: un costo
+# subestimado se lee como una ración barata, que es justo la conclusión
+# equivocada. Se informa la cobertura real igual, para que se vea qué falta.
+COBERTURA_MIN = 0.95
 
 
 # --- Materia seca entregada, desde el proveedor ------------------------------
@@ -133,6 +156,76 @@ def ms_por_lote_dia(consumos: dict) -> tuple[dict, dict]:
         "recetas": {r: round(100 * v, 1) for r, v in sorted(pct.items())},
         "kg_sin_receta": round(kg_sin_receta),
         "kg_negativos": round(kg_negativos),
+    }
+
+
+def costo_por_lote_dia(consumos: dict, precios: dict) -> tuple[dict, dict]:
+    """({(lote, fecha): $ del alimento}, diagnóstico).
+
+    Espejo de `ms_por_lote_dia`, con la misma estructura y el mismo criterio: el
+    costo se resuelve POR RECETA sobre todo el período y después se aplica a los
+    kg descargados. Una operación suelta puede ser una carga parcial y dar un
+    $/kg disparatado; la receta agregada es estable.
+
+    `precios`: el dict de `precios_alimentos.leer()["precios"]`, indexado por
+    nombre normalizado.
+
+    Se calcula sobre kg FRESCOS a propósito (ver el encabezado del módulo).
+    """
+    import precios_alimentos    # perezoso: sin planilla el resto del módulo anda igual
+
+    kg_receta = collections.defaultdict(float)
+    pesos_receta = collections.defaultdict(float)
+    kg_sin_precio = collections.defaultdict(float)
+    faltantes = collections.defaultdict(float)
+    receta_de_op = {}
+    estimados = set()
+    for c in consumos.get("cargas") or []:
+        kg, receta, ingr = c.get("kg") or 0, c.get("receta"), c.get("ingrediente")
+        if kg <= 0 or not receta:
+            continue
+        kg_receta[receta] += kg
+        receta_de_op[c.get("operacion")] = receta
+        p = precios.get(precios_alimentos._norm(ingr)) if ingr else None
+        if p is None or p.get("precio_kg") is None:
+            kg_sin_precio[receta] += kg
+            if ingr:
+                faltantes[ingr] += kg
+            continue
+        pesos_receta[receta] += kg * p["precio_kg"]
+        if p.get("estimado"):
+            estimados.add(ingr)
+
+    # $/kg de mezcla por receta, solo donde los precios cubren lo suficiente.
+    cobertura = {r: (1 - kg_sin_precio[r] / kg_receta[r]) if kg_receta[r] else 0.0
+                 for r in kg_receta}
+    por_kg = {r: pesos_receta[r] / kg_receta[r]
+              for r in kg_receta
+              if kg_receta[r] and cobertura[r] >= COBERTURA_MIN}
+
+    salida = collections.defaultdict(float)
+    kg_sin_costo = 0.0
+    for d in consumos.get("descargas") or []:
+        kg = d.get("kg") or 0
+        if kg == 0:
+            continue
+        p = por_kg.get(receta_de_op.get(d.get("operacion")))
+        fecha = _fecha_de(d.get("fecha"))
+        if p is None or fecha is None:
+            kg_sin_costo += kg
+            continue
+        salida[((d.get("lote") or "").strip(), fecha)] += kg * p
+    return dict(salida), {
+        "costo_por_kg_receta": {r: round(v, 2) for r, v in sorted(por_kg.items())},
+        "cobertura_precios": {r: round(100 * v) for r, v in sorted(cobertura.items())},
+        "recetas_sin_costo": sorted(r for r in kg_receta if r not in por_kg),
+        "kg_sin_costo": round(kg_sin_costo),
+        # Qué ingrediente falta cargar, ordenado por cuánto pesa: es la lista de
+        # trabajo del tambo, no un mensaje genérico de "faltan precios".
+        "ingredientes_sin_precio": [
+            {"ingrediente": n, "kg": round(k)}
+            for n, k in sorted(faltantes.items(), key=lambda kv: -kv[1])],
+        "ingredientes_estimados": sorted(estimados),
     }
 
 
@@ -231,18 +324,26 @@ def _filas(data) -> list:
 
 
 def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
-             lote_de_grupo: dict, diagnostico: dict = None) -> dict:
-    """Conversión por grupo y sólidos por vaca.
+             lote_de_grupo: dict, diagnostico: dict = None,
+             costo_lote_dia: dict = None, precio_litro: float = None) -> dict:
+    """Conversión por grupo y sólidos por vaca, y —si hay precios— costo de
+    alimentación y litros libres.
 
     `grupos`: la lista de `conciliacion.grupos_de`, que trae `es_ordene`.
     `lote_de_grupo`: {oid_grupo: nombre_de_lote}, de `conciliacion.lote_de_grupo`.
+    `costo_lote_dia`: salida de `costo_por_lote_dia`. None = sin planilla de
+        precios; todo lo físico se calcula igual y las columnas de plata quedan
+        en None, que es distinto de cero y así lo tiene que mostrar la pantalla.
+    `precio_litro`: $ por litro de leche, de `precios_alimentos`. Sin él hay
+        costo en pesos pero NO litros libres.
     """
+    costo_lote_dia = costo_lote_dia or {}
     info = {g["oid"]: g for g in grupos}
     # Se suman por grupo solo los días en que HAY las dos cosas: producción y
     # descarga. Un día sin descarga registrada no es un día de ayuno, es un
     # agujero de datos, y contarlo hundiría la conversión del grupo.
     acum = collections.defaultdict(lambda: {"ms": 0.0, "leche": 0.0, "vacas_dia": 0,
-                                            "dias": 0})
+                                            "dias": 0, "costo": 0.0, "dias_costo": 0})
     for f in _filas(prod_dia):
         oid = int(f["grupo"])
         lote = lote_de_grupo.get(oid)
@@ -262,6 +363,13 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
         a["leche"] += float(f["kg_leche"] or 0)
         a["vacas_dia"] += int(f["vacas"] or 0)
         a["dias"] += 1
+        # El costo se acumula aparte y con su propio contador de días: puede
+        # faltar el precio de una receta y no de otra, y mezclando los días la
+        # división daría un costo diluido en jornadas que no se valorizaron.
+        costo = costo_lote_dia.get((lote, fecha))
+        if costo is not None:
+            a["costo"] += costo
+            a["dias_costo"] += 1
 
     # Sólidos: el % de cada vaca, promediado por grupo con el peso de su leche.
     sol_vaca = {int(f["rp"]): f for f in _filas(solidos)}
@@ -278,6 +386,7 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
         solidos_grupo[oid] += kg * (float(s["grasa"]) + float(s["proteina"])) / 100.0
 
     filas_grupo, tot_ms, tot_sol = [], 0.0, 0.0
+    tot_costo, tot_leche_costo = 0.0, 0.0
     for oid, a in acum.items():
         g = info[oid]
         # % de sólidos del grupo, de las vacas que tienen control.
@@ -287,6 +396,18 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
         ms_vaca = a["ms"] / a["vacas_dia"]
         leche_vaca = a["leche"] / a["vacas_dia"]
         sol_vaca_dia = leche_vaca * pct
+
+        # Costo por vaca y por día. El denominador son las vacas-día DE LOS DÍAS
+        # VALORIZADOS, no del período entero: si se valorizaron 20 de 28 días,
+        # dividir por los 28 daría un costo 30% más bajo del real.
+        costo_vaca, litros_pagar, litros_libres, pct_libres = None, None, None, None
+        if a["dias_costo"]:
+            vacas_dia_costo = a["vacas_dia"] * a["dias_costo"] / a["dias"]
+            costo_vaca = a["costo"] / vacas_dia_costo if vacas_dia_costo else None
+        if costo_vaca is not None and precio_litro:
+            litros_pagar = costo_vaca / precio_litro
+            litros_libres = leche_vaca - litros_pagar
+            pct_libres = 100 * litros_libres / leche_vaca if leche_vaca else None
 
         motivo = None
         if ms_vaca < MS_MIN_PLAUSIBLE:
@@ -301,6 +422,11 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
         if confiable:
             tot_ms += a["ms"]
             tot_sol += a["leche"] * pct
+            if costo_vaca is not None:
+                tot_costo += a["costo"]
+                # Litros del mismo subconjunto de días que el costo, para que el
+                # total del tambo divida cosas comparables.
+                tot_leche_costo += a["leche"] * a["dias_costo"] / a["dias"]
         filas_grupo.append({
             "oid": oid, "grupo": g["nombre"], "numero": g["numero"],
             "lote": lote_de_grupo.get(oid),
@@ -311,6 +437,13 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
             "pct_solidos": round(100 * pct, 2),
             "kg_solidos_vaca_dia": round(sol_vaca_dia, 2),
             "conversion": round(sol_vaca_dia / ms_vaca, 3) if ms_vaca else None,
+            "dias_con_costo": a["dias_costo"],
+            "costo_vaca_dia": round(costo_vaca, 2) if costo_vaca is not None else None,
+            "costo_por_litro": (round(costo_vaca / leche_vaca, 2)
+                                if costo_vaca is not None and leche_vaca else None),
+            "litros_para_pagar": round(litros_pagar, 1) if litros_pagar is not None else None,
+            "litros_libres": round(litros_libres, 1) if litros_libres is not None else None,
+            "pct_litros_libres": round(pct_libres, 1) if pct_libres is not None else None,
             "confiable": confiable,
             "motivo": motivo,
         })
@@ -334,6 +467,12 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
     # Solo de los grupos confiables: en los otros la materia seca es incompleta
     # y arrastraría a cada vaca del grupo.
     ms_de_grupo = {f["oid"]: f["kg_ms_vaca_dia"] for f in filas_grupo if f["confiable"]}
+    # El costo por vaca sale del costo de SU GRUPO, igual que la materia seca y
+    # con la misma advertencia: es un reparto en partes iguales, no una medición.
+    # Adentro de un grupo, ordenar por litros libres es ordenar por producción
+    # con otro nombre — lo único que varía entre esas vacas es la leche.
+    costo_de_grupo = {f["oid"]: f["costo_vaca_dia"] for f in filas_grupo
+                      if f["confiable"] and f["costo_vaca_dia"] is not None}
     filas_vaca = []
     for p in prod:
         oid = int(p["grupo"]) if p["grupo"] is not None else None
@@ -346,6 +485,9 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
         pct = ((float(s["grasa"]) + float(s["proteina"])) / 100.0) if s else None
         ms_dia = ms_de_grupo.get(oid)
         sol_dia = leche_dia * pct if pct is not None else None
+        costo_dia = costo_de_grupo.get(oid)
+        libres = (leche_dia - costo_dia / precio_litro
+                  if costo_dia is not None and precio_litro else None)
         filas_vaca.append({
             "rp": int(p["rp"]),
             "grupo": g["nombre"],
@@ -359,11 +501,62 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
             "kg_ms_dia": ms_dia,
             "conversion": (round(sol_dia / ms_dia, 3)
                            if (sol_dia is not None and ms_dia) else None),
+            "costo_vaca_dia": costo_dia,
+            "litros_libres": round(libres, 1) if libres is not None else None,
+            "pct_litros_libres": (round(100 * libres / leche_dia, 1)
+                                  if libres is not None and leche_dia else None),
         })
     filas_vaca.sort(key=lambda f: -(f["conversion"] or -1))
 
     sin_control = sum(1 for f in filas_vaca if not f["controles"])
     no_confiables = [f for f in filas_grupo if not f["confiable"]]
+
+    # --- Economía del tambo -------------------------------------------------
+    # Se pondera por VACAS-DÍA de los grupos que tienen costo, no por el promedio
+    # simple de los grupos: un rodeo de 400 vacas y otro de 40 no pesan igual, y
+    # el promedio simple le daría al chico diez veces la influencia que le toca.
+    # Todo en None cuando falta la planilla o el precio: la pantalla tiene que
+    # poder decir "no hay dato", nunca "costo cero".
+    con_costo = [f for f in filas_grupo
+                 if f["confiable"] and f["costo_vaca_dia"] is not None
+                 and f["vacas_promedio"]]
+    vd = sum(f["vacas_promedio"] for f in con_costo)
+    costo_tambo = (sum(f["costo_vaca_dia"] * f["vacas_promedio"] for f in con_costo) / vd
+                   if vd else None)
+    leche_tambo = (sum(f["kg_leche_vaca_dia"] * f["vacas_promedio"] for f in con_costo) / vd
+                   if vd else None)
+    libres_tambo = (leche_tambo - costo_tambo / precio_litro
+                    if costo_tambo is not None and leche_tambo and precio_litro else None)
+    economia = {
+        "precio_litro": precio_litro,
+        "costo_vaca_dia": round(costo_tambo, 2) if costo_tambo is not None else None,
+        "costo_por_litro": (round(costo_tambo / leche_tambo, 2)
+                            if costo_tambo is not None and leche_tambo else None),
+        "kg_leche_vaca_dia": round(leche_tambo, 1) if leche_tambo is not None else None,
+        "litros_para_pagar": (round(costo_tambo / precio_litro, 1)
+                              if costo_tambo is not None and precio_litro else None),
+        "litros_libres": round(libres_tambo, 1) if libres_tambo is not None else None,
+        "pct_litros_libres": (round(100 * libres_tambo / leche_tambo, 1)
+                              if libres_tambo is not None and leche_tambo else None),
+        # Sobre cuántas vacas se calculó: sin esto un costo sacado de un solo
+        # rodeo se lee como el costo del tambo entero.
+        "vacas": round(vd) if vd else 0,
+        "grupos_con_costo": len(con_costo),
+        "grupos_confiables": len(filas_grupo) - len(no_confiables),
+        "hay_costo": costo_tambo is not None,
+        # El motivo tiene que apuntar a la causa REAL, no a la primera plausible.
+        # Se probó con el mapeo de lotes vacío y el mensaje culpaba a la
+        # cobertura de precios, que estaba al 100%: se manda a revisar el lugar
+        # equivocado. Los tres casos son distintos y se arreglan en pantallas
+        # distintas (planilla / conciliación de grupos / planilla otra vez).
+        "falta": None if costo_tambo is not None else (
+            "No hay planilla de precios cargada, o no tiene ningún precio."
+            if not costo_lote_dia else
+            "Ningún grupo de ordeñe tiene lote asignado: hay que mapearlos en "
+            "la conciliación de grupos." if not filas_grupo else
+            "Hay precios y hay grupos, pero ninguna descarga de sus lotes se "
+            "pudo valorizar (mirá la cobertura de precios por receta)."),
+    }
 
     # Cobertura sobre el rodeo EN ORDEÑE. Es la pregunta que importa —"¿estoy
     # analizando bien a las vacas que producen?"— y sin esto queda escondida:
@@ -398,6 +591,7 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
             "pct": round(100 * cab_ok / cab_total) if cab_total else None,
             "fuera": fuera,
         },
+        "economia": economia,
         "resumen": {
             "conversion_tambo": round(tot_sol / tot_ms, 3) if tot_ms else None,
             "kg_ms_total": round(tot_ms),

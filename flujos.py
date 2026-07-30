@@ -2,8 +2,8 @@
 """Análisis de flujos de ordeño (réplica gráfica de los informes de flujo de
 DelPro, con rango de fechas amplio y series de líneas).
 
-Todo sale de `CMSMilkYield`, que guarda una fila por ordeño individual con la
-curva de flujo ya resumida en cuatro tramos:
+Todo sale de `CMSMilkYield`, que guarda una fila por ordeño individual (una
+"bajada") con la curva de flujo ya resumida en cuatro tramos:
 
     Flow0To15 / Flow15To30 / Flow30To60 / Flow60To120   kg/min promedio del tramo
     AverageFlow / PeakFlow                              kg/min del ordeño entero
@@ -11,6 +11,22 @@ curva de flujo ya resumida en cuatro tramos:
     IsoDuration                                         duración del ordeño, en segundos
     LowFlowDurationInSec                                segundos iniciales con flujo bajo
                                                         ("tiempo de colocación")
+
+Los litros de cada bajada NO están en `CMSMilkYield` (ahí solo hay flujo y
+duración): salen de `SessionMilkYield.TotalYield`, unida por el mismo OID que
+ya usa `sql_por_grupo` (`s.OID = y.OID`).
+
+TIEMPO ENTRE ORDEÑOS — DelPro no tiene ningún sensor de entrada/salida al
+corral ni al corral de espera, así que no hay forma de medir cuánto tiempo está
+la vaca en cada lugar. Lo que sí se puede calcular es el tiempo transcurrido
+entre el inicio de una bajada y el inicio de la siguiente para la misma vaca
+(`sql_tiempo_fuera`), que es una ESTIMACIÓN: mezcla en un solo número todo lo
+que pasa entre dos ordeños (comer, descansar, caminata, espera), porque la base
+no distingue esos tiempos entre sí. El tambo es ESTABULADO, no hay pastoreo.
+Ver el docstring de `sql_tiempo_fuera` para las guardas de plausibilidad.
+Para el tiempo que le lleva el ordeño en sí —arreo + espera + ordeño, por
+rodeo— ver "Horas/día en ordeño" en Rendimiento Sala (`rutina._grupos_sesion`
++ el `arreo_min` de `configuracion_tambo.py`).
 
 Verificado contra el informe de Power BI del tambo (11–23/07/2026): los
 promedios de los cuatro tramos, el % de retirada forzada y el % sobre el flujo
@@ -33,6 +49,16 @@ tramos promediados, así que acá se calcula con dos criterios complementarios:
 # estas consultas devuelven agregados (una fila por día/grupo/tramo), no las
 # visitas una por una — lo que cuesta es el escaneo, no el transporte.
 RANGO_FLUJOS_MAX_DIAS = 120
+
+# `sql_tiempo_fuera` es distinta a las demás: para armar el LAG por vaca,
+# SQL Server tiene que ordenar TODAS las bajadas del período por vaca y
+# fecha, no solo escanearlas y sumar -- medido contra la base real, con
+# rangos largos esto puede superar el timeout de la consulta (180 s) en este
+# SQL Express con poca RAM, aunque `sql_por_dia` con el mismo rango y el
+# mismo JOIN responda en segundos. Por eso esta consulta puntual usa un
+# rango más corto, recortado al tramo más reciente del rango elegido en
+# pantalla (ver `_recorte_fuera` en app.py).
+RANGO_FUERA_MAX_DIAS = 31
 
 # Umbrales de flujo de retirada (kg/min). NO se eligen a mano: salen de la
 # configuración de la propia rotativa, en `CMSMpcSetting.TakeoffLimit` (el
@@ -132,6 +158,7 @@ def sql_por_dia(desde: str, hasta: str, retirada_min: float, retirada_max: float
                AVG(y.PeakFlow)    AS f_pico,
                AVG(y.IsoDuration * 1.0)          AS dur_seg,
                AVG(y.LowFlowDurationInSec * 1.0) AS coloc_seg,
+               AVG(s.TotalYield) AS litros_bajada,
                100.0 * SUM(CASE WHEN y.TakeOffFlow < {retirada_min} THEN 1 ELSE 0 END)
                      / NULLIF({_CON_RETIRADA}, 0) AS pct_bajo_min,
                100.0 * SUM(CASE WHEN y.TakeOffFlow > {retirada_max} THEN 1 ELSE 0 END)
@@ -145,6 +172,12 @@ def sql_por_dia(desde: str, hasta: str, retirada_min: float, retirada_max: float
                {_BIMODAL}
         FROM MilkingDeviceVisit v
         JOIN CMSMilkYield y ON y.MilkingDeviceVisit = v.OID
+        -- LEFT (no JOIN): si alguna vez una bajada no tuviera fila en
+        -- SessionMilkYield, no se puede sumar bien pero SÍ sigue contando
+        -- para "ordenos" y el resto de los porcentajes ya validados contra
+        -- el informe de DelPro -- no hay que reducir ese denominador por
+        -- agregar un dato nuevo.
+        LEFT JOIN SessionMilkYield s ON s.OID = y.OID
         WHERE {_rango(desde, hasta)}
         GROUP BY CAST(v.CreationTime AS date)
         ORDER BY fecha
@@ -221,6 +254,74 @@ def sql_por_deo(desde: str, hasta: str) -> str:
     """
 
 
+# --- Tiempo estimado entre ordeños ------------------------------------------
+# ESTIMACIÓN, no una medición: DelPro no tiene sensor de entrada/salida al
+# corral ni al corral de espera. Lo único medible es el tiempo transcurrido
+# entre el inicio de una bajada y el inicio de la siguiente, para la misma
+# vaca -- mezcla en un solo número todo lo que pasa entre dos ordeños (comer,
+# descansar, caminata, espera), porque la base no distingue esos tiempos entre
+# sí. El tambo es ESTABULADO: no hay pastoreo que separar acá.
+#
+# Solo se cuentan los huecos DENTRO del mismo día calendario: el hueco
+# nocturno entre el último ordeño de un día y el primero del siguiente se
+# descarta a propósito, porque su duración depende de dónde se corta el día
+# (medianoche) más que de nada real del manejo.
+#
+# Guardas de plausibilidad: se descartan huecos de menos de GAP_MIN_SEG (dos
+# bajadas casi seguidas, ruido de datos) y de más de GAP_MAX_SEG (la vaca se
+# saltó una bajada ese día -- contarlo mezclaría "pasa mucho tiempo afuera"
+# con "no vino a ordeñarse", que es un problema distinto).
+GAP_MIN_SEG = 60
+GAP_MAX_SEG = 12 * 3600
+
+# Mínimo de vacas con dato ese día para confiar en el promedio (ver el
+# docstring de sql_tiempo_fuera).
+VACAS_FUERA_MIN = 50
+
+
+def sql_tiempo_fuera(desde: str, hasta: str) -> str:
+    """Por día: segundos promedio por vaca entre bajadas del mismo día, y
+    cuántas vacas aportaron al menos un hueco válido ese día.
+
+    Descarta días con menos de {VACAS_FUERA_MIN} vacas con dato (mismo
+    criterio que `resumen.SQL_PRODUCCION_DIARIA`, `HAVING vacas... >= 50`):
+    un día con la base a medio cargar daría un promedio armado con un puñado
+    de vacas, y ese promedio pesa igual de "un día" que uno completo si no se
+    lo saca -- se prefiere mostrar el día ausente en el gráfico antes que un
+    número que no significa nada."""
+    return f"""
+        WITH visitas AS (
+          SELECT s.BasicAnimal, v.CreationTime AS inicio,
+                 LAG(v.CreationTime) OVER (
+                   PARTITION BY s.BasicAnimal ORDER BY v.CreationTime
+                 ) AS inicio_anterior
+          FROM MilkingDeviceVisit v
+          JOIN CMSMilkYield y ON y.MilkingDeviceVisit = v.OID
+          JOIN SessionMilkYield s ON s.OID = y.OID
+          WHERE {_rango(desde, hasta)}
+        ),
+        huecos AS (
+          SELECT BasicAnimal, CAST(inicio AS date) AS fecha,
+                 DATEDIFF(second, inicio_anterior, inicio) AS gap_seg
+          FROM visitas
+          WHERE inicio_anterior IS NOT NULL
+            AND CAST(inicio_anterior AS date) = CAST(inicio AS date)
+            AND DATEDIFF(second, inicio_anterior, inicio) BETWEEN {GAP_MIN_SEG} AND {GAP_MAX_SEG}
+        ),
+        por_vaca_dia AS (
+          SELECT BasicAnimal, fecha, SUM(gap_seg) AS seg_fuera
+          FROM huecos
+          GROUP BY BasicAnimal, fecha
+        )
+        SELECT fecha, AVG(seg_fuera * 1.0) AS seg_fuera_prom, COUNT(*) AS vacas_con_dato
+        FROM por_vaca_dia
+        GROUP BY fecha
+        HAVING COUNT(*) >= {VACAS_FUERA_MIN}
+        ORDER BY fecha
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
+
+
 # --- Armado del resultado ----------------------------------------------------
 
 def _filas(data):
@@ -233,7 +334,7 @@ def _num(v, dec=2):
     return None if v is None else round(float(v), dec)
 
 
-def analizar(data_dia, data_grupo, data_dist, data_deo, umbrales: dict) -> dict:
+def analizar(data_dia, data_grupo, data_dist, data_deo, data_fuera, umbrales: dict) -> dict:
     """Arma el JSON que consume la página, ya redondeado y ordenado."""
     dias = []
     for f in _filas(data_dia):
@@ -245,6 +346,7 @@ def analizar(data_dia, data_grupo, data_dist, data_deo, umbrales: dict) -> dict:
             "f_prom": _num(f["f_prom"]), "f_pico": _num(f["f_pico"]),
             "f_retirada": _num(f["f_retirada"]),
             "dur_seg": _num(f["dur_seg"], 0), "coloc_seg": _num(f["coloc_seg"], 1),
+            "litros_bajada": _num(f["litros_bajada"], 1),
             "pct_bajo_min": _num(f["pct_bajo_min"], 1),
             "pct_sobre_max": _num(f["pct_sobre_max"], 1),
             "pct_manual": _num(f["pct_manual"], 2),
@@ -252,7 +354,21 @@ def analizar(data_dia, data_grupo, data_dist, data_deo, umbrales: dict) -> dict:
             "pct_forzada": _num(f["pct_forzada"], 1),
             "pct_bimodal": _num(f["pct_bimodal"], 1),
             "pct_arranque_lento": _num(f["pct_arranque_lento"], 1),
+            # Se completan abajo con `data_fuera` (consulta aparte, por vaca):
+            "seg_fuera_prom": None, "vacas_con_dato_fuera": None,
         })
+
+    # "Tiempo fuera" sale de una consulta con otra forma (por vaca, no por
+    # bajada) -- se pega acá por fecha en vez de traerlo ya mezclado del SQL.
+    # `data_fuera` puede venir None: es la consulta más pesada de las cinco
+    # (ver RANGO_FUERA_MAX_DIAS) y si se pasa del timeout se descarta sola,
+    # sin tumbar el resto de la página -- ver _refresh_flujos_async en app.py.
+    por_fecha_fuera = {str(f["fecha"])[:10]: f for f in (_filas(data_fuera) if data_fuera else [])}
+    for d in dias:
+        f = por_fecha_fuera.get(d["fecha"])
+        if f:
+            d["seg_fuera_prom"] = _num(f["seg_fuera_prom"], 0)
+            d["vacas_con_dato_fuera"] = int(f["vacas_con_dato"] or 0)
 
     grupos = [{
         "grupo": (f["grupo"] or f"Grupo {f['grupo_num']}"),
@@ -294,8 +410,9 @@ def analizar(data_dia, data_grupo, data_dist, data_deo, umbrales: dict) -> dict:
     # uno completo.
     total = sum(d["ordenos"] for d in dias)
 
-    def ponderado(clave):
-        vals = [(d[clave], d["ordenos"]) for d in dias if d[clave] is not None]
+    def ponderado(clave, peso_clave="ordenos"):
+        vals = [(d[clave], d[peso_clave]) for d in dias
+                if d[clave] is not None and d[peso_clave] is not None]
         n = sum(w for _, w in vals)
         return round(sum(v * w for v, w in vals) / n, 2) if n else None
 
@@ -303,6 +420,8 @@ def analizar(data_dia, data_grupo, data_dist, data_deo, umbrales: dict) -> dict:
         "ordenos": total,
         "f_prom": ponderado("f_prom"),
         "f_pico": ponderado("f_pico"),
+        "litros_bajada": ponderado("litros_bajada"),
+        "seg_fuera_prom": ponderado("seg_fuera_prom", peso_clave="vacas_con_dato_fuera"),
         "f_retirada": ponderado("f_retirada"),
         "dur_seg": ponderado("dur_seg"),
         "coloc_seg": ponderado("coloc_seg"),

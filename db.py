@@ -7,7 +7,7 @@ import threading
 
 import pyodbc
 
-from tambos import DEFAULT_TAMBO, TAMBOS, nombre_variable_password, password_de
+from tambos import DEFAULT_TAMBO, TAMBOS, conexion, nombre_variable_password, password_de
 
 # SQL Server de DelPro es Express y suele quedar con muy poca memoria (el
 # equipo tiene 8 GB compartidos): consultas concurrentes se apilan esperando
@@ -25,9 +25,15 @@ def _slot_for(server: str) -> threading.Semaphore:
 
 
 def _conn_str(tambo_id: str) -> tuple[str, str]:
-    """Construye la cadena de conexión del tambo. Devuelve (cadena, servidor)."""
+    """Construye la cadena de conexión del tambo. Devuelve (cadena, servidor).
+
+    `conexion(tid)` ya combina lo declarado en `tambos.TAMBOS` con los
+    overrides guardados desde la página "⚙ Configuración" (ver
+    `tambos._config_manual`/`configuracion_tambo.py`) — server/auth/user
+    pueden venir de cualquiera de los dos lados, sin que a este módulo le
+    importe cuál."""
     tid = tambo_id if tambo_id in TAMBOS else DEFAULT_TAMBO
-    cfg = TAMBOS[tid]
+    cfg = conexion(tid)
     server = cfg["server"]
     partes = [
         "DRIVER={ODBC Driver 18 for SQL Server}",
@@ -40,9 +46,10 @@ def _conn_str(tambo_id: str) -> tuple[str, str]:
         pwd = password_de(tid)
         if not pwd:
             raise RuntimeError(
-                f"Falta la contraseña del tambo '{tid}'. Definí la variable de "
-                f"entorno {nombre_variable_password(tid)} y reiniciá la "
-                f"aplicación (ver INSTALL.md)."
+                f"Falta la contraseña del tambo '{tid}'. Definila en la página "
+                f"«⚙ Configuración», o con la variable de entorno "
+                f"{nombre_variable_password(tid)} (reiniciando la aplicación "
+                f"después) — ver INSTALL.md."
             )
         partes.append(f"UID={cfg['user']}")
         partes.append(f"PWD={pwd}")
@@ -67,6 +74,18 @@ _COMMENT = re.compile(r"(--[^\n]*|/\*.*?\*/)", re.DOTALL)
 
 class UnsafeQueryError(Exception):
     pass
+
+
+class TablaNoDisponibleError(Exception):
+    """La consulta referencia una tabla/vista que no existe en ESTA base: la
+    misma DDM de DelPro puede tener diferencias de estructura chicas según el
+    hardware o el tipo de sala de cada instalación (p.ej. la cámara BCS —
+    `BcsDailyData` —, o las tablas propias del controlador de una rotativa —
+    `CMSMilkYield`, `CMSGroupMilkSetting` — que una sala convencional no
+    tiene). Quien pida algo OPCIONAL debe capturar puntualmente este error
+    (nunca `Exception` a secas) y degradar a "sin datos" — cualquier otro
+    error (timeout, conexión, permisos, SQL mal armado) sigue siendo un error
+    real y no debe confundirse con esto ni silenciarse."""
 
 
 def validate_sql(sql: str) -> str:
@@ -129,7 +148,17 @@ def run_query(sql: str, validate: bool = True, tambo: str = DEFAULT_TAMBO,
             # grabando normal). Combinado con el usuario de solo lectura y la
             # validación SELECT-only, la app no puede tocar ni trabar la base.
             cur.execute("SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED")
-            cur.execute(sql)
+            try:
+                cur.execute(sql)
+            except pyodbc.Error as exc:
+                # 42S02 = "Invalid object name": la consulta referencia una
+                # tabla/vista que no existe EN ESTA base — la diferencia de
+                # estructura entre instalaciones (ver TablaNoDisponibleError),
+                # no un error de conexión ni de la consulta en sí. Cualquier
+                # otro SQLSTATE sigue siendo un error real, sin tocar.
+                if exc.args and exc.args[0] == "42S02":
+                    raise TablaNoDisponibleError(str(exc)) from exc
+                raise
             columns = [d[0] for d in cur.description] if cur.description else []
             rows = []
             for row in cur.fetchmany(max_rows):

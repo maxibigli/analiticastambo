@@ -85,6 +85,15 @@
     border-left: 3px solid var(--border); padding-left: 10px;
   }
   .explica b { color: var(--text-primary); font-weight: 600; }
+  /* Explicación larga plegada: el detalle señal por señal está disponible sin
+     empujar los datos abajo del pliegue. Mismo lenguaje visual que .explica. */
+  .explica-det { margin: 0 0 10px; }
+  .explica-det > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary);
+    list-style: none; border-left: 3px solid var(--border); padding-left: 10px; }
+  .explica-det > summary::-webkit-details-marker { display: none; }
+  .explica-det > summary::before { content: '+ '; font-weight: 700; color: var(--accent); }
+  .explica-det[open] > summary::before { content: '– '; }
+  .explica-det > summary:hover { color: var(--text-primary); }
   /* Meses proyectados: se distinguen de los reales sin gritar. */
   .proy-futuro td { background: color-mix(in srgb, var(--accent) 7%, transparent); }
   /* Encabezados de sección y subsección dentro de la tabla de indicadores,
@@ -192,6 +201,25 @@
   #rotativa .puesto-foco { cursor: pointer; }
   .rotativa-col { flex: 1 1 280px; min-width: 250px; max-width: 400px; display: flex; flex-direction: column; gap: 10px; }
   #rotativa-detalle { display: flex; flex-direction: column; gap: 7px; }
+
+  /* Sala convencional (espina de pescado): dos filas de puestos, una por
+     lado, en vez de la plataforma circular de la rotativa. */
+  .sala-layout { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; margin-top: 12px; }
+  #sala-grafica { flex: 2 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 18px; }
+  .sala-col { flex: 1 1 280px; min-width: 250px; max-width: 400px; }
+  .sala-lado-titulo { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; font-weight: 600; }
+  .sala-puestos { display: grid; grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 6px; }
+  .sala-puesto {
+    border: 1.5px solid var(--muted); border-radius: 6px; padding: 5px 2px; text-align: center;
+    font-size: 11px; cursor: pointer; background: transparent; line-height: 1.35; color: var(--text-secondary);
+  }
+  .sala-puesto .n { font-weight: 700; font-size: 13px; color: var(--text-primary); display: block; }
+  .sala-puesto.vacio { border-style: dashed; }
+  .sala-puesto.ocupado { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .sala-puesto.tratamiento { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, transparent); }
+  .sala-puesto.alerta { border-color: var(--critical); background: color-mix(in srgb, var(--critical) 18%, transparent); border-width: 2px; }
+  .sala-puesto.seleccionado { outline: 2px solid var(--text-primary); outline-offset: 1px; }
+  #sala-detalle { display: flex; flex-direction: column; gap: 7px; }
   #panel-alarmas:empty { display: none; }
   .panel-alarmas {
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px; overflow: hidden;
@@ -262,15 +290,149 @@
   .aten2-card.sis-ubre .aten2-sis { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
   .aten2-card.sis-metabolico .aten2-sis { background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--warning); }
   .aten2-card.sis-general .aten2-sis { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  /* Riesgo genético del padre: contexto al lado del sistema, deliberadamente
+     discreto — no suma al score, solo desempata el orden (ver PESO_GENETICA). */
+  .aten2-gen { display: inline-block; font-size: 10.5px; font-weight: 600; cursor: help;
+    padding: 2px 7px; border-radius: 20px; margin: 8px 0 0 5px;
+    background: color-mix(in srgb, var(--muted) 16%, transparent); color: var(--text-secondary); }
+  .aten2-gen.sin { opacity: .6; font-weight: 500; }
+  /* --- Vúmetros del desglose del score --------------------------------------
+     Una fila por parámetro analizado: etiqueta, barra segmentada (estilo VU) y
+     el valor crudo. La barra se pinta hasta la evidencia 0-1 con un degradado
+     verde->ámbar->rojo, y las marcas cada 20% dan la referencia visual. */
+  .aten2-vu { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .aten2-vu-tit { font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); margin-bottom: 6px; display: flex; justify-content: space-between; }
+  .vu { display: grid; grid-template-columns: 1fr 74px; gap: 7px; align-items: center;
+    margin-bottom: 5px; font-size: 11px; }
+  .vu-lab { display: flex; align-items: center; gap: 5px; color: var(--text-secondary);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vu-lab b { font-weight: 600; color: var(--text-primary); font-size: 11px; }
+  .vu-pista { position: relative; height: 7px; border-radius: 4px; overflow: hidden;
+    background: color-mix(in srgb, var(--muted) 20%, transparent); }
+  .vu-fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px;
+    background: linear-gradient(90deg, var(--good) 0%, var(--warning) 55%, var(--critical) 100%);
+    background-size: 220px 100%;    /* el color depende del ANCHO, no del relleno */
+    transition: width .25s ease; }
+  /* Marcas cada 20%, para leer la barra sin números. */
+  .vu-pista::after { content: ''; position: absolute; inset: 0; pointer-events: none;
+    background: repeating-linear-gradient(90deg, transparent 0 calc(20% - 1px),
+      color-mix(in srgb, var(--page) 65%, transparent) calc(20% - 1px) 20%); }
+  .vu-val { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-secondary);
+    font-size: 10.5px; white-space: nowrap; }
+  .vu.sin .vu-lab, .vu.sin .vu-val { opacity: .45; }
+  .vu.sin .vu-pista { background: repeating-linear-gradient(45deg,
+      color-mix(in srgb, var(--muted) 14%, transparent) 0 4px, transparent 4px 8px); }
+  /* La genética es contexto, no evidencia: barra punteada para que se distinga. */
+  .vu.ctx .vu-pista { outline: 1px dashed color-mix(in srgb, var(--muted) 45%, transparent);
+    outline-offset: 1px; }
+  .vu.ctx .vu-fill { background: color-mix(in srgb, var(--muted) 55%, transparent); }
+  .vu-sub { padding-left: 11px; }
+  .vu-sub .vu-lab::before { content: '↳'; color: var(--muted); margin-right: 2px; }
+  /* Vúmetro de sistema (0-10), un poco más grande que los de parámetro. */
+  .vu-sis .vu-pista { height: 10px; }
+  .vu-sis .vu-lab b { font-size: 11.5px; }
+  .vu-sis.top .vu-lab b { color: var(--text); }
+  .vu-sis:not(.top) { opacity: .62; }
+  /* --- Detalle del riesgo heredado (desplegable, para no estirar la tarjeta) */
+  .her-det { margin-top: 9px; border-top: 1px solid var(--border); padding-top: 7px; }
+  .her-det > summary { cursor: pointer; font-size: 10.5px; color: var(--muted);
+    list-style: none; text-transform: uppercase; letter-spacing: .04em; }
+  .her-det > summary::-webkit-details-marker { display: none; }
+  .her-det > summary::before { content: '+ '; font-weight: 700; color: var(--accent); }
+  .her-det[open] > summary::before { content: '– '; }
+  .her-tit { font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); margin: 7px 0 4px; }
+  .her-fila { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px;
+    align-items: center; margin-bottom: 4px; font-size: 11px; }
+  .her-lab { color: var(--text-primary); font-weight: 600; }
+  .her-txt { grid-column: 1 / -1; color: var(--text-secondary); font-size: 10.5px; }
+  /* `--vu-w` tiene que coincidir con el ancho de la pista: el degradado de
+     `.vu-fill` viene dimensionado a 220px, así que en una barrita de 62px solo
+     se veía su primer tramo y una fila de 99/100 salía VERDE, diciendo lo
+     contrario del número que tiene al lado. Con el tamaño igualado el degradado
+     entra completo y el extremo malo se ve rojo. Una sola variable para que el
+     ancho y el degradado no se puedan desincronizar. */
+  .her-mini { --vu-w: 62px; grid-row: 1; grid-column: 2; width: var(--vu-w); height: 6px; }
+  .her-mini .vu-fill { background-size: var(--vu-w) 100%; }
+  .her-nota { margin-top: 7px; font-size: 10px; line-height: 1.45; color: var(--muted);
+    border-left: 2px solid var(--border); padding-left: 7px; }
+  /* Barra de COLOR SÓLIDO, para las pistas de ancho completo. El degradado de
+     `.vu-fill` viene dimensionado a 220px, así que en una barra de 800px se
+     repite cuatro veces: un valor de 98/100 quedaba pintado verde-amarillo-rojo
+     cuatro veces seguidas, ilegible. Acá el ancho lo manda la grilla y no se
+     puede acotar como en `.her-mini`, así que se cambia el criterio: un color
+     por tramo. Para una escala relativa 0-100 es además más claro — lo que
+     importa es en qué cuarto del rodeo cae, no un continuo. */
+  .vu-solido .vu-fill { background-image: none !important; }
+
+  /* --- Línea de tiempo de la vida del animal -----------------------------
+     Posicionamiento absoluto sobre un contenedor relativo: el eje X es el
+     tiempo real (de nacimiento a hoy), así que la distancia entre dos marcas
+     significa cuánto pasó entre los dos eventos. Con una lista ordenada eso se
+     pierde: tres celos en un mes se ven igual que tres celos en tres años.
+     Las marcas van en CARRILES por tipo para que no se tapen entre sí. */
+  .lt-wrap { overflow-x: auto; padding-bottom: 4px; }
+  .lt { position: relative; min-width: 640px; }
+  .lt-carril { position: relative; height: 26px; margin-bottom: 2px; }
+  .lt-carril::before { content: ''; position: absolute; left: 0; right: 0; top: 50%;
+    height: 1px; background: var(--border); }
+  .lt-lab { position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+    font-size: 9.5px; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); background: var(--surface-1); padding-right: 6px; z-index: 2; }
+  /* La zona de marcas arranca después de la etiqueta del carril. */
+  .lt-pista { position: absolute; left: 96px; right: 6px; top: 0; bottom: 0; }
+  .lt-m { position: absolute; top: 50%; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px;
+    border-radius: 50%; cursor: help; border: 1px solid var(--page); }
+  .lt-m:hover { transform: scale(1.55); z-index: 3; }
+  /* El parto es el hito que estructura la vida de la vaca: se distingue. */
+  .lt-m.hito { width: 13px; height: 13px; margin: -6.5px 0 0 -6.5px; border-radius: 2px;
+    transform: rotate(45deg); }
+  .lt-m.hito:hover { transform: rotate(45deg) scale(1.5); }
+  .lt-eje { position: relative; height: 18px; margin-top: 2px; }
+  .lt-tick { position: absolute; top: 0; font-size: 9.5px; color: var(--muted);
+    transform: translateX(-50%); white-space: nowrap; }
+  .lt-tick::before { content: ''; position: absolute; left: 50%; top: -4px; width: 1px;
+    height: 4px; background: var(--border); }
+  /* Tramos de lactancia como fondo: se ve de un vistazo cuándo estuvo en
+     ordeñe y cuándo seca. */
+  .lt-lact { position: absolute; top: 0; bottom: 0; border-radius: 2px;
+    background: color-mix(in srgb, var(--accent) 9%, transparent); }
+  .lt-ref { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 8px; font-size: 10.5px;
+    color: var(--text-secondary); }
+  .lt-ref span { display: flex; align-items: center; gap: 5px; }
+  .lt-ref i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; }
+  .lt-ref i.hito { border-radius: 2px; transform: rotate(45deg); }
+
+  /* --- Árbol de herencia en la ficha del animal --------------------------- */
+  .ped-nivel { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); margin: 12px 0 6px; }
+  /* `align-items: start` para que una caja sin datos (p.ej. el abuelo paterno,
+     que casi nunca está en el catálogo) no se estire a la altura de su vecina
+     dejando un hueco vacío del tamaño de la tarjeta. */
+  .ped-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(255px, 1fr));
+    gap: 10px; align-items: start; }
+  .ped-caja { background: var(--page); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; }
+  .ped-caja.sin { opacity: .62; border-style: dashed; }
+  .ped-cab { display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 8px; margin-bottom: 4px; font-size: 12.5px; }
+  .ped-clase { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
+  .ped-aporte { font-size: 15px; font-weight: 700; color: var(--accent); cursor: help;
+    white-space: nowrap; }
+  /* El degradado de `.vu-fill` tiene `background-size: 220px`, o sea que en una
+     barra más ancha que eso SE REPITE y el extremo "malo" vuelve a verde: un
+     riesgo de 95/100 se veía verde en la punta, justo al revés de lo que dice.
+     Acotando la pista a 220px el degradado calza de punta a punta una sola vez. */
+  .ped-riesgo { max-width: 220px; margin: 5px 0 6px; }
+  .ped-prods { display: flex; flex-wrap: wrap; gap: 4px 10px; margin-top: 7px;
+    padding-top: 6px; border-top: 1px dashed var(--border); }
+  .ped-prod { font-size: 10.5px; color: var(--text-secondary); }
+  .ped-prod b { color: var(--text-primary); }
   .aten2-motivos { list-style: none; margin: 9px 0 0; padding: 0; font-size: 12.5px; color: var(--text-secondary); }
   .aten2-motivos li { position: relative; padding-left: 13px; margin-top: 4px; }
   .aten2-motivos li::before { content: '•'; position: absolute; left: 1px; color: var(--text-secondary); }
-  .aten2-barras { display: flex; gap: 6px; margin-top: 10px; font-size: 10px; color: var(--muted); }
-  .aten2-barras span { flex: 1; text-align: center; padding: 3px 0; border-radius: 6px; background: var(--baseline); }
-  .aten2-barras span.top { font-weight: 700; }
-  .aten2-card.sis-ubre .aten2-barras .b-ubre.top { background: color-mix(in srgb, var(--critical) 16%, transparent); color: var(--critical); }
-  .aten2-card.sis-metabolico .aten2-barras .b-metab.top { background: color-mix(in srgb, var(--warning) 20%, transparent); color: var(--warning); }
-  .aten2-card.sis-general .aten2-barras .b-sist.top { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+  /* (las barras planas de sistema se reemplazaron por los vúmetros .vu-sis) */
   .trat-box { margin-top: 7px; padding: 7px 9px; border-radius: 8px; background: color-mix(in srgb, var(--warning) 14%, transparent); border-left: 3px solid var(--warning); }
   .trat-titulo { font-size: 12.5px; font-weight: 700; color: var(--warning); }
   .trat-det { font-size: 12px; color: var(--text-secondary); margin-top: 2px; }
@@ -356,7 +518,9 @@
     <div class="sidebar-brand"><img src="/static/img/logo.svg" alt="">LactIA</div>
     {% if 'dashboard' in paginas_visibles %}<button class="nav-item" data-pagina="dashboard">📊 <span>Dashboard</span></button>{% endif %}
     {% if 'ordeno' in paginas_visibles %}<button class="nav-item" data-pagina="ordeno">🔄 <span>Ordeño en vivo</span></button>{% endif %}
+    {% if 'sala_cms' in paginas_visibles %}<button class="nav-item" data-pagina="sala_cms">🐟 <span>Ordeño en Vivo Sala CMS</span></button>{% endif %}
     {% if 'rutina' in paginas_visibles %}<button class="nav-item" data-pagina="rutina">⏱️ <span>Rutina de ordeño</span></button>{% endif %}
+    {% if 'rendimiento' in paginas_visibles %}<button class="nav-item" data-pagina="rendimiento">⚡ <span>Rendimiento Sala</span></button>{% endif %}
     {% if 'flujos' in paginas_visibles %}<button class="nav-item" data-pagina="flujos">💧 <span>Flujos de ordeño</span></button>{% endif %}
     {% if 'evolucion' in paginas_visibles %}<button class="nav-item" data-pagina="evolucion">📈 <span>Evolución</span></button>{% endif %}
     {% if 'proyeccion' in paginas_visibles %}<button class="nav-item" data-pagina="proyeccion">🔮 <span>Proyección de Rebaños</span></button>{% endif %}
@@ -368,6 +532,7 @@
     {% if 'iot' in paginas_visibles %}<button class="nav-item" data-pagina="iot">📡 <span>Monitoreo IoT</span></button>{% endif %}
     {% if 'tareas' in paginas_visibles %}<button class="nav-item" data-pagina="tareas">✅ <span>Tareas pendientes</span></button>{% endif %}
     {% if 'consultas' in paginas_visibles %}<button class="nav-item" data-pagina="consultas">🔍 <span>Consultas e IA</span></button>{% endif %}
+    {% if 'configuracion' in paginas_visibles %}<button class="nav-item" data-pagina="configuracion">⚙ <span>Configuración</span></button>{% endif %}
   </nav>
   <div class="sidebar-fondo" id="sidebar-fondo"></div>
   <div class="main-area">
@@ -424,12 +589,14 @@
   <section class="card" id="resumen-duraciones-card">
     <h2 style="margin:0">Duraciones de ordeño — últimos 7 días</h2>
     <span class="aviso">Minutos por sesión (hasta 3 por día).</span>
+    <div class="aviso" id="resumen-duraciones-error" style="color:var(--critical);margin-top:6px"></div>
     <div class="chart-box" style="height:260px;margin-top:10px"><canvas id="chart-resumen-duraciones"></canvas></div>
   </section>
 
   <section class="card" id="resumen-grupo-card">
     <h2 style="margin:0">Producción media por grupo — últimos 30 días</h2>
     <span class="aviso">Kg/vaca/día de los grupos más numerosos, con el promedio general del tambo (línea punteada).</span>
+    <div class="aviso" id="resumen-grupo-error" style="color:var(--critical);margin-top:6px"></div>
     <div class="chart-box" style="height:280px;margin-top:10px"><canvas id="chart-resumen-grupo"></canvas></div>
   </section>
 
@@ -940,6 +1107,7 @@
       <div class="lac-segment" id="alim-tabs" role="group" aria-label="Vista" style="margin-left:auto">
         <button class="lac-segment__item" data-tab="conciliacion" aria-pressed="true">Conciliación de grupos</button>
         <button class="lac-segment__item" data-tab="conversion" aria-pressed="false">Eficiencia de conversión</button>
+        <button class="lac-segment__item" data-tab="libres" aria-pressed="false">💵 Litros libres</button>
         <button class="lac-segment__item" data-tab="historica" aria-pressed="false">Conversión histórica</button>
       </div>
     </div>
@@ -1003,6 +1171,40 @@
         movimiento del tambo lo explica un lote solo.</span>
       <div class="chart-box" style="height:280px;margin-top:8px"><canvas id="chart-ch-lotes"></canvas></div>
 
+      <h3 class="g-titulo" style="margin-top:22px">Vacas en ordeñe por lactancia</h3>
+      <p class="explica">
+        <b>Para qué sirve.</b> Una vaquillona de primera cría da menos leche que una de 2da o 3ra
+        lactancia — no porque algo esté mal, es biología. Si en un período entraron muchas vacas de
+        primera, el litros por vaca del <b>tambo entero</b> puede caer o amesetarse aunque cada vaca,
+        dentro de su propia categoría, esté dando igual o más que antes. Este gráfico separa esas dos
+        cosas: cuántas vacas hay de cada lactancia, y cuánto da cada categoría por separado.
+        <br><b>L1</b> es primera lactancia (vacas de primera cría), <b>L2</b> segunda, <b>L3+</b>
+        tercera o más. Sale de <code>AnimalDaily</code>, no depende de las descargas de Haasten:
+        una semana puede estar completa acá aunque en los gráficos de arriba esté marcada parcial.
+      </p>
+      <div class="chart-box" style="height:260px;margin-top:8px"><canvas id="chart-ch-lact-vacas"></canvas></div>
+
+      <h4 style="margin-top:18px;margin-bottom:4px">Litros por vaca, según lactancia</h4>
+      <span class="aviso">Las tres líneas por separado. Si el tambo se amesetó pero las tres líneas
+        siguen subiendo o se mantienen, la explicación no es que las vacas rindan menos: es que
+        cambió la mezcla.</span>
+      <div class="chart-box" style="height:240px;margin-top:8px"><canvas id="chart-ch-lact-litros"></canvas></div>
+
+      <div id="ch-lact-diagnostico" style="margin-top:14px"></div>
+
+      <section id="ch-libres-cont" hidden>
+        <h3 class="g-titulo" style="margin-top:22px">💵 Litros libres, semana a semana</h3>
+        <span class="aviso">Cuántos litros por vaca quedaron libres después de pagar el alimento, en
+          cada semana. Es la única forma de saber si un cambio de ración mejoró el margen o solo lo
+          movió de lado. Sigue exactamente los mismos descartes que la conversión: una semana con
+          descargas incompletas queda afuera acá también, porque su costo saldría bajo justamente por
+          estar mal cargada y dibujaría una mejora que no pasó.
+          <b>Ojo:</b> son <b>precios de hoy aplicados a todo el período</b> — el movimiento que se ve
+          es de producción y de consumo, no de precios.</span>
+        <div id="ch-libres-aviso" style="margin-top:8px"></div>
+        <div class="chart-box" style="height:280px;margin-top:8px"><canvas id="chart-ch-libres"></canvas></div>
+      </section>
+
       <h3 class="g-titulo" style="margin-top:22px">Semanas, en detalle</h3>
       <div style="overflow-x:auto;margin-top:8px" id="ch-tabla-semanas"></div>
 
@@ -1038,6 +1240,8 @@
       </div>
       <div class="aviso" id="cv-info" style="margin-top:8px"></div>
       <section class="kpis" id="cv-kpis" style="margin-top:10px"></section>
+      <span class="aviso" style="display:block;margin-top:10px">El costo y los
+        <b>litros libres</b> están en su propia pestaña: <b>💵 Litros libres</b>.</span>
       <div id="cv-avisos" style="margin-top:10px"></div>
 
       <h3 class="g-titulo" style="margin-top:20px">Por grupo — el indicador confiable</h3>
@@ -1050,6 +1254,67 @@
         de los sólidos.</span>
       <div style="overflow-x:auto;margin-top:8px" id="cv-tabla-vacas"></div>
       <div class="aviso" id="cv-diagnostico" style="margin-top:12px"></div>
+    </div>
+
+    <div id="alim-panel-libres" hidden>
+      <p class="explica" style="margin-top:12px">
+        <b>Qué contesta.</b> De los litros que produce una vaca, cuántos se van en pagarle la comida
+        y cuántos <b>le quedan libres</b>. Es la pregunta que la conversión no contesta: la
+        conversión dice si el rodeo transforma bien el alimento en sólidos, esto dice si eso alcanza
+        para que el litro deje plata.
+        <br><b>Solo descuenta el alimento.</b> No hay mano de obra, sanidad, amortizaciones ni
+        estructura. Es el «litros libres de alimentación» de siempre, no la rentabilidad del tambo.
+        <br><b>De dónde salen los precios.</b> Los 70 ingredientes del mixer vienen con
+        <b>precio 0</b> —nadie los cargó del lado de Haasten— y la usina publica litros y sólidos
+        pero no importes. O sea que ninguno de los dos precios que hace falta está en un sistema
+        conectado: los carga el tambo en una planilla, y la ruta se define en ⚙ Configuración. El
+        precio de la leche va en esa misma planilla.
+        <br><b>El costo por vaca es un reparto, no una medición.</b> El TMR se entrega al corral: a
+        todas las vacas del grupo se les imputa el mismo costo. Sirve para comparar <b>grupos entre
+        sí</b> y al tambo contra sí mismo en el tiempo. Dentro de un mismo grupo, ordenar por litros
+        libres es ordenar por producción con otro nombre — lo único que cambia entre esas vacas es
+        cuánta leche dan.
+        <br><b>Si falta el precio de un ingrediente, su receta no reporta costo</b> en vez de
+        contarlo como cero. Un costo incompleto siempre sale para abajo, y «la ración es barata» es
+        justo la conclusión equivocada. Abajo se lista qué falta cargar.
+      </p>
+      <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Período
+          <select id="ll-dias" style="padding:6px 8px">
+            <option value="14">2 semanas</option>
+            <option value="28" selected>4 semanas</option>
+            <option value="56">8 semanas</option>
+            <option value="84">12 semanas</option>
+          </select>
+        </label>
+        <button class="secundario" id="ll-aplicar">Aplicar</button>
+      </div>
+      <div class="aviso" id="ll-info" style="margin-top:8px"></div>
+      <div id="ll-aviso-precios" style="margin-top:8px"></div>
+      <section class="kpis" id="ll-kpis" style="margin-top:10px"></section>
+
+      <h3 class="g-titulo" style="margin-top:22px">En qué se va la producción de cada rodeo</h3>
+      <span class="aviso">Cada barra es la producción por vaca y por día, partida en dos: lo que se
+        va en pagar el alimento y lo que queda libre. La barra entera son los litros que da la vaca.
+        Los grupos con descargas sin registrar quedan afuera — su costo saldría bajo justamente por
+        estar mal cargado, y dibujaría el mejor margen del tambo.</span>
+      <div class="chart-box" style="height:280px;margin-top:8px"><canvas id="chart-ll-grupos"></canvas></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Cuánto cuesta producir un litro</h3>
+      <span class="aviso">El costo del alimento por litro producido, contra lo que paga la usina por
+        ese litro (línea). La distancia entre la barra y la línea es lo que queda por litro para
+        todo lo demás.</span>
+      <div class="chart-box" style="height:260px;margin-top:8px"><canvas id="chart-ll-litro"></canvas></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Por grupo — los números</h3>
+      <div style="overflow-x:auto;margin-top:8px" id="ll-tabla-grupos"></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Por vaca</h3>
+      <span class="aviso">Los litros son de cada animal; el costo es el de su grupo repartido en
+        partes iguales, y va atenuado para que no se confunda con un dato medido. Ordenada por litros
+        libres.</span>
+      <div style="overflow-x:auto;margin-top:8px" id="ll-tabla-vacas"></div>
+      <div class="aviso" id="ll-diagnostico" style="margin-top:14px"></div>
     </div>
 
     <div id="alim-panel-conciliacion">
@@ -1288,6 +1553,77 @@
   </section>
   </div>
 
+  <div class="page" id="page-sala_cms" hidden>
+  <section class="card" id="sala-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🐟 Ordeño en Vivo — Sala CMS</h2>
+      <span id="sala-badge" class="badge historico">—</span>
+      <span id="sala-info" class="aviso"></span>
+      <div class="segmentado" style="margin-left:auto">
+        <button id="sala-vista-grafica" class="seg activa">Sala</button>
+        <button id="sala-vista-tabla" class="seg">Tabla</button>
+      </div>
+      <label class="aviso" style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="sala-vivo" checked> En vivo
+      </label>
+      <button class="secundario" id="sala-config-toggle">⚙ Configurar</button>
+      <button class="secundario" id="sala-refrescar">Actualizar</button>
+    </div>
+
+    <p class="explica" style="margin-top:10px">
+      <b>Sala convencional (espina de pescado), no rotativa.</b> Las vacas entran por <b>tanda</b>:
+      mientras un lado está ordeñando, el otro lado se llena. Cada tanda alterna de lado — se ve en el
+      número de <b>bloque</b> de cada puesto.
+      <br><b>"En vivo"</b> muestra la última visita de cada puesto dentro de la ventana configurada
+      (por defecto cubre un ciclo completo de ida y vuelta del mismo lado). Sin esa marca, se ve la
+      sesión completa del último ordeño.
+      <br><b>Lo que este módulo NO tiene</b>, porque la base de este tambo no lo registra: la bandera
+      de "no ordeñar" / "descartar leche" que sí tiene la rotativa, y el apartado en vivo (acá solo
+      queda un registro histórico de apartados ya hechos, no una bandera pendiente).
+    </p>
+
+    <div id="sala-config" hidden style="margin-top:10px;padding:12px;border:1px solid var(--border);border-radius:8px">
+      <div class="controls">
+        <label class="aviso">Lados
+          <input type="number" id="sala-cfg-lados" min="1" max="4" style="width:56px">
+        </label>
+        <label class="aviso">Puestos por lado
+          <input type="number" id="sala-cfg-puestos" min="1" max="100" style="width:64px">
+        </label>
+        <label class="aviso">Ventana "en vivo" (min)
+          <input type="number" id="sala-cfg-ventana" min="5" max="60" style="width:64px">
+        </label>
+        <button class="secundario" id="sala-cfg-guardar">Guardar</button>
+      </div>
+      <span class="aviso" style="display:block;margin-top:6px">La ventana tiene que cubrir un ciclo
+        completo ida y vuelta del mismo lado: si un lado no aparece en la sala, agrandala. Puestos por
+        lado es solo para dibujar la grilla — no filtra datos, así que un número de menos simplemente
+        no muestra algunos puestos con vacas reales.</span>
+    </div>
+
+    <div id="sala-resumen" class="resumen-inc" style="margin-top:10px"></div>
+
+    <div id="sala-grafica-wrap">
+      <div class="sala-layout">
+        <div id="sala-grafica"></div>
+        <div class="sala-col">
+          <div id="sala-detalle"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="sala-tabla-wrap" hidden>
+      <div class="controls" style="margin-top:12px">
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">
+          <input type="checkbox" id="sala-alertas"> Solo con alerta
+        </label>
+        <input type="text" id="sala-buscar" placeholder="Buscar RP…" style="width:120px">
+      </div>
+      <div class="tabla-scroll" style="max-height:440px;margin-top:12px"><table id="sala-tabla"></table></div>
+    </div>
+  </section>
+  </div>
+
   <div class="page" id="page-rutina" hidden>
   <section class="card" id="rutina-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -1303,6 +1639,11 @@
     <div id="rutina-config-panel" hidden style="margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:9px">
       <div class="aviso" style="margin-bottom:6px">Grupos a incluir en el análisis</div>
       <div id="rutina-grupos-check" style="display:flex;flex-wrap:wrap;gap:12px"></div>
+      <div class="aviso" style="margin:14px 0 6px">Objetivo de colocación de pezonera</div>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px;width:fit-content">
+        Segundos desde la identificación
+        <input type="number" min="10" max="600" id="rutina-umbral-prep" style="width:90px;padding:5px 7px">
+      </label>
       <div class="aviso" style="margin:14px 0 6px">Peso de cada componente en el score (%)</div>
       <div id="rutina-pesos-inputs" style="display:flex;flex-wrap:wrap;gap:14px"></div>
       <div style="margin-top:14px;display:flex;gap:10px">
@@ -1315,7 +1656,9 @@
     <div class="rutina-layout" id="rutina-cuerpo"></div>
   </section>
   <div class="rutina-tooltip" id="rutina-tooltip"></div>
+  </div>
 
+  <div class="page" id="page-rendimiento" hidden>
   <section class="card" id="rendimiento-sala-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">Rendimiento Sala</h2>
@@ -1332,19 +1675,65 @@
     </div>
     <div class="aviso" id="rend-info" style="margin-top:8px"></div>
     <div class="kpis" id="rend-kpis" style="margin-top:10px"></div>
+    <div class="aviso" id="rend-dotacion-nota" style="margin-top:6px"></div>
     <div class="grid2" style="margin-top:14px">
       <div>
         <div class="aviso" style="margin-bottom:6px">Producción por sesión (kg)</div>
         <div class="chart-box" style="height:260px"><canvas id="chart-rend-produccion"></canvas></div>
       </div>
       <div>
-        <div class="aviso" style="margin-bottom:6px">Ordeños por hora (throughput)</div>
+        <div class="aviso" style="margin-bottom:6px">Ordeños y litros por hora (throughput)</div>
         <div class="chart-box" style="height:260px"><canvas id="chart-rend-throughput"></canvas></div>
       </div>
     </div>
     <div style="margin-top:14px">
-      <div class="aviso" style="margin-bottom:6px">Vacas identificadas vs. desconocidas por día</div>
+      <div class="aviso" style="margin-bottom:6px">% de identificación por día</div>
+      <p class="explica" style="margin-top:0">
+        <b>Qué muestra.</b> Qué porcentaje de los ordeños de cada día quedó con la vaca
+        correctamente identificada. Nunca es 100%: un collar que no lee, una vaca que entra
+        pegada a otra, y ese ordeño queda sin dueño — su leche se contabiliza pero no se le puede
+        atribuir a ninguna vaca, así que no entra en su producción individual ni en su historial.
+        <br><b>Cómo se calcula.</b> Se cuentan los ordeños que DelPro asignó a su registro de
+        animal "desconocido" (<code>BasicAnimal.Number = 0</code>), sobre el total de ordeños con
+        leche del día. <b>Ojo:</b> este número sale de una consulta propia, no de la de arriba —
+        la de las sesiones filtra las visitas sin identificar para poder separar los ordeños, así
+        que ahí los desconocidos no aparecen.
+      </p>
+      <div class="aviso" id="rend-ident-nota" style="margin-bottom:6px"></div>
       <div class="chart-box" style="height:260px"><canvas id="chart-rend-identificacion"></canvas></div>
+    </div>
+    <div class="grid2" style="margin-top:14px">
+      <div>
+        <div class="aviso" style="margin-bottom:6px">Vacas por puesto de ordeño — por día</div>
+        <div class="chart-box" style="height:240px"><canvas id="chart-rend-vacas-puesto"></canvas></div>
+      </div>
+      <div>
+        <div class="aviso" style="margin-bottom:6px">Vacas por persona — por día</div>
+        <div class="chart-box" style="height:240px"><canvas id="chart-rend-vacas-persona"></canvas></div>
+      </div>
+    </div>
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Horas/día en ordeño — por rodeo</div>
+      <p class="explica" style="margin-top:0">
+        <b>Qué muestra.</b> Cuántas horas por día le lleva el ordeño a una vaca de cada rodeo
+        (arreo + espera + ordeño), o sea el tiempo que está fuera del corral, sin comer ni
+        descansar, comparado entre grupos. La cantidad de vacas va en el eje derecho, para leer las
+        horas sabiendo si el grupo es grande o chico. Promedio de los días del período elegido.
+        <br><b>Cómo se calcula.</b> Por sesión se mide la ventana del grupo —desde que entra su
+        primera vaca hasta que sale la última— con las mismas visitas de "Rendimiento Sala", sin
+        consulta nueva. Esa ventana se divide por <b>dos</b>: el rodeo llega completo al corral de
+        espera y entra de a una, así que la primera vaca casi no espera y la última espera todo,
+        y el promedio por vaca es la mitad. Al resultado se le suma el <b>arreo</b> de
+        ⚙ Configuración (el traslado del corral al corral de espera: lo viven todas las vacas por
+        igual, y no queda registrado en la base).
+        Si un día tuvo más de una sesión, las horas se SUMAN (son ordeños distintos el mismo día);
+        las vacas NO se suman, es el mismo rodeo pasando varias veces.
+      </p>
+      <div class="chart-box" style="height:280px"><canvas id="chart-rend-permanencia-grupo"></canvas></div>
+    </div>
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Horas/día en ordeño — evolución por rodeo</div>
+      <div class="chart-box" style="height:280px"><canvas id="chart-rend-permanencia"></canvas></div>
     </div>
   </section>
   </div>
@@ -1421,6 +1810,37 @@
         que es lo que DelPro llama tiempo de colocación.
       </p>
       <div class="chart-box" style="height:300px"><canvas id="chart-flu-rutina"></canvas></div>
+    </div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Litros y tiempo por bajada — evolución diaria</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> Cuánta leche y cuánto tiempo deja cada bajada individual, promediado
+        por día — para separar si un cambio en la producción del tambo viene de más leche por
+        vaca o de sesiones más largas/cortas.
+        <br><b>Cómo se calcula.</b> <code>SessionMilkYield.TotalYield</code> promedio por bajada
+        (eje izquierdo, litros). En el eje derecho, en segundos, los mismos <code>IsoDuration</code>
+        y <code>LowFlowDurationInSec</code> del gráfico de arriba.
+      </p>
+      <div class="chart-box" style="height:280px"><canvas id="chart-flu-litros"></canvas></div>
+    </div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Tiempo estimado entre ordeños</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> Una estimación de cuánto tiempo pasa cada vaca, por día, entre una
+        bajada y la siguiente.
+        <br><b>Cómo se calcula.</b> Tiempo transcurrido entre el inicio de una bajada y el inicio
+        de la próxima, para la misma vaca, contando solo los huecos dentro del mismo día (se
+        descarta el hueco nocturno entre el último ordeño de un día y el primero del siguiente).
+        <br><b>Ojo — es una estimación, no una medición.</b> DelPro no tiene ningún sensor de
+        entrada o salida del corral ni del corral de espera: este tiempo mezcla en un solo número
+        todo lo que pasa entre dos ordeños —comer, descansar, caminata y espera— porque la base no
+        distingue esos tiempos entre sí. Tratalo como una tendencia relativa (¿se está alargando o
+        acortando?), no como el tiempo real que la vaca pasa en el corral. Para el tiempo que le
+        lleva el ordeño en sí, mirá "Horas/día en ordeño" en Rendimiento Sala.
+      </p>
+      <div class="chart-box" style="height:260px"><canvas id="chart-flu-fuera"></canvas></div>
     </div>
 
     <div class="grid2" style="margin-top:20px">
@@ -1638,10 +2058,55 @@
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <h2 style="margin:0">Atención vacas <span class="chip ambar" style="cursor:help" title="Compara cada vaca contra SU PROPIO historial de los últimos 3 días vs. una referencia de 3 días previa (con 4 días de hueco). Combina caída de leche, alarma de bajo rendimiento, producción vs. esperada, conductividad, sangre en leche, tendencia de condición corporal y ordeños faltados en 3 sistemas (UBRE / METABÓLICO / GENERAL); el score final es el sistema más alto. En el backtest contra 647 diagnósticos reales todavía no superó al índice clásico — por eso es experimental, se muestra en paralelo para validar en el campo.">EXPERIMENTAL ❓</span></h2>
       </div>
-      <span class="aviso">Índice multi-sistema (ubre / metabólico / general) armado y calibrado contra 647
-        diagnósticos reales de este tambo. En la comparación contra el índice de arriba con la misma tasa de
-        falsos positivos, <b>todavía no lo supera</b> — se muestra en paralelo, a validar con evidencia de campo.
-        Cada tarjeta explica el motivo para que el operario juzgue si la señal es real.</span>
+      <p class="explica">
+        <b>Qué muestra.</b> A qué vacas mirar HOY. No busca "vacas con números malos": busca vacas que
+        <b>cambiaron respecto de sí mismas</b> — una vaca que baja de 17 a 12 litros importa aunque 12
+        litros sea normal para el rodeo, y una que siempre dio 12 no aparece. Por eso cada vaca se compara
+        contra su propio historial y no contra un promedio general.
+        <br><b>Las dos ventanas.</b> Se toman los <b>últimos 3 días</b> (lo que está pasando) y se comparan
+        contra <b>3 días de referencia, dejando 4 días de hueco en el medio</b>. El hueco es a propósito: si
+        la referencia fuera pegada a hoy, el propio arranque de la enfermedad ya la habría contaminado y la
+        vaca parecería normal.
+        <br><b>Cómo se combina.</b> Cada señal aporta una <b>evidencia de 0 a 1</b>, y las señales se agrupan
+        en tres sistemas —<b>UBRE</b> (mastitis), <b>METABÓLICO</b> (posparto, ej. metritis) y
+        <b>GENERAL</b>— con los pesos que muestra cada vúmetro. Dentro de cada sistema no se suman: se
+        combinan de forma que <b>dos señales flojas no equivalen a una fuerte</b>. El score de la vaca es el
+        del <b>peor sistema</b>, no el promedio: una vaca con la ubre comprometida no se "diluye" porque el
+        resto esté bien. Se lista a partir de 2,0.
+      </p>
+      <details class="explica-det">
+        <summary>Qué se analiza exactamente, señal por señal (y qué NO hace este índice)</summary>
+        <p class="explica" style="margin-top:8px">
+          <b>Señales de leche</b> (se combinan primero entre sí, y ese resultado va a los tres sistemas):
+          <br>· <b>Caída de leche</b> — kg por ordeño de los últimos 3 días contra su propia referencia.
+          <br>· <b>Alarma de bajo rendimiento</b> — la bandera que levanta el propio controlador de la
+          rotativa (<code>LowYieldAlarm</code>). No existe en sala convencional.
+          <br>· <b>Por debajo de lo esperado</b> — producción real contra la que DelPro espera para su curva
+          de lactancia, comparado a su vez con cuánto se desviaba antes.
+          <br><b>Señales de ubre:</b> · <b>Conductividad</b> — pico de los últimos 3 días, contra el umbral
+          general y contra su propio pico habitual (se usa el MÁXIMO, no el promedio: el promedio no
+          discrimina). · <b>Alarma de conductividad del equipo</b> (<code>ConductivityAlarm</code>).
+          <br><b>Señal metabólica:</b> · <b>Condición corporal</b> — puntos de BCS perdidos en 2 y 4 semanas.
+          Requiere cámara BCS instalada.
+          <br><b>Señal general:</b> · <b>Ordeños perdidos</b> — cuántas veces faltó a la sala contra su
+          propio normal (no contra un número fijo: este tambo ordeña 3 veces por día, otro puede ordeñar 2).
+          <br><b>Riesgo heredado (contexto, NO suma al score):</b> mitad del <b>padre</b> —índice genético
+          del catálogo de toros— y mitad de la <b>madre</b> —sus enfermedades reales por año, medidas en
+          este tambo, normalizadas por los años que vivió para no castigar a las hijas de las vacas más
+          longevas—. Solo puede <b>desempatar el orden</b> hasta 0,3 puntos: nunca mete a una vaca en la
+          lista, ni cambia su score. Es deliberado: la heredabilidad de estos rasgos es baja y la genética
+          no cambia día a día, así que si pesara más las mismas vacas encabezarían la lista para siempre.
+          <br><b>Cómo leer los vúmetros.</b> Barra más larga = más evidencia. Las <b>rayadas y atenuadas
+          son "sin dato"</b>, que NO es lo mismo que evidencia cero: cuando falta una señal se excluye del
+          cálculo y el peso se reparte entre las demás, nunca se cuenta como si hubiera dado bien. Una barra
+          vacía pero no rayada sí significa "se midió y dio cero".
+          <br><b>Lo que este índice NO hace.</b> No diagnostica: dice dónde mirar, no qué tiene la vaca.
+          No reemplaza al índice clásico de arriba — en el backtest contra <b>568 casos de mastitis y 79 de
+          metritis</b> reales de este tambo, con la misma tasa de falsos positivos, <b>todavía no lo
+          supera</b>, y por eso los dos se muestran en paralelo en vez de reemplazarlo. Y no es una
+          probabilidad de enfermarse: es una prioridad de revisión.
+        </p>
+      </details>
       <div id="salud-atencion2-cuerpo"></div>
     </section>
 
@@ -1756,6 +2221,99 @@
         <div class="kpis" id="ficha-info-grid" style="margin-top:10px"></div>
       </section>
 
+      <section class="card" id="ficha-merito-card" hidden>
+        <h2 style="margin:0">🏅 Índice de mérito — la vida de este animal</h2>
+        <div id="ficha-merito-cuerpo"></div>
+        <div id="ficha-linea-cont" hidden>
+          <h3 class="g-titulo" style="margin-top:20px">Línea de tiempo</h3>
+          <span class="aviso">Toda su vida en una línea: partos, celos, servicios, controles de
+            gestación, cambios de rodeo y enfermedades. Cada marca dice qué pasó y cuándo.</span>
+          <div id="ficha-linea" style="margin-top:12px"></div>
+        </div>
+        <details class="explica-det" style="margin-top:16px">
+          <summary>Cómo se calcula el índice, y qué NO es</summary>
+          <p class="explica" style="margin-top:8px">
+            <b>Qué contesta.</b> «De las vacas que tengo, cuáles rindieron mejor». Es un resumen de
+            la <b>vida ya vivida</b>, comparada contra las vacas de este mismo rodeo.
+            <b>50 es la mediana del tambo</b>; un 30 no significa «mala vaca», significa «peor que
+            el 70% de las de acá».
+            <br><b>Es fenotípico, no genético.</b> Mezcla genética con ambiente, manejo, sanidad y
+            suerte. Sirve para decidir sobre <b>este animal</b> —retenerlo, venderlo—, no sobre su
+            familia ni para elegir con qué toro servir: para eso está el panel de Herencia, que
+            mira el pedigrí y se muestra aparte a propósito.
+            <br><b>Es relativo y se reacomoda.</b> Si el rodeo entero mejora, los índices no suben:
+            se reordenan. Al entrar o salir animales, todos se recalculan.
+            <br><b>Todo se normaliza por oportunidad</b>, y es lo que evita el error más grave. Una
+            vaca de primera lactancia <i>no pudo</i> tener tres mastitis en cinco años. Así que la
+            producción se compara contra las vacas de <b>su misma lactancia</b> (acá la primera
+            promedia 35,8 litros y la cuarta 46,4), las enfermedades se cuentan <b>por año de
+            exposición</b> y la longevidad es <b>lactancias por año de vida</b>.
+            <br><b>Sin producción medida no hay índice.</b> El mérito de una vaca de tambo es
+            producir; puntuar a una vaquillona por lo poco que se le puede medir la premiaría por
+            no haber tenido oportunidad de fallar. Para esos animales el estimador correcto es el
+            pedigrí, en el panel de Herencia.
+            <br><b>Un eje que no se puede medir se excluye y su peso se reparte</b>, nunca se cuenta
+            como cero. Abajo de cada eje se ve con qué peso entró <i>de verdad</i>.
+            <br><b>Dos cosas que el dato no permite.</b> La «facilidad de parto» que muestra el
+            historial no es una escala: 3.046 partos de este rodeo tienen el mismo valor, así que
+            es un identificador y no puntúa. Y los terneros por parto solo distinguen simple de
+            mellizos, con 1.296 de 3.090 partos sin ternero cargado — se muestra como dato, no
+            entra al índice.
+          </p>
+        </details>
+      </section>
+
+      <section class="card" id="ficha-rent-card" hidden>
+        <h2 style="margin:0">💵 Rentabilidad — lo que produce contra lo que come</h2>
+        <p class="explica" style="margin-top:8px">
+          <b>Qué muestra.</b> Los litros que dio este animal contra el costo del alimento que le
+          tocó, semana por semana, con los precios de la planilla del tambo. Es el mismo cálculo de
+          <b>litros libres</b> de la pantalla de Alimentación, pero de una sola vaca.
+          <br><b>El costo es un reparto, no una medición.</b> El TMR se entrega al corral y no hay
+          comederos individuales: a todas las vacas del grupo se les imputa el mismo costo. O sea que
+          la diferencia entre dos vacas del mismo rodeo es <b>enteramente su producción</b>. Lo que
+          este panel agrega es el nivel: si esta vaca cubre lo que come, y por cuánto.
+          <br><b>Va por semana y no por día a propósito.</b> El mixer descarga irregular —dos veces
+          un día, ninguna al siguiente— y el costo diario por vaca llega a variar más del doble sin
+          que cambie nada del rodeo. La semana promedia ese ruido del registro.
+          <br><b>Solo descuenta el alimento</b>: no hay mano de obra, sanidad, ni crianza. Y el
+          período arranca cuando arrancó el sistema del mixer, no cuando nació la vaca: antes no hay
+          descargas con las que valorizar nada.
+        </p>
+        <div id="ficha-rent-aviso" style="margin-bottom:8px"></div>
+        <div id="ficha-rent-cuerpo"></div>
+        <div id="ficha-rent-grafico" hidden>
+          <h3 class="g-titulo" style="margin-top:20px">Semana a semana</h3>
+          <span class="aviso">La barra entera son los litros del día en esa semana, partida en lo que
+            queda libre y lo que se va en la comida. La línea es el <b>margen acumulado</b> del
+            período. Pasando el mouse aparece el DEL, que es lo que explica el movimiento: una vaca
+            recién parida produce poco y deja poco sin que nada esté mal.</span>
+          <div class="chart-box" style="height:300px;margin-top:10px"><canvas id="chart-ficha-rent"></canvas></div>
+          <div class="aviso" id="ficha-rent-pie" style="margin-top:10px"></div>
+        </div>
+      </section>
+
+      <section class="card" id="ficha-herencia-card" hidden>
+        <h2 style="margin:0">🧬 Herencia — de dónde viene esta vaca</h2>
+        <p class="explica" style="margin-top:8px">
+          <b>Qué muestra.</b> Qué se sabe de sus ancestros, y de qué clase es cada dato. Es lo más
+          útil justamente cuando la vaca todavía no tiene historia propia —una vaquillona de
+          recría—: ahí los ancestros son lo único con que estimar su tendencia a producir y a
+          enfermarse.
+          <br><b>Dos clases de dato, que no son comparables.</b> Del <b>padre</b> y de los
+          <b>abuelos toro</b> hay valor <b>genético</b> (PTA del catálogo, estimado sobre muchas
+          hijas: confiable como estimación genética). De la <b>madre</b> y la <b>abuela</b> hay
+          <b>fenotipo</b>: lo que realmente les pasó y produjeron en este tambo — más concreto,
+          pero de un solo animal, así que como estimador de genética es más ruidoso.
+          <br><b>Los aportes NO se suman entre niveles.</b> Padre y madre aportan 50% cada uno y
+          ahí está el 100% de la genética. Los abuelos (25% cada uno) están <i>adentro</i> de ese
+          50%: explican de dónde viene cada padre, no se agregan encima. Sumar los cinco daría
+          175%, que es el error típico al leer un pedigrí.
+        </p>
+        <div class="aviso" id="ficha-herencia-aviso" style="margin-bottom:10px"></div>
+        <div id="ficha-herencia-cuerpo"></div>
+      </section>
+
       <section class="card">
         <h2 style="margin:0">Producción diaria</h2>
         <span class="aviso">Últimos 60 días · kg por día.</span>
@@ -1837,6 +2395,130 @@
     <details><summary>Ver SQL ejecutado</summary><pre id="res-sql"></pre></details>
   </section>
   </div>
+
+  <div class="page" id="page-configuracion" hidden>
+  <section class="card">
+    <h2 style="margin:0">⚙ Configuración</h2>
+    <span class="aviso">Conexión, hardware y proveedores del tambo seleccionado arriba.</span>
+    <div class="aviso" id="config-estado" style="margin-top:8px"></div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Datos generales</div>
+    <div class="controls" style="flex-wrap:wrap;gap:14px">
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Nombre del tambo
+        <input type="text" id="cfg-nombre" style="width:220px;padding:7px 8px">
+      </label>
+    </div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Conexión a la base</div>
+    <span class="aviso">Vacío = se sigue usando lo declarado en <code>tambos.py</code>.</span>
+    <div class="controls" style="flex-wrap:wrap;gap:14px;margin-top:6px">
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Dirección IP
+        <input type="text" id="cfg-ip" placeholder="192.168.1.20" style="width:160px;padding:7px 8px">
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Puerto
+        <input type="number" id="cfg-puerto" placeholder="1433" style="width:100px;padding:7px 8px">
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Usuario
+        <input type="text" id="cfg-usuario" style="width:160px;padding:7px 8px">
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Contraseña
+        <input type="password" id="cfg-contrasena" placeholder="(sin cambios)" style="width:160px;padding:7px 8px">
+      </label>
+    </div>
+    <div class="aviso" id="config-contrasena-nota" style="margin-top:6px"></div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Hardware</div>
+    <div class="controls" style="flex-wrap:wrap;gap:18px">
+      <label class="aviso" style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="cfg-tiene-bcs"> Tiene cámara de score corporal (BCS)
+      </label>
+      <label class="aviso" style="display:flex;align-items:center;gap:6px">
+        <input type="checkbox" id="cfg-tiene-podal"> Tiene cámara podal
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Sistema de actividad
+        <select id="cfg-sistema-actividad" style="padding:7px 8px"></select>
+      </label>
+    </div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Entrega de leche</div>
+    <div class="controls" style="flex-wrap:wrap;gap:14px">
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Caudalímetro
+        <select id="cfg-caudalimetro" style="padding:7px 8px"></select>
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Usina láctea
+        <select id="cfg-usina-lactea" style="padding:7px 8px"></select>
+      </label>
+    </div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Alimentación</div>
+    <div class="controls" style="flex-wrap:wrap;gap:14px">
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Sistema de alimentación
+        <select id="cfg-sistema-alimentacion" style="padding:7px 8px"></select>
+      </label>
+    </div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Sala de ordeño</div>
+    <div class="controls" style="flex-wrap:wrap;gap:14px">
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Tipo de sala
+        <select id="cfg-sala" style="padding:7px 8px"></select>
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Personas en el ordeño
+        <input type="number" id="cfg-personas" min="1" max="50" style="width:100px;padding:7px 8px">
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Arreo por sesión (min)
+        <input type="number" id="cfg-arreo" min="0" max="240" style="width:110px;padding:7px 8px">
+      </label>
+    </div>
+    <span class="aviso">Ninguno de los dos sale de DelPro, los carga el tambo. <b>Personas</b>
+      alimenta "vacas por persona"; <b>arreo</b> es lo que lleva traer el rodeo desde su corral
+      hasta el corral de espera — tiempo en que la vaca ya salió del corral pero todavía no hay
+      registro en la base. Los dos se usan en Rendimiento Sala.</span>
+    <div id="config-puestos-cont" hidden style="margin-top:10px">
+      <span class="aviso">Cantidad de lados y puestos por lado de la sala convencional.</span>
+      <div class="controls" style="flex-wrap:wrap;gap:14px;margin-top:6px">
+        <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Lados
+          <input type="number" id="cfg-lados" min="1" max="10" style="width:80px;padding:7px 8px">
+        </label>
+        <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Puestos por lado
+          <input type="number" id="cfg-puestos-por-lado" min="1" max="100" style="width:100px;padding:7px 8px">
+        </label>
+        <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Ventana "en vivo" (min)
+          <input type="number" id="cfg-ventana-vivo" min="1" max="200" style="width:100px;padding:7px 8px">
+        </label>
+      </div>
+    </div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Planillas del tambo (Excel)</div>
+    <span class="aviso">Estos dos datos <b>no están en ningún sistema conectado</b> y los mantiene el
+      tambo a mano. Dejá el campo vacío para usar los archivos que están junto a la aplicación.
+      Podés poner un <b>archivo</b> o una <b>carpeta</b> (ahí se buscan los nombres de siempre).</span>
+    <div class="controls" style="flex-direction:column;align-items:stretch;gap:10px;margin-top:8px">
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">
+        Catálogo genético de toros
+        <input type="text" id="cfg-ruta-toros" placeholder="D:\Tambo\Genetica  o  D:\Tambo\Toros.xlsx"
+               style="padding:7px 8px">
+        <span class="aviso" id="cfg-estado-toros"></span>
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">
+        Precios de alimentos y de la leche
+        <input type="text" id="cfg-ruta-precios" placeholder="D:\Tambo\Precios_alimentos.xlsx"
+               style="padding:7px 8px">
+        <span class="aviso" id="cfg-estado-precios"></span>
+      </label>
+    </div>
+    <span class="aviso" style="display:block;margin-top:8px">
+      <b>Toros:</b> DelPro no trae valor genético (este rodeo no está genotipado), así que sale del
+      catálogo del proveedor. Alimenta el índice de salud y la herencia de la Ficha Animal.
+      <b>Precios:</b> los 70 ingredientes del mixer vienen con precio 0 —nadie los cargó allá— y la
+      usina publica solo litros y sólidos, sin importes. Con esta planilla la app calcula el costo de
+      la ración y los <b>litros libres</b>. El precio de la leche va en la misma planilla.
+    </span>
+
+    <div style="margin-top:18px">
+      <button id="config-guardar">Guardar configuración</button>
+    </div>
+  </section>
+  </div>
     </main>
   </div>
 </div>
@@ -1859,6 +2541,15 @@ let tamboActual = '';
 
 function fmt(n) {
   return typeof n === 'number' ? n.toLocaleString('es-AR', {maximumFractionDigits: 1}) : (n ?? '');
+}
+
+// Escape de HTML, global. Hace falta en cualquier lugar donde se arma innerHTML
+// con texto que viene del backend: nombres de archivo, de ingrediente, mensajes
+// de error. Estaba definido suelto dentro de tres funciones distintas y usarlo
+// desde una cuarta tiraba "esc is not defined" — que rompe la página entera, no
+// solo el pedazo que lo llamó.
+function escHtml(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
 function baseOpts(mostrarLeyenda) {
@@ -2016,6 +2707,26 @@ async function pedirJSON(url, opts) {
   }
 }
 
+// Refresco periódico que espera a que la vuelta anterior termine antes de
+// programar la próxima. Un setInterval a ciegas dispara una segunda llamada
+// superpuesta si la consulta anterior quedó atascada detrás de otras en el
+// semáforo de la base (ver db.py) y tardó más que el intervalo — eso es
+// justo lo que se ve en el indicador de "Calculando…" cuando la base está
+// lenta: varias vueltas de la MISMA sección amontonadas, empeorando la cola
+// en vez de esperar a que se libere.
+// `setId`: dónde guardar el timer vigente en cada vuelta, para que
+// clearInterval(esaVariable) en cualquier otro lugar del código siga
+// cortando el refresco como antes (clearInterval/clearTimeout son
+// intercambiables en el navegador). `inmediato`: si hay que disparar la
+// primera vuelta ya mismo (antes tenían esto ordeno/sala: no, iot/podal: sí).
+function refrescoSinSolape(fn, ms, setId, inmediato) {
+  const vuelta = () => {
+    Promise.resolve(fn()).catch(() => {}).finally(() => setId(setTimeout(vuelta, ms)));
+  };
+  if (inmediato) fn();
+  setId(setTimeout(vuelta, ms));
+}
+
 async function cargarDashboard(intento = 0) {
   try {
     const d = await pedirJSON('/api/dashboard?tambo=' + encodeURIComponent(tamboActual));
@@ -2140,8 +2851,10 @@ async function cargarResumenAnimales() {
 }
 
 async function cargarResumenDuraciones() {
+  const errBox = document.getElementById('resumen-duraciones-error');
   try {
     const d = await pedirJSON('/api/resumen/duraciones?tambo=' + encodeURIComponent(tamboActual));
+    errBox.textContent = '';
     const puntos = d.puntos || [];
     const maxSesiones = Math.max(1, ...puntos.map(p => p.duraciones.length));
     const colores = [SERIES[2], css('--warning'), SERIES[4], SERIES[5], SERIES[6]];
@@ -2167,13 +2880,20 @@ async function cargarResumenDuraciones() {
     });
     if (d.calculando) setTimeout(cargarResumenDuraciones, 4000);
   } catch (e) {
-    if (e.calentando) setTimeout(cargarResumenDuraciones, 4000);
+    if (e.calentando) { setTimeout(cargarResumenDuraciones, 4000); return; }
+    // Error real (no "todavía calculando"): se limpia el gráfico viejo en vez
+    // de dejarlo — mostrar el dato de otro tambo como si fuera el actual es
+    // peor que no mostrar nada.
+    if (chartResumenDuraciones) { chartResumenDuraciones.destroy(); chartResumenDuraciones = null; }
+    errBox.textContent = 'No disponible para este tambo: ' + e.message;
   }
 }
 
 async function cargarResumenGrupo() {
+  const errBox = document.getElementById('resumen-grupo-error');
   try {
     const d = await pedirJSON('/api/resumen/produccion_grupo?tambo=' + encodeURIComponent(tamboActual));
+    errBox.textContent = '';
     const detalle = d.detalle || { columns: [], rows: [] };
     const idx = { fecha: detalle.columns.indexOf('fecha'), grupo: detalle.columns.indexOf('grupo'),
                   promedio_kg: detalle.columns.indexOf('promedio_kg') };
@@ -2214,7 +2934,9 @@ async function cargarResumenGrupo() {
     });
     if (d.calculando) setTimeout(cargarResumenGrupo, 4000);
   } catch (e) {
-    if (e.calentando) setTimeout(cargarResumenGrupo, 4000);
+    if (e.calentando) { setTimeout(cargarResumenGrupo, 4000); return; }
+    if (chartResumenGrupo) { chartResumenGrupo.destroy(); chartResumenGrupo = null; }
+    errBox.textContent = 'No disponible para este tambo: ' + e.message;
   }
 }
 
@@ -2360,7 +3082,9 @@ async function cargarIncidentesDia() {
 document.getElementById('incid-aplicar').addEventListener('click', cargarIncidentesDia);
 
 // --- Rendimiento Sala: throughput de la rotativa por sesión, rango elegible -
-let chartRendProd = null, chartRendThroughput = null, chartRendIdent = null, rendReintento = null;
+let chartRendProd = null, chartRendThroughput = null, chartRendIdent = null,
+    chartRendVacasPuesto = null, chartRendVacasPersona = null, chartRendPermanencia = null,
+    chartRendPermanenciaGrupo = null, rendReintento = null;
 
 function etiquetaSesion(s) {
   const [, m, d] = s.fecha.split('-');
@@ -2388,16 +3112,104 @@ async function cargarRendimiento() {
     const labels = sesiones.map(etiquetaSesion);
     const kgTotal = sesiones.reduce((a, s) => a + (s.kg_total || 0), 0);
     const ordTotal = sesiones.reduce((a, s) => a + (s.n_ordenios || 0), 0);
-    const descTotal = sesiones.reduce((a, s) => a + (s.n_desconocidos || 0), 0);
+    // (los desconocidos NO salen de `sesiones`: ver el bloque de identificación
+    // más abajo — esa consulta filtra las visitas sin identificar)
     const rotaciones = sesiones.filter(s => s.n_rotaciones != null).map(s => s.n_rotaciones);
     const rotProm = rotaciones.length ? Math.round(rotaciones.reduce((a, b) => a + b, 0) / rotaciones.length) : null;
+    const ordHora = sesiones.filter(s => s.ordenios_por_hora != null).map(s => s.ordenios_por_hora);
+    const ordHoraProm = ordHora.length ? Math.round(10 * ordHora.reduce((a, b) => a + b, 0) / ordHora.length) / 10 : null;
+    const kgHora = sesiones.filter(s => s.kg_por_hora != null).map(s => s.kg_por_hora);
+    const kgHoraProm = kgHora.length ? Math.round(10 * kgHora.reduce((a, b) => a + b, 0) / kgHora.length) / 10 : null;
+
+    // Vacas por puesto / por persona: dotación del tambo (vacas DISTINTAS de
+    // cada día contra la capacidad física / el personal). `vacas_dia` viene
+    // del backend ya deduplicado por vaca y por día (una vaca ordeñada en
+    // varias sesiones del mismo día cuenta una sola vez) — ver
+    // rutina.analizar_rendimiento. Puestos/personas son constantes del
+    // tambo (no cambian día a día), así que la EVOLUCIÓN de estos dos
+    // indicadores es, en los hechos, la evolución de "vacas_dia" escalada.
+    const infoTambo = tambosInfo[tamboActual] || {};
+    const puestos = infoTambo.puestos, personas = infoTambo.personas;
+    const vacasPorDia = {};
+    sesiones.forEach(s => { if (s.vacas_dia != null) vacasPorDia[s.fecha] = s.vacas_dia; });
+    const fechasVacas = Object.keys(vacasPorDia).sort();
+    const vacasDiaProm = fechasVacas.length
+      ? Math.round(fechasVacas.reduce((a, f) => a + vacasPorDia[f], 0) / fechasVacas.length) : null;
+    const vacasPorPuestoProm = (vacasDiaProm && puestos) ? Math.round(10 * vacasDiaProm / puestos) / 10 : null;
+    const vacasPorPersonaProm = (vacasDiaProm && personas) ? Math.round(vacasDiaProm / personas) : null;
+
+    // Horas por día que le lleva el ORDEÑO a una vaca de cada rodeo (el
+    // tiempo que está fuera del corral: arreo + espera + ordeño). Por sesión,
+    // la ventana medida (g.permanencia_min: primera vaca del grupo que entra
+    // -> última que sale) se divide por DOS: el rodeo llega completo al corral
+    // de espera y entra de a una, así que la primera vaca casi no espera y la
+    // última espera toda la ventana — repartido linealmente, el PROMEDIO por
+    // vaca es la mitad. El arreo, en cambio, lo viven todas por igual (van
+    // juntas del corral al corral de espera), así que se suma entero y una vez
+    // por sesión. Después las sesiones del día se SUMAN (son ordeños distintos
+    // el mismo día).
+    // `arreo_min` sale de ⚙ Configuración (no está en DDM: es tiempo en que la
+    // vaca ya salió del corral pero todavía no hay registro en la base).
+    function promediar(lista) { return lista.length ? lista.reduce((a, b) => a + b, 0) / lista.length : null; }
+    const arreoMin = infoTambo.arreo_min || 0;
+    const permPorDiaGrupo = {};    // {fecha: {grupo: horas de ordeño ESE día}}
+    const vacasPorDiaGrupo = {};   // {fecha: {grupo: [n_vacas de cada sesión ese día]}}
+    sesiones.forEach(s => (s.grupos || []).forEach(g => {
+      const dia = permPorDiaGrupo[s.fecha] = permPorDiaGrupo[s.fecha] || {};
+      dia[g.grupo] = (dia[g.grupo] || 0) + (arreoMin + g.permanencia_min / 2) / 60;
+      const diaV = vacasPorDiaGrupo[s.fecha] = vacasPorDiaGrupo[s.fecha] || {};
+      (diaV[g.grupo] = diaV[g.grupo] || []).push(g.n_vacas);
+    }));
+    const fechasPerm = Object.keys(permPorDiaGrupo).sort();
+    const gruposPerm = [...new Set(fechasPerm.flatMap(f => Object.keys(permPorDiaGrupo[f])))];
+    // Vacas por rodeo: la composición del grupo no cambia entre las sesiones
+    // de un mismo día (es el mismo rodeo pasando varias veces), así que se
+    // promedia entre sesiones para ese día y después entre los días del
+    // período — a diferencia de las horas, acá NO tiene sentido sumar.
+    const vacasPromPorGrupo = {};   // {grupo: cantidad de vacas promedio}
+    gruposPerm.forEach(g => {
+      const porDia = fechasPerm.map(f => promediar((vacasPorDiaGrupo[f] || {})[g] || [])).filter(v => v != null);
+      vacasPromPorGrupo[g] = promediar(porDia);
+    });
+    // Por rodeo (para la tarjeta y el gráfico de barras): promedio de esas
+    // horas diarias a lo largo del período — el resumen de "cuánto por día",
+    // no un total acumulado de todo el rango.
+    const permPromPorGrupo = {};   // {grupo: horas/día promedio}
+    gruposPerm.forEach(g => {
+      permPromPorGrupo[g] = promediar(fechasPerm.map(f => permPorDiaGrupo[f][g]).filter(v => v != null));
+    });
+    const permPromedioGeneral = promediar(Object.values(permPromPorGrupo).filter(v => v != null));
+
+    // % de identificación: viene de su propia consulta (d.identificacion), NO
+    // de las sesiones — la consulta de sesiones descarta las visitas sin
+    // identificar para poder separar los ordeños, así que ahí "desconocidos"
+    // siempre daba 0. null = esta sala no lo calcula (ver salas/convencional).
+    const ident = d.identificacion || null;
+    const identOrd = ident ? ident.reduce((a, x) => a + x.ordenos, 0) : 0;
+    const identDesc = ident ? ident.reduce((a, x) => a + x.desconocidos, 0) : 0;
+    const identKg = ident ? ident.reduce((a, x) => a + x.kg_desconocidos, 0) : 0;
+    // Ponderado por ordeños del día, no promedio de porcentajes: un día con
+    // media sesión cargada no puede pesar igual que uno completo.
+    const pctIdent = identOrd ? 100 * (identOrd - identDesc) / identOrd : null;
 
     document.getElementById('rend-kpis').innerHTML = [
       ['Ordeños totales', ordTotal],
       ['Producción total', kgTotal ? Math.round(kgTotal) + ' kg' : '—'],
-      ['Desconocidos', ordTotal ? Math.round(100 * descTotal / ordTotal) + '%' : '—'],
+      ['% de identificación', pctIdent != null ? (Math.round(100 * pctIdent) / 100) + '%' : 'no disponible'],
+      ['Ordeños sin identificar', ident ? `${fmt(identDesc)} (${fmt(Math.round(identKg))} kg)` : '—'],
       ['Rotaciones promedio/sesión', rotProm],
+      ['Ordeños/hora promedio', ordHoraProm ?? '—'],
+      ['Litros/hora promedio', kgHoraProm ?? '—'],
+      ['Vacas por puesto (promedio)', vacasPorPuestoProm ?? '—'],
+      ['Vacas por persona (promedio)', vacasPorPersonaProm ?? '—'],
+      ['Horas/día en ordeño (promedio de todos los rodeos)',
+        permPromedioGeneral != null ? (Math.round(10 * permPromedioGeneral) / 10) + ' h' : '—'],
     ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
+    const faltan = [];
+    if (!personas) faltan.push('la cantidad de personas (para "vacas por persona")');
+    if (!infoTambo.arreo_min) faltan.push('el arreo por sesión (hoy las horas/día en ordeño se calculan sin él, o sea de menos)');
+    document.getElementById('rend-dotacion-nota').textContent = faltan.length
+      ? 'Falta configurar ' + faltan.join(' y ') + ' — en ⚙ Configuración → Sala de ordeño.' : '';
 
     chartRendProd = dibujar('chart-rend-produccion', chartRendProd, {
       type: 'bar',
@@ -2405,30 +3217,91 @@ async function cargarRendimiento() {
         backgroundColor: SERIES[0], maxBarThickness: 28, borderRadius: 4 }] },
       options: baseOpts(false),
     });
+    const optsThroughput = optsDobleEje('ordeños/hora', 'litros/hora');
+    optsThroughput.plugins.legend.display = true;
     chartRendThroughput = dibujar('chart-rend-throughput', chartRendThroughput, {
       type: 'line',
-      data: { labels, datasets: [{ label: 'Ordeños/hora', data: sesiones.map(s => s.ordenios_por_hora),
-        borderColor: SERIES[1], backgroundColor: SERIES[1], borderWidth: 2, pointRadius: 3, tension: .2 }] },
-      options: baseOpts(false),
+      data: { labels, datasets: [
+        linea('Ordeños/hora', sesiones.map(s => s.ordenios_por_hora), SERIES[1]),
+        linea('Litros/hora', sesiones.map(s => s.kg_por_hora), SERIES[3], { yAxisID: 'y1' }),
+      ] },
+      options: optsThroughput,
     });
 
-    const porDia = {};
-    sesiones.forEach(s => {
-      const p = porDia[s.fecha] = porDia[s.fecha] || { identificadas: 0, desconocidas: 0 };
-      p.identificadas += s.n_identificadas || 0;
-      p.desconocidas += s.n_desconocidos || 0;
-    });
-    const fechas = Object.keys(porDia).sort();
-    const opts = baseOpts(true);
-    opts.scales.x.stacked = true;
-    opts.scales.y.stacked = true;
+    // % de identificación en el tiempo: la línea es la tasa (eje izquierdo) y
+    // las barras la cantidad absoluta de ordeños sin identificar (eje derecho)
+    // — la tasa sola esconde si el problema son 3 ordeños o 300.
+    document.getElementById('rend-ident-nota').textContent = ident ? ''
+      : 'El % de identificación todavía no está disponible para este tipo de sala (ver salas/convencional.py).';
+    const oIdent = optsDobleEje('% identificados', 'ordeños sin identificar');
+    oIdent.plugins.legend.display = true;
+    oIdent.scales.y.suggestedMin = 90;   // la tasa se mueve en un rango angosto
+    oIdent.scales.y.suggestedMax = 100;
     chartRendIdent = dibujar('chart-rend-identificacion', chartRendIdent, {
       type: 'bar',
-      data: { labels: fechas, datasets: [
-        { label: 'Identificadas', data: fechas.map(f => porDia[f].identificadas), backgroundColor: SERIES[2] },
-        { label: 'Desconocidas', data: fechas.map(f => porDia[f].desconocidas), backgroundColor: SERIES[5] },
+      data: { labels: (ident || []).map(x => etiquetaDia(x.fecha)), datasets: [
+        { type: 'bar', label: 'Ordeños sin identificar', yAxisID: 'y1',
+          data: (ident || []).map(x => x.desconocidos),
+          backgroundColor: SERIES[5], maxBarThickness: 26, borderRadius: 3 },
+        linea('% identificados', (ident || []).map(x => x.pct_identificacion), SERIES[2], { type: 'line' }),
       ] },
-      options: opts,
+      options: oIdent,
+    });
+
+    const labelsVacas = fechasVacas.map(etiquetaDia);
+    const oVacasPuesto = baseOpts(false);
+    oVacasPuesto.scales.y.title = { display: true, text: 'vacas/puesto' };
+    chartRendVacasPuesto = dibujar('chart-rend-vacas-puesto', chartRendVacasPuesto, {
+      type: 'line',
+      data: { labels: labelsVacas, datasets: [
+        linea('Vacas por puesto', fechasVacas.map(f => puestos ? Math.round(10 * vacasPorDia[f] / puestos) / 10 : null), SERIES[4]),
+      ] },
+      options: oVacasPuesto,
+    });
+    const oVacasPersona = baseOpts(false);
+    oVacasPersona.scales.y.title = { display: true, text: 'vacas/persona' };
+    chartRendVacasPersona = dibujar('chart-rend-vacas-persona', chartRendVacasPersona, {
+      type: 'line',
+      data: { labels: labelsVacas, datasets: [
+        linea('Vacas por persona', fechasVacas.map(f => personas ? Math.round(vacasPorDia[f] / personas) : null), SERIES[6]),
+      ] },
+      options: oVacasPersona,
+    });
+
+    // Horas/día en ordeño, separado por rodeo — gráfico aparte, un valor
+    // por grupo (promedio de las horas diarias a lo largo del período). Usa
+    // permPromPorGrupo, ya calculado arriba (misma cuenta que la tarjeta).
+    const gruposOrdenados = [...gruposPerm].sort((a, b) => (permPromPorGrupo[b] ?? 0) - (permPromPorGrupo[a] ?? 0));
+    const oPermGrupo = optsDobleEje('horas/día', 'vacas');
+    oPermGrupo.plugins.legend.display = true;
+    chartRendPermanenciaGrupo = dibujar('chart-rend-permanencia-grupo', chartRendPermanenciaGrupo, {
+      type: 'bar',
+      data: { labels: gruposOrdenados, datasets: [
+        {
+          type: 'bar', label: 'Horas/día en ordeño',
+          data: gruposOrdenados.map(g => permPromPorGrupo[g] != null ? Math.round(10 * permPromPorGrupo[g]) / 10 : null),
+          backgroundColor: gruposOrdenados.map((_, i) => SERIES[i % SERIES.length]),
+          maxBarThickness: 40, borderRadius: 4,
+        },
+        linea('Vacas', gruposOrdenados.map(g => vacasPromPorGrupo[g] != null ? Math.round(vacasPromPorGrupo[g]) : null),
+              SERIES[7], { yAxisID: 'y1', type: 'line' }),
+      ] },
+      options: oPermGrupo,
+    });
+
+    // Horas/día en ordeño, en el tiempo: un punto por día y por grupo —
+    // ya es la suma de las sesiones de ese día (permPorDiaGrupo, armado
+    // arriba), no hace falta promediar de nuevo acá.
+    const oPerm = baseOpts(true);
+    oPerm.scales.y.title = { display: true, text: 'horas' };
+    chartRendPermanencia = dibujar('chart-rend-permanencia', chartRendPermanencia, {
+      type: 'line',
+      data: { labels: fechasPerm.map(etiquetaDia), datasets: gruposPerm.map((g, i) =>
+        linea(g, fechasPerm.map(f => {
+          const v = permPorDiaGrupo[f][g];
+          return v != null ? Math.round(10 * v) / 10 : null;
+        }), SERIES[i % SERIES.length])) },
+      options: oPerm,
     });
 
     info.textContent = `${sesiones.length} sesión(es) entre ${desde} y ${hasta}.` +
@@ -2442,7 +3315,8 @@ document.getElementById('rend-aplicar').addEventListener('click', cargarRendimie
 
 // --- Análisis de flujos de ordeño -------------------------------------------
 let chartFluRetirada = null, chartFluRutina = null, chartFluGrupo = null,
-    chartFluDist = null, chartFluBimodal = null, fluReintento = null;
+    chartFluDist = null, chartFluBimodal = null, chartFluLitros = null,
+    chartFluFuera = null, fluReintento = null;
 
 function etiquetaDia(iso) { const [, m, d] = iso.split('-'); return `${d}/${m}`; }
 
@@ -2514,6 +3388,13 @@ const graficoFlujos = (canvasId, ref, labels, datasets, options) =>
 
 const kgFlu = v => Number(v).toFixed(2).replace('.', ',');   // 0.6 -> "0,60"
 
+// 21600 -> "6h 00min" (para el tiempo entre ordeños, en segundos).
+function fmtHoras(seg) {
+  if (seg == null) return '—';
+  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);
+  return `${h}h ${String(m).padStart(2, '0')}min`;
+}
+
 function pintarFlujos(d) {
   const dias = d.dias || [];
   const info = document.getElementById('flu-info');
@@ -2535,6 +3416,8 @@ function pintarFlujos(d) {
     ['Flujo pico', r.f_pico != null ? fmt(r.f_pico) + ' kg/min' : '—'],
     ['Duración de ordeño', r.dur_seg != null ? fmt(Math.round(r.dur_seg)) + ' s' : '—'],
     ['Tiempo de colocación', r.coloc_seg != null ? fmt(r.coloc_seg) + ' s' : '—'],
+    ['Litros por bajada', r.litros_bajada != null ? fmt(r.litros_bajada) + ' L' : '—'],
+    ['Tiempo entre ordeños (estimado)', fmtHoras(r.seg_fuera_prom)],
     [`Retirada < ${kgFlu(u.retirada_min)} kg/min`, pct(r.pct_bajo_min)],
     ['Retirada forzada', pct(r.pct_forzada)],
     ['Arranque lento', pct(r.pct_arranque_lento)],
@@ -2562,6 +3445,22 @@ function pintarFlujos(d) {
     linea('Duración de ordeño (s)', dias.map(x => x.dur_seg), SERIES[7], pnt),
     linea('Tiempo de colocación (s)', dias.map(x => x.coloc_seg), SERIES[4], pnt),
   ], optsDobleEje('kg/min', 'segundos'));
+
+  chartFluLitros = graficoFlujos('chart-flu-litros', chartFluLitros, labels, [
+    linea('Litros por bajada', dias.map(x => x.litros_bajada), SERIES[0]),
+    linea('Duración de ordeño (s)', dias.map(x => x.dur_seg), SERIES[7], pnt),
+    linea('Tiempo de colocación (s)', dias.map(x => x.coloc_seg), SERIES[4], pnt),
+  ], optsDobleEje('litros', 'segundos'));
+
+  const oFue = baseOpts(true);
+  oFue.scales.y.title = { display: true, text: 'horas por vaca por día' };
+  oFue.plugins = oFue.plugins || {};
+  oFue.plugins.tooltip = Object.assign({}, oFue.plugins.tooltip, {
+    callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtHoras(ctx.parsed.y * 3600)}` },
+  });
+  chartFluFuera = graficoFlujos('chart-flu-fuera', chartFluFuera, labels, [
+    linea('Tiempo entre bajadas (estimado)', dias.map(x => x.seg_fuera_prom != null ? x.seg_fuera_prom / 3600 : null), SERIES[3]),
+  ], oFue);
 
   const oGru = baseOpts(true);
   oGru.scales.y.title = { display: true, text: 'kg/min' };
@@ -3977,7 +4876,7 @@ function esGrafica() { return ordenoVista === 'rotativa'; }
 function reprogramarRefrescoOrdeno() {
   clearInterval(ordenoTimer);
   const ms = (esGrafica() || modoVivo() || modoSim()) ? VIVO_REFRESCO_MS : ORDENO_REFRESCO_MS;
-  ordenoTimer = setInterval(cargarOrdeno, ms);
+  refrescoSinSolape(cargarOrdeno, ms, id => { ordenoTimer = id; });
 }
 
 function filaConAlerta(fila, idx) {
@@ -4457,6 +5356,13 @@ const milesRCS = n => n == null ? '—' : Math.round(n).toLocaleString('es-AR');
 async function seccionSalud(url, destino, pintar) {
   try {
     const d = await pedirJSON(url + '?tambo=' + encodeURIComponent(tamboActual));
+    if (d.no_disponible) {
+      // Estructural (p.ej. esta sala no tiene la tabla que hace falta): no
+      // es un error real ni "todavía calculando", no tiene sentido reintentar.
+      const cont = destino && document.getElementById(destino);
+      if (cont) cont.innerHTML = `<div class="aviso" style="margin-top:10px">${d.mensaje}</div>`;
+      return true;
+    }
     pintar(d);
     return true;
   } catch (e) {
@@ -4496,8 +5402,18 @@ const SIS_CLASE = { UBRE: 'sis-ubre', 'METABÓLICO': 'sis-metabolico', GENERAL: 
 function pintarSaludAtencionV2(d) {
   const cont = document.getElementById('salud-atencion2-cuerpo');
   const vacas = d.vacas || [];
+  const notaSala = d.incluye_alarmas_equipo === false
+    ? `<div class="aviso" style="margin-bottom:10px">Esta sala no tiene alarma de bajo rendimiento ni de conductividad del equipo (propias del controlador de la rotativa) — el resto de las señales (caída de leche, conductividad, condición corporal) sí está incluido.</div>`
+    : '';
+  // Genética: contexto, no evidencia de hoy. Si hay datos ficticios en juego,
+  // se avisa FUERTE — nadie puede descartar una vaca por un número inventado.
+  const gen = d.genetica || {};
+  const notaGen = gen.aviso_simulado
+    ? `<div class="aviso" style="margin-bottom:10px;border-left:3px solid var(--critical);padding-left:8px">
+         <b>⚠ ${gen.aviso_simulado}</b></div>`
+    : (gen.error ? `<div class="aviso" style="margin-bottom:10px">Riesgo genético no disponible: ${gen.error}</div>` : '');
   if (!vacas.length) {
-    cont.innerHTML = `<div class="aviso" style="margin-top:10px">Ninguna vaca supera los umbrales del índice experimental. ✔</div>`;
+    cont.innerHTML = notaSala + notaGen + `<div class="aviso" style="margin-top:10px">Ninguna vaca supera los umbrales del índice experimental. ✔</div>`;
     return;
   }
   const EXPLIC = {
@@ -4505,8 +5421,101 @@ function pintarSaludAtencionV2(d) {
     'b-metab': 'METABÓLICO (riesgo post-parto, ej. metritis): combina caída de condición corporal (BCS) y caída de leche. 0 a 10.',
     'b-sist': 'GENERAL: combina caída de leche contra el propio historial de la vaca y ordeños faltantes en los últimos 3 días. 0 a 10.',
   };
-  const barra = (v, cls, top) => `<span class="${cls}${top ? ' top' : ''}" title="${EXPLIC[cls]}">${v == null ? '—' : v}</span>`;
-  cont.innerHTML = `<div class="aten2-grid">` + vacas.map(v => {
+  // --- Vúmetros -------------------------------------------------------------
+  // Una fila por parámetro que el índice analiza, con la evidencia 0-1 que
+  // aportó y el valor crudo que la produjo. Los que no tienen dato se dibujan
+  // rayados y atenuados: "sin dato" NO es evidencia cero.
+  const esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const vuFila = (label, ev, texto, extra) => {
+    const pct = ev == null ? 0 : Math.max(0, Math.min(100, ev * 100));
+    const cls = 'vu' + (ev == null ? ' sin' : '') + (extra && extra.cls ? ' ' + extra.cls : '');
+    const val = ev == null ? '—' : (extra && extra.crudo ? extra.crudo : Math.round(pct) + '%');
+    return `<div class="${cls}" title="${esc(texto || '')}">
+      <div>
+        <div class="vu-lab"><b>${esc(label)}</b></div>
+        <div class="vu-pista"><div class="vu-fill" style="width:${pct}%"></div></div>
+      </div>
+      <div class="vu-val">${esc(val)}</div>
+    </div>`;
+  };
+  // Sistemas (0-10): el que define el score va remarcado, los otros atenuados.
+  const vuSistema = (nombre, valor, cls, esTop) => vuFila(nombre,
+    valor == null ? null : valor / 10, EXPLIC[cls],
+    { cls: 'vu-sis' + (esTop ? ' top' : ''), crudo: valor == null ? '—' : valor + ' / 10' });
+  const desglose = v => {
+    const ps = v.parametros || [];
+    const sis = [
+      vuSistema('UBRE', v.S_ubre, 'b-ubre', v.sistema === 'UBRE'),
+      vuSistema('METABÓLICO', v.S_metab, 'b-metab', v.sistema === 'METABÓLICO'),
+      vuSistema('GENERAL', v.S_sist, 'b-sist', v.sistema === 'GENERAL'),
+    ].join('');
+    const filas = ps.map(p => {
+      // A qué sistema alimenta y con qué peso, para que se vea la composición.
+      const pesos = Object.entries(p.sistemas || {})
+        .map(([s, w]) => `${s} ×${w}`).join(' · ');
+      const detalle = [p.texto, pesos && ('Alimenta: ' + pesos),
+        p.via && 'Se combina primero en "Evidencia de leche"',
+        p.contexto && 'CONTEXTO: no suma al score, solo desempata el orden',
+        p.simulado && '⚠ DATO FICTICIO de prueba'].filter(Boolean).join(' — ');
+      return vuFila(p.label, p.evidencia, detalle, {
+        cls: (p.via ? 'vu-sub' : '') + (p.contexto ? ' ctx' : ''),
+      });
+    }).join('');
+    return `<div class="aten2-vu">
+      <div class="aten2-vu-tit"><span>Sistemas</span><span>0 – 10</span></div>${sis}
+      <div class="aten2-vu-tit" style="margin-top:9px"><span>Qué se analizó</span><span>evidencia</span></div>${filas}
+      ${herenciaDetalle(v)}
+    </div>`;
+  };
+  // Detalle de las dos ramas heredadas, en un desplegable para no estirar la
+  // tarjeta: rasgo por rasgo del padre (con el valor crudo que reconoce el
+  // asesor genético) y la historia clínica real de la madre.
+  const herenciaDetalle = v => {
+    const dp = v.detalle_padre || [], dm = v.detalle_madre || [];
+    if (!dp.length && !dm.length) return '';
+    const fila = (label, texto, pct) => `<div class="her-fila">
+        <div class="her-lab">${esc(label)}</div>
+        <div class="her-txt">${esc(texto)}</div>
+        ${pct == null ? '' : `<div class="vu-pista her-mini"><div class="vu-fill" style="width:${Math.max(0, Math.min(100, pct))}%"></div></div>`}
+      </div>`;
+    const bloquePadre = dp.length ? `
+      <div class="her-tit">Padre ${esc(v.padre || '')} — índice genético del catálogo
+        ${v.genetica_simulada ? '<b style="color:var(--critical)">⚠ FICTICIO</b>' : ''}</div>
+      ${dp.map(p => fila(p.label, `${p.valor} (${p.direccion})`, p.percentil)).join('')}` : '';
+    const bloqueMadre = dm.length ? `
+      <div class="her-tit" style="margin-top:7px">Madre ${v.madre ? 'RP ' + esc(v.madre) : ''} — enfermedades reales de este tambo</div>
+      ${dm.map(p => fila(p.label, p.texto, p.percentil)).join('')}` : '';
+    return `<details class="her-det">
+      <summary>Ver de dónde sale el riesgo heredado</summary>
+      ${bloquePadre}${bloqueMadre}
+      <div class="her-nota">Las dos mitades no son el mismo tipo de dato: el padre es
+        valor genético estimado sobre muchas hijas; la madre es lo que efectivamente le pasó a
+        UNA vaca, que mezcla genética con ambiente. Los percentiles son relativos a este tambo
+        y a este catálogo, no valores absolutos. No suma al score: solo desempata el orden.</div>
+    </details>`;
+  };
+  // El riesgo genético NO suma al score: solo puede adelantar la vaca en la
+  // lista hasta `gen.peso` puntos (ver PESO_GENETICA en salud.py).
+  const TIP_GEN = `Riesgo HEREDADO, 0-100: mitad del PADRE (índice genético del catálogo de `
+    + `${gen.toros || '—'} toros) y mitad de la MADRE (sus enfermedades reales por año, medidas acá). `
+    + `100 = el peor. No es una probabilidad de enfermarse, y las dos mitades no son el mismo tipo `
+    + `de dato: el padre es valor genético estimado, la madre es lo que efectivamente le pasó. `
+    + `No suma al score — solo desempata el orden hasta ${gen.peso ?? 0} puntos.`;
+  const chipGen = v => {
+    if (v.riesgo_genetico == null) {
+      return `<span class="aten2-gen sin" title="Sin padre en el catálogo de toros y sin historia clínica de la madre. Sin dato NO es riesgo cero.">her —</span>`;
+    }
+    const sim = v.genetica_simulada ? ' ⚠' : '';
+    // Si falta una rama se marca con ½, para no leer "solo padre" como padre+madre.
+    const parcial = v.ramas_herencia && v.ramas_herencia !== 'padre+madre' ? ' ½' : '';
+    const det = [v.padre && 'Padre: ' + v.padre + (v.riesgo_padre != null ? ' (' + Math.round(v.riesgo_padre) + ')' : ' — sin catálogo'),
+                 v.madre && 'Madre RP ' + v.madre + (v.riesgo_madre != null ? ' (' + Math.round(v.riesgo_madre) + ')' : ' — sin historia'),
+                 v.ramas_herencia && 'Calculado con: ' + v.ramas_herencia,
+                 v.genetica_simulada && '⚠ el lado del padre es DATO FICTICIO de prueba'].filter(Boolean).join(' · ');
+    return `<span class="aten2-gen" title="${esc(TIP_GEN + ' · ' + det)}">her ${Math.round(v.riesgo_genetico)}${parcial}${sim}</span>`;
+  };
+  cont.innerHTML = notaSala + notaGen + `<div class="aten2-grid">` + vacas.map(v => {
     const cls = SIS_CLASE[v.sistema] || '';
     return `<div class="aten2-card ${cls}">
       <div class="aten2-cab">
@@ -4515,12 +5524,9 @@ function pintarSaludAtencionV2(d) {
         <div class="aten2-score" title="Score del sistema con más evidencia (remarcado abajo). Se lista a partir de 2.0.">${v.score}</div>
       </div>
       <span class="aten2-sis" title="${EXPLIC[cls] || ''}">${v.sistema}</span>
+      ${chipGen(v)}
       <ul class="aten2-motivos">${v.motivos.map(m => `<li>${m.texto}</li>`).join('')}</ul>
-      <div class="aten2-barras">
-        ${barra(v.S_ubre, 'b-ubre', v.sistema === 'UBRE')}
-        ${barra(v.S_metab, 'b-metab', v.sistema === 'METABÓLICO')}
-        ${barra(v.S_sist, 'b-sist', v.sistema === 'GENERAL')}
-      </div>
+      ${desglose(v)}
     </div>`;
   }).join('') + `</div>`;
 }
@@ -4681,6 +5687,406 @@ function pintarFichaInfo(info) {
     `<div class="tile"><div class="label">${l}</div><div class="value" style="font-size:17px">${v}</div></div>`).join('');
 }
 
+// --- Panel de herencia de la ficha ------------------------------------------
+// Un bloque por ancestro, con su aporte de genes, la CLASE de dato (genético
+// del catálogo vs. fenotípico de la base) y el detalle de salud y producción.
+const PROD_LABEL = {
+  pta_leche: 'Leche (PTA)', pta_grasa: 'Grasa (PTA)', pta_proteina: 'Proteína (PTA)',
+  tpi: 'TPI', merito_neto: 'Mérito Neto US$',
+  lactancias: 'Lactancias', kg_dia_prom: 'kg/día promedio', kg_dia_max: 'mejor día (kg)',
+};
+
+// --- Índice de mérito y línea de tiempo --------------------------------------
+// Cada tipo de evento con su color y su carril. Los carriles agrupan por lo que
+// el que mira está buscando: la carrera reproductiva, la sanitaria y el manejo.
+const LT_TIPOS = {
+  'Parto':                 {carril: 'repro',  color: '#4f9a94', hito: true},
+  'Inseminación':          {carril: 'repro',  color: '#2f7ec1', hito: false},
+  'Celo':                  {carril: 'repro',  color: '#7fb2d9', hito: false},
+  'Control de gestación':  {carril: 'repro',  color: '#8a6fc9', hito: false},
+  'Diagnóstico':           {carril: 'salud',  color: '#b3382c', hito: false},
+  'Cambio de grupo':       {carril: 'manejo', color: '#8b949e', hito: false},
+  'Cambio de transponder': {carril: 'manejo', color: '#5c6570', hito: false},
+  'Entrada':               {carril: 'manejo', color: '#d9a066', hito: true},
+  'Salida':                {carril: 'manejo', color: '#7a2d24', hito: true},
+};
+const LT_CARRILES = [
+  ['repro',  'Reproducción'],
+  ['salud',  'Sanidad'],
+  ['manejo', 'Manejo'],
+];
+const EJES_LABEL = {
+  produccion: ['Producción', 'litros por día contra las vacas de su misma lactancia'],
+  sanidad: ['Sanidad', 'episodios por año de exposición, contra el rodeo'],
+  fertilidad: ['Fertilidad', 'intervalo entre partos, edad al primer parto y servicios por preñez'],
+  longevidad: ['Longevidad', 'lactancias sostenidas por año de carrera'],
+};
+
+function pintarFichaMerito(m, eventos, info) {
+  const card = document.getElementById('ficha-merito-card');
+  if (!m || m.error) { card.hidden = true; return; }
+  card.hidden = false;
+  const cuerpo = document.getElementById('ficha-merito-cuerpo');
+  const esc = m.escala || {};
+
+  // --- El número, con su ubicación en el rodeo -----------------------------
+  let cab;
+  if (m.score == null) {
+    cab = `<div class="kpis" style="margin-top:10px">
+      <div class="tile" style="grid-column:1/-1;border-top-color:var(--muted)">
+        <div class="label">Índice de mérito</div>
+        <div class="value" style="font-size:16px">Sin índice</div>
+        <div class="label">${escHtml(m.sin_indice || '')}</div></div></div>`;
+  } else {
+    // Contra qué se compara: sin los cuartiles del rodeo, un 70 no dice nada.
+    const ubic = esc.p50 == null ? '' :
+      (m.score >= esc.p90 ? `entre el 10% mejor del rodeo`
+       : m.score >= esc.p75 ? `en el cuarto superior`
+       : m.score >= esc.p50 ? `por encima de la mediana`
+       : m.score >= esc.p25 ? `por debajo de la mediana`
+       : `en el cuarto inferior`);
+    const color = m.score >= (esc.p75 ?? 75) ? 'var(--good)'
+                : m.score >= (esc.p25 ?? 25) ? 'var(--warning)' : 'var(--critical)';
+    cab = `<div class="kpis" style="margin-top:10px">
+      <div class="tile" style="border-top-color:${color}">
+        <div class="label">Índice de mérito</div>
+        <div class="value" style="font-size:30px">${m.score}<span style="font-size:14px;opacity:.6"> / 100</span></div>
+        <div class="label">${ubic}${esc.n ? ` · ${fmt(esc.n)} vacas comparadas` : ''}</div></div>
+      <div class="tile"><div class="label">Confianza</div>
+        <div class="value" style="font-size:17px">${escHtml(m.confianza)}</div>
+        <div class="label">${m.ejes_medidos} de ${m.ejes_totales} ejes · ${m.peso_cubierto}% del peso
+          ${m.comparable ? '' : '<b style="color:var(--critical)">· no comparable con otro animal</b>'}</div></div>
+      <div class="tile"><div class="label">Mediana del rodeo</div>
+        <div class="value" style="font-size:17px">${esc.p50 ?? '—'}</div>
+        <div class="label">p25 ${esc.p25 ?? '—'} · p75 ${esc.p75 ?? '—'} · p90 ${esc.p90 ?? '—'}</div></div>
+      <div class="tile"><div class="label">Vida</div>
+        <div class="value" style="font-size:17px">${(m.vida.anios_vida ?? '—')} años</div>
+        <div class="label">${m.vida.n_partos} parto(s) · ${m.vida.n_celos} celos ·
+          ${m.vida.n_servicios} servicios</div></div>
+    </div>`;
+  }
+
+  // --- Los cuatro ejes, con vúmetro y su peso REAL -------------------------
+  // Color por tramo, con los cuartiles del rodeo como corte: es lo que el
+  // número significa. El p25/p75 salen del rodeo, no de umbrales inventados.
+  const colorEje = v => v == null ? 'var(--muted)'
+    : v >= (esc.p75 ?? 75) ? 'var(--good)'
+    : v >= (esc.p25 ?? 25) ? 'var(--warning)' : 'var(--critical)';
+
+  const ejes = Object.entries(EJES_LABEL).map(([k, [lab, sub]]) => {
+    const v = m.ejes[k], ap = (m.aporte_real || {})[k];
+    const det = (m.detalle || {})[k] || {};
+    // `.vu` es una grilla de DOS columnas: el label y la barra van envueltos en
+    // un solo div (columna 1) y el valor va aparte (columna 2). Con los tres
+    // sueltos, el valor cae a una segunda fila debajo de la barra.
+    return `<div class="vu vu-sis vu-solido${v == null ? ' sin' : ''}">
+        <div>
+          <div class="vu-lab"><b>${lab}</b>
+            <span class="aviso">${v == null ? 'excluido' : `peso ${ap}%`}</span></div>
+          <div class="vu-pista"><div class="vu-fill"
+            style="width:${v == null ? 0 : v}%;background-color:${colorEje(v)}"></div></div>
+        </div>
+        <div class="vu-val">${v == null ? '—' : v.toFixed(0) + ' / 100'}</div>
+      </div>
+      <div class="her-txt" style="margin:-2px 0 9px 0">${escHtml(det.texto || '')}
+        <span class="aviso">(${sub})</span></div>`;
+  }).join('');
+
+  cuerpo.innerHTML = cab + `<div class="aten2-vu" style="margin-top:14px">
+    <div class="aten2-vu-tit"><span>Los cuatro ejes</span><span>0 – 100</span></div>
+    ${ejes}</div>` + pintarMeritoExtra(m);
+
+  pintarLineaTiempo(eventos, info, m);
+}
+
+// Datos de la vida que NO puntúan pero que el que selecciona quiere ver.
+function pintarMeritoExtra(m) {
+  const v = m.vida || {};
+  const items = [];
+  if (v.primer_parto) items.push(['Primer parto', v.primer_parto]);
+  if (v.ultimo_parto) items.push(['Último parto', v.ultimo_parto]);
+  if (v.mellizos) items.push(['Partos con mellizos', v.mellizos]);
+  if (v.partos_sin_ternero) {
+    items.push(['Partos sin ternero cargado',
+      `${v.partos_sin_ternero} <span class="aviso">(dato faltante, no un mortinato)</span>`]);
+  }
+  if (v.n_servicios) {
+    items.push(['Servicios / preñeces', `${v.n_servicios} / ${v.n_concepciones}`]);
+  }
+  if (v.salida) items.push(['Salida del rodeo', v.salida]);
+  if (!items.length) return '';
+  return `<div class="her-nota" style="margin-top:12px">
+    <b>Otros datos de su vida</b> (no entran al índice)<br>` +
+    items.map(([l, x]) => `${l}: <b>${x}</b>`).join(' · ') + `</div>`;
+}
+
+function pintarLineaTiempo(eventos, info, m) {
+  const cont = document.getElementById('ficha-linea-cont');
+  const evs = (eventos || []).filter(e => e.fecha);
+  if (!evs.length) { cont.hidden = true; return; }
+  cont.hidden = false;
+
+  const fx = s => new Date(String(s).slice(0, 10) + 'T00:00:00');
+  // El eje arranca en el NACIMIENTO, no en el primer evento: así se ve el hueco
+  // de crianza, que en una vaquillona atrasada es justamente el dato.
+  const nac = info && info.nacimiento ? fx(info.nacimiento) : null;
+  const fechas = evs.map(e => fx(e.fecha));
+  const t0 = nac && nac < Math.min(...fechas) ? nac : new Date(Math.min(...fechas));
+  const fin = (m && m.vida && m.vida.salida) ? fx(m.vida.salida) : new Date();
+  const t1 = fin > new Date(Math.max(...fechas)) ? fin : new Date(Math.max(...fechas));
+  const span = Math.max(1, t1 - t0);
+  const pos = d => 100 * (d - t0) / span;
+
+  const porCarril = {};
+  LT_CARRILES.forEach(([k]) => { porCarril[k] = []; });
+  evs.forEach(e => {
+    const cfg = LT_TIPOS[e.tipo] || {carril: 'manejo', color: '#8b949e', hito: false};
+    (porCarril[cfg.carril] || porCarril.manejo).push({e, cfg, p: pos(fx(e.fecha))});
+  });
+
+  // Ticks: uno por año, más el nacimiento.
+  const ticks = [];
+  for (let y = t0.getFullYear(); y <= t1.getFullYear(); y++) {
+    const d = new Date(y, 0, 1);
+    if (d >= t0 && d <= t1) ticks.push({p: pos(d), txt: String(y)});
+  }
+
+  const carriles = LT_CARRILES.map(([k, lab]) => {
+    const marcas = (porCarril[k] || []).map(({e, cfg, p}) =>
+      `<div class="lt-m${cfg.hito ? ' hito' : ''}" style="left:${p}%;background:${cfg.color}"
+         title="${escHtml(e.fecha)} · ${escHtml(e.tipo)}${e.detalle ? ' — ' + escHtml(e.detalle) : ''}"></div>`
+    ).join('');
+    return `<div class="lt-carril"><span class="lt-lab">${lab}</span>
+      <div class="lt-pista">${marcas}</div></div>`;
+  }).join('');
+
+  document.getElementById('ficha-linea').innerHTML = `
+    <div class="lt-wrap"><div class="lt">
+      ${carriles}
+      <div class="lt-carril" style="height:0;margin:0"><div class="lt-pista"></div></div>
+      <div class="lt-eje"><div class="lt-pista" style="position:relative;left:96px;right:6px;height:100%">
+        ${ticks.map(t => {
+          // Los ticks van centrados sobre su marca, pero el primero y el último
+          // se saldrían del contenedor y quedaban cortados ("20" en vez de
+          // "2026"): en los bordes se alinean hacia adentro.
+          const tr = t.p > 96 ? 'translateX(-100%)' : t.p < 3 ? 'translateX(0)' : 'translateX(-50%)';
+          return `<div class="lt-tick" style="left:${t.p}%;transform:${tr}">${t.txt}</div>`;
+        }).join('')}
+      </div></div>
+    </div></div>
+    <div class="lt-ref">
+      ${Object.entries(LT_TIPOS).map(([t, c]) =>
+        `<span><i class="${c.hito ? 'hito' : ''}" style="background:${c.color}"></i>${t}</span>`).join('')}
+    </div>
+    <span class="aviso" style="display:block;margin-top:8px">La distancia entre dos marcas es
+      tiempo real: tres celos en un mes se ven juntos y tres celos en tres años, separados. El eje
+      arranca en el <b>nacimiento</b>${info && info.nacimiento ? ` (${info.nacimiento})` : ''}, así
+      que el tramo vacío del principio es la crianza.</span>`;
+}
+
+// --- Rentabilidad del animal en la ficha -------------------------------------
+let chartFichaRent = null;
+
+function pintarFichaRent(r) {
+  const card = document.getElementById('ficha-rent-card');
+  if (!r || r.error) {
+    // Con error se oculta: un panel de plata que no se pudo calcular es peor
+    // que no mostrarlo. El motivo queda en el log del servidor.
+    card.hidden = true;
+    // El gráfico se oculta explícitamente: si venía de otra vaca que sí
+    // producía, quedaría el canvas anterior debajo de un panel que dice que no
+    // hay producción.
+    document.getElementById('ficha-rent-grafico').hidden = true;
+    if (chartFichaRent) { chartFichaRent.destroy(); chartFichaRent = null; }
+    return;
+  }
+  card.hidden = false;
+  const res = r.resumen || {}, pr = r.precios || {};
+  const avisos = [];
+  if (pr.aviso_estimado) {
+    avisos.push(`<span class="chip rojo">Estimado</span> <b style="color:var(--critical)">${escHtml(pr.aviso_estimado)}</b>`);
+  }
+  if (r.falta) avisos.push(`<b>${escHtml(r.falta)}</b>`);
+  document.getElementById('ficha-rent-aviso').innerHTML =
+    avisos.map(a => `<div class="aviso" style="padding:3px 0">${a}</div>`).join('');
+
+  const cuerpo = document.getElementById('ficha-rent-cuerpo');
+
+  // --- Caso vaquillona que todavía no produce -----------------------------
+  // No hay ni un litro que graficar, y el dato importante es otro: cuánto lleva
+  // comiendo sin haber empezado a producir. Es donde este panel dice más.
+  const esp = r.espera_primer_parto;
+  if (!r.produce) {
+    cuerpo.innerHTML = `
+      <div class="kpis">
+        <div class="tile" style="border-top-color:var(--warning)">
+          <div class="label">Producción en el período</div>
+          <div class="value">0 litros</div>
+          <div class="label">${r.desde} a ${r.hasta}</div></div>
+        ${esp ? `
+        <div class="tile" style="border-top-color:var(--warning)">
+          <div class="label">Edad</div>
+          <div class="value">${Math.floor(esp.meses_edad / 12)} a ${esp.meses_edad % 12} m</div>
+          <div class="label">referencia de primer parto: ${esp.meses_referencia} meses</div></div>
+        <div class="tile" style="border-top-color:${esp.meses_atraso ? 'var(--critical)' : 'var(--good)'}">
+          <div class="label">Atraso sobre el primer parto</div>
+          <div class="value">${esp.meses_atraso} ${esp.meses_atraso === 1 ? 'mes' : 'meses'}</div>
+          <div class="label">${esp.meses_atraso ? 'comiendo sin producir' : 'en tiempo'}</div></div>` : ''}
+      </div>
+      ${esp ? `<p class="explica" style="margin-top:12px"><b>Lectura.</b> ${escHtml(esp.texto)}
+        Una vaquillona que no parió no genera ingreso pero sí costo todos los días, así que el
+        atraso <b>es plata</b>. No se puede poner el número exacto acá: su grupo de recría no
+        recibe descargas registradas del mixer con lote asignado, así que no hay un costo diario
+        que imputarle. Se resuelve mapeando ese lote en «Conciliación de grupos».</p>` : ''}`;
+    // El gráfico se oculta explícitamente: si venía de otra vaca que sí
+    // producía, quedaría el canvas anterior debajo de un panel que dice que no
+    // hay producción.
+    document.getElementById('ficha-rent-grafico').hidden = true;
+    if (chartFichaRent) { chartFichaRent.destroy(); chartFichaRent = null; }
+    return;
+  }
+
+  // --- Caso vaca en producción --------------------------------------------
+  const hayPlata = res.margen != null;
+  cuerpo.innerHTML = `
+    <div class="kpis">
+      <div class="tile" style="border-top-color:${hayPlata && res.margen >= 0 ? 'var(--good)' : 'var(--critical)'}">
+        <div class="label">Margen sobre alimentación</div>
+        <div class="value">${hayPlata ? pesos(res.margen) : '—'}</div>
+        <div class="label">${hayPlata ? `en ${res.dias_valorizados} días valorizados` : 'sin precios'}</div></div>
+      <div class="tile"><div class="label">Por día</div>
+        <div class="value">${hayPlata ? pesos(res.margen_dia) : '—'}</div>
+        <div class="label">${hayPlata ? `${pesos(res.ingreso)} de leche − ${pesos(res.costo)} de comida` : ''}</div></div>
+      <div class="tile"><div class="label">Litros libres por día</div>
+        <div class="value">${res.litros_libres_dia == null ? '—' : litros(res.litros_libres_dia)}</div>
+        <div class="label">de ${litros(res.litros_dia)} que produce</div></div>
+      <div class="tile"><div class="label">Le cuesta el litro</div>
+        <div class="value">${res.costo_por_litro == null ? '—' : pesos(res.costo_por_litro)}</div>
+        <div class="label">la usina paga ${pesos(res.precio_litro)}</div></div>
+    </div>`;
+
+  const sem = (r.semanas || []).filter(s => s.margen_dia != null);
+  document.getElementById('ficha-rent-grafico').hidden = !sem.length;
+  if (!sem.length) return;
+
+  // Reconstruir el acumulado alineado a las semanas graficadas: `r.acumulado`
+  // viene alineado a TODAS las semanas, incluidas las que no se valorizaron.
+  const idx = new Map((r.semanas || []).map((s, i) => [s.semana, i]));
+  const acum = sem.map(s => (r.acumulado || [])[idx.get(s.semana)] ?? null);
+
+  const o = baseOpts(true);
+  o.scales.x.stacked = true;
+  o.scales.y.stacked = true;
+  o.scales.y.title = { display: true, text: 'litros / día' };
+  o.plugins = o.plugins || {};
+  // El DEL en el tooltip: ubica cada semana en la curva de lactancia, que es lo
+  // que explica el movimiento (una vaca recién parida produce poco y su margen
+  // es bajo sin que nada esté mal).
+  o.plugins.tooltip = {
+    callbacks: {
+      afterTitle: (items) => {
+        const s = sem[items[0].dataIndex];
+        return [`${s.desde} a ${s.hasta}`,
+                s.dim != null ? `DEL ${s.dim} · ${s.grupo || ''}` : (s.grupo || '')].filter(Boolean);
+      },
+    },
+  };
+  chartFichaRent = dibujar('chart-ficha-rent', chartFichaRent, {
+    data: {
+      labels: sem.map(s => s.semana),
+      datasets: [
+        { type: 'bar', label: 'Litros libres', data: sem.map(s => s.litros_libres),
+          backgroundColor: '#4f9a94', borderWidth: 0, maxBarThickness: 30, borderRadius: 3,
+          order: 3 },
+        { type: 'bar', label: 'Se van en el alimento',
+          data: sem.map(s => s.litros_dia != null && s.litros_libres != null
+            ? +(s.litros_dia - s.litros_libres).toFixed(1) : null),
+          backgroundColor: '#b3382c', borderWidth: 0, maxBarThickness: 30, borderRadius: 3,
+          order: 3 },
+        { type: 'line', label: 'Margen acumulado', yAxisID: 'y1', data: acum,
+          borderColor: '#d9a066', borderWidth: 2.5, pointRadius: 2.5, tension: .35,
+          fill: true, backgroundColor: 'rgba(217,160,102,.13)', order: 1 },
+      ],
+    },
+    options: { ...o, scales: { ...o.scales,
+      y1: { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false },
+            title: { display: true, text: '$ acumulado' },
+            ticks: { callback: v => (Math.abs(v) >= 1e6
+              ? (v / 1e6).toLocaleString('es-AR', {maximumFractionDigits: 1}) + ' M'
+              : (v / 1000).toLocaleString('es-AR', {maximumFractionDigits: 0}) + ' k') } } } },
+  });
+
+  const huecos = (r.semanas || []).length - sem.length;
+  document.getElementById('ficha-rent-pie').innerHTML =
+    `Período: <b>${r.desde}</b> a <b>${r.hasta}</b>. ${res.semanas_valorizadas} de ` +
+    `${res.semanas} semana(s) valorizadas` +
+    (huecos ? `; ${huecos} quedaron afuera del gráfico por no tener suficientes días con ` +
+              `descarga registrada — un día sin descarga no es un día de ayuno, así que se ` +
+              `excluye en vez de contarse como comida gratis.` : '.') +
+    (r.dias_sin_costo ? ` ${r.dias_sin_costo} día(s) sueltos sin descarga a su lote.` : '') +
+    // Los paréntesis importan: sin ellos `A + B.length ? C : D` se agrupa como
+    // `(A + B.length) ? C : D` y todo el texto anterior se pierde.
+    ((r.grupos_sin_lote || []).length
+      ? ` Grupos sin lote asignado por los que pasó: ` +
+        `<b>${r.grupos_sin_lote.map(escHtml).join(', ')}</b>.`
+      : '');
+}
+
+function pintarFichaHerencia(h, aviso) {
+  const card = document.getElementById('ficha-herencia-card');
+  if (!h) { card.hidden = true; return; }
+  card.hidden = false;
+  document.getElementById('ficha-herencia-aviso').innerHTML = aviso
+    ? `<b style="color:var(--critical)">⚠ ${escHtml(aviso)}</b>` : '';
+
+  const bloque = a => {
+    const esToro = a.clase === 'toro';
+    const ident = a.id == null ? '—' : (esToro ? escHtml(a.id) : 'RP ' + a.id);
+    const clase = esToro ? 'genético (catálogo)' : 'fenotípico (medido acá)';
+    const riesgo = a.riesgo == null ? null : Math.round(a.riesgo);
+    // Salud: filas ya explicadas por el backend (rasgos del toro o historia de la
+    // vaca), con el MISMO layout que la tarjeta de atención — label arriba y
+    // texto abajo. Sin el label dos filas de la madre salían idénticas ("sin
+    // episodios en 2.02 años") y no se sabía cuál era mastitis y cuál metritis.
+    // Donde hay percentil va la barrita: más larga es peor, en las dos clases.
+    const salud = (a.salud || []).map(s => {
+      const p = s.percentil;
+      const txt = s.detalle || s.texto || '';
+      return `<div class="her-fila"><div class="her-lab">${escHtml(s.label)}</div>`
+        + (p == null ? '' : `<div class="vu-pista her-mini"><div class="vu-fill" style="width:${Math.max(0, Math.min(100, p))}%"></div></div>`)
+        + `<div class="her-txt">${escHtml(txt)}</div></div>`;
+    }).join('');
+    const prod = Object.entries(a.produccion || {})
+      .filter(([, v]) => v != null)
+      .map(([k, v]) => `<span class="ped-prod">${escHtml(PROD_LABEL[k] || k)}: <b>${escHtml(v)}</b></span>`).join('');
+    return `<div class="ped-caja${a.riesgo == null ? ' sin' : ''}">
+      <div class="ped-cab">
+        <div><b>${escHtml(a.parentesco)}</b> · ${ident}
+          <span class="ped-clase">${clase}${a.simulado ? ' · <b style="color:var(--critical)">⚠ FICTICIO</b>' : ''}</span></div>
+        <div class="ped-aporte" title="Proporción de genes que aporta.">${a.aporte}%</div>
+      </div>
+      ${riesgo == null
+        ? `<div class="her-txt" style="opacity:.7">${escHtml(a.motivo || 'Sin datos.')}</div>`
+        : `<div class="vu-pista ped-riesgo"><div class="vu-fill" style="width:${riesgo}%"></div></div>
+           <div class="her-txt"><b>Riesgo de enfermar ${riesgo}/100</b></div>${salud}`}
+      ${prod ? `<div class="ped-prods">${prod}</div>`
+             : (a.nota_produccion ? `<div class="ped-prods"><span class="ped-prod" style="opacity:.75">${escHtml(a.nota_produccion)}</span></div>` : '')}
+    </div>`;
+  };
+
+  const r = h.riesgo_enfermar;
+  document.getElementById('ficha-herencia-cuerpo').innerHTML = `
+    <div class="kpis" style="margin-bottom:12px">
+      <div class="tile"><div class="label">Riesgo heredado de enfermar</div>
+        <div class="value" style="font-size:17px">${r == null ? '—' : Math.round(r) + ' / 100'}</div>
+        <div class="label">${h.ramas && h.ramas.length ? 'con: ' + h.ramas.join(' + ') : 'sin datos de ancestros'}</div></div>
+    </div>
+    <div class="ped-nivel">Padres — aportan el 100% entre los dos</div>
+    <div class="ped-grid">${h.padres.map(bloque).join('')}</div>
+    <div class="ped-nivel">Abuelos — 25% cada uno, ADENTRO del aporte de su hijo/a</div>
+    <div class="ped-grid">${h.abuelos.map(bloque).join('')}</div>`;
+}
+
 function pintarFichaEventos(eventos) {
   const cont = document.getElementById('ficha-eventos-cuerpo');
   if (!eventos.length) { cont.innerHTML = '<div class="aviso">Sin eventos registrados.</div>'; return; }
@@ -4754,6 +6160,9 @@ async function buscarFicha() {
   try {
     const d = await pedirJSON(`/api/animal/ficha?rp=${encodeURIComponent(rp)}&tambo=${encodeURIComponent(tamboActual)}`);
     pintarFichaInfo(d.info);
+    pintarFichaMerito(d.merito, d.eventos, d.info);
+    pintarFichaRent(d.rentabilidad);
+    pintarFichaHerencia(d.herencia, d.genetica_aviso);
     pintarFichaEventos(d.eventos);
     pintarFichaProduccion(d.produccion);
     pintarFichaBcs(d.bcs);
@@ -4810,8 +6219,7 @@ async function cargarIot() {
 
 function iniciarIotVivo() {
   clearInterval(iotTimer);
-  cargarIot();
-  iotTimer = setInterval(cargarIot, IOT_REFRESCO_MS);
+  refrescoSinSolape(cargarIot, IOT_REFRESCO_MS, id => { iotTimer = id; }, true);
 }
 
 function detenerIotVivo() {
@@ -5048,8 +6456,7 @@ async function cargarPodalVivo() {
 
 function iniciarPodalVivo() {
   clearInterval(podalTimer);
-  cargarPodalVivo();
-  podalTimer = setInterval(cargarPodalVivo, PODAL_REFRESCO_MS);
+  refrescoSinSolape(cargarPodalVivo, PODAL_REFRESCO_MS, id => { podalTimer = id; }, true);
 }
 
 function detenerPodalVivo() {
@@ -5222,6 +6629,14 @@ async function cargarTambos() {
       cargarDatosDePagina(paginaActual);
       // La evolución NO se recarga sola: es pesada, se dispara solo con
       // "Aplicar" o "Ver mes completo".
+      // Reanuda el auto-refresco de Sala CMS si un tambo incompatible lo
+      // había frenado (ver el catch de cargarSala) y se volvió a uno bueno.
+      if (paginaActual === 'sala_cms') reprogramarRefrescoSala();
+      // Si el panel de "Configurar análisis" está abierto, refrescarlo: el
+      // input de "ocupación" se muestra u oculta según el tipo de sala del
+      // tambo activo (ver salaEsConvencional).
+      const panelCfg = document.getElementById('rutina-config-panel');
+      if (panelCfg && !panelCfg.hidden) { rutinaGruposDisponibles = []; cargarGruposRutina(); pintarPesosRutina(); }
     });
   } catch (e) {
     sel.innerHTML = '<option>—</option>';
@@ -5256,7 +6671,13 @@ document.getElementById('vista-tabla').addEventListener('click', () => cambiarVi
 // Rutina de ordeño: identificación → colocación de pezonera → retiro, por
 // sesión, con un score 0-100% que resume la calidad de la rutina.
 // ---------------------------------------------------------------------------
-const RUTINA_PUESTOS = 80;
+// Puestos físicos de la sala ACTIVA (80 en la rotativa, lados×puestos_por_lado
+// en una convencional — ver salas.de().cantidad_puestos en el backend). Se usa
+// para escalar el eje del gráfico de sesión: sin esto, San José (32 puestos)
+// quedaba dibujado contra un eje de 80, con todos los datos apretados abajo.
+function rutinaPuestos() {
+  return (tambosInfo[tamboActual] || {}).puestos || 80;
+}
 let rutinaData = null, rutinaSesionIdx = 0, rutinaZoom = 1;
 
 function colorScore(v) {
@@ -5280,11 +6701,13 @@ const RUTINA_PESOS_LABELS = {
 const RUTINA_CONFIG_KEY = 'delpro_rutina_config_v1';
 let rutinaGruposDisponibles = [];
 
+const UMBRAL_PREP_S_DEFECTO = 90;
+
 function leerConfigRutina() {
   try {
     const raw = localStorage.getItem(RUTINA_CONFIG_KEY);
-    return raw ? JSON.parse(raw) : { grupos: null, pesos: null };
-  } catch (e) { return { grupos: null, pesos: null }; }
+    return raw ? JSON.parse(raw) : { grupos: null, pesos: null, umbral_prep_s: null };
+  } catch (e) { return { grupos: null, pesos: null, umbral_prep_s: null }; }
 }
 function guardarConfigRutina(cfg) { localStorage.setItem(RUTINA_CONFIG_KEY, JSON.stringify(cfg)); }
 
@@ -5294,6 +6717,7 @@ function paramsRutinaConfig() {
   let extra = '';
   if (cfg.grupos && cfg.grupos.length) extra += '&grupos=' + encodeURIComponent(cfg.grupos.join(','));
   if (cfg.pesos) extra += '&pesos=' + encodeURIComponent(JSON.stringify(cfg.pesos));
+  if (cfg.umbral_prep_s) extra += '&umbral_prep_s=' + encodeURIComponent(cfg.umbral_prep_s);
   return extra;
 }
 
@@ -5321,15 +6745,34 @@ async function cargarGruposRutina() {
   }
 }
 
+// La sala convencional no tiene un equivalente real de "ocupación de la
+// plataforma" (ver salas/convencional.py._sin_ocupacion): el backend ya
+// excluye ese componente del score sea cual sea el peso pedido, así que se
+// oculta el input acá para no ofrecer un control que no hace nada.
+function salaEsConvencional() {
+  return (tambosInfo[tamboActual] || {}).sala === 'convencional';
+}
+
 function pintarPesosRutina() {
   const cont = document.getElementById('rutina-pesos-inputs');
   if (!cont) return;
-  const pesos = leerConfigRutina().pesos || RUTINA_PESOS_DEFECTO;
-  cont.innerHTML = Object.keys(RUTINA_PESOS_DEFECTO).map(clave => `
+  const cfg = leerConfigRutina();
+  const pesos = cfg.pesos || RUTINA_PESOS_DEFECTO;
+  const umbralPrep = cfg.umbral_prep_s || UMBRAL_PREP_S_DEFECTO;
+  const convencional = salaEsConvencional();
+  cont.innerHTML = Object.keys(RUTINA_PESOS_DEFECTO)
+    .filter(clave => clave !== 'ocupacion' || !convencional)
+    .map(clave => `
     <label class="aviso" style="display:flex;flex-direction:column;gap:3px">
-      ${RUTINA_PESOS_LABELS[clave]}
+      ${clave === 'prep_90s' ? `Colocación ≤${umbralPrep}s` : RUTINA_PESOS_LABELS[clave]}
       <input type="number" min="0" max="100" data-peso="${clave}" value="${pesos[clave]}" style="width:80px;padding:5px 7px">
     </label>`).join('');
+}
+
+function pintarUmbralPrepRutina() {
+  const inp = document.getElementById('rutina-umbral-prep');
+  if (!inp) return;
+  inp.value = leerConfigRutina().umbral_prep_s || UMBRAL_PREP_S_DEFECTO;
 }
 
 document.getElementById('rutina-config-toggle').addEventListener('click', () => {
@@ -5338,6 +6781,7 @@ document.getElementById('rutina-config-toggle').addEventListener('click', () => 
   if (!panel.hidden) {
     if (!rutinaGruposDisponibles.length) cargarGruposRutina();
     pintarPesosRutina();
+    pintarUmbralPrepRutina();
   }
 });
 
@@ -5349,15 +6793,22 @@ document.getElementById('rutina-config-aplicar').addEventListener('click', () =>
   document.querySelectorAll('#rutina-pesos-inputs input[data-peso]').forEach(inp => {
     pesos[inp.dataset.peso] = Number(inp.value) || 0;
   });
+  // Si la sala convencional escondió el input de "ocupación", se conserva el
+  // peso por defecto para esa clave: no se puede editar y el backend la
+  // excluye de todos modos, así que no cuenta como un cambio real.
+  if (salaEsConvencional()) pesos.ocupacion = RUTINA_PESOS_DEFECTO.ocupacion;
   const esDefecto = JSON.stringify(pesos) === JSON.stringify(RUTINA_PESOS_DEFECTO);
-  guardarConfigRutina({ grupos, pesos: esDefecto ? null : pesos });
+  const umbralInp = Number(document.getElementById('rutina-umbral-prep').value) || UMBRAL_PREP_S_DEFECTO;
+  const umbral_prep_s = umbralInp === UMBRAL_PREP_S_DEFECTO ? null : umbralInp;
+  guardarConfigRutina({ grupos, pesos: esDefecto ? null : pesos, umbral_prep_s });
   cargarRutina(document.getElementById('rutina-fecha').value);
 });
 
 document.getElementById('rutina-config-reset').addEventListener('click', () => {
-  guardarConfigRutina({ grupos: null, pesos: null });
+  guardarConfigRutina({ grupos: null, pesos: null, umbral_prep_s: null });
   cargarGruposRutina();
   pintarPesosRutina();
+  pintarUmbralPrepRutina();
   cargarRutina(document.getElementById('rutina-fecha').value);
 });
 
@@ -5454,9 +6905,10 @@ function renderRutinaChart(s) {
   const pxPerMin = (durMin > 240 ? 9 : 14) * rutinaZoom;
   const margenIzq = 30, margenSup = 8, margenInf = 24;
   const anchoPx = Math.max(700, margenIzq + 24 + durMin * pxPerMin);
-  const alto = margenSup + margenInf + RUTINA_PUESTOS * 10;
+  const puestos = rutinaPuestos();
+  const alto = margenSup + margenInf + puestos * 10;
   const x = t => margenIzq + ((t - inicio) / dur) * (anchoPx - margenIzq - 14);
-  const y = p => margenSup + (RUTINA_PUESTOS - p) * ((alto - margenSup - margenInf) / RUTINA_PUESTOS);
+  const y = p => margenSup + (puestos - p) * ((alto - margenSup - margenInf) / puestos);
 
   let grid = '';
   const pasoMs = (durMin > 240 ? 10 : 5) * 60 * 1000;
@@ -5467,7 +6919,8 @@ function renderRutinaChart(s) {
     grid += `<text x="${xx.toFixed(1)}" y="${(alto - margenInf + 13).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="middle">${new Date(t).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}</text>`;
   }
   let ejey = '';
-  for (let p = 0; p <= RUTINA_PUESTOS; p += 8) {
+  const pasoEje = puestos > 40 ? 8 : 4;
+  for (let p = 0; p <= puestos; p += pasoEje) {
     ejey += `<text x="${margenIzq - 5}" y="${(y(p) + 3).toFixed(1)}" font-size="9" fill="var(--muted)" text-anchor="end">${p}</text>`;
   }
 
@@ -5509,7 +6962,8 @@ document.addEventListener('mousemove', (e) => {
   const s = rutinaData.sesiones[rutinaSesionIdx];
   const v = s.visitas[Number(el.dataset.i)];
   const hora = iso => iso ? new Date(iso).toLocaleTimeString('es-AR') : '—';
-  const prep = v.prep_seg == null ? '—' : `${v.prep_seg}s ${v.cumple_90 ? '✓' : '⚠ objetivo ≤90s'}`;
+  const umbralPrep = leerConfigRutina().umbral_prep_s || UMBRAL_PREP_S_DEFECTO;
+  const prep = v.prep_seg == null ? '—' : `${v.prep_seg}s ${v.cumple_90 ? '✓' : `⚠ objetivo ≤${umbralPrep}s`}`;
   const nomGrupo = (s.grupos.find(g => g.grupo === v.grupo) || {}).nombre
                    || 'Grupo ' + (v.grupo ?? '—');
   tip.innerHTML = `<b>Puesto ${v.puesto}</b> · RP ${v.rp || '?'} · ${nomGrupo}<br>
@@ -5568,7 +7022,11 @@ async function cargarEvolucion() {
 
     const labels = d.puntos.map(p => new Date(p.fecha + 'T00:00:00')
       .toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: '2-digit' }));
-    const datasets = EVOLUCION_SERIES.map((s, k) => ({
+    // "Ocupación de la plataforma" no existe para una sala convencional (ver
+    // salaEsConvencional más arriba): la serie daría siempre null, así que se
+    // saca del todo en vez de mostrar una leyenda vacía.
+    const series = EVOLUCION_SERIES.filter(s => s.clave !== 'ocupacion' || !salaEsConvencional());
+    const datasets = series.map((s, k) => ({
       label: s.label, data: d.puntos.map(p => p[s.clave]),
       borderColor: SERIES[k % 8], backgroundColor: SERIES[k % 8],
       borderWidth: s.ancho || 1.6, pointRadius: d.total_puntos > 90 ? 0 : 3, tension: .25,
@@ -5974,8 +7432,53 @@ document.getElementById('conc-guardar').addEventListener('click', async () => {
 // --- Alimentación: eficiencia de conversión ----------------------------------
 let cvDatos = null, chartCv = null, cvReintento = null;
 
+// $ con separador de miles y sin decimales: los pesos por vaca/día andan en los
+// miles y los centavos son ruido a esa escala.
+const pesos = v => v == null ? '—'
+  : '$' + Number(v).toLocaleString('es-AR', {maximumFractionDigits: 0});
+const litros = v => v == null ? '—' : Number(v).toFixed(1) + ' l';
+
+// De dónde sale la plata, y qué le falta. Va junto al diagnóstico de materia
+// seca porque es el mismo tipo de información: cómo se construyó el número.
+function pintarDiagnosticoPrecios(dg) {
+  const pr = dg.precios || {};
+  if (!pr.insumos && !pr.error) return '';
+  const cob = Object.entries(dg.cobertura_precios || {});
+  const flojas = cob.filter(([, p]) => p < 95);
+  const faltan = dg.ingredientes_sin_precio || [];
+  let h = `<br><br><b>De dónde sale el costo.</b> Los ingredientes del mixer vienen con precio 0
+    en Haasten, así que los precios salen de la planilla del tambo
+    (<b>${escHtml(pr.archivo || '—')}</b>): ${pr.insumos || 0} insumos`;
+  if (pr.precio_litro) {
+    h += `, leche a <b>${pesos(pr.precio_litro)}</b> el litro`;
+    if (pr.tipo_cambio) h += ` (tipo de cambio $${fmt(pr.tipo_cambio)})`;
+  }
+  h += `. El costo de cada receta es la suma de sus ingredientes por sus kg, y de ahí se imputa a
+    los kg descargados a cada lote. Se calcula sobre <b>kg frescos</b>, que es como se carga el
+    mixer y como se factura, no sobre materia seca.`;
+  if (pr.error) h += `<br><b style="color:var(--critical)">⚠ ${escHtml(pr.error)}</b>`;
+  if (pr.aviso_estimado) {
+    h += `<br><b style="color:var(--critical)">⚠ ${escHtml(pr.aviso_estimado)}</b>`;
+  }
+  // Una receta con precios incompletos NO reporta costo: mejor sin número que
+  // con uno que parece la ración entera y es una parte.
+  if (flojas.length) {
+    h += `<br>Recetas con precios incompletos, que por eso quedan sin costo: ` +
+      flojas.map(([n, p]) => `${escHtml(n)} <b>${p}%</b> de sus kg con precio`).join(' · ') + '.';
+  }
+  if (faltan.length) {
+    h += `<br>Ingredientes a cargar en la planilla, del que más pesa al que menos: ` +
+      faltan.slice(0, 8).map(x => `${escHtml(x.ingrediente)} (${fmt(x.kg)} kg)`).join(' · ') +
+      (faltan.length > 8 ? ` y ${faltan.length - 8} más.` : '.');
+  }
+  h += `<br><b>Los litros libres solo descuentan el alimento</b>: no hay mano de obra, sanidad ni
+    estructura. Y el costo por vaca es un reparto del corral en partes iguales, no una medición
+    individual — sirve para comparar grupos, no vacas de un mismo grupo.`;
+  return h;
+}
+
 function pintarConversion() {
-  const d = cvDatos, r = d.resumen || {}, cob = d.cobertura || {};
+  const d = cvDatos, r = d.resumen || {}, cob = d.cobertura || {}, ec = d.economia || {};
   const conv = r.conversion_tambo;
   // El número solo no dice nada: se lo ubica contra las referencias de la
   // industria para vacas de alta producción.
@@ -5995,6 +7498,38 @@ function pintarConversion() {
       r.vacas_sin_control ? `${fmt(r.vacas_sin_control)} sin control lechero` : 'todas con control'],
   ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
     `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
+
+  // Economía. Va en su propia fila de tarjetas y solo si hay precios: si no,
+  // una sola tarjeta explica qué falta en vez de mostrar cuatro guiones.
+  // El aviso de precios estimados va ACÁ, arriba de las tarjetas, no solo en el
+  // diagnóstico del final: son pesos inventados con la misma cara que los
+  // reales, y las tarjetas es lo que la gente mira. Mismo criterio que el aviso
+  // de datos genéticos simulados en la tarjeta de atención de vacas.
+  const avisoPr = ((d.diagnostico || {}).precios || {}).aviso_estimado;
+  document.getElementById('cv-aviso-precios').innerHTML = avisoPr
+    ? `<span class="chip rojo">Estimado</span> <b style="color:var(--critical)">${escHtml(avisoPr)}</b>`
+    : '';
+
+  const cvEc = document.getElementById('cv-kpis-economia');
+  if (ec.hay_costo) {
+    cvEc.innerHTML = [
+      ['Litros libres', litros(ec.litros_libres),
+        `de ${litros(ec.kg_leche_vaca_dia)} · ${ec.pct_litros_libres}% queda después del alimento`],
+      ['Para pagar el alimento', litros(ec.litros_para_pagar),
+        `a ${pesos(ec.precio_litro)} el litro`],
+      ['Costo de la ración', pesos(ec.costo_vaca_dia) + '/vaca/día',
+        `${pesos(ec.costo_por_litro)} por litro producido`],
+      ['Sobre cuántas vacas', fmt(ec.vacas),
+        `${ec.grupos_con_costo} de ${ec.grupos_confiables} grupo(s) valorizados`],
+    ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
+      `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
+  } else {
+    cvEc.innerHTML = `<div class="tile" style="grid-column:1/-1;border-top-color:var(--muted)">
+      <div class="label">Litros libres</div>
+      <div class="value" style="font-size:15px">Sin datos</div>
+      <div class="label">${escHtml(ec.falta || 'Falta la planilla de precios.')}
+        Se carga en ⚙ Configuración.</div></div>`;
+  }
 
   const g = d.grupos || [];
   // Al gráfico van SOLO los confiables. Un grupo con descargas incompletas
@@ -6073,7 +7608,8 @@ function pintarConversion() {
     (dg.kg_sin_receta ? `<br>${fmt(dg.kg_sin_receta)} kg descargados quedaron afuera porque su ` +
       `mezcla se cargó antes del inicio del período y no se sabe con qué receta.` : '') +
     (dg.kg_negativos ? ` ${fmt(Math.abs(dg.kg_negativos))} kg de correcciones y devoluciones ` +
-      `se descontaron.` : '');
+      `se descontaron.` : '') +
+    pintarDiagnosticoPrecios(dg);
 
   document.getElementById('cv-info').innerHTML =
     `Período: <b>${d.desde}</b> a <b>${d.hasta}</b> (${d.dias} días). Termina en el último día ` +
@@ -6102,13 +7638,168 @@ document.getElementById('cv-aplicar').addEventListener('click', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Litros libres. Usa el MISMO endpoint y el mismo caché que la eficiencia de
+// conversión —el backend calcula las dos cosas del mismo cruce— así que abrir
+// esta pestaña no dispara ninguna consulta nueva. Con la base local corriendo
+// en SQL Express con poca RAM, duplicar el cruce sería el problema, no el
+// beneficio.
+// ---------------------------------------------------------------------------
+let llDatos = null, llReintento = null;
+let chartLlGrupos = null, chartLlLitro = null;
+
+function pintarLitrosLibres() {
+  const d = llDatos, ec = d.economia || {}, dg = d.diagnostico || {};
+  const pr = dg.precios || {};
+
+  document.getElementById('ll-aviso-precios').innerHTML = pr.aviso_estimado
+    ? `<span class="chip rojo">Estimado</span> <b style="color:var(--critical)">${escHtml(pr.aviso_estimado)}</b>`
+    : '';
+
+  const kpis = document.getElementById('ll-kpis');
+  if (ec.hay_costo) {
+    kpis.innerHTML = [
+      ['Litros libres', litros(ec.litros_libres),
+        `de ${litros(ec.kg_leche_vaca_dia)} · queda el ${ec.pct_litros_libres}%`],
+      ['Se van en el alimento', litros(ec.litros_para_pagar),
+        `a ${pesos(ec.precio_litro)} el litro`],
+      ['Costo de la ración', pesos(ec.costo_vaca_dia),
+        `por vaca y por día · ${pesos(ec.costo_por_litro)} por litro`],
+      ['Sobre cuántas vacas', fmt(ec.vacas),
+        `${ec.grupos_con_costo} de ${ec.grupos_confiables} grupo(s) valorizados`],
+    ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
+      `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
+  } else {
+    // Un solo cartel que dice QUÉ falta y dónde se arregla, en vez de cuatro
+    // tarjetas con guiones que no explican nada.
+    kpis.innerHTML = `<div class="tile" style="grid-column:1/-1;border-top-color:var(--muted)">
+      <div class="label">Litros libres</div>
+      <div class="value" style="font-size:15px">Sin datos todavía</div>
+      <div class="label">${escHtml(ec.falta || 'Falta la planilla de precios.')}
+        La ruta se define en ⚙ Configuración.</div></div>`;
+  }
+
+  // Solo los confiables: un grupo con descargas sin registrar tiene costo bajo
+  // por estar mal cargado y dibujaría la barra de mejor margen del tambo.
+  const g = (d.grupos || []).filter(x => x.confiable && x.litros_libres != null)
+    .sort((a, b) => (b.pct_litros_libres || 0) - (a.pct_litros_libres || 0));
+
+  const o1 = baseOpts(true);
+  o1.scales.x.stacked = true;
+  o1.scales.y.stacked = true;
+  o1.scales.y.title = { display: true, text: 'litros / vaca / día' };
+  chartLlGrupos = dibujar('chart-ll-grupos', chartLlGrupos, {
+    type: 'bar',
+    data: {
+      labels: g.map(x => x.grupo),
+      datasets: [
+        { label: 'Litros libres', data: g.map(x => x.litros_libres),
+          backgroundColor: '#4f9a94' },
+        { label: 'Se van en el alimento', data: g.map(x => x.litros_para_pagar),
+          backgroundColor: '#b3382c' },
+      ],
+    },
+    options: o1,
+  });
+
+  const o2 = baseOpts(true);
+  o2.scales.y.title = { display: true, text: '$ por litro' };
+  const precio = ec.precio_litro;
+  chartLlLitro = dibujar('chart-ll-litro', chartLlLitro, {
+    type: 'bar',
+    data: {
+      labels: g.map(x => x.grupo),
+      datasets: [
+        { label: 'Costo del alimento por litro', data: g.map(x => x.costo_por_litro),
+          backgroundColor: '#d9a066' },
+        // La referencia va como línea sobre las barras: sin ella el costo por
+        // litro es un número sin escala — no se sabe si $200 es mucho o poco.
+        ...(precio ? [{
+          label: 'Precio de la leche', type: 'line', data: g.map(() => precio),
+          borderColor: '#4f9a94', borderWidth: 2, borderDash: [5, 4],
+          pointRadius: 0, fill: false,
+        }] : []),
+      ],
+    },
+    options: o2,
+  });
+
+  tablaInteractiva('ll-tabla-grupos', [
+    { clave: 'grupo', titulo: 'Grupo', tipo: 'texto',
+      fmt: (v, f) => f.confiable ? v : `${v} <span class="chip rojo">no confiable</span>` },
+    { clave: 'lote', titulo: 'Lote', tipo: 'texto' },
+    { clave: 'vacas_promedio', titulo: 'Vacas', tipo: 'num' },
+    { clave: 'kg_leche_vaca_dia', titulo: 'Litros/vaca/día', tipo: 'num' },
+    { clave: 'kg_ms_vaca_dia', titulo: 'kg MS/vaca/día', tipo: 'num' },
+    { clave: 'costo_vaca_dia', titulo: '$ alimento/vaca/día', tipo: 'num', fmt: pesos },
+    { clave: 'costo_por_litro', titulo: '$ alimento/litro', tipo: 'num', fmt: pesos },
+    { clave: 'litros_para_pagar', titulo: 'Litros para pagarlo', tipo: 'num', fmt: litros },
+    // El chip va PEGADO al número, no solo en la columna Grupo. Un grupo con
+    // descargas sin registrar sale con el mejor porcentaje de litros libres del
+    // tambo —menos comida anotada es menos costo— y ordenando por esta columna
+    // encabeza la tabla, lejos de la advertencia. Le pasa a Rodeo 9 (Enfermería),
+    // que da 84,5% justamente por estar mal cargado.
+    { clave: 'litros_libres', titulo: 'LITROS LIBRES', tipo: 'num',
+      fmt: (v, f) => v == null ? '—'
+        : (f.confiable ? `<b>${v.toFixed(1)}</b>` : `${v.toFixed(1)}`)
+          + (f.pct_litros_libres != null
+              ? ` <span class="aviso">(${f.pct_litros_libres}%)</span>` : '')
+          + (f.confiable ? '' : ' <span class="chip rojo">no confiable</span>') },
+    { clave: 'dias', titulo: 'Días con dato', tipo: 'num',
+      // Los días valorizados pueden ser menos que los días con materia seca (una
+      // receta sin costo se saltea), y el costo se divide por esos, no por todos.
+      // Sin verlo, un grupo con la mitad de los días parece igual al resto.
+      fmt: (v, f) => (f.dias_con_costo != null && f.dias_con_costo < v)
+        ? `${v} <span class="aviso">(${f.dias_con_costo} con costo)</span>` : v },
+  ], d.grupos || [], { orden: 'litros_libres' });
+
+  tablaInteractiva('ll-tabla-vacas', [
+    { clave: 'rp', titulo: 'RP', tipo: 'num' },
+    { clave: 'grupo', titulo: 'Grupo', tipo: 'texto' },
+    { clave: 'lactancia', titulo: 'Lact.', tipo: 'num' },
+    { clave: 'dim', titulo: 'DEL', tipo: 'num' },
+    { clave: 'kg_leche_dia', titulo: 'Litros/día', tipo: 'num' },
+    { clave: 'costo_vaca_dia', titulo: '$ alimento/día (reparto)', tipo: 'num',
+      fmt: v => v == null ? '—' : `<span class="aviso">${pesos(v)}</span>` },
+    { clave: 'litros_libres', titulo: 'LITROS LIBRES', tipo: 'num',
+      fmt: (v, f) => v == null ? '—'
+        : `<b>${v.toFixed(1)}</b>` + (f.pct_litros_libres != null
+            ? ` <span class="aviso">(${f.pct_litros_libres}%)</span>` : '') },
+  ], (d.vacas || []).filter(v => v.litros_libres != null), { orden: 'litros_libres' });
+
+  document.getElementById('ll-diagnostico').innerHTML = pintarDiagnosticoPrecios(dg);
+  document.getElementById('ll-info').innerHTML =
+    `Período: <b>${d.desde}</b> a <b>${d.hasta}</b> (${d.dias} días). Termina en el último día ` +
+    `completo de datos diarios de DelPro, no en hoy.`;
+}
+
+async function cargarLitrosLibres() {
+  const info = document.getElementById('ll-info');
+  clearTimeout(llReintento);
+  const dias = document.getElementById('ll-dias').value;
+  try {
+    llDatos = await pedirJSON('/api/alimentacion/conversion?tambo=' +
+      encodeURIComponent(tamboActual) + '&dias=' + dias);
+    pintarLitrosLibres();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; llReintento = setTimeout(cargarLitrosLibres, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('ll-aplicar').addEventListener('click', () => {
+  llDatos = null;
+  cargarLitrosLibres();
+});
+
+// ---------------------------------------------------------------------------
 // Conversión histórica. Ver `conversion_historica.py`: dos indicadores con
 // frecuencias distintas a propósito (litros/MS semanal, sólidos/MS mensual).
 // ---------------------------------------------------------------------------
 let chDatos = null, chReintento = null, chTipo = 'line';
 // `dibujar()` recibe el Chart ANTERIOR para destruirlo: si se le pasa un
 // string, al repintar revienta con `.destroy is not a function`.
-let chartChSem = null, chartChCob = null, chartChMes = null, chartChLotes = null;
+let chartChSem = null, chartChCob = null, chartChMes = null, chartChLotes = null,
+    chartChLactVacas = null, chartChLactLitros = null, chartChLibres = null;
 
 // Decimales con coma, que es como se escriben los números acá. `fmt()` recorta
 // a un decimal y una conversión de 1,656 quedaría en 1,7 — se pierde justo lo
@@ -6283,6 +7974,66 @@ function pintarConversionHistorica() {
       scales: { y: { title: { display: true, text: 'litros / kg MS' } } },
     });
 
+  // --- Por lactancia: composición del rodeo y su efecto en el promedio ----
+  pintarLactanciaHistorica(d.por_lactancia || { semanas: [], descomposiciones: [] });
+
+  // --- Evolución de los litros libres --------------------------------------
+  // Solo si hay precios cargados. Sin ellos la sección entera queda oculta en
+  // vez de mostrar un gráfico vacío que parece un error del sistema.
+  // Las semanas valorizadas A MEDIAS no entran al gráfico. Marcarlas no
+  // alcanza —es el mismo argumento que ya usa este módulo con las semanas
+  // recortadas: el salto se ve igual—. Y acá el salto es grande y engañoso:
+  // medido el 30/07/2026, una semana en la que faltaban los rodeos 2, 3 y 4
+  // daba 4.646 $/vaca contra 9.000 en las completas, o sea 34 litros libres
+  // contra 24, dibujando una mejora del margen que nunca pasó.
+  const todasLibres = sem.filter(s => s.litros_libres != null);
+  const conLibres = todasLibres.filter(s => !s.parcial_costo);
+  const parciales = todasLibres.filter(s => s.parcial_costo);
+  document.getElementById('ch-libres-cont').hidden = !conLibres.length;
+  if (conLibres.length) {
+    const prHist = d.precios || {};
+    const avisos = [];
+    if (prHist.aviso_estimado) {
+      avisos.push(`<span class="chip rojo">Estimado</span> <b style="color:var(--critical)">${escHtml(prHist.aviso_estimado)}</b>`);
+    }
+    if (parciales.length) {
+      avisos.push(`<span class="chip rojo">Fuera del gráfico</span> ` +
+        `<b>${parciales.length} semana(s)</b> quedaron afuera porque solo se pudo valorizar una ` +
+        `parte del rodeo: ` + parciales.map(s =>
+          `${escHtml(s.semana)} <span class="aviso">(${fmtDec(s.cobertura_costo, 0)}% de las vacas)</span>`
+        ).join(' · ') + `. Con media ración sin precio el costo sale bajo y el margen parece ` +
+        `mejor de lo que fue. Están en la tabla de abajo con su cobertura. Se arregla cargando ` +
+        `los precios que faltan (ver el detalle al pie).`);
+    }
+    document.getElementById('ch-libres-aviso').innerHTML =
+      avisos.map(a => `<div class="aviso" style="padding:3px 0">${a}</div>`).join('');
+    const ol = baseOpts(true);
+    ol.scales.x.stacked = true;
+    ol.scales.y.stacked = true;
+    ol.scales.y.title = { display: true, text: 'litros / vaca / día' };
+    chartChLibres = dibujar('chart-ch-libres', chartChLibres, {
+      type: 'bar',
+      data: {
+        labels: conLibres.map(s => s.semana),
+        datasets: [
+          { label: 'Litros libres', data: conLibres.map(s => s.litros_libres),
+            backgroundColor: '#4f9a94', borderWidth: 0, maxBarThickness: 26 },
+          { label: 'Se van en el alimento',
+            data: conLibres.map(s => s.litros_vaca != null && s.litros_libres != null
+              ? +(s.litros_vaca - s.litros_libres).toFixed(1) : null),
+            backgroundColor: '#b3382c', borderWidth: 0, maxBarThickness: 26 },
+          { label: '% que queda libre', type: 'line', yAxisID: 'y1',
+            data: conLibres.map(s => s.pct_litros_libres),
+            borderColor: '#d9a066', borderWidth: 2, pointRadius: 2, tension: .3, fill: false },
+        ],
+      },
+      options: { ...ol, scales: { ...ol.scales,
+        y1: { position: 'right', beginAtZero: true, suggestedMax: 100,
+              grid: { drawOnChartArea: false },
+              title: { display: true, text: '% libre' } } } },
+    });
+  }
+
   tablaInteractiva('ch-tabla-semanas', [
     { clave: 'semana', titulo: 'Semana' },
     { clave: 'desde', titulo: 'Desde' },
@@ -6291,6 +8042,17 @@ function pintarConversionHistorica() {
     { clave: 'litros_vaca', titulo: 'Litros/vaca', fmt: v => fmtDec(v, 1) },
     { clave: 'ms_vaca', titulo: 'kg MS/vaca', fmt: v => fmtDec(v, 1) },
     { clave: 'conversion', titulo: 'Conversión', fmt: v => fmtDec(v) },
+    { clave: 'costo_vaca_dia', titulo: '$ alimento/vaca/día', tipo: 'num', fmt: pesos },
+    { clave: 'litros_libres', titulo: 'Litros libres', tipo: 'num',
+      // Con la cobertura pegada al número: una semana valorizada al 50% da un
+      // margen que parece bueno y no se puede comparar con las completas.
+      fmt: (v, f) => v == null ? '—'
+        : (f.parcial_costo ? fmtDec(v, 1) : `<b>${fmtDec(v, 1)}</b>`)
+          + (f.pct_litros_libres != null
+              ? ` <span class="aviso">(${fmtDec(f.pct_litros_libres, 1)}%)</span>` : '')
+          + (f.parcial_costo
+              ? ` <span class="chip rojo">solo ${fmtDec(f.cobertura_costo, 0)}% del rodeo</span>` : '') },
+    { clave: 'cobertura_costo', titulo: 'Cobertura costo %', fmt: v => fmtDec(v, 1) },
     { clave: 'cobertura', titulo: 'Cobertura %', fmt: v => fmtDec(v, 1) },
     { clave: 'dias', titulo: 'Días con datos', tipo: 'num' },
     { clave: 'parcial', titulo: 'Parcial', tipo: 'bool' },
@@ -6326,6 +8088,104 @@ function pintarConversionHistorica() {
   document.getElementById('ch-excluidos').innerHTML = partes.join('');
 }
 
+const COLORES_LACT = { 'L1': '#f472b6', 'L2': '#38bdf8', 'L3+': '#22c55e' };
+const NOMBRE_LACT = { 'L1': 'L1 · primera cría', 'L2': 'L2 · segunda lactancia', 'L3+': 'L3+ · tercera o más' };
+
+function pintarLactanciaHistorica(pl) {
+  const sem = pl.semanas || [];
+  const buckets = ['L1', 'L2', 'L3+'];
+  const et = sem.map(s => s.semana);
+
+  // --- Vacas por lactancia, apiladas, con el % de L1 como línea ------------
+  chartChLactVacas = dibujar('chart-ch-lact-vacas', chartChLactVacas, {
+    type: 'bar',
+    data: {
+      labels: et,
+      datasets: [
+        ...buckets.map(b => ({
+          type: 'bar', label: NOMBRE_LACT[b], stack: 'vacas',
+          data: sem.map(s => s.buckets[b].vacas),
+          backgroundColor: COLORES_LACT[b], borderWidth: 0, maxBarThickness: 26,
+        })),
+        { type: 'line', label: '% de primera cría (L1)', data: sem.map(s => s.pct_l1),
+          borderColor: '#f59e0b', backgroundColor: '#f59e0b', borderWidth: 3,
+          yAxisID: 'y1', tension: .25, pointRadius: 2 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      scales: {
+        x: { stacked: true },
+        y: { stacked: true, title: { display: true, text: 'vacas-día' } },
+        y1: { position: 'right', grid: { drawOnChartArea: false }, suggestedMax: 100,
+              title: { display: true, text: '% de L1' } },
+      },
+    },
+  });
+
+  // --- Litros por vaca, una línea por lactancia -----------------------------
+  chartChLactLitros = graficoCH('chart-ch-lact-litros', chartChLactLitros, et,
+    buckets.map(b => ({
+      label: NOMBRE_LACT[b], data: sem.map(s => s.buckets[b].litros_vaca),
+      borderColor: COLORES_LACT[b], backgroundColor: COLORES_LACT[b], tension: .25, spanGaps: true,
+    })), {
+      responsive: true, maintainAspectRatio: false,
+      scales: { y: { title: { display: true, text: 'litros / vaca / día' } } },
+    });
+
+  // --- Diagnóstico: mezcla vs. productividad real ---------------------------
+  const cont = document.getElementById('ch-lact-diagnostico');
+  const descs = pl.descomposiciones || [];
+  if (!descs.length) {
+    cont.innerHTML = '<div class="aviso">Todavía no hay suficientes semanas completas para '
+      + 'descomponer el cambio en mezcla y productividad (hacen falta al menos 8).</div>';
+    return;
+  }
+  const TITULOS = { 'todo el rango medido': 'En todo el rango medido',
+                    'desde el pico': 'Desde el mejor momento del rodeo hasta ahora' };
+  cont.innerHTML = descs.map(ds => {
+    const rango = `${ds.semanas_a[0]} a ${ds.semanas_a[ds.semanas_a.length-1]} → ` +
+                  `${ds.semanas_b[0]} a ${ds.semanas_b[ds.semanas_b.length-1]}`;
+    const mezclaDomina = Math.abs(ds.efecto_mezcla) >= Math.abs(ds.efecto_productividad);
+    let veredicto;
+    if (ds.delta_total <= 0 && ds.efecto_mezcla < 0 && mezclaDomina) {
+      veredicto = `<b>La caída está explicada, sobre todo, por la incorporación de vacas de ` +
+        `primera cría.</b> Dentro de cada lactancia la producción se mantuvo estable o mejoró ` +
+        `(efecto productividad ${fmtDec(ds.efecto_productividad, 2)}); lo que bajó el promedio ` +
+        `del tambo fue que hoy hay más L1 y menos L2/L3+ en el rodeo.`;
+    } else if (ds.delta_total > 0 && ds.efecto_mezcla < 0) {
+      veredicto = `A pesar de que la mezcla le restó ${fmtDec(Math.abs(ds.efecto_mezcla), 2)} ` +
+        `L/vaca (más vacas de primera cría), el promedio del tambo subió porque cada lactancia, ` +
+        `por separado, produjo más.`;
+    } else if (ds.efecto_mezcla >= 0) {
+      veredicto = `El cambio de mezcla no le restó al promedio — no explica ninguna caída en ` +
+        `este tramo.`;
+    } else {
+      veredicto = `La mezcla aportó ${fmtDec(ds.efecto_mezcla, 2)} L/vaca, pero el cambio ` +
+        `principal es la productividad dentro de cada lactancia.`;
+    }
+    const filas = buckets.map(b => {
+      const x = ds.detalle[b];
+      return `<tr><td>${NOMBRE_LACT[b]}</td>
+        <td>${fmtDec(x.share_a, 1)}% → ${fmtDec(x.share_b, 1)}%</td>
+        <td>${fmtDec(x.litros_vaca_a, 1)} → ${fmtDec(x.litros_vaca_b, 1)} L/vaca</td></tr>`;
+    }).join('');
+    return `<div class="alerta-caja" style="margin-top:10px">
+      <b>${TITULOS[ds.etiqueta] || ds.etiqueta}</b> (${rango})
+      <div style="margin-top:6px">Litros por vaca del tambo: ${fmtDec(ds.litros_vaca_a, 1)} →
+        ${fmtDec(ds.litros_vaca_b, 1)} (${ds.delta_total >= 0 ? '+' : ''}${fmtDec(ds.delta_total, 2)}).
+        Efecto mezcla ${ds.efecto_mezcla >= 0 ? '+' : ''}${fmtDec(ds.efecto_mezcla, 2)} ·
+        efecto productividad ${ds.efecto_productividad >= 0 ? '+' : ''}${fmtDec(ds.efecto_productividad, 2)}.</div>
+      <div style="margin-top:6px">${veredicto}</div>
+      <table style="margin-top:8px;width:100%;font-size:12.5px;border-collapse:collapse">
+        <thead><tr><th style="text-align:left">Lactancia</th><th style="text-align:left">Participación</th>
+          <th style="text-align:left">Litros/vaca</th></tr></thead>
+        <tbody>${filas}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+}
+
 document.getElementById('ch-aplicar').addEventListener('click', () => {
   chDatos = null;
   cargarConversionHistorica();
@@ -6341,8 +8201,10 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
     x.setAttribute('aria-pressed', String(x.dataset.tab === tab)));
   document.getElementById('alim-panel-conciliacion').hidden = tab !== 'conciliacion';
   document.getElementById('alim-panel-conversion').hidden = tab !== 'conversion';
+  document.getElementById('alim-panel-libres').hidden = tab !== 'libres';
   document.getElementById('alim-panel-historica').hidden = tab !== 'historica';
   if (tab === 'conversion' && !cvDatos) cargarConversion();
+  if (tab === 'libres' && !llDatos) cargarLitrosLibres();
   if (tab === 'historica' && !chDatos) cargarConversionHistorica();
 });
 
@@ -6352,7 +8214,7 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'ordeno', 'rutina', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas']
+const PAGINAS = ['dashboard', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas', 'configuracion']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -6376,6 +8238,245 @@ function activarAPedido(contId, fn, titulo, detalle) {
 
 const DEMORA = 'Consulta pesada: puede tardar un rato la primera vez, después queda en memoria.';
 
+// ---------------------------------------------------------------------------
+// Ordeño en Vivo — Sala CMS (espina de pescado). Módulo aparte de la
+// rotativa: acá las vacas entran por TANDA (bloque), alternando de lado, no
+// por una vuelta continua. Ver `sala_convencional.py`.
+// ---------------------------------------------------------------------------
+let salaData = null, salaConfig = null, salaTimer = null, salaReintento = null;
+let salaVista = 'grafica';
+let salaSeleccion = null;   // {lado, puesto} del puesto clickeado, para el detalle
+const SALA_REFRESCO_MS = 8000;
+
+function salaEsGrafica() { return salaVista === 'grafica'; }
+function salaEsVivo() { return document.getElementById('sala-vivo').checked; }
+
+function reprogramarRefrescoSala() {
+  clearInterval(salaTimer);
+  refrescoSinSolape(cargarSala, SALA_REFRESCO_MS, id => { salaTimer = id; });
+}
+
+async function cargarSalaConfig() {
+  try {
+    salaConfig = await pedirJSON('/api/sala/config?tambo=' + encodeURIComponent(tamboActual));
+    document.getElementById('sala-cfg-lados').value = salaConfig.lados;
+    document.getElementById('sala-cfg-puestos').value = salaConfig.puestos_por_lado;
+    document.getElementById('sala-cfg-ventana').value = salaConfig.ventana_vivo_min;
+  } catch (e) { /* la config es secundaria: si falla, se sigue con lo que había */ }
+}
+
+async function guardarSalaConfig() {
+  const cambios = {
+    lados: document.getElementById('sala-cfg-lados').value,
+    puestos_por_lado: document.getElementById('sala-cfg-puestos').value,
+    ventana_vivo_min: document.getElementById('sala-cfg-ventana').value,
+  };
+  try {
+    salaConfig = await pedirJSON('/api/sala/config?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cambios),
+    });
+    cargarSala();
+  } catch (e) {
+    alert('No se pudo guardar: ' + e.message);
+  }
+}
+
+async function cargarSala() {
+  clearTimeout(salaReintento);
+  const modo = salaEsVivo() ? '&modo=vivo' : '';
+  try {
+    const d = await pedirJSON('/api/sala?tambo=' + encodeURIComponent(tamboActual) + modo);
+    salaData = d;
+    const badge = document.getElementById('sala-badge');
+    if (d.en_vivo) { badge.className = 'badge vivo'; badge.textContent = 'EN VIVO'; }
+    else { badge.className = 'badge historico'; badge.textContent = d.modo === 'vivo' ? 'Sin ordeño ahora' : 'Último ordeño'; }
+    document.getElementById('sala-info').textContent =
+      (d.momento ? `${d.momento} (${d.hace}) · ` : '') + `${d.vacas} vacas`;
+    renderSala();
+  } catch (e) {
+    if (e.calentando) {
+      document.getElementById('sala-badge').textContent = 'cargando…';
+      salaReintento = setTimeout(cargarSala, 3000);
+    } else {
+      // Error real (no "calentando"): no tiene sentido seguir reintentando
+      // cada 8s contra algo que no va a cambiar solo (p.ej. el selector de
+      // tambo pasó a uno rotativo mientras esta página seguía de fondo) — se
+      // frena el auto-refresco en vez de repetir el mismo error sin parar.
+      clearInterval(salaTimer);
+      const badge = document.getElementById('sala-badge');
+      badge.className = 'badge historico';
+      badge.textContent = 'No disponible';
+      document.getElementById('sala-info').textContent = e.message;
+      salaData = null;
+      document.getElementById('sala-grafica').innerHTML = '';
+      document.getElementById('sala-detalle').innerHTML = '';
+      document.getElementById('sala-resumen').innerHTML = '';
+    }
+  }
+}
+
+function salaEstado(fila, idx) {
+  if (!fila) return 'vacio';
+  if (fila[idx.a_baja] || fila[idx.a_cond] || fila[idx.a_sangre] || fila[idx.a_retirada]) return 'alerta';
+  if (fila[idx.tratamiento_det]) return 'tratamiento';
+  return 'ocupado';
+}
+
+function salaResumen() {
+  const d = salaData;
+  const cont = document.getElementById('sala-resumen');
+  if (!d || !d.rows.length) { cont.innerHTML = ''; return; }
+  const idx = Object.fromEntries(d.columns.map((c, i) => [c, i]));
+  const total = d.rows.length;
+  const conTrat = d.rows.filter(f => f[idx.tratamiento_det]).length;
+  const conAlerta = d.rows.filter(f =>
+    f[idx.a_baja] || f[idx.a_cond] || f[idx.a_sangre] || f[idx.a_retirada]).length;
+  const cfg = salaConfig || {};
+  const capacidad = (cfg.lados || 0) * (cfg.puestos_por_lado || 0);
+  cont.innerHTML =
+    `<b>${total}</b> vacas en sala` +
+    (capacidad ? ` de <b>${capacidad}</b> puestos configurados` : '') +
+    ` · <b class="${conTrat ? 'malo' : ''}">${conTrat}</b> con tratamiento` +
+    ` · <b class="${conAlerta ? 'malo' : ''}">${conAlerta}</b> con alerta`;
+}
+
+// El MPCNo real de este tambo numera CORRIDO entre lados (verificado: lado 1
+// = puestos 1-16, lado 2 = 17-32, sin superponerse) — por eso el puesto
+// "visual" p del lado L se busca en la fila real como (L-1)*puestos+p. Un
+// tambo nuevo con otra convención de numeración (p.ej. cada lado arrancando
+// de nuevo en 1) rompería este cálculo: revisar acá si la grilla sale vacía
+// en una instalación distinta a San José.
+function salaPuestoReal(lado, p, puestosPorLado) {
+  return (lado - 1) * puestosPorLado + p;
+}
+
+function pintarSalaGrafica() {
+  const d = salaData;
+  const cont = document.getElementById('sala-grafica');
+  if (!d) { cont.innerHTML = ''; return; }
+  const idx = Object.fromEntries(d.columns.map((c, i) => [c, i]));
+  const porPuesto = {};
+  d.rows.forEach(f => { porPuesto[`${f[idx.lado]}-${f[idx.puesto]}`] = f; });
+  const cfg = salaConfig || { lados: 2, puestos_por_lado: 16 };
+  let html = '';
+  for (let lado = 1; lado <= cfg.lados; lado++) {
+    html += `<div class="sala-lado"><div class="sala-lado-titulo">Lado ${lado}</div><div class="sala-puestos">`;
+    for (let p = 1; p <= cfg.puestos_por_lado; p++) {
+      const real = salaPuestoReal(lado, p, cfg.puestos_por_lado);
+      const fila = porPuesto[`${lado}-${real}`];
+      const clase = salaEstado(fila, idx);
+      const sel = salaSeleccion && salaSeleccion.lado === lado && salaSeleccion.puesto === real ? ' seleccionado' : '';
+      const rp = fila ? fila[idx.rp] : '';
+      const kg = fila && fila[idx.produccion_kg] != null ? fmtDec(fila[idx.produccion_kg], 1) + ' kg' : '';
+      html += `<button type="button" class="sala-puesto ${clase}${sel}" data-lado="${lado}" data-puesto="${real}">` +
+        `<span class="n">${real}</span>${rp || '—'}${kg ? '<br>' + kg : ''}</button>`;
+    }
+    html += `</div></div>`;
+  }
+  cont.innerHTML = html;
+  cont.querySelectorAll('.sala-puesto').forEach(b => b.addEventListener('click', () => {
+    salaSeleccion = { lado: Number(b.dataset.lado), puesto: Number(b.dataset.puesto) };
+    renderSala();
+  }));
+}
+
+function pintarSalaDetalle() {
+  const d = salaData;
+  const cont = document.getElementById('sala-detalle');
+  if (!d || !salaSeleccion) {
+    cont.innerHTML = '<div class="aviso">Tocá un puesto para ver la vaca.</div>';
+    return;
+  }
+  const idx = Object.fromEntries(d.columns.map((c, i) => [c, i]));
+  const fila = d.rows.find(f => f[idx.lado] === salaSeleccion.lado && f[idx.puesto] === salaSeleccion.puesto);
+  if (!fila) {
+    cont.innerHTML = `<div class="aviso">Lado ${salaSeleccion.lado}, puesto ${salaSeleccion.puesto}: vacío en esta ventana.</div>`;
+    return;
+  }
+  const v = c => fila[idx[c]];
+  const filas = [
+    ['RP', v('rp')], ['Grupo', v('grupo')], ['Bloque', v('bloque')],
+    ['Días', v('dias')], ['Producción', v('produccion_kg') != null ? fmtDec(v('produccion_kg'), 1) + ' kg' : '—'],
+    ['Esperada', v('esperada_kg') != null ? fmtDec(v('esperada_kg'), 1) + ' kg' : '—'],
+    ['Conductividad', v('conductividad') ?? '—'], ['SCC', v('scc') != null ? fmt(v('scc') * 1000) : '—'],
+    ['Reproductivo', v('reproductivo')],
+    ['Tratamiento', v('tratamiento_det') || 'Ninguno'],
+    ['Droga/dosis', v('droga_dosis') || '—'],
+    ['Retiro de leche hasta', v('retiro_leche') || '—'],
+    ['No faenar hasta', v('no_faenar') || '—'],
+    ['Último parto', v('ultimo_parto') || '—'],
+    ['Último tratamiento', v('ult_tratamiento') ? `${v('ult_tratamiento')} (${v('ult_tratamiento_fecha')})` : '—'],
+  ];
+  const alarmas = [];
+  if (v('a_baja')) alarmas.push('Producción baja');
+  if (v('a_cond')) alarmas.push('Conductividad');
+  if (v('a_sangre')) alarmas.push('Sangre');
+  if (v('a_retirada')) alarmas.push('Retirada forzada');
+  cont.innerHTML =
+    `<div style="font-weight:700;font-size:15px">RP ${v('rp')} · Lado ${salaSeleccion.lado}, puesto ${salaSeleccion.puesto}</div>` +
+    (alarmas.length ? `<div class="aviso" style="color:var(--critical)">⚠ ${alarmas.join(' · ')}</div>` : '') +
+    filas.slice(1).map(([l, val]) => `<div class="aviso"><b>${l}:</b> ${val ?? '—'}</div>`).join('');
+}
+
+function pintarSalaTabla() {
+  const d = salaData;
+  if (!d) return;
+  const idx = Object.fromEntries(d.columns.map((c, i) => [c, i]));
+  const soloAlerta = document.getElementById('sala-alertas').checked;
+  const buscar = (document.getElementById('sala-buscar').value || '').trim();
+  let filas = d.rows.map(f => Object.fromEntries(d.columns.map((c, i) => [c, f[i]])));
+  if (soloAlerta) filas = filas.filter(f => f.a_baja || f.a_cond || f.a_sangre || f.a_retirada);
+  if (buscar) filas = filas.filter(f => String(f.rp || '').includes(buscar));
+  tablaInteractiva('sala-tabla', [
+    { clave: 'lado', titulo: 'Lado', tipo: 'num' },
+    { clave: 'puesto', titulo: 'Puesto', tipo: 'num' },
+    { clave: 'bloque', titulo: 'Bloque', tipo: 'num' },
+    { clave: 'rp', titulo: 'RP', tipo: 'num' },
+    { clave: 'grupo', titulo: 'Grupo' },
+    { clave: 'dias', titulo: 'Días', tipo: 'num' },
+    { clave: 'produccion_kg', titulo: 'Kg', fmt: v => fmtDec(v, 1) },
+    { clave: 'esperada_kg', titulo: 'Esperada', fmt: v => fmtDec(v, 1) },
+    { clave: 'conductividad', titulo: 'Cond.', tipo: 'num' },
+    { clave: 'scc', titulo: 'SCC', tipo: 'num' },
+    { clave: 'reproductivo', titulo: 'Reproductivo' },
+    { clave: 'tratamiento_det', titulo: 'Tratamiento' },
+    { clave: 'retiro_leche', titulo: 'Retiro leche' },
+    { clave: 'a_baja', titulo: 'Baja', tipo: 'bool' },
+    { clave: 'a_cond', titulo: 'Cond.', tipo: 'bool' },
+    { clave: 'a_sangre', titulo: 'Sangre', tipo: 'bool' },
+    { clave: 'a_retirada', titulo: 'Retirada', tipo: 'bool' },
+  ], filas, { orden: 'lado' });
+}
+
+function renderSala() {
+  document.getElementById('sala-grafica-wrap').hidden = !salaEsGrafica();
+  document.getElementById('sala-tabla-wrap').hidden = salaEsGrafica();
+  salaResumen();
+  if (salaEsGrafica()) { pintarSalaGrafica(); pintarSalaDetalle(); } else { pintarSalaTabla(); }
+}
+
+document.getElementById('sala-vista-grafica').addEventListener('click', () => {
+  salaVista = 'grafica';
+  document.getElementById('sala-vista-grafica').classList.add('activa');
+  document.getElementById('sala-vista-tabla').classList.remove('activa');
+  renderSala();
+});
+document.getElementById('sala-vista-tabla').addEventListener('click', () => {
+  salaVista = 'tabla';
+  document.getElementById('sala-vista-tabla').classList.add('activa');
+  document.getElementById('sala-vista-grafica').classList.remove('activa');
+  renderSala();
+});
+document.getElementById('sala-vivo').addEventListener('change', cargarSala);
+document.getElementById('sala-refrescar').addEventListener('click', cargarSala);
+document.getElementById('sala-config-toggle').addEventListener('click', () => {
+  const c = document.getElementById('sala-config');
+  c.hidden = !c.hidden;
+});
+document.getElementById('sala-cfg-guardar').addEventListener('click', guardarSalaConfig);
+document.getElementById('sala-alertas').addEventListener('change', renderSala);
+document.getElementById('sala-buscar').addEventListener('input', renderSala);
+
 function cargarDatosDePagina(id) {
   if (paginasCargadas.has(id)) return;
   paginasCargadas.add(id);
@@ -6384,10 +8485,9 @@ function cargarDatosDePagina(id) {
     cargarResumenProduccion(); cargarResumenAnimales(); cargarResumenDuraciones(); cargarResumenGrupo();
   }
   else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
-  else if (id === 'rutina') {
-    cargarRutina();
-    activarAPedido('rend-info', cargarRendimiento, 'rendimiento de sala', DEMORA);
-  }
+  else if (id === 'sala_cms') { cargarSalaConfig().then(cargarSala); }
+  else if (id === 'rutina') cargarRutina();
+  else if (id === 'rendimiento') activarAPedido('rend-info', cargarRendimiento, 'rendimiento de sala', DEMORA);
   else if (id === 'flujos') activarAPedido('flu-info', cargarFlujos, 'flujos de ordeño', DEMORA);
   else if (id === 'proyeccion') activarAPedido('proy-info', cargarProyeccion, 'la proyección', DEMORA);
   // Arranca en Parámetros Reproductivos: es la primera pestaña y la consulta
@@ -6403,6 +8503,7 @@ function cargarDatosDePagina(id) {
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
   else if (id === 'consultas') cargarPredefinidas();
+  else if (id === 'configuracion') cargarConfiguracion();
   // 'evolucion' no se autocarga: solo con "Aplicar" / "Ver mes completo".
 }
 
@@ -6423,10 +8524,13 @@ function irAPagina(id) {
   cargarDatosDePagina(id);
   // El auto-refresco del ordeño solo tiene sentido con esa página a la vista.
   if (id === 'ordeno') reprogramarRefrescoOrdeno(); else clearInterval(ordenoTimer);
+  if (id === 'sala_cms') reprogramarRefrescoSala(); else clearInterval(salaTimer);
   // El reintento de Salud solo tiene sentido con esa página a la vista.
   if (id !== 'salud') clearTimeout(saludReintento);
   // Ídem el reintento del análisis de flujos mientras el caché se calienta.
   if (id !== 'flujos') clearTimeout(fluReintento);
+  if (id !== 'rendimiento') clearTimeout(rendReintento);
+  if (id !== 'sala_cms') clearTimeout(salaReintento);
   if (id !== 'proyeccion') clearTimeout(proyReintento);
   if (id !== 'repro') clearTimeout(reproReintento);
   // Cámaras y actividad en vivo de "Problemas podales": solo mientras se ve la página.
@@ -6434,6 +8538,167 @@ function irAPagina(id) {
   // Estado en vivo de Monitoreo IoT: solo mientras se ve esa página.
   if (id === 'iot') iniciarIotVivo(); else detenerIotVivo();
 }
+
+// ---------------------------------------------------------------------------
+// "⚙ Configuración": conexión, hardware y proveedores del tambo activo.
+// Consolida en una sola pantalla lo que antes estaba repartido (tambos.py,
+// sala_convencional.json, proveedores/__init__.py) — ver configuracion_tambo.py.
+// ---------------------------------------------------------------------------
+function _llenarSelect(id, opciones, valorActual) {
+  const sel = document.getElementById(id);
+  sel.innerHTML = opciones.map(o =>
+    `<option value="${o.id}"${o.id === valorActual ? ' selected' : ''}>${o.label}</option>`).join('');
+}
+
+async function cargarConfiguracion() {
+  const estado = document.getElementById('config-estado');
+  estado.textContent = 'Cargando…';
+  try {
+    const d = await pedirJSON('/api/configuracion?tambo=' + encodeURIComponent(tamboActual));
+    const cfg = d.config, cat = d.catalogos;
+    document.getElementById('cfg-nombre').value = cfg.nombre || '';
+    document.getElementById('cfg-ip').value = cfg.ip || '';
+    document.getElementById('cfg-puerto').value = cfg.puerto || '';
+    document.getElementById('cfg-usuario').value = cfg.usuario || '';
+    document.getElementById('cfg-contrasena').value = '';
+    document.getElementById('config-contrasena-nota').textContent = cfg.contrasena_configurada
+      ? 'Ya hay una contraseña guardada — dejá el campo vacío para conservarla.'
+      : 'Sin contraseña guardada (se usa la variable de entorno de tambos.py, si hay).';
+    document.getElementById('cfg-tiene-bcs').checked = !!cfg.tiene_bcs;
+    document.getElementById('cfg-tiene-podal').checked = !!cfg.tiene_podal;
+    _llenarSelect('cfg-sistema-actividad', cat.sistema_actividad, cfg.sistema_actividad);
+    _llenarSelect('cfg-caudalimetro', cat.caudalimetro, cfg.caudalimetro);
+    _llenarSelect('cfg-usina-lactea', cat.usina_lactea, cfg.usina_lactea);
+    // Estos dos aceptan "sin override" (cfg.sistema_alimentacion/sala === null,
+    // cae al defecto de código) — se agrega una opción explícita para eso, en
+    // vez de tildar el primero de la lista y sugerir un valor que no se guardó.
+    const SIN_OVERRIDE = { id: '', label: '— Usar el valor por defecto —' };
+    _llenarSelect('cfg-sistema-alimentacion', [SIN_OVERRIDE, ...cat.sistema_alimentacion],
+                  cfg.sistema_alimentacion || '');
+    _llenarSelect('cfg-sala', [SIN_OVERRIDE, ...cat.sala], cfg.sala || '');
+    document.getElementById('cfg-personas').value = cfg.personas || '';
+    document.getElementById('cfg-arreo').value = cfg.arreo_min ?? '';
+    document.getElementById('cfg-ruta-toros').value = cfg.ruta_toros || '';
+    document.getElementById('cfg-ruta-precios').value = cfg.ruta_precios || '';
+    pintarEstadoArchivos(d);
+
+    await _actualizarPuestosConfig(cfg.sala_efectiva === 'convencional');
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+// Estado real de las dos planillas. Lo importante no es repetir la ruta que el
+// tambo escribió, es decir QUÉ ARCHIVOS SE ESTÁN LEYENDO: una ruta con un error
+// de tipeo cae en silencio a los archivos de al lado de la app, y sin verlo uno
+// cree que está usando la carpeta nueva. Y si hay datos inventados en juego
+// —toros simulados o precios estimados— se avisa acá, que es donde se cargan.
+function pintarEstadoArchivos(d) {
+  const a = d.archivos || {};
+  const rojo = t => `<b style="color:var(--critical)">${t}</b>`;
+
+  const t = a.toros || {}, g = d.genetica || {};
+  let ht = [];
+  if (t.configurada && !t.existe) ht.push(rojo('⚠ La ruta que pusiste no existe.'));
+  ht.push(t.archivos && t.archivos.length
+    ? `Leyendo: <b>${t.archivos.map(escHtml).join(' + ')}</b>`
+    : rojo('No se encontró ningún catálogo de toros.'));
+  if (g.error) ht.push(rojo('⚠ ' + escHtml(g.error)));
+  else if (g.toros != null) ht.push(`${g.toros} toros, ${g.con_riesgo} con datos de salud`);
+  if (g.aviso_simulado) ht.push(rojo('⚠ ' + escHtml(g.aviso_simulado)));
+  document.getElementById('cfg-estado-toros').innerHTML = ht.join(' · ');
+
+  const p = a.precios || {}, pr = d.precios || {};
+  let hp = [];
+  if (p.configurada && !p.existe) hp.push(rojo('⚠ La ruta que pusiste no existe.'));
+  hp.push(p.archivo ? `Leyendo: <b>${escHtml(p.archivo)}</b>`
+                    : rojo('No se encontró la planilla de precios.'));
+  if (pr.error) hp.push(rojo('⚠ ' + escHtml(pr.error)));
+  else {
+    if (pr.insumos != null) hp.push(`${pr.insumos} insumos con precio`);
+    // Sin el precio de la leche hay costo en pesos pero no litros libres, y eso
+    // hay que decirlo acá y no dejar que la pantalla de Alimentación aparezca
+    // vacía sin explicación.
+    hp.push(pr.precio_litro
+      ? `leche $${Number(pr.precio_litro).toLocaleString('es-AR', {maximumFractionDigits: 2})}/litro`
+      : rojo('falta el precio de la leche: sin él no hay litros libres'));
+    if (pr.tipo_cambio) hp.push(`TC $${Number(pr.tipo_cambio).toLocaleString('es-AR')}`);
+    if (pr.aviso_estimado) hp.push(rojo('⚠ ' + escHtml(pr.aviso_estimado)));
+  }
+  document.getElementById('cfg-estado-precios').innerHTML = hp.join(' · ');
+}
+
+async function _actualizarPuestosConfig(mostrar) {
+  const cont = document.getElementById('config-puestos-cont');
+  cont.hidden = !mostrar;
+  if (!mostrar) return;
+  try {
+    const d = await pedirJSON('/api/sala/config?tambo=' + encodeURIComponent(tamboActual));
+    document.getElementById('cfg-lados').value = d.lados || '';
+    document.getElementById('cfg-puestos-por-lado').value = d.puestos_por_lado || '';
+    document.getElementById('cfg-ventana-vivo').value = d.ventana_vivo_min || '';
+  } catch (e) { /* todavía no es convencional del lado del backend: se completa al guardar */ }
+}
+
+document.getElementById('cfg-sala').addEventListener('change', (e) => {
+  _actualizarPuestosConfig(e.target.value === 'convencional');
+});
+
+document.getElementById('config-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('config-estado');
+  const numOrNull = v => (v === '' || v == null) ? null : Number(v);
+  const datos = {
+    nombre: document.getElementById('cfg-nombre').value.trim() || null,
+    ip: document.getElementById('cfg-ip').value.trim() || null,
+    puerto: numOrNull(document.getElementById('cfg-puerto').value),
+    usuario: document.getElementById('cfg-usuario').value.trim() || null,
+    contrasena: document.getElementById('cfg-contrasena').value || null,
+    tiene_bcs: document.getElementById('cfg-tiene-bcs').checked,
+    tiene_podal: document.getElementById('cfg-tiene-podal').checked,
+    sistema_actividad: document.getElementById('cfg-sistema-actividad').value,
+    caudalimetro: document.getElementById('cfg-caudalimetro').value,
+    usina_lactea: document.getElementById('cfg-usina-lactea').value,
+    sistema_alimentacion: document.getElementById('cfg-sistema-alimentacion').value || null,
+    sala: document.getElementById('cfg-sala').value || null,
+    personas: numOrNull(document.getElementById('cfg-personas').value),
+    arreo_min: numOrNull(document.getElementById('cfg-arreo').value),
+    ruta_toros: document.getElementById('cfg-ruta-toros').value.trim() || null,
+    ruta_precios: document.getElementById('cfg-ruta-precios').value.trim() || null,
+  };
+  estado.textContent = 'Guardando…';
+  const postJSON = (url, body) => pedirJSON(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  try {
+    await postJSON('/api/configuracion?tambo=' + encodeURIComponent(tamboActual), datos);
+    // Se manda si la sección de puestos está VISIBLE (la sala es convencional
+    // ya sea por tambos.py o por el override recién guardado arriba), no solo
+    // cuando se tocó el combo "Tipo de sala" — si no, un tambo que ya es
+    // convencional por defecto (San José) nunca guardaría sus puestos.
+    // El pedido va DESPUÉS de esperar el de arriba (no en paralelo) porque
+    // _no_es_sala_convencional en app.py necesita el override ya guardado.
+    if (!document.getElementById('config-puestos-cont').hidden) {
+      const puestos = {
+        lados: numOrNull(document.getElementById('cfg-lados').value),
+        puestos_por_lado: numOrNull(document.getElementById('cfg-puestos-por-lado').value),
+        ventana_vivo_min: numOrNull(document.getElementById('cfg-ventana-vivo').value),
+      };
+      const limpio = Object.fromEntries(Object.entries(puestos).filter(([, v]) => v != null));
+      if (Object.keys(limpio).length) {
+        await postJSON('/api/sala/config?tambo=' + encodeURIComponent(tamboActual), limpio);
+      }
+    }
+    estado.textContent = 'Guardado.';
+    paginasCargadas.delete('configuracion');
+    await cargarConfiguracion();
+    // El tipo de sala / puestos pueden haber cambiado: refresca el listado
+    // de tambos (cambia "puestos" en el selector) sin recargar toda la página.
+    cargarTambos();
+  } catch (e) {
+    estado.textContent = 'Error al guardar: ' + e.message;
+  }
+});
 
 document.querySelectorAll('.nav-item').forEach(el =>
   el.addEventListener('click', () => irAPagina(el.dataset.pagina)));

@@ -13,6 +13,21 @@ valores NO coinciden con los del Chi oficial y no deben presentarse como tales.
 Todo lo demás (RCS/células somáticas, conductividad del rebaño y estadística
 de producción por rodeo) sí sale de datos reales y es directamente comparable.
 """
+import re
+
+# `salas.de(tambo).sql_grupos()` viene armado para correr SOLO (trae su
+# propio ORDER BY + OPTION de memoria, ver salas/convencional.py) — SQL Server
+# no permite NINGUNO de los dos dentro de una subquery/derived table sin
+# TOP/OFFSET ("Incorrect syntax near OPTION" / "The ORDER BY clause is
+# invalid in ... derived tables ... subqueries"), así que se sacan acá antes
+# de usarlo como JOIN en las consultas de abajo.
+_OPTION_CLAUSE = re.compile(r"\s*OPTION\s*\([^)]*\)\s*;?\s*\Z", re.IGNORECASE)
+_ORDER_BY_CLAUSE = re.compile(r"\s*ORDER\s+BY\b.*\Z", re.IGNORECASE | re.DOTALL)
+
+
+def _grupos_subquery(grupos_sql: str) -> str:
+    sin_option = _OPTION_CLAUSE.sub("", grupos_sql)
+    return _ORDER_BY_CLAUSE.sub("", sin_option)
 
 # OJO CON LAS UNIDADES: MilkTest.SCC se guarda en MILES de células/ml (un valor
 # de 4488 en la base son 4.488.000 células/ml). Verificado contra el reporte
@@ -68,58 +83,66 @@ _CTE_TESTS = f"""
 # --- Sección "Mayores RCS": resumen por grupo -------------------------------
 # "nuevas" = vacas que superan el umbral en el último control pero NO lo
 # superaban en el anterior (casos nuevos, los más accionables).
-SQL_RCS_POR_GRUPO = f"""
-    WITH {_CTE_TESTS}
-    SELECT g.Name AS grupo, g.Number AS numero,
-           COUNT(*) AS vacas,
-           AVG(u.scc_ultimo) AS scc_promedio,
-           MAX(u.scc_ultimo) AS scc_maximo,
-           SUM(CASE WHEN u.scc_ultimo > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END) AS altas_ultimo,
-           SUM(CASE WHEN u.scc_anterior > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END) AS altas_anterior,
-           SUM(CASE WHEN u.scc_ultimo > {UMBRAL_RCS_BASE}
-                     AND (u.scc_anterior IS NULL OR u.scc_anterior <= {UMBRAL_RCS_BASE})
-                    THEN 1 ELSE 0 END) AS nuevas,
-           SUM(CASE WHEN u.scc_ultimo > {UMBRAL_RCS_BASE} AND u.scc_anterior > {UMBRAL_RCS_BASE}
-                    THEN 1 ELSE 0 END) AS cronicas
-    FROM ult u
-    JOIN BasicAnimal b ON b.OID = u.Animal
-    JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
-    JOIN CMSGroupMilkSetting c ON c.[Group] = b.[Group] AND c.GCRecord IS NULL
-                              AND c.EnableMilking = 1
-    WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
-    GROUP BY g.Name, g.Number
-    ORDER BY g.Number
-    OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
-"""
+#
+# `grupos_sql`: subquery de "qué [Group] son de ordeñe real" — sale de
+# `salas.de(tambo).sql_grupos()` (ver salas/__init__.py), NUNCA se hardcodea
+# CMSGroupMilkSetting acá: esa tabla es propia del controlador de una
+# rotativa y una sala convencional (San José) no la tiene — la consulta
+# tiraría 'Invalid object name' (ver db.TablaNoDisponibleError). Todas las
+# consultas de este módulo que necesitan "grupos reales" siguen este mismo
+# patrón, con el mismo shape de columna (`gr.grupo`).
+def sql_rcs_por_grupo(grupos_sql: str) -> str:
+    return f"""
+        WITH {_CTE_TESTS}
+        SELECT g.Name AS grupo, g.Number AS numero,
+               COUNT(*) AS vacas,
+               AVG(u.scc_ultimo) AS scc_promedio,
+               MAX(u.scc_ultimo) AS scc_maximo,
+               SUM(CASE WHEN u.scc_ultimo > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END) AS altas_ultimo,
+               SUM(CASE WHEN u.scc_anterior > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END) AS altas_anterior,
+               SUM(CASE WHEN u.scc_ultimo > {UMBRAL_RCS_BASE}
+                         AND (u.scc_anterior IS NULL OR u.scc_anterior <= {UMBRAL_RCS_BASE})
+                        THEN 1 ELSE 0 END) AS nuevas,
+               SUM(CASE WHEN u.scc_ultimo > {UMBRAL_RCS_BASE} AND u.scc_anterior > {UMBRAL_RCS_BASE}
+                        THEN 1 ELSE 0 END) AS cronicas
+        FROM ult u
+        JOIN BasicAnimal b ON b.OID = u.Animal
+        JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
+        JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = b.[Group]
+        WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
+        GROUP BY g.Name, g.Number
+        ORDER BY g.Number
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
 
 # --- Secciones "Vacas con RCS altos" y "Crónicas" ---------------------------
 # `cronica` = superó el umbral en el último control Y en el anterior.
-SQL_RCS_VACAS = f"""
-    WITH ancla AS ({_ANCLA}),
-    {_CTE_TESTS},
-    dia AS (
-      SELECT ad.BasicAnimal, ad.DIM, ad.LactationNumber,
-             ROW_NUMBER() OVER (PARTITION BY ad.BasicAnimal ORDER BY ad.Date DESC) AS rn
-      FROM AnimalDaily ad CROSS JOIN ancla
-      WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1
-        AND ad.Date BETWEEN DATEADD(day, -20, ancla.d) AND ancla.d
-    )
-    SELECT b.Number AS rp, g.Name AS grupo, d.DIM AS del, d.LactationNumber AS lactancia,
-           u.scc_ultimo, u.scc_anterior,
-           CONVERT(varchar(10), u.fecha_ultimo, 120) AS fecha_ultimo,
-           CONVERT(varchar(10), u.fecha_anterior, 120) AS fecha_anterior,
-           CASE WHEN u.scc_anterior > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END AS cronica
-    FROM ult u
-    JOIN BasicAnimal b ON b.OID = u.Animal
-    JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
-    JOIN CMSGroupMilkSetting c ON c.[Group] = b.[Group] AND c.GCRecord IS NULL
-                              AND c.EnableMilking = 1
-    LEFT JOIN dia d ON d.BasicAnimal = u.Animal AND d.rn = 1
-    WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
-      AND u.scc_ultimo > {UMBRAL_RCS_BASE}
-    ORDER BY u.scc_ultimo DESC
-    OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
-"""
+def sql_rcs_vacas(grupos_sql: str) -> str:
+    return f"""
+        WITH ancla AS ({_ANCLA}),
+        {_CTE_TESTS},
+        dia AS (
+          SELECT ad.BasicAnimal, ad.DIM, ad.LactationNumber,
+                 ROW_NUMBER() OVER (PARTITION BY ad.BasicAnimal ORDER BY ad.Date DESC) AS rn
+          FROM AnimalDaily ad CROSS JOIN ancla
+          WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1
+            AND ad.Date BETWEEN DATEADD(day, -20, ancla.d) AND ancla.d
+        )
+        SELECT b.Number AS rp, g.Name AS grupo, d.DIM AS del, d.LactationNumber AS lactancia,
+               u.scc_ultimo, u.scc_anterior,
+               CONVERT(varchar(10), u.fecha_ultimo, 120) AS fecha_ultimo,
+               CONVERT(varchar(10), u.fecha_anterior, 120) AS fecha_anterior,
+               CASE WHEN u.scc_anterior > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END AS cronica
+        FROM ult u
+        JOIN BasicAnimal b ON b.OID = u.Animal
+        JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
+        JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = b.[Group]
+        LEFT JOIN dia d ON d.BasicAnimal = u.Animal AND d.rn = 1
+        WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
+          AND u.scc_ultimo > {UMBRAL_RCS_BASE}
+        ORDER BY u.scc_ultimo DESC
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
 
 # --- Condición corporal (BCS) por vaca --------------------------------------
 # Réplica del gráfico de DelPro "Score corporal" (cámara BCS): un punto por
@@ -131,100 +154,106 @@ SQL_RCS_VACAS = f"""
 BCS_BAJO = 2.5   # por debajo: vaca flaca, riesgo de cetosis/fertilidad
 BCS_ALTO = 4.25  # por encima: vaca engrasada, riesgo de parto/metabólico
 
-SQL_BCS_VACAS = f"""
-    WITH bcs AS (
-      SELECT Animal, BcsValue, CAST(DateAndTime AS date) AS fecha,
-             ROW_NUMBER() OVER (PARTITION BY Animal ORDER BY DateAndTime DESC) AS rn
-      FROM BcsDailyData
-      WHERE BcsValue IS NOT NULL
-    ),
-    dia AS (
-      SELECT ad.BasicAnimal, ad.DIM, ad.LactationNumber,
-             ROW_NUMBER() OVER (PARTITION BY ad.BasicAnimal ORDER BY ad.Date DESC) AS rn
-      FROM AnimalDaily ad
-      WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1
-    )
-    SELECT b.Number AS rp, g.Name AS grupo, d.DIM AS del, d.LactationNumber AS lactancia,
-           bc.BcsValue AS score, CONVERT(varchar(10), bc.fecha, 120) AS fecha_score,
-           CASE WHEN r.IsDryingOff = 1 THEN 'En secado' WHEN r.IsPregnant = 1 THEN 'Preñada'
-                WHEN r.IsInseminated = 1 THEN 'Inseminada' WHEN r.Animal IS NULL THEN '-'
-                ELSE 'Vacía' END AS reproductivo
-    FROM bcs bc
-    JOIN BasicAnimal b ON b.OID = bc.Animal
-    JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
-    JOIN CMSGroupMilkSetting c ON c.[Group] = b.[Group] AND c.GCRecord IS NULL
-                              AND c.EnableMilking = 1
-    LEFT JOIN dia d ON d.BasicAnimal = bc.Animal AND d.rn = 1
-    LEFT JOIN AnimalReproductionInfo r ON r.Animal = bc.Animal AND r.GCRecord IS NULL
-    WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0 AND bc.rn = 1
-    OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
-"""
+# Además del grupo (ver nota de sql_rcs_por_grupo), esta consulta depende de
+# BcsDailyData: existe solo si el tambo tiene la cámara BCS instalada (es un
+# add-on de hardware, independiente del tipo de sala). Si no está, tira
+# 'Invalid object name' → db.TablaNoDisponibleError; el llamador (app.py) lo
+# captura puntualmente y muestra "sin cámara BCS" en vez de reintentar para
+# siempre.
+def sql_bcs_vacas(grupos_sql: str) -> str:
+    return f"""
+        WITH bcs AS (
+          SELECT Animal, BcsValue, CAST(DateAndTime AS date) AS fecha,
+                 ROW_NUMBER() OVER (PARTITION BY Animal ORDER BY DateAndTime DESC) AS rn
+          FROM BcsDailyData
+          WHERE BcsValue IS NOT NULL
+        ),
+        dia AS (
+          SELECT ad.BasicAnimal, ad.DIM, ad.LactationNumber,
+                 ROW_NUMBER() OVER (PARTITION BY ad.BasicAnimal ORDER BY ad.Date DESC) AS rn
+          FROM AnimalDaily ad
+          WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1
+        )
+        SELECT b.Number AS rp, g.Name AS grupo, d.DIM AS del, d.LactationNumber AS lactancia,
+               bc.BcsValue AS score, CONVERT(varchar(10), bc.fecha, 120) AS fecha_score,
+               CASE WHEN r.IsDryingOff = 1 THEN 'En secado' WHEN r.IsPregnant = 1 THEN 'Preñada'
+                    WHEN r.IsInseminated = 1 THEN 'Inseminada' WHEN r.Animal IS NULL THEN '-'
+                    ELSE 'Vacía' END AS reproductivo
+        FROM bcs bc
+        JOIN BasicAnimal b ON b.OID = bc.Animal
+        JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
+        JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = b.[Group]
+        LEFT JOIN dia d ON d.BasicAnimal = bc.Animal AND d.rn = 1
+        LEFT JOIN AnimalReproductionInfo r ON r.Animal = bc.Animal AND r.GCRecord IS NULL
+        WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0 AND bc.rn = 1
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
 
 
 # --- Sección "Vista del rebaño (conductividad)" -----------------------------
 # Promedio diario de conductividad relativa por grupo. >115 es sospecha de
 # mastitis, así que la curva por rodeo muestra si un lote se está yendo.
-SQL_CONDUCTIVIDAD_REBANIO = f"""
-    WITH ancla AS ({_ANCLA})
-    SELECT CAST(s.BeginTime AS date) AS fecha, g.Name AS grupo,
-           AVG(CAST(s.RelativeConductivity AS float)) AS cond_promedio,
-           SUM(CASE WHEN s.RelativeConductivity > {COND_ALTA} THEN 1 ELSE 0 END) AS vacas_altas,
-           COUNT(*) AS ordenos
-    FROM SessionMilkYield s CROSS JOIN ancla
-    JOIN BasicAnimal b ON b.OID = s.BasicAnimal
-    JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
-    JOIN CMSGroupMilkSetting c ON c.[Group] = b.[Group] AND c.GCRecord IS NULL
-                              AND c.EnableMilking = 1
-    WHERE CAST(s.BeginTime AS date) BETWEEN DATEADD(day, -{DIAS_CONDUCTIVIDAD}, ancla.d) AND ancla.d
-      AND s.RelativeConductivity IS NOT NULL AND b.Number > 0
-    GROUP BY CAST(s.BeginTime AS date), g.Name
-    ORDER BY fecha, grupo
-    OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
-"""
+def sql_conductividad_rebanio(grupos_sql: str) -> str:
+    return f"""
+        WITH ancla AS ({_ANCLA})
+        SELECT CAST(s.BeginTime AS date) AS fecha, g.Name AS grupo,
+               AVG(CAST(s.RelativeConductivity AS float)) AS cond_promedio,
+               SUM(CASE WHEN s.RelativeConductivity > {COND_ALTA} THEN 1 ELSE 0 END) AS vacas_altas,
+               COUNT(*) AS ordenos
+        FROM SessionMilkYield s CROSS JOIN ancla
+        JOIN BasicAnimal b ON b.OID = s.BasicAnimal
+        JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
+        JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = b.[Group]
+        WHERE CAST(s.BeginTime AS date) BETWEEN DATEADD(day, -{DIAS_CONDUCTIVIDAD}, ancla.d) AND ancla.d
+          AND s.RelativeConductivity IS NOT NULL AND b.Number > 0
+        GROUP BY CAST(s.BeginTime AS date), g.Name
+        ORDER BY fecha, grupo
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
 
 # --- Índice de atención (PROPIO, no es el score Chi) ------------------------
 # Datos crudos por vaca de los últimos días: producción real vs. esperada,
 # conductividad, y la referencia de los 7 días previos. Con esto se arma en
 # Python el índice (ver calcular_atencion), para poder explicar cada motivo.
 DIAS_ATENCION = 3          # días COMPLETOS de ordeño a mirar hacia atrás
-SQL_ATENCION_DATOS = f"""
-    WITH ancla AS ({_ANCLA}),
-    reciente AS (
-      SELECT s.BasicAnimal,
-             SUM(s.TotalYield) AS kg_real,
-             SUM(s.ExpectedYield) AS kg_esperado,
-             MAX(s.RelativeConductivity) AS cond_max,
-             AVG(CAST(s.RelativeConductivity AS float)) AS cond_prom,
-             MAX(s.BeginTime) AS ultimo_ordeno,
-             COUNT(*) AS ordenos
-      FROM SessionMilkYield s CROSS JOIN ancla
-      -- Solo días COMPLETOS: el último día cargado suele estar a medio ordeñar
-      -- y compararlo contra la expectativa del día entero da caídas falsas.
-      WHERE CAST(s.BeginTime AS date) BETWEEN DATEADD(day, -{DIAS_ATENCION - 1}, ancla.d) AND ancla.d
-        AND s.TotalYield IS NOT NULL
-      GROUP BY s.BasicAnimal
-    ),
-    dia AS (
-      SELECT ad.BasicAnimal, ad.TotalYield AS kg_dia, ad.AvgYieldPrev7d AS kg_prev7,
-             ad.DIM, ad.LactationNumber,
-             ROW_NUMBER() OVER (PARTITION BY ad.BasicAnimal ORDER BY ad.Date DESC) AS rn
-      FROM AnimalDaily ad CROSS JOIN ancla
-      WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1 AND ad.TotalYield > 0
-        AND ad.Date BETWEEN DATEADD(day, -10, ancla.d) AND ancla.d
-    )
-    SELECT b.Number AS rp, g.Name AS grupo, d.DIM AS del, d.LactationNumber AS lactancia,
-           r.kg_real, r.kg_esperado, r.cond_max, r.cond_prom, r.ordenos,
-           d.kg_dia, d.kg_prev7,
-           CONVERT(varchar(16), r.ultimo_ordeno, 120) AS ultimo_ordeno
-    FROM reciente r
-    JOIN BasicAnimal b ON b.OID = r.BasicAnimal
-    JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
-    JOIN CMSGroupMilkSetting c ON c.[Group] = b.[Group] AND c.GCRecord IS NULL
-                              AND c.EnableMilking = 1
-    LEFT JOIN dia d ON d.BasicAnimal = r.BasicAnimal AND d.rn = 1
-    WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
-    OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
-"""
+def sql_atencion_datos(grupos_sql: str) -> str:
+    return f"""
+        WITH ancla AS ({_ANCLA}),
+        reciente AS (
+          SELECT s.BasicAnimal,
+                 SUM(s.TotalYield) AS kg_real,
+                 SUM(s.ExpectedYield) AS kg_esperado,
+                 MAX(s.RelativeConductivity) AS cond_max,
+                 AVG(CAST(s.RelativeConductivity AS float)) AS cond_prom,
+                 MAX(s.BeginTime) AS ultimo_ordeno,
+                 COUNT(*) AS ordenos
+          FROM SessionMilkYield s CROSS JOIN ancla
+          -- Solo días COMPLETOS: el último día cargado suele estar a medio ordeñar
+          -- y compararlo contra la expectativa del día entero da caídas falsas.
+          WHERE CAST(s.BeginTime AS date) BETWEEN DATEADD(day, -{DIAS_ATENCION - 1}, ancla.d) AND ancla.d
+            AND s.TotalYield IS NOT NULL
+          GROUP BY s.BasicAnimal
+        ),
+        dia AS (
+          SELECT ad.BasicAnimal, ad.TotalYield AS kg_dia, ad.AvgYieldPrev7d AS kg_prev7,
+                 ad.DIM, ad.LactationNumber,
+                 ROW_NUMBER() OVER (PARTITION BY ad.BasicAnimal ORDER BY ad.Date DESC) AS rn
+          FROM AnimalDaily ad CROSS JOIN ancla
+          WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1 AND ad.TotalYield > 0
+            AND ad.Date BETWEEN DATEADD(day, -10, ancla.d) AND ancla.d
+        )
+        SELECT b.Number AS rp, g.Name AS grupo, d.DIM AS del, d.LactationNumber AS lactancia,
+               r.kg_real, r.kg_esperado, r.cond_max, r.cond_prom, r.ordenos,
+               d.kg_dia, d.kg_prev7,
+               CONVERT(varchar(16), r.ultimo_ordeno, 120) AS ultimo_ordeno
+        FROM reciente r
+        JOIN BasicAnimal b ON b.OID = r.BasicAnimal
+        JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
+        JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = b.[Group]
+        LEFT JOIN dia d ON d.BasicAnimal = r.BasicAnimal AND d.rn = 1
+        WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
 
 
 def calcular_atencion(columns, rows, top: int = TOP_ATENCION) -> list:
@@ -295,75 +324,151 @@ def calcular_atencion(columns, rows, top: int = TOP_ATENCION) -> list:
 # 4 días de hueco antes de R (así el propio proceso de la enfermedad no
 # contamina el baseline). Es la misma ventana con la que se midió el lift
 # de 4,16x en el backtest.
-SQL_ATENCION_V2 = f"""
-    WITH ancla AS ({_ANCLA}),
-    ses AS (
-      SELECT s.BasicAnimal,
-             CASE WHEN CAST(s.BeginTime AS date) BETWEEN DATEADD(day, -2, ancla.d) AND ancla.d THEN 'R'
-                  WHEN CAST(s.BeginTime AS date) BETWEEN DATEADD(day, -9, ancla.d) AND DATEADD(day, -7, ancla.d) THEN 'B'
-             END AS ventana,
-             s.TotalYield, s.ExpectedYield, s.RelativeConductivity, s.MaxBlood,
-             c.LowYieldAlarm, c.ConductivityAlarm
-      FROM SessionMilkYield s CROSS JOIN ancla
-      JOIN CMSMilkYield c ON c.OID = s.OID
-      JOIN BasicAnimal b ON b.OID = s.BasicAnimal
-      JOIN CMSGroupMilkSetting g ON g.[Group] = b.[Group] AND g.GCRecord IS NULL AND g.EnableMilking = 1
-      WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
-        AND s.BeginTime >= DATEADD(day, -9, ancla.d) AND CAST(s.BeginTime AS date) <= ancla.d
-    ),
-    agg AS (
-      SELECT BasicAnimal,
-        COUNT(CASE WHEN ventana = 'R' THEN 1 END) AS n_ses_r,
-        AVG(CASE WHEN ventana = 'R' THEN TotalYield END) AS kg_r,
-        COUNT(CASE WHEN ventana = 'B' THEN 1 END) AS n_ses_b,
-        AVG(CASE WHEN ventana = 'B' THEN TotalYield END) AS kg_b,
-        AVG(CASE WHEN ventana = 'R' THEN CAST(LowYieldAlarm AS float) END) AS tasa_lya_r,
-        AVG(CASE WHEN ventana = 'B' THEN CAST(LowYieldAlarm AS float) END) AS tasa_lya_b,
-        AVG(CASE WHEN ventana = 'R' AND ExpectedYield >= 1 THEN TotalYield / ExpectedYield END) AS ratio_r,
-        AVG(CASE WHEN ventana = 'B' AND ExpectedYield >= 1 THEN TotalYield / ExpectedYield END) AS ratio_b,
-        MAX(CASE WHEN ventana = 'R' AND RelativeConductivity > 0 THEN RelativeConductivity END) AS cond_max_r,
-        MAX(CASE WHEN ventana = 'B' AND RelativeConductivity > 0 THEN RelativeConductivity END) AS cond_max_b,
-        MAX(CASE WHEN ventana = 'R' THEN MaxBlood END) AS blood_max_r,
-        AVG(CASE WHEN ventana = 'B' THEN CAST(MaxBlood AS float) END) AS blood_avg_b,
-        SUM(CASE WHEN ventana = 'R' AND ConductivityAlarm = 1 THEN 1 ELSE 0 END) AS n_alarmas_r
-      FROM ses
-      WHERE ventana IS NOT NULL
-      GROUP BY BasicAnimal
-    ),
-    bcs AS (
-      SELECT Animal, TrendValueFourWeeks, TrendValueTwoWeeks,
-             ROW_NUMBER() OVER (PARTITION BY Animal ORDER BY DateAndTime DESC) AS rn
-      FROM BcsDailyData
-      WHERE DateAndTime >= DATEADD(day, -10, GETDATE())
-    ),
-    dia AS (
-      SELECT ad.BasicAnimal, ad.DIM, ad.LactationNumber,
-             ROW_NUMBER() OVER (PARTITION BY ad.BasicAnimal ORDER BY ad.Date DESC) AS rn
-      FROM AnimalDaily ad CROSS JOIN ancla
-      WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1
-        AND ad.Date BETWEEN DATEADD(day, -15, ancla.d) AND ancla.d
-    )
-    SELECT b.Number AS rp, g.Name AS grupo, d.DIM AS del, d.LactationNumber AS lactancia,
-           a.n_ses_r, a.kg_r, a.n_ses_b, a.kg_b, a.tasa_lya_r, a.tasa_lya_b,
-           a.ratio_r, a.ratio_b, a.cond_max_r, a.cond_max_b, a.blood_max_r, a.blood_avg_b,
-           a.n_alarmas_r, bc.TrendValueFourWeeks, bc.TrendValueTwoWeeks
-    FROM agg a
-    JOIN BasicAnimal b ON b.OID = a.BasicAnimal
-    JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
-    LEFT JOIN dia d ON d.BasicAnimal = a.BasicAnimal AND d.rn = 1
-    LEFT JOIN bcs bc ON bc.Animal = a.BasicAnimal AND bc.rn = 1
-    OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
-"""
+#
+# De las señales de acá, SOLO DOS son propias del controlador de una rotativa:
+# LowYieldAlarm y ConductivityAlarm (tabla CMSMilkYield). El resto (caída de
+# leche, ratio esperado y conductividad de sesión, de SessionMilkYield; BCS,
+# de BcsDailyData) sale de tablas comunes a cualquier tipo de sala. Por eso
+# `con_alarmas_rotativa` gatilla SOLO esas dos columnas — en sala convencional
+# se arma la misma consulta con `CAST(NULL AS bit)` en su lugar, en vez de
+# tirar `db.TablaNoDisponibleError` para el índice entero como pasaba antes.
+# El filtro de grupos ahora sí usa `_grupos_subquery` como el resto del
+# módulo (antes hardcodeaba `CMSGroupMilkSetting`, que tampoco existe en
+# convencional) — ver api_salud_atencion_v2 en app.py para quién decide
+# `con_alarmas_rotativa` (tambos.tipo_sala(tambo) == "rotativa").
+def sql_atencion_v2(grupos_sql: str, con_alarmas_rotativa: bool) -> str:
+    if con_alarmas_rotativa:
+        columnas_alarma = "c.LowYieldAlarm, c.ConductivityAlarm"
+        join_alarma = "JOIN CMSMilkYield c ON c.OID = s.OID"
+    else:
+        columnas_alarma = ("CAST(NULL AS bit) AS LowYieldAlarm, "
+                            "CAST(NULL AS bit) AS ConductivityAlarm")
+        join_alarma = ""
+    return f"""
+        WITH ancla AS ({_ANCLA}),
+        ses AS (
+          SELECT s.BasicAnimal,
+                 CASE WHEN CAST(s.BeginTime AS date) BETWEEN DATEADD(day, -2, ancla.d) AND ancla.d THEN 'R'
+                      WHEN CAST(s.BeginTime AS date) BETWEEN DATEADD(day, -9, ancla.d) AND DATEADD(day, -7, ancla.d) THEN 'B'
+                 END AS ventana,
+                 s.TotalYield, s.ExpectedYield, s.RelativeConductivity, s.MaxBlood,
+                 {columnas_alarma}
+          FROM SessionMilkYield s CROSS JOIN ancla
+          {join_alarma}
+          JOIN BasicAnimal b ON b.OID = s.BasicAnimal
+          JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = b.[Group]
+          WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL AND b.Number > 0
+            AND s.BeginTime >= DATEADD(day, -9, ancla.d) AND CAST(s.BeginTime AS date) <= ancla.d
+        ),
+        agg AS (
+          SELECT BasicAnimal,
+            COUNT(CASE WHEN ventana = 'R' THEN 1 END) AS n_ses_r,
+            AVG(CASE WHEN ventana = 'R' THEN TotalYield END) AS kg_r,
+            COUNT(CASE WHEN ventana = 'B' THEN 1 END) AS n_ses_b,
+            AVG(CASE WHEN ventana = 'B' THEN TotalYield END) AS kg_b,
+            AVG(CASE WHEN ventana = 'R' THEN CAST(LowYieldAlarm AS float) END) AS tasa_lya_r,
+            AVG(CASE WHEN ventana = 'B' THEN CAST(LowYieldAlarm AS float) END) AS tasa_lya_b,
+            AVG(CASE WHEN ventana = 'R' AND ExpectedYield >= 1 THEN TotalYield / ExpectedYield END) AS ratio_r,
+            AVG(CASE WHEN ventana = 'B' AND ExpectedYield >= 1 THEN TotalYield / ExpectedYield END) AS ratio_b,
+            MAX(CASE WHEN ventana = 'R' AND RelativeConductivity > 0 THEN RelativeConductivity END) AS cond_max_r,
+            MAX(CASE WHEN ventana = 'B' AND RelativeConductivity > 0 THEN RelativeConductivity END) AS cond_max_b,
+            MAX(CASE WHEN ventana = 'R' THEN MaxBlood END) AS blood_max_r,
+            AVG(CASE WHEN ventana = 'B' THEN CAST(MaxBlood AS float) END) AS blood_avg_b,
+            SUM(CASE WHEN ventana = 'R' AND ConductivityAlarm = 1 THEN 1 ELSE 0 END) AS n_alarmas_r
+          FROM ses
+          WHERE ventana IS NOT NULL
+          GROUP BY BasicAnimal
+        ),
+        bcs AS (
+          SELECT Animal, TrendValueFourWeeks, TrendValueTwoWeeks,
+                 ROW_NUMBER() OVER (PARTITION BY Animal ORDER BY DateAndTime DESC) AS rn
+          FROM BcsDailyData
+          WHERE DateAndTime >= DATEADD(day, -10, GETDATE())
+        ),
+        dia AS (
+          SELECT ad.BasicAnimal, ad.DIM, ad.LactationNumber,
+                 ROW_NUMBER() OVER (PARTITION BY ad.BasicAnimal ORDER BY ad.Date DESC) AS rn
+          FROM AnimalDaily ad CROSS JOIN ancla
+          WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1
+            AND ad.Date BETWEEN DATEADD(day, -15, ancla.d) AND ancla.d
+        )
+        SELECT b.Number AS rp, g.Name AS grupo, d.DIM AS del, d.LactationNumber AS lactancia,
+               a.n_ses_r, a.kg_r, a.n_ses_b, a.kg_b, a.tasa_lya_r, a.tasa_lya_b,
+               a.ratio_r, a.ratio_b, a.cond_max_r, a.cond_max_b, a.blood_max_r, a.blood_avg_b,
+               a.n_alarmas_r, bc.TrendValueFourWeeks, bc.TrendValueTwoWeeks,
+               pd.FatherId AS padre, pd.MotherId AS madre
+        FROM agg a
+        JOIN BasicAnimal b ON b.OID = a.BasicAnimal
+        JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
+        LEFT JOIN dia d ON d.BasicAnimal = a.BasicAnimal AND d.rn = 1
+        LEFT JOIN bcs bc ON bc.Animal = a.BasicAnimal AND bc.rn = 1
+        -- Padre de la vaca, para el riesgo genético (ver genetica.py). LEFT
+        -- JOIN: 76 de 7.314 vacas activas no tienen padre cargado y NO deben
+        -- desaparecer del índice por eso -- salen sin dato genético, nada más.
+        LEFT JOIN PedigreeInfo pd ON pd.OID = b.PedigreeInfo
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
+    """
 
 
 def _clip(x, lo=0.0, hi=1.0):
     return max(lo, min(hi, x))
 
 
-def calcular_atencion_v2(columns, rows, top: int = TOP_ATENCION) -> list:
+# Cuánto puede mover la genética el ORDEN de la lista, en puntos de score
+# (que va de 0 a 10). Con 0,3 un riesgo genético del 100% adelanta a la vaca
+# como máximo 0,3 puntos: alcanza para desempatar entre vacas que hoy dan una
+# señal parecida, y no alcanza para tapar una diferencia real de evidencia.
+#
+# POR QUÉ TAN POCO, y por qué NO entra al score:
+#   * La heredabilidad de estos rasgos es baja (mastitis ~0,03-0,12), y del
+#     catálogo solo se conoce al PADRE: la mitad de la genética de la vaca.
+#   * La genética NO CAMBIA día a día. Si pesara fuerte, las mismas vacas
+#     encabezarían la lista para siempre pase lo que pase, y "Atención vacas"
+#     dejaría de servir para lo único que sirve: decir a quién mirar HOY.
+#   * El umbral de entrada (score >= 2.0) se aplica al score CRUDO, antes del
+#     ajuste: la genética nunca mete una vaca a la lista, solo reordena las que
+#     ya entraron por evidencia propia.
+# El `score` que se muestra y se compara con el backtest queda intacto.
+PESO_GENETICA = 0.3
+
+
+def _texto_herencia(gen, padre, madre) -> str:
+    """Explicación en criollo del riesgo heredado, diciendo con qué ramas se
+    calculó — para que no se lea un "solo padre" como si fuera padre+madre."""
+    if not gen or gen.get("riesgo") is None:
+        falta = []
+        if not padre:
+            falta.append("padre")
+        if not madre:
+            falta.append("madre")
+        if falta:
+            return f"Sin {' ni '.join(falta)} cargado en DelPro."
+        return (f"Ni el padre ({padre}) está en el catálogo de toros, ni la madre "
+                f"(RP {madre}) tiene historia clínica registrada.")
+    partes = [f"{gen['riesgo']} sobre 100 ({gen['ramas']})"]
+    if gen.get("riesgo_padre") is not None:
+        partes.append(f"padre {padre}: {round(gen['riesgo_padre'])}")
+    if gen.get("riesgo_madre") is not None:
+        det = f"madre RP {gen['madre_rp']}: {round(gen['riesgo_madre'])}"
+        m, t = gen.get("madre_mastitis") or 0, gen.get("madre_metritis") or 0
+        if m or t:
+            det += f" ({m} mastitis, {t} metritis en {gen.get('madre_anios')} años)"
+        else:
+            det += " (sin enfermedades registradas)"
+        partes.append(det)
+    return " · ".join(partes)
+
+
+def calcular_atencion_v2(columns, rows, top: int = TOP_ATENCION,
+                         genetica_fn=None) -> list:
     """Índice EXPERIMENTAL multi-sistema (UBRE / METABÓLICO / SISTÉMICO), ver
-    la nota arriba de SQL_ATENCION_V2. Score 0-10 por sistema (noisy-OR), se
-    muestra el peor sistema y la evidencia de cada uno en criollo."""
+    la nota arriba de sql_atencion_v2. Score 0-10 por sistema (noisy-OR), se
+    muestra el peor sistema y la evidencia de cada uno en criollo.
+
+    `genetica_fn(padre) -> dict | None`: riesgo genético del padre de la vaca
+    (ver `genetica.de_toro`). Se inyecta desde app.py para no acoplar este
+    módulo a la lectura del Excel. None = sin genética, y el índice queda
+    exactamente como antes. Ver `PESO_GENETICA` para qué hace y qué NO hace."""
     idx = {c: i for i, c in enumerate(columns)}
     fichas = []
     for r in rows:
@@ -375,8 +480,12 @@ def calcular_atencion_v2(columns, rows, top: int = TOP_ATENCION) -> list:
             drop_pct = 100 * (kg_r - kg_b) / kg_b
             e_terms.append(("Caída de leche", _clip((-drop_pct - 6) / 16), drop_pct,
                              f"{kg_r:.1f} kg/ordeño (venía en {kg_b:.1f}, {drop_pct:+.0f}%)"))
-        if g("n_ses_r") and g("n_ses_r") >= 2 and g("n_ses_b") and g("n_ses_b") >= 2:
-            tasa_r, tasa_b = g("tasa_lya_r"), g("tasa_lya_b")
+        tasa_r, tasa_b = g("tasa_lya_r"), g("tasa_lya_b")
+        if (g("n_ses_r") and g("n_ses_r") >= 2 and g("n_ses_b") and g("n_ses_b") >= 2
+                and tasa_r is not None and tasa_b is not None):
+            # tasa_lya_* viene NULL en sala convencional (no tiene CMSMilkYield,
+            # ver sql_atencion_v2) — se excluye el término, nunca se trata como
+            # evidencia negativa, mismo criterio que el resto del motor.
             e_lya = _clip((tasa_r - max(tasa_b, 0.05) - 0.05) / 0.35)
             e_terms.append(("Alarma de bajo rendimiento", e_lya, tasa_r,
                              f"{round(tasa_r * g('n_ses_r'))} de {g('n_ses_r')} ordeños con alarma"))
@@ -465,37 +574,122 @@ def calcular_atencion_v2(columns, rows, top: int = TOP_ATENCION) -> list:
         if not motivos:
             continue
 
+        # Riesgo genético del padre: CONTEXTO, no evidencia de hoy. No entra al
+        # score (que ya quedó fijado arriba, y el umbral de entrada ya se
+        # aplicó), solo desplaza el orden hasta PESO_GENETICA puntos.
+        padre = g("padre") if "padre" in idx else None
+        padre = padre.strip() if isinstance(padre, str) else None
+        madre = g("madre") if "madre" in idx else None
+        madre = madre.strip() if isinstance(madre, str) else None
+        # `genetica_fn(padre, madre)` -> riesgo heredado combinado (mitad
+        # padre por catálogo genético, mitad madre por su historia clínica).
+        # Ver herencia.py; app.py es quien arma la función.
+        gen = genetica_fn(padre, madre) if genetica_fn and (padre or madre) else None
+        riesgo_gen = gen.get("riesgo") if gen else None
+
+        # --- Desglose para los vúmetros de la tarjeta -----------------------
+        # Cada término con su evidencia 0-1, el valor crudo en criollo, y a qué
+        # sistema(s) alimenta con qué peso. Es EXACTAMENTE lo que ya se usó
+        # arriba para calcular: acá no se recalcula nada, solo se expone, para
+        # que la pantalla pueda mostrar de dónde sale el score en vez de un
+        # número suelto. `evidencia: None` = sin dato (no es evidencia cero).
+        por_label = {t[0]: t for t in e_terms}
+
+        def _p(clave, label, ev, texto, sistemas, sin_dato):
+            return {"clave": clave, "label": label,
+                    "evidencia": round(ev, 3) if ev is not None else None,
+                    "texto": texto if ev is not None else sin_dato,
+                    "sistemas": sistemas}
+
+        def _sub(clave, label, sin_dato):
+            """Sub-término de leche: no alimenta un sistema directo, primero se
+            combina en `E_LECHE` (ver más abajo) y ESE va a los sistemas."""
+            t = por_label.get(label)
+            p = _p(clave, label, t[1] if t else None, t[3] if t else None, {}, sin_dato)
+            p["via"] = "leche"
+            return p
+
+        parametros = [
+            _sub("leche_caida", "Caída de leche",
+                 "Sin dato: falta el promedio reciente o el de referencia."),
+            _sub("leche_alarma", "Alarma de bajo rendimiento",
+                 "No disponible en esta sala (es del controlador de la rotativa)."),
+            _sub("leche_esperada", "Por debajo de lo esperado",
+                 "Sin dato: no hay producción esperada para comparar."),
+            _p("leche", "Evidencia de leche (combinada)", E_LECHE,
+               (motivo_leche[3] if motivo_leche else None),
+               {"UBRE": 0.20, "METABÓLICO": 0.20, "GENERAL": 0.55},
+               "Sin ninguna señal de leche disponible."),
+            _p("conductividad", "Conductividad", e_cond,
+               (f"pico de {round(cond_max_r)}"
+                + (f" (su normal: {round(cond_max_b)})" if cond_max_b else "")) if cond_max_r else None,
+               {"UBRE": 0.35}, "Sin lectura de conductividad en la ventana."),
+            _p("alarma_equipo", "Alarma de conductividad del equipo",
+               e_alarm if n_alarmas is not None else None,
+               f"{n_alarmas or 0} ordeño(s) con alarma en 3 días",
+               {"UBRE": 0.35}, "No disponible en esta sala."),
+            _p("bcs", "Condición corporal (BCS)", e_bcs, motivo_bcs,
+               {"METABÓLICO": 0.40},
+               "Sin cámara BCS o sin lectura reciente."),
+            _p("ordenos_perdidos", "Ordeños perdidos", e_s2,
+               (f"{g('n_ses_r') or 0} de ~{n_esperado} esperados en 3 días"
+                if n_esperado else None),
+               {"GENERAL": 0.35}, "Sin historial suficiente para saber su normal."),
+            # La herencia va última y marcada `contexto`: NO entra al score.
+            {"clave": "genetica", "label": "Riesgo heredado (padre + madre)",
+             "evidencia": round(riesgo_gen / 100.0, 3) if riesgo_gen is not None else None,
+             "texto": _texto_herencia(gen, padre, madre),
+             "sistemas": {}, "contexto": True,
+             "simulado": bool(gen.get("simulado")) if gen else False},
+        ]
+
         fichas.append({
             "rp": g("rp"), "grupo": g("grupo"), "del": g("del"), "lactancia": g("lactancia"),
             "score": round(score, 1), "sistema": sistema_principal, "motivos": motivos,
             "S_ubre": round(S_ubre, 1) if S_ubre is not None else None,
             "S_metab": round(S_metab, 1) if S_metab is not None else None,
             "S_sist": round(S_sist, 1) if S_sist is not None else None,
+            "padre": padre,
+            "madre": madre,
+            "riesgo_genetico": riesgo_gen,
+            "riesgo_padre": gen.get("riesgo_padre") if gen else None,
+            "riesgo_madre": gen.get("riesgo_madre") if gen else None,
+            "ramas_herencia": gen.get("ramas") if gen else None,
+            "detalle_padre": gen.get("detalle_padre") if gen else [],
+            "detalle_madre": gen.get("detalle_madre") if gen else [],
+            "parametros": parametros,
+            # True = el riesgo sale de datos FICTICIOS de prueba. La pantalla
+            # TIENE que decirlo: nadie puede descartar una vaca por esto.
+            "genetica_simulada": bool(gen.get("simulado")) if gen else False,
+            "_orden": score + PESO_GENETICA * (riesgo_gen / 100.0 if riesgo_gen is not None else 0),
         })
-    fichas.sort(key=lambda f: -f["score"])
+    # Se ordena por el score ajustado, pero el que se muestra es el crudo.
+    fichas.sort(key=lambda f: -f["_orden"])
+    for f in fichas:
+        del f["_orden"]
     return fichas[:top]
 
 
 # --- Sección "Estadística de producción de leche" ---------------------------
 # Producción por ordeño de cada rodeo, día por día, para calcular después en
 # Python la tendencia (día vs día anterior) y comparar semanas.
-SQL_PRODUCCION_POR_RODEO = f"""
-    WITH ancla AS ({_ANCLA})
-    SELECT CAST(s.BeginTime AS date) AS fecha, g.Name AS grupo,
-           AVG(s.TotalYield) AS kg_por_ordeno,
-           AVG(CAST(s.RelativeConductivity AS float)) AS cond_promedio,
-           COUNT(*) AS ordenos
-    FROM SessionMilkYield s CROSS JOIN ancla
-    JOIN BasicAnimal b ON b.OID = s.BasicAnimal
-    JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
-    JOIN CMSGroupMilkSetting c ON c.[Group] = b.[Group] AND c.GCRecord IS NULL
-                              AND c.EnableMilking = 1
-    WHERE CAST(s.BeginTime AS date) BETWEEN DATEADD(day, -{DIAS_CONDUCTIVIDAD}, ancla.d) AND ancla.d
-      AND s.TotalYield > 0 AND b.Number > 0
-    GROUP BY CAST(s.BeginTime AS date), g.Name
-    ORDER BY fecha, grupo
-    OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
-"""
+def sql_produccion_por_rodeo(grupos_sql: str) -> str:
+    return f"""
+        WITH ancla AS ({_ANCLA})
+        SELECT CAST(s.BeginTime AS date) AS fecha, g.Name AS grupo,
+               AVG(s.TotalYield) AS kg_por_ordeno,
+               AVG(CAST(s.RelativeConductivity AS float)) AS cond_promedio,
+               COUNT(*) AS ordenos
+        FROM SessionMilkYield s CROSS JOIN ancla
+        JOIN BasicAnimal b ON b.OID = s.BasicAnimal
+        JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
+        JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = b.[Group]
+        WHERE CAST(s.BeginTime AS date) BETWEEN DATEADD(day, -{DIAS_CONDUCTIVIDAD}, ancla.d) AND ancla.d
+          AND s.TotalYield > 0 AND b.Number > 0
+        GROUP BY CAST(s.BeginTime AS date), g.Name
+        ORDER BY fecha, grupo
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
 
 DIAS_DETALLE_RODEO = 6     # días sueltos que se muestran antes de los promedios
 

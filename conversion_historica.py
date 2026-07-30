@@ -100,7 +100,7 @@ def sql_solidos_por_control(desde, hasta, herd=None) -> str:
     """
 
 
-def sql_grupos_ordene(herd=None) -> str:
+def sql_grupos_ordene(grupos_sql: str, herd=None) -> str:
     """Los OID de grupo que DelPro tiene marcados como de ordeñe.
 
     Hace falta filtrar por acá y no alcanza con "el grupo tuvo leche": los
@@ -109,14 +109,57 @@ def sql_grupos_ordene(herd=None) -> str:
     lote —secas incluidas—. Esa MS entera se dividía entre ese puñado de vacas
     y daba 236 kg de materia seca por vaca, además de inflar el total del
     tambo. Un lote que come y no produce no puede entrar en una conversión.
+
+    `grupos_sql`: de `salas.grupos_subquery(tambo)` — qué [Group] son de
+    ordeñe real para ESTE tipo de sala. NUNCA se hardcodea CMSGroupMilkSetting
+    acá: esa tabla es propia del controlador de una rotativa (ver salud.py,
+    mismo patrón).
     """
     cond = rebano.condicion_herd("ag", herd)
     return f"""
-        SELECT c.[Group] AS grupo
-        FROM CMSGroupMilkSetting c
-        JOIN AnimalGroup ag ON ag.OID = c.[Group]
-        WHERE c.GCRecord IS NULL AND c.EnableMilking = 1
+        SELECT gr.grupo AS grupo
+        FROM ({grupos_sql}) gr
+        JOIN AnimalGroup ag ON ag.OID = gr.grupo
+        WHERE 1 = 1
           {f"AND {cond}" if cond else ""}
+    """
+
+
+BUCKETS_LACT = ["L1", "L2", "L3+"]
+
+# `LactationNumber` 0 = novilla que nunca parió (ver `resumen.py`), y no
+# debería aparecer en una fila de ordeño con leche. Aparece, pero apenas: 39
+# filas de 128.000 y 17 vacas en cuatro meses — un lag de carga en el momento
+# del parto, no una categoría real. Se suma a L1 en vez de abrir un bucket
+# aparte para eso.
+_BUCKET_LACT_SQL = ("CASE WHEN ad.LactationNumber <= 1 THEN 'L1' "
+                    "WHEN ad.LactationNumber = 2 THEN 'L2' ELSE 'L3+' END")
+
+
+def sql_produccion_por_lactancia(grupos_sql: str, desde, hasta, herd=None) -> str:
+    """Vacas en ordeñe y leche por día, agrupadas por lactancia (L1/L2/L3+).
+
+    Para separar si un cambio en litros por vaca es el rodeo mejorando o
+    empeorando, o es que cambió la MEZCLA de lactancias que se está ordeñando
+    (entran vaquillonas de primera cría, que producen menos que una vaca de
+    2da o 3ra). Se agrupa server-side por bucket, no por vaca: por vaca
+    multiplicaría las filas por 6-8 sin necesidad, esto ya alcanza para
+    reconstruir vacas-día y litros por semana y por bucket.
+
+    `grupos_sql`: ver la nota de `sql_grupos_ordene`.
+    """
+    cond = rebano.condicion_herd("ag", herd)
+    return f"""
+        SELECT CAST(ad.Date AS date) AS fecha, {_BUCKET_LACT_SQL} AS bucket,
+               COUNT(DISTINCT ad.BasicAnimal) AS vacas, SUM(ad.TotalYield) AS kg_leche
+        FROM AnimalDaily ad
+        JOIN AnimalGroup ag ON ag.OID = ad.AnimalGroup
+        JOIN ({grupos_sql}) gr ON gr.grupo = ad.AnimalGroup
+        WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1 AND ad.TotalYield > 0
+          AND ad.Date BETWEEN '{desde}' AND '{hasta}'
+          {f"AND {cond}" if cond else ""}
+        GROUP BY CAST(ad.Date AS date), {_BUCKET_LACT_SQL}
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
 
 
@@ -191,15 +234,153 @@ def _filas(data) -> list:
     return [{c: f[i] for c, i in idx.items()} for f in data["rows"]]
 
 
+def _bloque_lactancia(semanas: list, claves: list) -> tuple:
+    """Suma vacas-día y kg de leche de varias semanas, y devuelve (share, litros_vaca)
+    por bucket sobre ese bloque. `semanas` es la lista completa de semanas ya
+    armadas (con "buckets" adentro); `claves` son las que entran al bloque."""
+    por_semana = {s["semana"]: s for s in semanas}
+    tot_v = {b: 0 for b in BUCKETS_LACT}
+    tot_kg = {b: 0.0 for b in BUCKETS_LACT}
+    for k in claves:
+        s = por_semana[k]
+        for b in BUCKETS_LACT:
+            tot_v[b] += s["buckets"][b]["vacas"]
+            tot_kg[b] += s["buckets"][b]["kg_leche"]
+    total_v = sum(tot_v.values())
+    share = {b: (tot_v[b] / total_v if total_v else 0.0) for b in BUCKETS_LACT}
+    litros_vaca = {b: (tot_kg[b] / tot_v[b] if tot_v[b] else 0.0) for b in BUCKETS_LACT}
+    return share, litros_vaca
+
+
+def _descomponer(claves_a: list, claves_b: list, semanas: list, etiqueta: str) -> dict:
+    """¿El litros/vaca del rodeo cambió porque las vacas produjeron distinto, o
+    porque cambió la MEZCLA de lactancias que se está ordeñando?
+
+    Descomposición estándar de dos factores (a pesos de Laspeyres): el cambio
+    total se separa en cuánto es "mismo bucket, distinta mezcla de acá en más"
+    (efecto MEZCLA, a productividad del bloque B) más "misma mezcla de acá
+    para atrás, distinta productividad" (efecto PRODUCTIVIDAD, a mezcla del
+    bloque A). Los dos suman el cambio total, sin residuo.
+
+    Por qué hace falta: una vaquillona de primera cría da menos leche que una
+    de 2da o 3ra lactancia SIN que eso sea un problema de ración. Si en el
+    período de comparación entraron muchas de primera, el promedio del rodeo
+    puede caer o amesetarse aunque cada vaca, dentro de su categoría, esté
+    dando igual o más que antes. Sin esta cuenta, esa caída se lee como que
+    "algo empeoró", cuando en realidad cambió quién está en el tambo.
+    """
+    share_a, lv_a = _bloque_lactancia(semanas, claves_a)
+    share_b, lv_b = _bloque_lactancia(semanas, claves_b)
+    total_a = sum(share_a[b] * lv_a[b] for b in BUCKETS_LACT)
+    total_b = sum(share_b[b] * lv_b[b] for b in BUCKETS_LACT)
+    efecto_mezcla = sum(lv_b[b] * (share_b[b] - share_a[b]) for b in BUCKETS_LACT)
+    efecto_productividad = sum(share_a[b] * (lv_b[b] - lv_a[b]) for b in BUCKETS_LACT)
+    return {
+        "etiqueta": etiqueta,
+        "semanas_a": claves_a, "semanas_b": claves_b,
+        "litros_vaca_a": round(total_a, 2), "litros_vaca_b": round(total_b, 2),
+        "delta_total": round(total_b - total_a, 2),
+        "efecto_mezcla": round(efecto_mezcla, 2),
+        "efecto_productividad": round(efecto_productividad, 2),
+        "detalle": {b: {
+            "share_a": round(share_a[b] * 100, 1), "share_b": round(share_b[b] * 100, 1),
+            "litros_vaca_a": round(lv_a[b], 1), "litros_vaca_b": round(lv_b[b], 1),
+        } for b in BUCKETS_LACT},
+    }
+
+
+def lactancia(filas_lactancia, hoy: datetime.date) -> dict:
+    """Vacas y litros por vaca, semana a semana, abiertos por lactancia.
+
+    Es independiente de la materia seca: sale entero de `AnimalDaily`, así que
+    no depende de que Haasten tenga las descargas cargadas. Por eso una semana
+    puede estar completa acá y parcial en `armar()`, o al revés.
+    """
+    por_semana_dia = {}
+    for f in _filas(filas_lactancia):
+        d = _fecha(f["fecha"])
+        clave, lunes = semana_de(d)
+        s = por_semana_dia.setdefault(clave, {
+            "semana": clave, "desde": lunes.isoformat(),
+            "hasta": (lunes + datetime.timedelta(days=6)).isoformat(),
+            "dias": set(),
+            "buckets": {b: {"vacas": 0, "kg_leche": 0.0} for b in BUCKETS_LACT},
+        })
+        s["dias"].add(d.isoformat())
+        b = f["bucket"]
+        s["buckets"][b]["vacas"] += int(f["vacas"] or 0)
+        s["buckets"][b]["kg_leche"] += float(f["kg_leche"] or 0)
+
+    def cerrar(s):
+        dias = len(s["dias"])
+        total_v = sum(s["buckets"][b]["vacas"] for b in BUCKETS_LACT)
+        pct_l1 = round(100 * s["buckets"]["L1"]["vacas"] / total_v, 1) if total_v else None
+        return {
+            "semana": s["semana"], "desde": s["desde"], "hasta": s["hasta"], "dias": dias,
+            "parcial": dias < DIAS_MIN_SEMANA,
+            "vacas_total": total_v, "pct_l1": pct_l1,
+            "buckets": {b: {
+                "vacas": s["buckets"][b]["vacas"],
+                "kg_leche": round(s["buckets"][b]["kg_leche"]),
+                "litros_vaca": (round(s["buckets"][b]["kg_leche"] / s["buckets"][b]["vacas"], 1)
+                                if s["buckets"][b]["vacas"] else None),
+            } for b in BUCKETS_LACT},
+        }
+
+    semanas = [cerrar(s) for s in sorted(por_semana_dia.values(), key=lambda x: x["semana"])]
+    completas = [s["semana"] for s in semanas if not s["parcial"]]
+
+    descomposiciones = []
+    # Rango completo: primeras 4 semanas completas contra las últimas 4. Mismo
+    # criterio que `tendencia` en `armar()`, para que hablen de las mismas
+    # semanas si alguien compara las dos pestañas.
+    if len(completas) >= 8:
+        descomposiciones.append(_descomponer(
+            completas[:4], completas[-4:], semanas, "todo el rango medido"))
+
+    # Pico contra la actualidad: la ventana de 4 semanas con mayor litros/vaca
+    # del rodeo ANTES de las últimas 4, contra esas últimas 4. Es la pregunta
+    # que importa cuando el gráfico muestra un amesetamiento o caída sobre el
+    # final: el promedio de "primeras contra últimas" puede taparla si el
+    # rodeo venía de un arranque lento en abril, como es el caso acá. Se busca
+    # solo ANTES del bloque final para que las dos mitades no compartan
+    # semanas — si no, "antes/después" comparte datos con "después".
+    ultimas = completas[-4:]
+    anteriores = completas[:-4]
+    if len(anteriores) >= 4:
+        ventanas = [anteriores[i:i + 4] for i in range(len(anteriores) - 3)]
+
+        def litros_vaca_bloque(claves):
+            share, lv = _bloque_lactancia(semanas, claves)
+            return sum(share[b] * lv[b] for b in BUCKETS_LACT)
+
+        pico = max(ventanas, key=litros_vaca_bloque)
+        descomposiciones.append(_descomponer(pico, ultimas, semanas, "desde el pico"))
+
+    return {"semanas": semanas, "descomposiciones": descomposiciones}
+
+
 def armar(prod_dia, ms_lote_dia: dict, lote_de_grupo: dict,
-          solidos_control, hoy: datetime.date, grupos_ordene=None) -> dict:
+          solidos_control, hoy: datetime.date, grupos_ordene=None,
+          costo_lote_dia: dict = None, precio_litro: float = None) -> dict:
     """Cruza producción diaria con materia seca diaria y arma las dos series.
 
     `ms_lote_dia`: {(lote, fecha): kg_ms_totales} — sale de
     `alimentacion.ms_por_lote_dia()`.
     `lote_de_grupo`: {grupo_oid: lote} — el mapeo de `conciliacion.py`.
     `grupos_ordene`: OIDs de grupos de ordeñe (ver `sql_grupos_ordene`).
+    `costo_lote_dia`: {(lote, fecha): $ de alimento} — de
+        `alimentacion.costo_por_lote_dia()`. None = sin planilla de precios; la
+        serie física sale igual y la de litros libres queda vacía.
+    `precio_litro`: $ del litro de leche, para pasar el costo a litros.
+
+    LOS LITROS LIBRES SIGUEN EL MISMO CAMINO QUE LA MATERIA SECA, semana por
+    semana y con los mismos descartes: un lote-semana con descargas incompletas
+    queda afuera acá también. Si se lo dejara entrar, su costo bajo (menos comida
+    anotada es menos plata) dibujaría una MEJORA del margen justo en las semanas
+    peor cargadas — al revés de la realidad.
     """
+    costo_lote_dia = costo_lote_dia or {}
     # Un lote entra a la conversión solo si TODOS sus grupos son de ordeñe. Si
     # comparte lote con un grupo que no ordeña, su comida no es atribuible a
     # leche y el lote entero queda afuera.
@@ -223,7 +404,8 @@ def armar(prod_dia, ms_lote_dia: dict, lote_de_grupo: dict,
             no_ordene.add(f.get("nombre") or f["grupo"])
             continue
         clave = (lote, d.isoformat())
-        acum = diario.setdefault(clave, {"kg_leche": 0.0, "vacas": 0, "kg_ms": 0.0})
+        acum = diario.setdefault(clave, {"kg_leche": 0.0, "vacas": 0, "kg_ms": 0.0,
+                                          "costo": 0.0, "dias_costo": 0})
         acum["kg_leche"] += float(f["kg_leche"] or 0)
         acum["vacas"] += int(f["vacas"] or 0)
 
@@ -240,6 +422,14 @@ def armar(prod_dia, ms_lote_dia: dict, lote_de_grupo: dict,
         clave = ((lote or "").strip(), _fecha(dia).isoformat())
         if clave in diario:
             diario[clave]["kg_ms"] += float(kg or 0)
+    # El costo, por el mismo camino y con el mismo `if clave in diario`: sumar
+    # plata de días sin producción cargada infla el costo por litro igual que
+    # infla la materia seca.
+    for (lote, dia), plata in costo_lote_dia.items():
+        clave = ((lote or "").strip(), _fecha(dia).isoformat())
+        if clave in diario:
+            diario[clave]["costo"] += float(plata or 0)
+            diario[clave]["dias_costo"] += 1
 
     # --- Lote × semana, que es la unidad más chica CONFIABLE -----------------
     # El día suelto no lo es: el mixer puede descargar dos veces un día y
@@ -251,11 +441,20 @@ def armar(prod_dia, ms_lote_dia: dict, lote_de_grupo: dict,
         clave, lunes = semana_de(datetime.date.fromisoformat(dia))
         ls = ls_acum.setdefault((lote, clave), {
             "lunes": lunes, "kg_leche": 0.0, "kg_ms": 0.0,
-            "vacas_dia": 0, "dias": set()})
+            "vacas_dia": 0, "dias": set(), "costo": 0.0,
+            "leche_costo": 0.0, "vacas_costo": 0})
         ls["kg_leche"] += v["kg_leche"]
         ls["kg_ms"] += v["kg_ms"]
         ls["vacas_dia"] += int(v["vacas"] or 0)
         ls["dias"].add(dia)
+        # La leche y las vacas de los días VALORIZADOS se acumulan aparte: el
+        # costo por litro tiene que dividir por la leche de esos mismos días, no
+        # por la de la semana entera (si se valorizaron 4 de 7 días, dividir por
+        # los 7 da un costo por litro casi la mitad del real).
+        if v["dias_costo"]:
+            ls["costo"] += v["costo"]
+            ls["leche_costo"] += v["kg_leche"]
+            ls["vacas_costo"] += int(v["vacas"] or 0)
 
     # --- Semanal ------------------------------------------------------------
     semanas = {}
@@ -267,7 +466,9 @@ def armar(prod_dia, ms_lote_dia: dict, lote_de_grupo: dict,
             "semana": clave, "desde": lunes.isoformat(),
             "hasta": (lunes + datetime.timedelta(days=6)).isoformat(),
             "kg_leche": 0.0, "kg_ms": 0.0, "vacas_dia": 0,
-            "vacas_dia_total": 0, "dias": set()})
+            "vacas_dia_total": 0, "dias": set(),
+            "costo": 0.0, "leche_costo": 0.0, "vacas_costo": 0,
+            "vacas_base_costo": 0})
         # Las vacas se cuentan SIEMPRE, con comida cargada o sin ella: es el
         # denominador de la cobertura.
         s["vacas_dia_total"] += ls["vacas_dia"]
@@ -302,9 +503,58 @@ def armar(prod_dia, ms_lote_dia: dict, lote_de_grupo: dict,
         s["kg_ms"] += ls["kg_ms"]
         s["vacas_dia"] += vacas
         s["dias"] |= ls["dias"]
+        # Solo llega acá un lote-semana que pasó los descartes de arriba, así que
+        # la plata hereda las mismas garantías que la materia seca.
+        s["costo"] += ls["costo"]
+        s["leche_costo"] += ls["leche_costo"]
+        s["vacas_costo"] += ls["vacas_costo"]
+        # Denominador de la COBERTURA DEL COSTO: las vacas que sí tienen materia
+        # seca, valorizadas o no. Hace falta porque las dos coberturas son
+        # distintas y la del costo puede ser mucho peor sin que se note. Medido
+        # el 30/07/2026: dos recetas quedaban sin precio y con eso el costo de la
+        # semana 24 salía de 4.646 $/vaca contra 9.000 en las semanas completas
+        # —los rodeos 2, 3 y 4 no entraban— y el gráfico dibujaba una mejora del
+        # margen que nunca pasó. Aritméticamente el número cerraba: lo que
+        # cambiaba era QUÉ RODEOS estaba midiendo cada semana.
+        s["vacas_base_costo"] += vacas
 
         por_lote.setdefault(lote, {})[clave] = {
-            "kg_leche": ls["kg_leche"], "kg_ms": ls["kg_ms"], "vacas_dia": vacas}
+            "kg_leche": ls["kg_leche"], "kg_ms": ls["kg_ms"], "vacas_dia": vacas,
+            "costo": ls["costo"], "leche_costo": ls["leche_costo"],
+            "vacas_costo": ls["vacas_costo"], "vacas_base_costo": vacas}
+
+    def _economia(s):
+        """Costo y litros libres de una semana. Todo None si no se valorizó nada:
+        un cero acá se leería como "comieron gratis".
+
+        SE DEVUELVE LA COBERTURA DEL COSTO, que no es la misma que la de materia
+        seca. Una semana en la que solo se pudo valorizar la mitad de las vacas
+        da un costo por vaca perfectamente creíble —la aritmética cierra— pero
+        está midiendo otros rodeos que la semana de al lado, y la comparación
+        entre semanas es justamente para lo que sirve esta pantalla.
+        """
+        vc, lc, plata = s.get("vacas_costo") or 0, s.get("leche_costo") or 0, s.get("costo") or 0
+        base = s.get("vacas_base_costo") or 0
+        vacio = {"costo_vaca_dia": None, "costo_por_litro": None,
+                 "litros_libres": None, "pct_litros_libres": None,
+                 "cobertura_costo": None, "parcial_costo": None}
+        if not vc or not plata:
+            return vacio
+        cob = round(100 * vc / base, 1) if base else None
+        costo_vaca = plata / vc
+        litros_vaca = lc / vc if vc else None
+        por_litro = plata / lc if lc else None
+        libres = (litros_vaca - costo_vaca / precio_litro
+                  if litros_vaca is not None and precio_litro else None)
+        return {
+            "costo_vaca_dia": round(costo_vaca, 2),
+            "costo_por_litro": round(por_litro, 2) if por_litro is not None else None,
+            "litros_libres": round(libres, 1) if libres is not None else None,
+            "pct_litros_libres": (round(100 * libres / litros_vaca, 1)
+                                  if libres is not None and litros_vaca else None),
+            "cobertura_costo": cob,
+            "parcial_costo": (cob or 0) < COBERTURA_MIN,
+        }
 
     def cerrar(s):
         dias = len(s["dias"]) if isinstance(s.get("dias"), set) else s.get("dias", 0)
@@ -319,6 +569,7 @@ def armar(prod_dia, ms_lote_dia: dict, lote_de_grupo: dict,
             "litros_vaca": round(s["kg_leche"] / vacas, 1) if vacas else None,
             "ms_vaca": round(s["kg_ms"] / vacas, 1) if vacas else None,
             "conversion": round(s["kg_leche"] / s["kg_ms"], 3) if s["kg_ms"] else None,
+            **_economia(s),
             "dias": dias,
             # Qué parte del rodeo en ordeñe entró en el cálculo. Sin esto, una
             # semana a la que le faltan descargas parece igual de sólida que
@@ -350,6 +601,7 @@ def armar(prod_dia, ms_lote_dia: dict, lote_de_grupo: dict,
             "conversion": round(v["kg_leche"] / v["kg_ms"], 3) if v["kg_ms"] else None,
             "litros_vaca": round(v["kg_leche"] / v["vacas_dia"], 1) if v["vacas_dia"] else None,
             "ms_vaca": round(v["kg_ms"] / v["vacas_dia"], 1) if v["vacas_dia"] else None,
+            **_economia(v),
         } for k, v in sorted(sems.items())]
 
     # --- Mensual, anclado al control lechero --------------------------------

@@ -31,6 +31,13 @@ servidor y la base — el listbox de la aplicación se actualiza solo.
             solo quedan disponibles el dashboard, la rotativa, las tareas y las
             consultas fijas, todas de solo lectura. Recomendado al apuntar a la
             base que graba el ordeño en vivo.
+  sala:     "rotativa" (defecto, no hace falta declararlo) o "convencional".
+            Una sala convencional (espina de pescado) NO tiene
+            `CMSGroupMilkSetting`/`MilkingDeviceVisit`/`CMSMilkYield` —esas
+            tablas son propias del controlador de la rotativa—, así que varias
+            partes de la app (lista de "grupos de ordeñe reales", duración de
+            sesión) necesitan una consulta distinta. Ver `tipo_sala()` abajo y
+            `sala_convencional.py`.
 
 CONTRASEÑAS: nunca se escriben en este archivo. Con auth="sql" la contraseña se
 lee de una VARIABLE DE ENTORNO (ver `password_de` más abajo):
@@ -82,10 +89,54 @@ TAMBOS = {
     #     # contraseña en la variable de entorno DELPRO_PWD_DON_GERMAN
     #     # (o indicá otro nombre con "password_env": "MI_VARIABLE")
     # },
+
+    # Tambo San José: sala convencional espina de pescado (2 lados x 16 puestos),
+    # copia restaurada en esta PC para desarrollar "Ordeño en Vivo Sala CMS".
+    # Un solo rebaño en su base (Herd.OID = 1).
+    "san_jose": {
+        "nombre": "San José",
+        "server": "localhost\\DELPRO",
+        "database": "SanJose",
+        "auth": "windows",
+        "rebanos": [1],
+        # Sala convencional: no tiene CMSGroupMilkSetting/MilkingDeviceVisit/
+        # CMSMilkYield (tablas de la rotativa). Ver `tipo_sala()` más abajo.
+        "sala": "convencional",
+    },
 }
 
 # Tambo que se muestra por defecto al abrir la aplicación.
 DEFAULT_TAMBO = "ponderosa"
+
+
+def _config_manual(tambo_id: str) -> dict:
+    """Config de este archivo, combinada con los overrides de la página
+    "⚙ Configuración" (ver `configuracion_tambo.py`). El tambo tiene que
+    existir ACÁ primero (id, database, rebaños); lo editable desde la UI son
+    la conexión (ip/puerto/usuario/contraseña), el nombre y el tipo de sala —
+    si no se configuró nada, esto es exactamente `TAMBOS.get(tambo_id, {})`,
+    sin cambiar un bit el comportamiento de siempre.
+
+    Import adentro de la función (no arriba del archivo): evita un ciclo,
+    `configuracion_tambo.py` no importa `tambos` pero podría hacerlo a futuro.
+    """
+    import configuracion_tambo
+    base = dict(TAMBOS.get(tambo_id, {}))
+    cfg = configuracion_tambo.config_de(tambo_id)
+
+    if cfg.get("nombre"):
+        base["nombre"] = cfg["nombre"]
+    if cfg.get("ip"):
+        base["server"] = f"{cfg['ip']},{cfg['puerto']}" if cfg.get("puerto") else cfg["ip"]
+        if cfg.get("usuario"):
+            base["auth"] = "sql"
+            base["user"] = cfg["usuario"]
+            base["password"] = cfg.get("contrasena") or ""
+        else:
+            base["auth"] = "windows"
+    if cfg.get("sala"):
+        base["sala"] = cfg["sala"]
+    return base
 
 
 def rebanos_de(tambo_id: str) -> list:
@@ -94,7 +145,7 @@ def rebanos_de(tambo_id: str) -> list:
     Lista vacía = no está declarado, y quien llame decide qué hacer (ver
     `rebano.por_defecto`, que en ese caso cae a deducirlo).
     """
-    cfg = TAMBOS.get(tambo_id, {})
+    cfg = _config_manual(tambo_id)
     valor = cfg.get("rebanos") or cfg.get("rebano")
     if valor is None:
         return []
@@ -105,24 +156,38 @@ def rebanos_de(tambo_id: str) -> list:
 
 def nombre_variable_password(tambo_id: str) -> str:
     """Nombre de la variable de entorno donde se espera la contraseña."""
-    cfg = TAMBOS.get(tambo_id, {})
+    cfg = _config_manual(tambo_id)
     return cfg.get("password_env") or f"DELPRO_PWD_{tambo_id.upper()}"
 
 
 def password_de(tambo_id: str) -> str:
-    """Contraseña del tambo, leída de la variable de entorno correspondiente.
-
-    Como último recurso acepta una clave "password" escrita en este archivo,
-    pero NO es recomendable: quedaría la contraseña en texto plano en el código.
-    """
-    cfg = TAMBOS.get(tambo_id, {})
+    """Contraseña del tambo: variable de entorno primero, y si no, la que se
+    haya guardado desde la página "⚙ Configuración" (ver
+    `configuracion_tambo.py` — ahí sí se admite en archivo, a diferencia de
+    este módulo, por decisión explícita del tambo)."""
+    cfg = _config_manual(tambo_id)
     desde_entorno = os.environ.get(nombre_variable_password(tambo_id))
     return desde_entorno or cfg.get("password", "")
 
 
 def es_produccion(tambo_id: str) -> bool:
     """True si el tambo apunta a una base de producción en vivo (bloquea IA)."""
-    return bool(TAMBOS.get(tambo_id, {}).get("produccion"))
+    return bool(_config_manual(tambo_id).get("produccion"))
+
+
+def tipo_sala(tambo_id: str) -> str:
+    """"rotativa" o "convencional". Ver la nota de la clave "sala" arriba."""
+    return _config_manual(tambo_id).get("sala") or "rotativa"
+
+
+def nombre_de(tambo_id: str) -> str:
+    return _config_manual(tambo_id).get("nombre", tambo_id)
+
+
+def conexion(tambo_id: str) -> dict:
+    """server/database/auth/user/password ya combinados con los overrides de
+    la UI — lo que usa `db._conn_str` para conectar de verdad."""
+    return _config_manual(tambo_id)
 
 
 def existe(tambo_id: str) -> bool:
@@ -135,5 +200,5 @@ def resolver(tambo_id: str) -> str:
 
 
 def lista() -> list:
-    return [{"id": k, "nombre": v["nombre"], "produccion": es_produccion(k)}
+    return [{"id": k, "nombre": nombre_de(k), "produccion": es_produccion(k), "sala": tipo_sala(k)}
             for k, v in TAMBOS.items()]

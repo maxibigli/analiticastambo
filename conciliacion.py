@@ -46,7 +46,7 @@ import rebano
 # --- Lado DelPro -------------------------------------------------------------
 
 
-def sql_grupos(herd=None) -> str:
+def sql_grupos(grupos_sql: str, herd=None) -> str:
     """Todos los grupos del rebaño con sus cabezas activas.
 
     OJO con las dos claves: `AbstractGroup.Number` es el número que MUESTRA
@@ -57,6 +57,11 @@ def sql_grupos(herd=None) -> str:
     `AnimalGroup` comparte OID con `AbstractGroup` (herencia XPO), así que el
     filtro por rebaño se puede aplicar directo sobre `AnimalGroup.Herd` sin el
     EXISTS que usan los otros módulos.
+
+    `grupos_sql`: de `salas.grupos_subquery(tambo)` — qué [Group] son de
+    ordeñe real para ESTE tipo de sala. NUNCA se hardcodea CMSGroupMilkSetting
+    acá: esa tabla es propia del controlador de una rotativa y una sala
+    convencional (San José) no la tiene (ver salud.py, mismo patrón).
     """
     cond = rebano.condicion_herd("ag", herd)
     where_herd = f"AND {cond}" if cond else ""
@@ -65,12 +70,10 @@ def sql_grupos(herd=None) -> str:
                (SELECT COUNT(*) FROM BasicAnimal b
                  WHERE b.[Group] = ag.OID AND b.GCRecord IS NULL
                    AND b.ExitDate IS NULL AND b.Number > 0) AS cabezas,
-               CASE WHEN EXISTS (SELECT 1 FROM CMSGroupMilkSetting c
-                                  WHERE c.[Group] = ag.OID AND c.GCRecord IS NULL
-                                    AND c.EnableMilking = 1)
-                    THEN 1 ELSE 0 END AS es_ordene
+               CASE WHEN gr.grupo IS NOT NULL THEN 1 ELSE 0 END AS es_ordene
         FROM AnimalGroup ag
         JOIN AbstractGroup g ON g.OID = ag.OID AND g.GCRecord IS NULL
+        LEFT JOIN ({grupos_sql}) gr ON gr.grupo = ag.OID
         WHERE 1 = 1 {where_herd}
         ORDER BY g.Number
     """

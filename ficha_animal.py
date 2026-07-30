@@ -90,6 +90,97 @@ def sql_info_general(rp: int) -> str:
 # descripciones son una simplificación propia (no siempre calzan letra por
 # letra con el texto de DelPro, p. ej. no traducimos el motivo exacto del
 # celo ni el nombre del toro/semen todavía).
+def sql_pedigri(rp: int) -> str:
+    """Árbol de 3 generaciones por la línea que DDM permite recorrer.
+
+    El PADRE es un toro: no está en `BasicAnimal`, así que de él solo se tiene
+    el NOMBRE (`FatherId`) — sus datos genéticos y su propio pedigrí salen del
+    catálogo de toros (ver genetica.py). La línea MATERNA sí se puede recorrer
+    dentro de la base, porque la madre es una vaca del rodeo con su propia
+    ficha: de ahí salen el abuelo materno (el padre de la madre, otro nombre de
+    toro) y la abuela materna (otra vaca, con RP y por lo tanto con historia
+    clínica y producción propias).
+
+    Se devuelve UNA fila; los ancestros que falten vienen en NULL (no todos los
+    animales tienen la madre cargada, y menos la abuela).
+
+    NO se filtra por rebaño a propósito, aunque la base la compartan tres
+    tambos. El motivo: al dar de baja un animal DelPro le deja el `[Group]` en
+    NULL, así que `rebano.filtro()` excluiría a casi toda ancestra —la abuela
+    está dada de baja siempre— y el panel quedaría vacío justo donde sirve.
+    El riesgo que eso deja abierto es un RP repetido entre rebaños: medido al
+    30/07/2026 hay 24 RPs repetidos (48 animales) y NINGUNO está referenciado
+    como `MotherId`, o sea que hoy no afecta a ningún pedigrí. Igual el `TOP 1`
+    desempata por fecha de nacimiento (una madre nació antes que su hija) y
+    después por OID, para que sea determinista y no elija al azar entre dos.
+    """
+    return f"""
+        WITH yo AS (
+          SELECT b.OID, b.Number AS rp, b.BirthDate AS nacimiento,
+                 p.FatherId AS padre, p.MotherId AS madre_rp
+          FROM BasicAnimal b
+          LEFT JOIN PedigreeInfo p ON p.OID = b.PedigreeInfo
+          WHERE b.Number = {rp} AND b.GCRecord IS NULL
+        ),
+        madre AS (
+          SELECT TOP 1 b.Number AS rp, pm.FatherId AS abuelo_materno,
+                 pm.MotherId AS abuela_rp, b.BirthDate AS nace,
+                 CONVERT(varchar(10), b.BirthDate, 120) AS nacimiento,
+                 CONVERT(varchar(10), b.ExitDate, 120) AS salida
+          FROM yo
+          JOIN BasicAnimal b ON b.Number = TRY_CAST(yo.madre_rp AS int)
+                            AND b.GCRecord IS NULL
+          LEFT JOIN PedigreeInfo pm ON pm.OID = b.PedigreeInfo
+          ORDER BY CASE WHEN b.BirthDate < yo.nacimiento THEN 0 ELSE 1 END, b.OID
+        ),
+        abuela AS (
+          SELECT TOP 1 b.Number AS rp, pa.FatherId AS bisabuelo_materno,
+                 CONVERT(varchar(10), b.ExitDate, 120) AS salida
+          FROM madre
+          JOIN BasicAnimal b ON b.Number = TRY_CAST(madre.abuela_rp AS int)
+                            AND b.GCRecord IS NULL
+          LEFT JOIN PedigreeInfo pa ON pa.OID = b.PedigreeInfo
+          ORDER BY CASE WHEN b.BirthDate < madre.nace THEN 0 ELSE 1 END, b.OID
+        )
+        SELECT yo.rp, yo.padre,
+               (SELECT rp FROM madre) AS madre_rp,
+               (SELECT nacimiento FROM madre) AS madre_nacimiento,
+               (SELECT salida FROM madre) AS madre_salida,
+               (SELECT abuelo_materno FROM madre) AS abuelo_materno,
+               (SELECT rp FROM abuela) AS abuela_rp,
+               (SELECT salida FROM abuela) AS abuela_salida,
+               (SELECT bisabuelo_materno FROM abuela) AS bisabuelo_materno
+        FROM yo
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 10)
+    """
+
+
+def sql_produccion_ancestras(rps: list) -> str:
+    """Producción real de las ancestras hembras (madre y abuela): cuántas
+    lactancias hizo, su promedio de leche por día y su mejor día.
+
+    Es la "tendencia a producir" medida de verdad, no estimada de un catálogo:
+    para una vaquillona sin datos propios, lo que produjo su madre es el mejor
+    indicio que hay. `AnimalDaily` solo cubre animales que pasaron por el
+    ordeñe, así que una ancestra que se fue antes de parir sale sin datos.
+    """
+    lista = ", ".join(str(int(r)) for r in rps) or "-1"
+    return f"""
+        SELECT b.Number AS rp,
+               MAX(ad.LactationNumber) AS lactancias,
+               CAST(AVG(ad.TotalYield) AS decimal(6,2)) AS kg_dia_prom,
+               CAST(MAX(ad.TotalYield) AS decimal(6,2)) AS kg_dia_max,
+               COUNT(*) AS dias_con_dato
+        FROM BasicAnimal b
+        JOIN AnimalDaily ad ON ad.BasicAnimal = b.OID
+                           AND ad.GCRecord IS NULL AND ad.IsYieldValid = 1
+                           AND ad.TotalYield > 0
+        WHERE b.Number IN ({lista}) AND b.GCRecord IS NULL
+        GROUP BY b.Number
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 15)
+    """
+
+
 def sql_eventos(rp: int) -> str:
     return f"""
         SELECT a.DateAndTime AS fecha, 'Cambio de grupo' AS tipo,
@@ -147,6 +238,22 @@ def sql_eventos(rp: int) -> str:
         SELECT a.DateAndTime, 'Salida', 'Baja del rodeo'
         FROM EventExit e JOIN AbstractAnimalEvent a ON a.OID = e.OID
         JOIN BasicAnimal b ON b.OID = a.BasicAnimal
+        WHERE b.Number = {rp} AND a.GCRecord IS NULL
+
+        -- Diagnósticos y tratamientos. Faltaban, y son justamente la parte de
+        -- la historia que permite ver enfermedades RECURRENTES. Se traen todos
+        -- con su texto tal cual: el catálogo de este tambo mezcla enfermedades
+        -- con estados reproductivos y comentarios ('Vacia', 'I.U.Normal',
+        -- 'Calostrado'), así que filtrar acá sería decidir por el veterinario.
+        -- Quien puntúa —`merito.py`— sí usa una lista explícita.
+        UNION ALL
+        SELECT a.DateAndTime, 'Diagnóstico',
+               COALESCE(tn.ItemValue, dg.Description, 'Sin detalle')
+        FROM DiagnosisTreatmentEvent e
+        JOIN AbstractAnimalEvent a ON a.OID = e.OID
+        JOIN BasicAnimal b ON b.OID = a.BasicAnimal
+        LEFT JOIN Diagnosis dg ON dg.OID = e.Diagnosis
+        LEFT JOIN TextLookupItem tn ON tn.OID = dg.DiagnosisName
         WHERE b.Number = {rp} AND a.GCRecord IS NULL
 
         ORDER BY fecha DESC

@@ -31,16 +31,27 @@ Un ingrediente es `{nombre, ms_pct, precio, stock}`, con `precio = None` cuando
 el proveedor no lo tiene cargado — NUNCA 0, que se propagaría como un costo real.
 """
 
-# Proveedor de cada tambo. Mientras haya uno solo alcanza con el defecto; el día
-# que un tambo use otro sistema se agrega acá su id y listo.
-POR_TAMBO: dict[str, str] = {}
+# Proveedor de cada tambo. Se puede declarar acá (código) o desde la página
+# "⚙ Configuración" (ver `configuracion_tambo.py`) — lo de la UI manda si
+# está cargado, esto queda como respaldo para lo que todavía no se configuró.
+#
+# San José usa MixerOne, no Haasten — declararlo acá evita que caiga al
+# defecto y termine comparando sus grupos contra el mixer de OTRO tambo
+# (ver proveedores/mixerone.py: la integración real queda para más adelante,
+# por ahora el módulo solo informa "no conectado" en vez de dar datos falsos).
+POR_TAMBO: dict[str, str] = {"san_jose": "mixerone"}
 POR_DEFECTO = "haasten"
+
+_MODULOS = {"haasten": "haasten", "mixerone": "mixerone", "delpro": "delpro"}
 
 
 def de(tambo: str):
     """El módulo proveedor que le toca a un tambo."""
-    nombre = POR_TAMBO.get(tambo, POR_DEFECTO)
-    if nombre == "haasten":
-        from . import haasten
-        return haasten
-    raise ValueError(f"Proveedor de alimentación desconocido: {nombre!r}")
+    import configuracion_tambo
+    nombre = configuracion_tambo.config_de(tambo).get("sistema_alimentacion") \
+        or POR_TAMBO.get(tambo, POR_DEFECTO)
+    modulo = _MODULOS.get(nombre)
+    if modulo is None:
+        raise ValueError(f"Proveedor de alimentación desconocido: {nombre!r}")
+    import importlib
+    return importlib.import_module(f".{modulo}", __name__)

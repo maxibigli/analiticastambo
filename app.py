@@ -20,27 +20,35 @@ import cicla
 import conciliacion
 import conversion_historica
 import config_alertas
+import configuracion_tambo
 import correo
 import db
 import clima
 import ficha_animal
 import flujos
+import genetica
+import herencia
 import gestacion
 import iot_monitoreo
 import laserenisima
 import mantenimiento
+import merito
 import partos_secados
 import performance
 import podal
+import precios_alimentos
 import preneces
 import parametros
 import proveedores
 import proyeccion
 import rebano
+import rentabilidad
 import tasa_prenez
 import reproduccion
 import resumen
 import rutina
+import sala_convencional
+import salas
 import salud
 import simulador
 import tambos
@@ -124,16 +132,22 @@ _SQL["ordeno_vivo"] = ORDENO_VIVO_SQL
 _SQL["ordeno_inc"] = ORDENO_INC_SQL
 _SQL["ordeno_alarmas"] = ORDENO_ALARMAS_SQL
 _SQL["mantenimiento"] = mantenimiento.MANTENIMIENTO_SQL
-_SQL["rutina_grupos"] = rutina.SQL_GRUPOS
-_SQL["rutina_ordenos_dia"] = rutina.SQL_ORDENOS_POR_DIA
+# "rutina_grupos"/"rutina_ordenos_dia" NO se registran acá: dependen del tipo
+# de sala del tambo (ver salas/), así que todo llamador pasa el SQL armado en
+# el momento con `salas.de(tambo)` — nunca caen al registro fijo de `_SQL`.
 _SQL["rutina_grupos_nombres"] = rutina.SQL_GRUPOS_NOMBRES
-_SQL["salud_rcs_grupo"] = salud.SQL_RCS_POR_GRUPO
-_SQL["salud_rcs_vacas"] = salud.SQL_RCS_VACAS
-_SQL["salud_conductividad"] = salud.SQL_CONDUCTIVIDAD_REBANIO
-_SQL["salud_produccion_rodeo"] = salud.SQL_PRODUCCION_POR_RODEO
-_SQL["salud_atencion"] = salud.SQL_ATENCION_DATOS
-_SQL["salud_atencion_v2"] = salud.SQL_ATENCION_V2
-_SQL["salud_bcs_vacas"] = salud.SQL_BCS_VACAS
+# "salud_rcs_grupo"/"salud_rcs_vacas"/"salud_conductividad"/
+# "salud_produccion_rodeo"/"salud_atencion"/"salud_bcs_vacas" TAMPOCO se
+# registran acá (mismo motivo que "rutina_grupos"): necesitan el filtro de
+# "grupos de ordeñe reales" de `salas.de(tambo).sql_grupos()`, que varía por
+# tambo — ver salud.sql_*(grupos_sql) y _refresh_salud_async más abajo.
+# "salud_atencion_v2" tampoco se registra acá por el mismo motivo desde que
+# salud.sql_atencion_v2() pasó a tomar el filtro de grupos por tambo (y, para
+# rotativa/convencional, si incluye o no las señales de CMSMilkYield) — ver
+# api_salud_atencion_v2 más abajo.
+# "herencia_madres" NO se registra acá: necesita un tope de filas más alto que
+# el genérico (hay más madres que 5.000) y se cachea aparte — ver
+# `_historia_madres` más abajo.
 _SQL["resumen_produccion_diaria"] = resumen.SQL_PRODUCCION_DIARIA
 _SQL["resumen_animales"] = resumen.SQL_ANIMALES
 _SQL["resumen_altas_bajas"] = resumen.SQL_ALTAS_BAJAS_AYER
@@ -206,13 +220,28 @@ def _cache_set(key: str, value: dict):
 
 _refreshing: set = set()
 
+# Último `db.TablaNoDisponibleError` de cada clave (se limpia si una consulta
+# posterior tiene éxito). A diferencia de un error de conexión o de RAM, "esta
+# tabla no existe en esta base" es un hecho ESTRUCTURAL de la instalación (la
+# misma DDM de DelPro con hardware/sala distinto — cámara BCS, controlador de
+# rotativa, etc.) que no se arregla reintentando: sin esto, el llamador se
+# queda para siempre en "calentando" sin forma de saber que en realidad nunca
+# va a resolver. Vive en memoria (como `_cache`/`_refreshing`): un reinicio
+# del proceso vuelve a intentar todo de cero.
+_errores_tabla: dict[str, str] = {}
+
 
 def _clave(tambo: str, consulta_id: str) -> str:
     return f"{tambo}:{consulta_id}"
 
 
-def _refresh_async(tambo: str, consulta_id: str):
-    """Refresca una consulta en segundo plano (una sola vez a la vez)."""
+def _refresh_async(tambo: str, consulta_id: str, sql: str | None = None):
+    """Refresca una consulta en segundo plano (una sola vez a la vez).
+
+    `sql`: None = la registrada en `_SQL[consulta_id]` (el caso normal, un
+    texto fijo para todos los tambos). Algunas pocas consultas SÍ varían según
+    el tipo de sala del tambo (p.ej. "qué grupos ordeñan de verdad" — ver
+    `salas/__init__.py`), y ahí el llamador arma el texto en el momento."""
     key = _clave(tambo, consulta_id)
     with _cache_lock:
         if key in _refreshing:
@@ -221,26 +250,33 @@ def _refresh_async(tambo: str, consulta_id: str):
 
     def worker():
         try:
-            _cache_set(key, db.run_query(_SQL[consulta_id], tambo=tambo))
+            resultado = db.run_query(sql if sql is not None else _SQL[consulta_id], tambo=tambo)
+        except db.TablaNoDisponibleError as exc:
+            with _cache_lock:
+                _errores_tabla[key] = str(exc)
+            return
         except Exception:  # noqa: BLE001
-            pass
+            return
         finally:
             with _cache_lock:
                 _refreshing.discard(key)
+        _cache_set(key, resultado)
+        with _cache_lock:
+            _errores_tabla.pop(key, None)
 
     threading.Thread(target=worker, daemon=True).start()
 
 
-def _run_consulta(consulta_id: str, tambo: str) -> dict:
+def _run_consulta(consulta_id: str, tambo: str, sql: str | None = None) -> dict:
     # Si hay dato (aunque esté vencido) se sirve al instante; si venció,
-    # se refresca en segundo plano para la próxima vez.
+    # se refresca en segundo plano para la próxima vez. `sql`: ver _refresh_async.
     key = _clave(tambo, consulta_id)
     value, fresh = _cache_get(key, allow_stale=True)
     if value is not None:
         if not fresh:
-            _refresh_async(tambo, consulta_id)
+            _refresh_async(tambo, consulta_id, sql)
         return value
-    data = db.run_query(_SQL[consulta_id], tambo=tambo)
+    data = db.run_query(sql if sql is not None else _SQL[consulta_id], tambo=tambo)
     _cache_set(key, data)
     return data
 
@@ -313,12 +349,13 @@ def _refresh_resumen_animales_async(tambo: str):
 
 def _calcular_resumen_grupo(tambo: str) -> dict:
     """Producción media por grupo (30 días): SOLO los grupos de ordeño reales
-    (CMSGroupMilkSetting.EnableMilking, misma lista que usa Rutina/Evolución
-    — ver rutina.SQL_GRUPOS) + el promedio general del tambo como referencia.
-    Antes se elegían "los más numerosos" por volumen en AnimalDaily, una
-    heurística que por coincidencia solía dar el mismo resultado pero no
-    garantizaba excluir corrales que no son de ordeño."""
-    grupos_data = db.run_query(rutina.SQL_GRUPOS, tambo=tambo)
+    + el promedio general del tambo como referencia. "Grupo de ordeño real"
+    depende del tipo de sala del tambo — ver `salas/`: en una rotativa sale de
+    `CMSGroupMilkSetting.EnableMilking` (la única fuente correcta ahí, porque
+    esa base puede compartir instalación con otro tambo); en una convencional,
+    de la producción real en `AnimalDaily` (esa base es de un solo tambo, sin
+    riesgo de mezclar corrales ajenos)."""
+    grupos_data = db.run_query(salas.de(tambo).sql_grupos_resumen(), tambo=tambo)
     grupos = [r[0] for r in grupos_data["rows"]]
     grupos_set = set(grupos)
     todo = db.run_query(resumen.SQL_PRODUCCION_GRUPO_30D, tambo=tambo)
@@ -354,7 +391,8 @@ def _refresh_resumen_grupo_async(tambo: str):
 
 def _refresh_rutina_async(tambo: str, fecha: str):
     """Recalcula la rutina de ordeño de un día en segundo plano (consulta
-    parametrizada por fecha, no vive en el registro fijo _SQL)."""
+    parametrizada por fecha, no vive en el registro fijo _SQL). La consulta
+    depende del tipo de sala del tambo — ver `salas/`."""
     key = _clave(tambo, f"rutina:{fecha}")
     with _cache_lock:
         if key in _refreshing:
@@ -363,7 +401,7 @@ def _refresh_rutina_async(tambo: str, fecha: str):
 
     def worker():
         try:
-            _cache_set(key, db.run_query(rutina.sql_rutina(fecha), tambo=tambo,
+            _cache_set(key, db.run_query(salas.de(tambo).sql_rutina(fecha), tambo=tambo,
                                           max_rows=rutina.MAX_FILAS_DIA))
         except Exception:  # noqa: BLE001
             pass
@@ -397,7 +435,10 @@ def _warmup(tambo: str):
     restantes = [c for c in CONSULTAS if c not in prioridad]
     for consulta_id in prioridad + restantes:
         try:
-            _run_consulta(consulta_id, tambo)
+            # "rutina_grupos" depende del tipo de sala (ver salas/); el resto
+            # de las IDs son consultas fijas para todos los tambos.
+            sql = salas.de(tambo).sql_grupos() if consulta_id == "rutina_grupos" else None
+            _run_consulta(consulta_id, tambo, sql)
         except Exception:  # noqa: BLE001
             pass
 
@@ -413,11 +454,17 @@ _calentados_lock = threading.Lock()
 
 def _tambo_del_request() -> str:
     """Lee el tambo del request (query param o body) y lo valida. Además,
-    dispara el warmup del tambo la primera vez que se lo usa."""
-    tambo = ""
-    if request.method == "GET":
-        tambo = request.args.get("tambo", "")
-    else:
+    dispara el warmup del tambo la primera vez que se lo usa.
+
+    El query param se mira SIEMPRE, incluso en POST: varias pantallas mandan
+    `?tambo=...` en la URL también para guardar (parámetros reproductivos,
+    configuración de sala). Nunca se notó que un POST sin `tambo` en el body
+    caía en el tambo por defecto porque hasta ahora el único tambo real era
+    "ponderosa" — que ES el default. Con un segundo tambo (San José) guardar
+    su configuración terminaba escribiendo silenciosamente sobre "ponderosa".
+    """
+    tambo = request.args.get("tambo", "")
+    if not tambo and request.method != "GET":
         tambo = (request.json or {}).get("tambo", "")
     tambo = tambos.resolver(tambo)
     with _calentados_lock:
@@ -438,7 +485,188 @@ def index():
 
 @app.get("/api/tambos")
 def api_tambos():
-    return jsonify({"tambos": tambos.lista(), "default": tambos.DEFAULT_TAMBO})
+    lista = tambos.lista()
+    for t in lista:
+        try:
+            t["puestos"] = salas.de(t["id"]).cantidad_puestos(t["id"])
+        except Exception:  # noqa: BLE001
+            t["puestos"] = None
+        _cfg = configuracion_tambo.config_de(t["id"])
+        t["personas"] = _cfg.get("personas")
+        t["arreo_min"] = _cfg.get("arreo_min")
+        # "Vacas en ordeñe" para indicadores de dotación (vacas por puesto,
+        # vacas por persona) -- se lee del caché de KPIs del dashboard, ya
+        # calculado y refrescado en segundo plano; si todavía no está tibio
+        # (recién arrancó el proceso) queda None y el frontend no muestra el
+        # indicador en vez de disparar una consulta nueva acá.
+        kpis, _ = _cache_get(_clave(t["id"], "__kpis__"), allow_stale=True)
+        t["vacas_en_ordeno"] = (kpis or {}).get("vacas_en_ordeno")
+    return jsonify({"tambos": lista, "default": tambos.DEFAULT_TAMBO})
+
+
+# --- Página "⚙ Configuración": conexión, hardware y proveedores por tambo ---
+CATALOGOS_CONFIGURACION = {
+    "sistema_actividad": [{"id": i, "label": configuracion_tambo.SISTEMAS_ACTIVIDAD_LABEL[i]}
+                          for i in configuracion_tambo.SISTEMAS_ACTIVIDAD],
+    "caudalimetro": [{"id": i, "label": configuracion_tambo.CAUDALIMETROS_LABEL[i]}
+                     for i in configuracion_tambo.CAUDALIMETROS],
+    "usina_lactea": [{"id": i, "label": configuracion_tambo.USINAS_LACTEAS_LABEL[i]}
+                     for i in configuracion_tambo.USINAS_LACTEAS],
+    "sistema_alimentacion": [{"id": i, "label": configuracion_tambo.SISTEMAS_ALIMENTACION_LABEL[i]}
+                             for i in configuracion_tambo.SISTEMAS_ALIMENTACION],
+    "sala": [{"id": i, "label": configuracion_tambo.SALAS_LABEL[i]} for i in configuracion_tambo.SALAS],
+}
+
+
+RENT_CACHE_TTL_S = 6 * 3600
+MERITO_CACHE_TTL_S = 6 * 3600
+
+
+def _merito_ctx(tambo: str, herd=None):
+    """Contexto del rodeo para el índice de mérito, cacheado.
+
+    El índice es RELATIVO al rodeo, así que para puntuar un animal hay que
+    conocer la distribución de los 5.578. Se calcula una vez cada 6 horas y
+    sirve para todas las fichas: hacerlo por ficha sería traer el rodeo entero
+    en cada búsqueda de RP.
+
+    Devuelve None si la consulta se truncó: con el rodeo incompleto los
+    percentiles saldrían mal y un índice mal calibrado es peor que ninguno.
+    """
+    clave = _clave(tambo, "__merito_ctx__")
+    data, _ = _cache_get(clave, allow_stale=True, ttl=MERITO_CACHE_TTL_S)
+    if data is None:
+        vida = db.run_query(merito.sql_vida(herd), tambo=tambo, max_rows=20000)
+        prod = db.run_query(merito.sql_produccion(herd), tambo=tambo, max_rows=20000)
+        if vida.get("truncated") or prod.get("truncated"):
+            return None
+        data = {"vida": vida, "prod": prod}
+        _cache_set(clave, data)
+    return merito.preparar(data["vida"], data["prod"])
+
+
+def _costo_mixer(tambo: str, desde, hasta):
+    """({(lote, fecha): $}, precio_litro, resumen_precios), cacheado.
+
+    Se cachea aparte de las pantallas de alimentación porque la ficha de un
+    animal se abre de a una y no puede pagar el costo de bajar cuatro meses de
+    consumos del mixer cada vez. La clave incluye el rango: dos fichas seguidas
+    del mismo tambo comparten el trabajo.
+    """
+    clave = _clave(tambo, f"__costo_mixer__{desde}_{hasta}")
+    data, _ = _cache_get(clave, allow_stale=True, ttl=RENT_CACHE_TTL_S)
+    if data is None:
+        consumos = proveedores.de(tambo).consumos(desde, hasta)
+        pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+        costo = {}
+        if pr.get("precios"):
+            costo, _diag = alimentacion.costo_por_lote_dia(consumos, pr["precios"])
+        data = {
+            "costo": {f"{l}|{f.isoformat()}": v for (l, f), v in costo.items()},
+            "precio_litro": pr.get("precio_litro"),
+            "precios": precios_alimentos.resumen(
+                configuracion_tambo.ruta_precios(tambo)),
+        }
+        _cache_set(clave, data)
+    salida = {}
+    for k, v in (data.get("costo") or {}).items():
+        lote, fecha = k.rsplit("|", 1)
+        salida[(lote, datetime.date.fromisoformat(fecha))] = v
+    return salida, data.get("precio_litro"), data.get("precios") or {}
+
+
+def _rentabilidad_animal(tambo: str, rp: int, herd=None, info: dict = None) -> dict:
+    """Rentabilidad de un animal para la ficha. Ver `rentabilidad.py`."""
+    hoy = datetime.date.today()
+    # El costo de alimentación no existe antes de que arrancara el mixer: pedir
+    # más atrás devolvería semanas de ingreso sin costo, o sea margen inventado.
+    desde = max(datetime.date.fromisoformat(conversion_historica.INICIO_ALIMENTACION),
+                hoy - datetime.timedelta(days=rentabilidad.RANGO_MAX_DIAS))
+    # Se corta en el último día COMPLETO de AnimalDaily, igual que las pantallas
+    # de alimentación: los dos sistemas no van al día parejo.
+    try:
+        d_dias = db.run_query(conciliacion.sql_dias_animaldaily(herd),
+                              tambo=tambo, max_rows=60)
+        ultimo = conciliacion.ultimo_dia_completo(d_dias)
+        hasta = (datetime.date.fromisoformat(ultimo["fecha"]) if ultimo["fecha"] else hoy)
+    except Exception:  # noqa: BLE001
+        hasta = hoy
+
+    dias = db.run_query(rentabilidad.sql_dias(rp, desde, hasta, herd),
+                        tambo=tambo, max_rows=500)
+    grupos = sorted({int(f[dias["columns"].index("grupo_oid")])
+                     for f in dias["rows"]
+                     if f[dias["columns"].index("grupo_oid")] is not None})
+    vacas = ({"columns": ["grupo_oid", "fecha", "vacas"], "rows": []} if not grupos
+             else db.run_query(rentabilidad.sql_vacas_grupo_dia(desde, hasta, grupos, herd),
+                                tambo=tambo, max_rows=20000))
+    costo, precio_litro, res_precios = _costo_mixer(tambo, desde, hasta)
+    salida = rentabilidad.armar(dias, vacas, costo,
+                                 conciliacion.lote_de_grupo(tambo),
+                                 precio_litro, info=info)
+    salida.update({"desde": desde.isoformat(), "hasta": hasta.isoformat(),
+                   "precios": res_precios})
+    return salida
+
+
+def _estado_archivos(tambo: str) -> dict:
+    """Qué archivos Excel se están usando de verdad, y en qué estado.
+
+    Va junto con la configuración porque es la única forma de que el tambo vea
+    si la ruta que escribió sirvió: una ruta con un error de tipeo cae en
+    silencio a los archivos por defecto (ver `configuracion_tambo._resolver`), y
+    sin mostrarlo uno cree que está leyendo la carpeta nueva. También trae los
+    avisos de datos ESTIMADOS/SIMULADOS: son la advertencia de que hay números
+    inventados en juego.
+    """
+    salida = {"archivos": configuracion_tambo.estado_rutas(tambo)}
+    try:
+        salida["genetica"] = genetica.resumen(configuracion_tambo.rutas_toros(tambo))
+    except Exception as exc:  # noqa: BLE001
+        salida["genetica"] = {"error": str(exc)}
+    try:
+        salida["precios"] = precios_alimentos.resumen(
+            configuracion_tambo.ruta_precios(tambo))
+    except Exception as exc:  # noqa: BLE001
+        salida["precios"] = {"error": str(exc)}
+    return salida
+
+
+@app.get("/api/configuracion")
+@auth.requiere_rol("admin")
+def api_configuracion():
+    """Config editable del tambo (conexión, hardware, proveedores) + los
+    catálogos de opciones para los selectores. La contraseña NUNCA se
+    devuelve: solo si hay una guardada (`contrasena_configurada`), para no
+    reexponerla en cada carga de página — se pisa escribiendo una nueva."""
+    tambo = _tambo_del_request()
+    cfg = configuracion_tambo.config_de(tambo)
+    cfg["contrasena_configurada"] = bool(cfg.pop("contrasena"))
+    cfg["tambo"] = tambo
+    cfg["sala_efectiva"] = tambos.tipo_sala(tambo)
+    return jsonify({"config": cfg, "catalogos": CATALOGOS_CONFIGURACION,
+                    **_estado_archivos(tambo)})
+
+
+@app.post("/api/configuracion")
+@auth.requiere_rol("admin")
+def api_guardar_configuracion():
+    tambo = _tambo_del_request()
+    datos = dict(request.json or {})
+    # Campo de UI, no de configuracion_tambo.guardar(): si el usuario no tocó
+    # el campo contraseña (lo dejó en blanco a propósito, ver el frontend),
+    # no hay que pisar la que ya estaba guardada con un vacío.
+    if not datos.get("contrasena"):
+        datos.pop("contrasena", None)
+    try:
+        cfg = configuracion_tambo.guardar(tambo, datos)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    cfg["contrasena_configurada"] = bool(cfg.pop("contrasena"))
+    cfg["tambo"] = tambo
+    cfg["sala_efectiva"] = tambos.tipo_sala(tambo)
+    return jsonify({"config": cfg, "catalogos": CATALOGOS_CONFIGURACION,
+                    **_estado_archivos(tambo)})
 
 
 @app.get("/api/health")
@@ -537,13 +765,64 @@ def api_resumen_animales():
     })
 
 
+def _refresh_duraciones_directo_async(tambo: str):
+    """Para salas que SÍ tienen la duración de cada sesión medida en una tabla
+    propia (convencional: `ParlorHistoricalData`) en vez de tener que
+    reconstruirla desde visitas individuales (`rutina.py`, solo la rotativa).
+    Ver `salas.de(tambo).sql_duraciones_dia`."""
+    key = _clave(tambo, "resumen_duraciones_directo")
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            sala = salas.de(tambo)
+            data = db.run_query(sala.sql_duraciones_dia(resumen.PRODUCCION_DIAS),
+                                tambo=tambo, max_rows=500)
+            filas = [{"fecha": r[0], "sesion": r[1], "duracion_min": r[2]} for r in data["rows"]]
+            _cache_set(key, sala.armar_duraciones(filas, resumen.PRODUCCION_DIAS))
+        except Exception as exc:  # noqa: BLE001
+            _cache_set(key, {"error": str(exc)})
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 @app.get("/api/resumen/duraciones")
 @auth.requiere_rol("admin")
 def api_resumen_duraciones():
     """Duración (min) de cada sesión de ordeño de los últimos días, para el
     gráfico de barras agrupadas 'Duraciones de ordeño' del home de DelPro.
-    Reutiliza el mismo caché por día que ya usan Rutina/Evolución."""
+
+    La rotativa reutiliza el mismo caché por día que ya usan Rutina/Evolución
+    (reconstruye la sesión desde visitas individuales, no tiene otra forma).
+    Una sala con la duración de sesión ya medida en una tabla propia (`ver
+    salas.de(tambo).sql_duraciones_dia`) usa esa directo — más simple y más
+    barato. `NotImplementedError` es la señal de "esta sala no tiene eso":
+    la rotativa la levanta a propósito (`salas/rotativa.py`)."""
     tambo = _tambo_del_request()
+    tiene_duraciones_propias = True
+    try:
+        salas.de(tambo).sql_duraciones_dia(resumen.PRODUCCION_DIAS)
+    except NotImplementedError:
+        tiene_duraciones_propias = False
+
+    if tiene_duraciones_propias:
+        key = _clave(tambo, "resumen_duraciones_directo")
+        data, fresh = _cache_get(key, allow_stale=True)
+        if data is None:
+            _refresh_duraciones_directo_async(tambo)
+            return jsonify({"calentando": True, "mensaje": "Calculando duraciones…"}), 202
+        if not fresh:
+            _refresh_duraciones_directo_async(tambo)
+        if data.get("error"):
+            return jsonify({"error": data["error"]}), 502
+        return jsonify(data)
+
     kpis, _ = _cache_get(_clave(tambo, "__kpis__"), allow_stale=True)
     if not kpis or not kpis.get("fecha_dato"):
         return jsonify({"calentando": True, "mensaje": "Calculando fecha por defecto…"}), 202
@@ -590,14 +869,22 @@ def api_resumen_produccion_grupo():
 # --- Salud del rodeo (réplica del reporte Chi) ------------------------------
 # Todas sirven del caché con el patrón habitual: si el dato todavía no está,
 # se dispara el cálculo en segundo plano y el frontend reintenta (202).
-def _servir_cacheado(tambo: str, consulta_id: str, mensaje: str):
+def _servir_cacheado(tambo: str, consulta_id: str, mensaje: str, sql: str | None = None):
     key = _clave(tambo, consulta_id)
     data, fresh = _cache_get(key, allow_stale=True)
     if data is None:
-        _refresh_async(tambo, consulta_id)
+        # "Esta tabla no existe en esta base" no se arregla reintentando (ver
+        # _errores_tabla): mostrarlo tal cual en vez de quedarse en
+        # "calentando" para siempre sin nunca resolver.
+        with _cache_lock:
+            error_tabla = _errores_tabla.get(key)
+        if error_tabla:
+            return None, (jsonify({"no_disponible": True,
+                                   "mensaje": "Esta sala no tiene los datos necesarios para esta sección."}), 200)
+        _refresh_async(tambo, consulta_id, sql)
         return None, (jsonify({"calentando": True, "mensaje": mensaje}), 202)
     if not fresh:
-        _refresh_async(tambo, consulta_id)
+        _refresh_async(tambo, consulta_id, sql)
     return data, None
 
 
@@ -608,7 +895,8 @@ def api_salud_rcs_grupo():
     control, cuántas superan 300.000 ahora y en el control previo, y cuántas
     son crónicas."""
     tambo = _tambo_del_request()
-    data, espera = _servir_cacheado(tambo, "salud_rcs_grupo", "Calculando RCS por rodeo…")
+    sql = salud.sql_rcs_por_grupo(salas.de(tambo).sql_grupos())
+    data, espera = _servir_cacheado(tambo, "salud_rcs_grupo", "Calculando RCS por rodeo…", sql)
     if espera:
         return espera
     idx = {c: i for i, c in enumerate(data["columns"])}
@@ -636,7 +924,8 @@ def api_salud_rcs_vacas():
     """Vacas con RCS por encima del umbral, separando las crónicas (altas en
     el último control Y en el anterior)."""
     tambo = _tambo_del_request()
-    data, espera = _servir_cacheado(tambo, "salud_rcs_vacas", "Calculando vacas con RCS alto…")
+    sql = salud.sql_rcs_vacas(salas.de(tambo).sql_grupos())
+    data, espera = _servir_cacheado(tambo, "salud_rcs_vacas", "Calculando vacas con RCS alto…", sql)
     if espera:
         return espera
     todas = [dict(zip(data["columns"], r)) for r in data["rows"]]
@@ -656,7 +945,8 @@ def api_salud_rcs_vacas():
 def api_salud_conductividad():
     """Conductividad promedio diaria por rodeo (vista del rebaño)."""
     tambo = _tambo_del_request()
-    data, espera = _servir_cacheado(tambo, "salud_conductividad", "Calculando conductividad…")
+    sql = salud.sql_conductividad_rebanio(salas.de(tambo).sql_grupos())
+    data, espera = _servir_cacheado(tambo, "salud_conductividad", "Calculando conductividad…", sql)
     if espera:
         return espera
     return jsonify({**data, "umbral": salud.COND_ALTA})
@@ -667,7 +957,8 @@ def api_salud_conductividad():
 def api_salud_produccion_rodeo():
     """Estadística de producción por rodeo con tendencias (día y semana)."""
     tambo = _tambo_del_request()
-    data, espera = _servir_cacheado(tambo, "salud_produccion_rodeo", "Calculando producción por rodeo…")
+    sql = salud.sql_produccion_por_rodeo(salas.de(tambo).sql_grupos())
+    data, espera = _servir_cacheado(tambo, "salud_produccion_rodeo", "Calculando producción por rodeo…", sql)
     if espera:
         return espera
     return jsonify({"rodeos": salud.resumen_por_rodeo(data["columns"], data["rows"])})
@@ -681,7 +972,8 @@ def api_salud_atencion():
     OJO: no es el score del add-on Chi (ese se calcula dentro de su ejecutable
     y no queda en la base). Usa las mismas señales, con pesos definidos acá."""
     tambo = _tambo_del_request()
-    data, espera = _servir_cacheado(tambo, "salud_atencion", "Calculando índice de atención…")
+    sql = salud.sql_atencion_datos(salas.de(tambo).sql_grupos())
+    data, espera = _servir_cacheado(tambo, "salud_atencion", "Calculando índice de atención…", sql)
     if espera:
         return espera
     fichas = salud.calcular_atencion(data["columns"], data["rows"])
@@ -696,13 +988,39 @@ def api_salud_atencion_v2():
     índice clásico (/api/salud/atencion), no lo reemplaza: el backtest contra
     647 diagnósticos reales no mostró que supere al clásico, pero las señales
     que usa sí están validadas individualmente. Cada vaca trae sus "motivos"
-    en texto para que el operario juzgue si la señal es válida en el campo."""
+    en texto para que el operario juzgue si la señal es válida en el campo.
+
+    En sala convencional corre igual, solo que sin las dos señales propias
+    del controlador de la rotativa (alarma de bajo rendimiento y de
+    conductividad del equipo, ambas de CMSMilkYield) — el resto (caída de
+    leche, conductividad de sesión, BCS) sale de tablas comunes a cualquier
+    sala, ver salud.sql_atencion_v2."""
     tambo = _tambo_del_request()
-    data, espera = _servir_cacheado(tambo, "salud_atencion_v2", "Calculando índice experimental…")
+    con_alarmas = tambos.tipo_sala(tambo) == "rotativa"
+    sql = salud.sql_atencion_v2(salas.de(tambo).sql_grupos(), con_alarmas)
+    data, espera = _servir_cacheado(tambo, "salud_atencion_v2", "Calculando índice experimental…", sql)
     if espera:
         return espera
-    fichas = salud.calcular_atencion_v2(data["columns"], data["rows"])
-    return jsonify({"vacas": fichas, "experimental": True})
+    # El riesgo heredado se inyecta como función (no se importa dentro de
+    # salud.py) para no acoplar el motor del índice ni a la lectura del Excel
+    # de toros ni a esta consulta — mismo criterio que `ocupacion_fn`.
+    # Mitad padre (catálogo genético) + mitad madre (su historia clínica).
+    madres = _historia_madres(tambo)
+    rutas_gen = configuracion_tambo.rutas_toros(tambo)
+    buscar_toro = genetica.buscador(rutas_gen)
+    fichas = salud.calcular_atencion_v2(
+        data["columns"], data["rows"],
+        genetica_fn=lambda p, m: herencia.de(buscar_toro, madres, p, m))
+    gen = genetica.resumen(rutas_gen)
+    return jsonify({"vacas": fichas, "experimental": True,
+                    "incluye_alarmas_equipo": con_alarmas,
+                    "genetica": {
+                        "toros": gen["toros"], "con_riesgo": gen["con_riesgo"],
+                        "peso": salud.PESO_GENETICA,
+                        # Si hay datos ficticios en juego, la pantalla lo avisa.
+                        "aviso_simulado": gen["aviso_simulado"],
+                        "escala": gen["escala"], "error": gen["error"],
+                    }})
 
 
 # --- Monitoreo IoT en tiempo real (gateway M300: lavado/barrido + sensores) -
@@ -798,7 +1116,8 @@ def api_salud_bcs_vacas():
     la lista de vacas fuera de rango. El filtrado por score mín/máx y estado
     reproductivo lo hace el frontend sobre este mismo listado."""
     tambo = _tambo_del_request()
-    data, espera = _servir_cacheado(tambo, "salud_bcs_vacas", "Calculando condición corporal…")
+    sql = salud.sql_bcs_vacas(salas.de(tambo).sql_grupos())
+    data, espera = _servir_cacheado(tambo, "salud_bcs_vacas", "Calculando condición corporal…", sql)
     if espera:
         return espera
     vacas = [dict(zip(data["columns"], r)) for r in data["rows"]]
@@ -828,11 +1147,79 @@ def api_animal_ficha():
             return jsonify({"error": f"No se encontró el animal RP {rp}."}), 404
         eventos = db.run_query(ficha_animal.sql_eventos(rp), tambo=tambo)
         produccion = db.run_query(ficha_animal.sql_produccion_diaria(rp), tambo=tambo)
-        bcs = db.run_query(ficha_animal.sql_bcs_individual(rp), tambo=tambo)
-        test_diario = db.run_query(ficha_animal.sql_test_leche_diario(rp), tambo=tambo)
         test_controles = db.run_query(ficha_animal.sql_test_leche_controles(rp), tambo=tambo)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"No se pudo consultar la base: {exc}"}), 502
+
+    # BCS (cámara BCS) y el detalle diario de conductividad/alarmas (tabla
+    # CMSMilkYield, propia del controlador de la rotativa) dependen de hardware
+    # o esquema que no todas las instalaciones tienen — p.ej. San José (sala
+    # convencional) no tiene ninguna de las dos tablas. Se degradan a "sin
+    # datos" en vez de tirar abajo el resto de la ficha, que sí es universal.
+    try:
+        bcs = db.run_query(ficha_animal.sql_bcs_individual(rp), tambo=tambo)
+    except db.TablaNoDisponibleError:
+        bcs = {"columns": [], "rows": []}
+    try:
+        test_diario = db.run_query(ficha_animal.sql_test_leche_diario(rp), tambo=tambo)
+    except db.TablaNoDisponibleError:
+        test_diario = {"columns": [], "rows": []}
+
+    # Rentabilidad del animal: lo que produjo contra lo que costó darle de
+    # comer. En su propio try/except porque depende de tres cosas de afuera —el
+    # proveedor del mixer, el mapeo de lotes y la planilla de precios— y ninguna
+    # puede tirar abajo la ficha, que es universal.
+    rent = None
+    try:
+        rent = _rentabilidad_animal(tambo, rp, herd=rebano.por_defecto(tambo),
+                                     info=dict(zip(info["columns"], info["rows"][0])))
+    except Exception as exc:  # noqa: BLE001
+        rent = {"error": str(exc)}
+
+    # Índice de mérito: la vida ya vivida del animal comparada con el rodeo.
+    # Igual que los otros paneles, en su propio try/except.
+    mer = None
+    try:
+        ctx = _merito_ctx(tambo, rebano.por_defecto(tambo))
+        if ctx is None:
+            mer = {"error": "El rodeo no entró completo en la consulta: los "
+                            "percentiles saldrían mal calibrados."}
+        else:
+            mer = merito.de_animal(rp, ctx)
+            if mer is not None:
+                mer["escala"] = merito.escala_rodeo(ctx)
+    except Exception as exc:  # noqa: BLE001
+        mer = {"error": str(exc)}
+
+    # Árbol de ancestros: padre (genético, del catálogo de toros) + línea
+    # materna (fenotípica, de la propia base). En su propio try/except porque
+    # depende del pedigrí estar cargado y del catálogo existir — si falla, la
+    # ficha se muestra igual sin el panel, que es un agregado.
+    herencia_arbol = None
+    try:
+        ped = db.run_query(ficha_animal.sql_pedigri(rp), tambo=tambo, max_rows=5)
+        if ped["rows"]:
+            pedigri = dict(zip(ped["columns"], ped["rows"][0]))
+            # Producción real de las ancestras hembras (la "tendencia a
+            # producir" medida, no estimada de un catálogo).
+            rps = [pedigri.get("madre_rp"), pedigri.get("abuela_rp")]
+            rps = [int(x) for x in rps if x is not None]
+            prod_anc = {}
+            if rps:
+                dp = db.run_query(ficha_animal.sql_produccion_ancestras(rps),
+                                  tambo=tambo, max_rows=10)
+                idxp = {c: i for i, c in enumerate(dp["columns"])}
+                prod_anc = {r[idxp["rp"]]: dict(zip(dp["columns"], r)) for r in dp["rows"]}
+            herencia_arbol = herencia.arbol(
+                pedigri, _historia_madres(tambo), prod_anc,
+                genetica.buscador(configuracion_tambo.rutas_toros(tambo)))
+    except Exception:  # noqa: BLE001
+        herencia_arbol = None
+    try:
+        aviso_gen = genetica.resumen(
+            configuracion_tambo.rutas_toros(tambo)).get("aviso_simulado")
+    except Exception:  # noqa: BLE001
+        aviso_gen = None      # falta el Excel de toros: la ficha se muestra igual
 
     return jsonify({
         "info": dict(zip(info["columns"], info["rows"][0])),
@@ -841,6 +1228,10 @@ def api_animal_ficha():
         "bcs": filas(bcs),
         "test_diario": filas(test_diario),
         "test_controles": filas(test_controles),
+        "rentabilidad": rent,
+        "merito": mer,
+        "herencia": herencia_arbol,
+        "genetica_aviso": aviso_gen,
     })
 
 
@@ -1058,12 +1449,60 @@ def _nombres_grupos(tambo: str) -> dict:
         return {}
 
 
-def _max_sesiones(tambo: str) -> int:
-    """Ordeños por día que tiene declarados el tambo (CMSGroupMilkSetting).
-    Es el tope de sesiones que puede dar el análisis de un día; si la config
-    no se puede leer, se usa el valor habitual."""
+# Historia clínica de las madres: diagnósticos de años atrás, no cambia en el
+# día. TTL largo a propósito, la consulta es cara.
+HERENCIA_CACHE_TTL_S = 6 * 3600
+
+
+def _historia_madres(tambo: str) -> dict:
+    """{rp: {riesgo, mastitis, metritis...}} — historia clínica de cada vaca,
+    para usarla como la mitad "madre" del riesgo heredado (ver herencia.py).
+
+    Se cachea aparte (no por `_run_consulta`) por una razón concreta: devuelve
+    una fila por MADRE y hay más madres que el tope genérico de 5.000 filas de
+    db.py — con el tope por defecto se truncaría en silencio y algunas vacas
+    quedarían sin la mitad materna sin que nada lo avise.
+
+    Es una foto que casi no se mueve (diagnósticos históricos), así que el TTL
+    largo alcanza. Si falla devuelve {} y el riesgo heredado se calcula solo
+    con el padre — el índice no se cae por esto, que es un dato de contexto."""
+    key = _clave(tambo, "__herencia_madres__")
+    cacheado, fresco = _cache_get(key, allow_stale=True, ttl=HERENCIA_CACHE_TTL_S)
+    if cacheado is not None and fresco:
+        return cacheado
     try:
-        data = _run_consulta("rutina_ordenos_dia", tambo)
+        data = db.run_query(herencia.sql_historia(), tambo=tambo, max_rows=20000)
+        if data.get("truncated"):
+            # Mejor sin dato materno que con la mitad de las madres faltando en
+            # silencio: el llamador cae a "solo padre" y la pantalla lo dice.
+            return {}
+        indice = herencia.indice_madres(data["columns"], data["rows"])
+        _cache_set(key, indice)
+        return indice
+    except Exception:  # noqa: BLE001
+        return cacheado if cacheado is not None else {}
+
+
+def _grupos_ordene(tambo: str) -> list:
+    """OIDs de los grupos de ordeñe REALES de esta sala (ver
+    `salas.de(tambo).sql_grupos()`): NO incluye corrales que no pasan por el
+    ordeño —secas, preparto, vaquillonas— ni, en una base compartida, grupos
+    de otros tambos. A propósito NO atrapa excepciones: si esto falla, es
+    mejor que la pantalla lo diga que mostrar en silencio rodeos que no son
+    de ordeñe (mismo criterio de fallar ruidoso que `salas/`)."""
+    data = _run_consulta("rutina_grupos", tambo, salas.de(tambo).sql_grupos())
+    idx_grupo = data["columns"].index("grupo")
+    return [r[idx_grupo] for r in data["rows"]]
+
+
+def _max_sesiones(tambo: str) -> int:
+    """Ordeños por día que tiene declarados el tambo. Es el tope de sesiones
+    que puede dar el análisis de un día; si la config no se puede leer, se usa
+    el valor habitual. La consulta depende del tipo de sala (ver `salas/`):
+    la rotativa lo lee de `CMSGroupMilkSetting`, la convencional de
+    `ParlorHistoricalData` (no tiene esa tabla)."""
+    try:
+        data = _run_consulta("rutina_ordenos_dia", tambo, salas.de(tambo).sql_ordenos_por_dia())
         if data["rows"] and data["rows"][0][0]:
             return int(data["rows"][0][0])
     except Exception:  # noqa: BLE001
@@ -1076,15 +1515,14 @@ def _grupos_pesos_de_request(tambo: str):
     comas, ej. "2,5,7") y `pesos` (JSON, ej. {"prep_90s":40,...}).
     `pesos` ausente/inválido => se usan los pesos base.
     `grupos` ausente => NO significa "todo el rodeo": se usan los grupos de
-    ordeño reales (CMSGroupMilkSetting.EnableMilking), para no mezclar en el
-    análisis corrales que ni pasan por la rotativa (secas, novillas, etc.)."""
+    ordeño reales de esta sala (ver `salas.de(tambo).sql_grupos()`), para no
+    mezclar en el análisis corrales que ni pasan por el ordeño (secas,
+    novillas, etc.)."""
     grupos_txt = request.args.get("grupos")
     if grupos_txt:
         grupos = grupos_txt.split(",")
     else:
-        datos_grupos = _run_consulta("rutina_grupos", tambo)
-        idx_grupo = datos_grupos["columns"].index("grupo")
-        grupos = [r[idx_grupo] for r in datos_grupos["rows"]]
+        grupos = _grupos_ordene(tambo)
     pesos_txt = request.args.get("pesos")
     pesos = None
     if pesos_txt:
@@ -1095,12 +1533,28 @@ def _grupos_pesos_de_request(tambo: str):
     return grupos, pesos
 
 
+UMBRAL_PREP_S_MIN, UMBRAL_PREP_S_MAX = 10, 600  # sanidad: rango razonable en segundos
+
+
+def _umbral_prep_de_request():
+    """Objetivo de colocación (segundos) pedido por la interfaz — ver el
+    selector nuevo en "Configurar análisis". Ausente/inválido => None (cada
+    sala usa su propio valor por defecto, ver rutina.UMBRAL_PREP_S)."""
+    valor = request.args.get("umbral_prep_s")
+    if not valor:
+        return None
+    try:
+        return max(UMBRAL_PREP_S_MIN, min(UMBRAL_PREP_S_MAX, round(float(valor))))
+    except (TypeError, ValueError):
+        return None
+
+
 @app.get("/api/rutina/grupos")
 def api_rutina_grupos():
     """Grupos activos hoy (con cantidad de animales), para el selector de
     'qué grupos incluir' en el análisis de rutina."""
     tambo = _tambo_del_request()
-    data = _run_consulta("rutina_grupos", tambo)
+    data = _run_consulta("rutina_grupos", tambo, salas.de(tambo).sql_grupos())
     return jsonify(data)
 
 
@@ -1110,6 +1564,7 @@ def api_rutina():
     un día completo, separado en sesiones y puntuado 0-100%."""
     tambo = _tambo_del_request()
     grupos, pesos = _grupos_pesos_de_request(tambo)
+    umbral_prep_s = _umbral_prep_de_request()
     fecha = request.args.get("fecha")
     if not fecha:
         kpis, _ = _cache_get(_clave(tambo, "__kpis__"), allow_stale=True)
@@ -1132,9 +1587,10 @@ def api_rutina():
         _refresh_rutina_async(tambo, fecha)
 
     try:
-        resultado = rutina.analizar_dia(data["columns"], data["rows"], fecha, grupos, pesos,
-                                         max_sesiones=_max_sesiones(tambo),
-                                         nombres=_nombres_grupos(tambo))
+        resultado = salas.de(tambo).analizar_dia(tambo, data["columns"], data["rows"], fecha,
+                                                 grupos, pesos, max_sesiones=_max_sesiones(tambo),
+                                                 nombres=_nombres_grupos(tambo),
+                                                 umbral_prep_s=umbral_prep_s)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
     resultado["incompleto"] = data.get("truncated", False)
@@ -1156,6 +1612,7 @@ def api_rutina_evolucion():
     progresivamente en segundo plano."""
     tambo = _tambo_del_request()
     grupos, pesos = _grupos_pesos_de_request(tambo)
+    umbral_prep_s = _umbral_prep_de_request()
 
     hasta = request.args.get("hasta")
     if hasta:
@@ -1205,8 +1662,9 @@ def api_rutina_evolucion():
         if data.get("truncated"):
             dias_incompletos.append(fecha)
         try:
-            punto = rutina.resumen_dia(data["columns"], data["rows"], fecha, grupos, pesos,
-                                        max_sesiones=tope, nombres=nombres_grupos)
+            punto = salas.de(tambo).resumen_dia(tambo, data["columns"], data["rows"], fecha, grupos, pesos,
+                                                max_sesiones=tope, nombres=nombres_grupos,
+                                                umbral_prep_s=umbral_prep_s)
         except Exception:  # noqa: BLE001
             punto = None
         if punto:
@@ -1325,9 +1783,22 @@ def _refresh_rendimiento_async(tambo, desde, hasta):
 
     def worker():
         try:
-            data = db.run_query(rutina.sql_rendimiento(desde.isoformat(), hasta.isoformat()),
+            data = db.run_query(salas.de(tambo).sql_rendimiento(desde.isoformat(), hasta.isoformat()),
                                  tambo=tambo, max_rows=rutina.MAX_FILAS_DIA * rutina.RANGO_RENDIMIENTO_MAX_DIAS)
-            _cache_set(key, data)
+            # El % de identificación NO sale de `data`: `sql_rendimiento`
+            # descarta las visitas sin identificar (ver el docstring de
+            # rutina.sql_identificacion), así que va en su propia consulta
+            # agregada por día. En su propio try/except porque es un dato
+            # secundario: si falla, el resto de Rendimiento Sala igual sirve.
+            ident = None
+            sql_ident = salas.de(tambo).sql_identificacion(desde.isoformat(), hasta.isoformat())
+            if sql_ident:   # None = esta sala no lo soporta (ver salas/convencional.py)
+                try:
+                    ident = db.run_query(sql_ident, tambo=tambo,
+                                         max_rows=rutina.RANGO_RENDIMIENTO_MAX_DIAS + 2)
+                except Exception:  # noqa: BLE001
+                    ident = None
+            _cache_set(key, {"visitas": data, "ident": ident})
         except Exception:  # noqa: BLE001
             pass
         finally:
@@ -1366,11 +1837,18 @@ def api_rutina_rendimiento():
     if not fresh:
         _refresh_rendimiento_async(tambo, desde, hasta)
 
-    sesiones = rutina.analizar_rendimiento(data["columns"], data["rows"],
-                                            desde.isoformat(), hasta.isoformat(),
-                                            max_sesiones=_max_sesiones(tambo))
+    visitas, ident = data["visitas"], data.get("ident")
+    sesiones = salas.de(tambo).analizar_rendimiento(tambo, visitas["columns"], visitas["rows"],
+                                                    desde.isoformat(), hasta.isoformat(),
+                                                    max_sesiones=_max_sesiones(tambo),
+                                                    nombres=_nombres_grupos(tambo),
+                                                    grupos_ordene=_grupos_ordene(tambo))
+    # None = esta sala no calcula identificación, o la consulta falló: el
+    # frontend muestra "no disponible" en vez de un 100% que no midió nada.
+    identificacion = rutina.armar_identificacion(ident["columns"], ident["rows"]) if ident else None
     return jsonify({"desde": desde.isoformat(), "hasta": hasta.isoformat(), "sesiones": sesiones,
-                    "truncated": data.get("truncated", False)})
+                    "identificacion": identificacion,
+                    "truncated": visitas.get("truncated", False)})
 
 
 # --- Análisis de flujos de ordeño -------------------------------------------
@@ -1415,6 +1893,22 @@ def _refresh_flujos_async(tambo, desde, hasta):
                 "dist": db.run_query(flujos.sql_distribucion(d, h), tambo=tambo, max_rows=200),
                 "deo": db.run_query(flujos.sql_por_deo(d, h), tambo=tambo, max_rows=50),
             }
+            # "Tiempo fuera" (sql_tiempo_fuera) es la consulta más pesada de
+            # las cinco -- ordena TODAS las bajadas del período por vaca para
+            # el LAG, en vez de escanear y sumar. Medido contra la base real:
+            # puede superar el timeout con el rango completo de 120 días,
+            # aunque las demás respondan en segundos. Por eso corre sobre un
+            # tramo más corto (el más reciente del rango elegido) y en su
+            # propio try/except: si igual se pasa del timeout, el resto de la
+            # página no se ve afectado -- "tiempo fuera" queda sin datos, no
+            # toda la pantalla en "calentando" para siempre.
+            desde_fuera = max(desde, hasta - datetime.timedelta(days=flujos.RANGO_FUERA_MAX_DIAS - 1))
+            try:
+                data["fuera"] = db.run_query(
+                    flujos.sql_tiempo_fuera(desde_fuera.isoformat(), h), tambo=tambo,
+                    max_rows=flujos.RANGO_FUERA_MAX_DIAS + 2)
+            except Exception:  # noqa: BLE001
+                data["fuera"] = None
             _cache_set(key, data)
         except Exception:  # noqa: BLE001
             pass
@@ -1459,7 +1953,7 @@ def api_flujos_analisis():
         _refresh_flujos_async(tambo, desde, hasta)
 
     resultado = flujos.analizar(data["dia"], data["grupo"], data["dist"], data["deo"],
-                                data["umbrales"])
+                                data["fuera"], data["umbrales"])
     resultado["desde"] = desde.isoformat()
     resultado["hasta"] = hasta.isoformat()
     return jsonify(resultado)
@@ -2579,12 +3073,10 @@ def _revisar_rutina_whatsapp(tambo: str):
     if data is None:
         _refresh_rutina_async(tambo, hoy)
         return
-    grupos_data = _run_consulta("rutina_grupos", tambo)
-    idx_grupo = grupos_data["columns"].index("grupo")
-    grupos = [r[idx_grupo] for r in grupos_data["rows"]]
-    resultado = rutina.analizar_dia(data["columns"], data["rows"], hoy, grupos,
-                                     max_sesiones=_max_sesiones(tambo),
-                                     nombres=_nombres_grupos(tambo))
+    grupos = _grupos_ordene(tambo)
+    resultado = salas.de(tambo).analizar_dia(tambo, data["columns"], data["rows"], hoy, grupos,
+                                             max_sesiones=_max_sesiones(tambo),
+                                             nombres=_nombres_grupos(tambo))
     for s in resultado["sesiones"]:
         if s["score"] < ALERTA_RUTINA_SCORE_MIN:
             clave = f"rutina_score:{hoy}:{s['indice']}"
@@ -2717,7 +3209,8 @@ def _conciliacion_estado(tambo: str, refrescar: bool = False) -> dict:
     data, _ = _cache_get(key, allow_stale=True, ttl=CONCILIACION_CACHE_TTL_S)
     if data is None or refrescar:
         data = {
-            "grupos": db.run_query(conciliacion.sql_grupos(herd), tambo=tambo, max_rows=500),
+            "grupos": db.run_query(conciliacion.sql_grupos(salas.grupos_subquery(tambo), herd),
+                                   tambo=tambo, max_rows=500),
             "dias": db.run_query(conciliacion.sql_dias_animaldaily(herd), tambo=tambo, max_rows=60),
             "cambio": db.run_query(conciliacion.sql_ultimo_cambio_grupo(herd),
                                    tambo=tambo, max_rows=5),
@@ -2843,10 +3336,27 @@ def api_alimentacion_conversion():
                 desde = hasta - datetime.timedelta(days=dias - 1)
                 consumos = proveedores.de(tambo).consumos(desde, hasta)
                 ms, diag = alimentacion.ms_por_lote_dia(consumos)
+                # Valorización: en su propio try/except porque depende de una
+                # planilla que el tambo mantiene a mano. Si falta o está mal, la
+                # conversión (que es física y no necesita precios) tiene que
+                # seguir saliendo igual.
+                costo, diag_costo, precio_litro = {}, {}, None
+                try:
+                    pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+                    if pr.get("precios"):
+                        costo, diag_costo = alimentacion.costo_por_lote_dia(
+                            consumos, pr["precios"])
+                    precio_litro = pr.get("precio_litro")
+                    diag_costo["precios"] = precios_alimentos.resumen(
+                        configuracion_tambo.ruta_precios(tambo))
+                except Exception as exc:  # noqa: BLE001
+                    diag_costo = {"precios": {"error": str(exc)}}
                 _cache_set(k, {
                     "desde": desde.isoformat(), "hasta": hasta.isoformat(),
                     "ms": {f"{l}|{f.isoformat()}": v for (l, f), v in ms.items()},
-                    "diagnostico": diag,
+                    "costo": {f"{l}|{f.isoformat()}": v for (l, f), v in costo.items()},
+                    "precio_litro": precio_litro,
+                    "diagnostico": {**diag, **diag_costo},
                     "prod_dia": db.run_query(
                         alimentacion.sql_produccion_grupo_dia(desde, hasta, herd),
                         tambo=tambo, max_rows=4000),
@@ -2856,7 +3366,7 @@ def api_alimentacion_conversion():
                     "solidos": db.run_query(
                         alimentacion.sql_solidos_vaca(desde, hasta, herd),
                         tambo=tambo, max_rows=5000),
-                    "grupos": db.run_query(conciliacion.sql_grupos(herd),
+                    "grupos": db.run_query(conciliacion.sql_grupos(salas.grupos_subquery(tambo), herd),
                                            tambo=tambo, max_rows=500),
                 })
             except Exception as exc:  # noqa: BLE001
@@ -2874,13 +3384,20 @@ def api_alimentacion_conversion():
     if data.get("error"):
         return jsonify({"error": data["error"]}), 502
 
-    ms = {}
-    for clave, v in data["ms"].items():
-        lote, fecha = clave.rsplit("|", 1)
-        ms[(lote, datetime.date.fromisoformat(fecha))] = v
+    def _por_lote_fecha(d):
+        """El caché guarda las claves como 'lote|fecha' (JSON no admite tuplas)."""
+        out = {}
+        for clave, v in (d or {}).items():
+            lote, fecha = clave.rsplit("|", 1)
+            out[(lote, datetime.date.fromisoformat(fecha))] = v
+        return out
+
     salida = alimentacion.analizar(
-        data["prod_dia"], data["prod_vaca"], data["solidos"], ms,
-        conciliacion.grupos_de(data["grupos"]), mapeo, data["diagnostico"])
+        data["prod_dia"], data["prod_vaca"], data["solidos"],
+        _por_lote_fecha(data["ms"]),
+        conciliacion.grupos_de(data["grupos"]), mapeo, data["diagnostico"],
+        costo_lote_dia=_por_lote_fecha(data.get("costo")),
+        precio_litro=data.get("precio_litro"))
     salida.update({"desde": data["desde"], "hasta": data["hasta"], "dias": dias})
     return jsonify(salida)
 
@@ -2936,9 +3453,25 @@ def api_alimentacion_conversion_historica():
                          else hoy)
                 consumos = proveedores.de(tambo).consumos(desde, hasta)
                 ms, _diag = alimentacion.ms_por_lote_dia(consumos)
+                # Valorización: en su propio try/except, como en la pestaña de
+                # conversión. La serie física no puede caerse porque falte una
+                # planilla que el tambo mantiene a mano.
+                costo, precio_litro, res_precios = {}, None, {}
+                try:
+                    pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+                    if pr.get("precios"):
+                        costo, _dc = alimentacion.costo_por_lote_dia(consumos, pr["precios"])
+                    precio_litro = pr.get("precio_litro")
+                    res_precios = precios_alimentos.resumen(
+                        configuracion_tambo.ruta_precios(tambo))
+                except Exception as exc:  # noqa: BLE001
+                    res_precios = {"error": str(exc)}
                 _cache_set(k, {
                     "desde": desde.isoformat(), "hasta": hasta.isoformat(),
                     "ms": {f"{l}|{f.isoformat()}": v for (l, f), v in ms.items()},
+                    "costo": {f"{l}|{f.isoformat()}": v for (l, f), v in costo.items()},
+                    "precio_litro": precio_litro,
+                    "precios": res_precios,
                     "prod_dia": db.run_query(
                         alimentacion.sql_produccion_grupo_dia(desde, hasta, herd),
                         tambo=tambo, max_rows=20000),
@@ -2946,8 +3479,12 @@ def api_alimentacion_conversion_historica():
                         conversion_historica.sql_solidos_por_control(desde, hasta, herd),
                         tambo=tambo, max_rows=200),
                     "ordene": db.run_query(
-                        conversion_historica.sql_grupos_ordene(herd),
+                        conversion_historica.sql_grupos_ordene(salas.grupos_subquery(tambo), herd),
                         tambo=tambo, max_rows=200),
+                    "lactancia": db.run_query(
+                        conversion_historica.sql_produccion_por_lactancia(
+                            salas.grupos_subquery(tambo), desde, hasta, herd),
+                        tambo=tambo, max_rows=20000),
                 })
             except Exception as exc:  # noqa: BLE001
                 _cache_set(k, {"error": str(exc)})
@@ -2964,16 +3501,195 @@ def api_alimentacion_conversion_historica():
     if data.get("error"):
         return jsonify({"error": data["error"]}), 502
 
-    ms = {}
-    for clave, v in data["ms"].items():
-        lote, fecha = clave.rsplit("|", 1)
-        ms[(lote, datetime.date.fromisoformat(fecha))] = v
+    def _por_lote_fecha(d):
+        out = {}
+        for clave, v in (d or {}).items():
+            lote, fecha = clave.rsplit("|", 1)
+            out[(lote, datetime.date.fromisoformat(fecha))] = v
+        return out
+
     salida = conversion_historica.armar(
-        data["prod_dia"], ms, mapeo, data["solidos"],
+        data["prod_dia"], _por_lote_fecha(data["ms"]), mapeo, data["solidos"],
         datetime.date.fromisoformat(data["hasta"]),
-        [f[0] for f in data["ordene"]["rows"]])
-    salida.update({"desde": data["desde"], "hasta": data["hasta"]})
+        [f[0] for f in data["ordene"]["rows"]],
+        costo_lote_dia=_por_lote_fecha(data.get("costo")),
+        precio_litro=data.get("precio_litro"))
+    salida["por_lactancia"] = conversion_historica.lactancia(
+        data["lactancia"], datetime.date.fromisoformat(data["hasta"]))
+    salida.update({"desde": data["desde"], "hasta": data["hasta"],
+                   "precios": data.get("precios") or {}})
     return jsonify(salida)
+
+
+def _refresh_sala_async(tambo: str, consulta_id: str, vivo: bool):
+    """Recalcula la sala convencional en segundo plano. No usa el registro
+    `_SQL` porque la consulta depende de tambo/ventana configurada, no es un
+    texto fijo como el resto de las consultas cacheadas."""
+    key = _clave(tambo, consulta_id)
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            sql = (sala_convencional.sql_sala_vivo(tambo) if vivo
+                   else sala_convencional.sql_sala_sesion())
+            _cache_set(key, db.run_query(sql, tambo=tambo, max_rows=3000))
+        except Exception as exc:  # noqa: BLE001
+            _cache_set(key, {"error": str(exc)})
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _refresh_sala_inc_async(tambo: str):
+    key = _clave(tambo, "sala_inc")
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            _cache_set(key, db.run_query(
+                sala_convencional.sql_sala_incidencias(), tambo=tambo, max_rows=500))
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _no_es_sala_convencional(tambo: str):
+    """None si el tambo es de sala convencional; si no, la respuesta de error
+    lista para devolver. Este módulo entero (`/api/sala*`) solo tiene sentido
+    para ese tipo de sala — evita disparar la consulta (SessionMilkYieldEx no
+    existe en una rotativa) y de paso devuelve un mensaje legible en vez de la
+    excepción cruda de ODBC. Puede pasar si el selector de tambo cambia a uno
+    rotativo mientras esta página sigue actualizándose sola de fondo."""
+    if tambos.tipo_sala(tambo) == "convencional":
+        return None
+    nombre = tambos.TAMBOS.get(tambo, {}).get("nombre", tambo)
+    return jsonify({"error": f"«Ordeño en Vivo Sala CMS» es solo para salas convencionales — "
+                             f"{nombre} es una sala rotativa. Usá «Ordeño en vivo» en su lugar.",
+                    "no_aplica": True}), 409
+
+
+@app.get("/api/sala/config")
+def api_sala_config():
+    """Configuración vigente de la sala convencional (lados, puestos por lado,
+    ventana en vivo). Ver `sala_convencional.py`."""
+    tambo = _tambo_del_request()
+    error = _no_es_sala_convencional(tambo)
+    if error:
+        return error
+    return jsonify(sala_convencional.configuracion(tambo))
+
+
+@app.post("/api/sala/config")
+@auth.requiere_rol("admin")
+def api_sala_guardar_config():
+    tambo = _tambo_del_request()
+    error = _no_es_sala_convencional(tambo)
+    if error:
+        return error
+    try:
+        cfg = sala_convencional.guardar_configuracion(tambo, request.json or {})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    # La ventana "en vivo" está adentro de la consulta cacheada: si cambió,
+    # los cachés viejos quedan con datos de una ventana que ya no es la
+    # vigente y hay que tirarlos, no esperar a que venzan solos.
+    with _cache_lock:
+        for k in [k for k in _cache if k.startswith(f"{tambo}:sala_")]:
+            _cache.pop(k, None)
+    return jsonify(cfg)
+
+
+@app.get("/api/sala")
+def api_sala():
+    """Vacas de la sala convencional (espina de pescado). modo=vivo → última
+    visita por (lado, puesto) dentro de la ventana configurada; si no, la
+    sesión completa (último ordeño). Ver `sala_convencional.py`."""
+    tambo = _tambo_del_request()
+    error = _no_es_sala_convencional(tambo)
+    if error:
+        return error
+    vivo = request.args.get("modo") == "vivo"
+    cfg = sala_convencional.configuracion(tambo)
+    # La clave incluye la ventana vigente: si el tambo la cambia, la consulta
+    # vieja queda en otra clave y no se sirve por error (misma lección que
+    # documenta PRECALENTAR.md sobre parámetros y claves de caché).
+    consulta_id = f"sala_vivo:{cfg['ventana_vivo_min']}" if vivo else "sala_sesion"
+    key = _clave(tambo, consulta_id)
+
+    if vivo:
+        data, fresh = _cache_get(key, allow_stale=True, ttl=_VIVO_TTL_S)
+        if data is None:
+            _refresh_sala_async(tambo, consulta_id, vivo=True)
+            return jsonify({"calentando": True, "mensaje": "Cargando la sala en vivo…"}), 202
+        if not fresh:
+            _refresh_sala_async(tambo, consulta_id, vivo=True)
+    else:
+        # `fresh` SÍ se revisa acá (antes no): sin esto, un error puntual (p.ej.
+        # una contraseña mal cargada en "⚙ Configuración") quedaba SERVIDO PARA
+        # SIEMPRE una vez cacheado — nada volvía a intentar la consulta hasta
+        # reiniciar el proceso, aunque el problema ya estuviera resuelto.
+        data, fresh = _cache_get(key, allow_stale=True)
+        if data is None:
+            _refresh_sala_async(tambo, consulta_id, vivo=False)
+            return jsonify({"calentando": True, "mensaje": "Cargando datos de la sala…"}), 202
+        if not fresh:
+            _refresh_sala_async(tambo, consulta_id, vivo=False)
+
+    if data.get("error"):
+        return jsonify({"error": data["error"]}), 502
+
+    columns = list(data["columns"])
+    rows = [list(r) for r in data["rows"]]
+    momento = rows[0][0] if rows else None
+    if columns and columns[0] == "momento_ordeno":
+        columns = columns[1:]
+        rows = [r[1:] for r in rows]
+
+    # Incidencias del equipo por puesto: consulta aparte, TTL largo (cambian
+    # de a poco), se pegan por (lado, puesto).
+    inc_data, _ = _cache_get(_clave(tambo, "sala_inc"), allow_stale=True)
+    if inc_data is None:
+        _refresh_sala_inc_async(tambo)
+    mapa_inc = {}
+    if inc_data:
+        di = {c: i for i, c in enumerate(inc_data["columns"])}
+        for r in inc_data["rows"]:
+            mapa_inc[(r[di["lado"]], r[di["puesto"]])] = [r[di[c]] for c in sala_convencional.INC_COLS]
+    il, ip = columns.index("lado"), columns.index("puesto")
+    columns = columns + sala_convencional.INC_COLS
+    defecto_inc = [0] * len(sala_convencional.INC_COLS)
+    rows = [r + (mapa_inc.get((r[il], r[ip])) or defecto_inc) for r in rows]
+
+    en_vivo, hace, ordenando = False, "", False
+    if momento:
+        try:
+            t = datetime.datetime.strptime(momento, "%Y-%m-%d %H:%M:%S")
+            minutos = int((datetime.datetime.now() - t).total_seconds() // 60)
+            en_vivo = minutos <= 20
+            ordenando = minutos <= sala_convencional.VIVO_LIMITE_MIN
+            hace = _hace_texto(minutos)
+        except (ValueError, TypeError):
+            pass
+
+    return jsonify({
+        "modo": "vivo" if vivo else "sesion",
+        "momento": momento, "en_vivo": en_vivo, "hace": hace, "ordenando": ordenando,
+        "vacas": len(rows), "columns": columns, "rows": rows,
+        "config": cfg,
+        "truncated": data.get("truncated", False),
+    })
 
 
 if __name__ == "__main__":
