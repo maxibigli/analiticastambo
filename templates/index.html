@@ -366,6 +366,59 @@
      importa es en qué cuarto del rodeo cae, no un continuo. */
   .vu-solido .vu-fill { background-image: none !important; }
 
+  /* --- Tablero de Diagnóstico --------------------------------------------
+     La tarjeta ES el control: se hace clic en toda su superficie para ir al
+     detalle, así que tiene que verse accionable (cursor, hover, foco visible)
+     y no como un cartel. */
+  .tb-grupo { margin-top: 18px; }
+  .tb-grupo h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
+    color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .tb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+    gap: 12px; }
+  .tb-card { position: relative; text-align: left; width: 100%; cursor: pointer;
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 13px 15px 14px; font: inherit; color: inherit;
+    /* La franja de color va a la izquierda y no arriba: al lado del número se
+       lee como parte del dato, y arriba competía con el borde de la tarjeta. */
+    border-left: 4px solid var(--muted);
+    transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
+  .tb-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.22);
+    border-color: var(--accent); }
+  .tb-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .tb-card.sin { cursor: pointer; opacity: .72; border-left-color: var(--muted); }
+  /* El chip de estado va absoluto arriba a la derecha, así que el nombre
+     necesita dejarle lugar: sin este padding, "Índice de conversión de
+     alimento" se metía por debajo y se leía "...alimentoCALCULANDO". */
+  .tb-nom { font-size: 11.5px; color: var(--text-secondary); line-height: 1.3;
+    min-height: 30px; padding-right: 76px; }
+  .tb-val { font-size: 27px; font-weight: 650; line-height: 1.1; margin-top: 4px;
+    font-variant-numeric: tabular-nums; }
+  .tb-val small { font-size: 12px; font-weight: 500; opacity: .65; margin-left: 3px; }
+  .tb-sub { font-size: 10.5px; color: var(--muted); margin-top: 3px; min-height: 13px; }
+  /* Escala: dónde cae el valor entre el verde y el rojo configurados. Sin esto
+     el color es una opinión sin referencia. */
+  .tb-escala { position: relative; height: 5px; border-radius: 3px; margin-top: 9px;
+    background: linear-gradient(90deg, var(--good), var(--warning), var(--critical)); }
+  .tb-escala i { position: absolute; top: -3px; width: 3px; height: 11px; border-radius: 2px;
+    background: var(--text-primary); box-shadow: 0 0 0 2px var(--surface-1); }
+  .tb-lims { display: flex; justify-content: space-between; font-size: 9.5px;
+    color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
+  .tb-ir { font-size: 10px; color: var(--accent); margin-top: 8px; opacity: 0;
+    transition: opacity .12s ease; }
+  .tb-card:hover .tb-ir, .tb-card:focus-visible .tb-ir { opacity: 1; }
+  .tb-chip { position: absolute; top: 10px; right: 12px; font-size: 9px;
+    text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+    max-width: 70px; text-align: right; line-height: 1.15; }
+  .tb-chip.viejo { color: var(--warning); }
+  /* Cuándo se leyó el dato. Con el servidor caído es la diferencia entre un
+     número que sirve y uno que engaña. */
+  .tb-leido { font-size: 9.5px; color: var(--muted); margin-top: 7px;
+    padding-top: 6px; border-top: 1px dashed var(--border); }
+  .tb-leido.viejo { color: var(--warning); }
+  /* La tarjeta con dato viejo se distingue del resto sin perder su color de
+     semáforo: el borde punteado dice "esto no es de ahora". */
+  .tb-card.viejo { border-style: dashed; }
+
   /* --- Línea de tiempo de la vida del animal -----------------------------
      Posicionamiento absoluto sobre un contenedor relativo: el eje X es el
      tiempo real (de nacimiento a hoy), así que la distancia entre dos marcas
@@ -517,6 +570,7 @@
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-brand"><img src="/static/img/logo.svg" alt="">LactIA</div>
     {% if 'dashboard' in paginas_visibles %}<button class="nav-item" data-pagina="dashboard">📊 <span>Dashboard</span></button>{% endif %}
+    {% if 'tablero' in paginas_visibles %}<button class="nav-item" data-pagina="tablero">🚦 <span>Tablero de Diagnóstico</span></button>{% endif %}
     {% if 'ordeno' in paginas_visibles %}<button class="nav-item" data-pagina="ordeno">🔄 <span>Ordeño en vivo</span></button>{% endif %}
     {% if 'sala_cms' in paginas_visibles %}<button class="nav-item" data-pagina="sala_cms">🐟 <span>Ordeño en Vivo Sala CMS</span></button>{% endif %}
     {% if 'rutina' in paginas_visibles %}<button class="nav-item" data-pagina="rutina">⏱️ <span>Rutina de ordeño</span></button>{% endif %}
@@ -1454,6 +1508,32 @@
         <div class="chart-box" style="height:220px"><canvas id="chart-laser-temp"></canvas></div>
       </div>
     </div>
+  </section>
+  </div>
+
+  <div class="page" id="page-tablero" hidden>
+  <section class="card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🚦 Tablero de Diagnóstico</h2>
+      <span class="aviso">Los indicadores del tambo, con su semáforo.</span>
+      <button class="secundario" id="tab-refrescar" style="margin-left:auto">Actualizar</button>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Qué es.</b> Una portada con los números que la aplicación ya calcula en sus distintas
+      pantallas, pintados de verde a rojo según los límites que fijaste. Hacé clic en cualquier
+      tarjeta para ir al detalle, con <b>el último mes ya seleccionado</b>.
+      <br><b>No calcula nada nuevo.</b> Cada tarjeta lee el mismo dato que su pantalla de origen, así
+      que nunca vas a ver dos números distintos de lo mismo. Por eso, un indicador cuya pantalla
+      todavía no se abrió aparece como <b>«calculando»</b> hasta que su cálculo esté listo.
+      <br><b>Sin dato no es cero.</b> Si falta la planilla de precios, o el tambo no tiene sensores,
+      la tarjeta queda en gris y dice qué falta — nunca un 0, que en un semáforo se pintaría de un
+      color y se leería como una medición.
+      <br><b>Los límites los ponés vos</b>, en ⚙ Configuración › Tablero de Diagnóstico. Los que
+      vienen cargados son un punto de partida, no una recomendación técnica.
+    </p>
+    <div class="aviso" id="tab-info" style="margin-top:8px"></div>
+    <section class="kpis" id="tab-resumen" style="margin-top:10px"></section>
+    <div id="tab-grupos" style="margin-top:6px"></div>
   </section>
   </div>
 
@@ -2516,6 +2596,31 @@
 
     <div style="margin-top:18px">
       <button id="config-guardar">Guardar configuración</button>
+    </div>
+  </section>
+
+  <section class="card" id="config-tablero-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🚦 Tablero de Diagnóstico</h2>
+      <span class="aviso">Los límites de cada indicador.</span>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Cómo funciona.</b> Cada indicador tiene un valor que se pinta <b>verde</b> y otro que se
+      pinta <b>rojo</b>. Entre esos dos, el color pasa por naranja de forma continua. Los valores
+      fuera de la escala se quedan en el extremo.
+      <br><b>Cuál va primero depende del indicador</b>, y la pantalla te lo dice en cada fila: en
+      «costo por litro» más bajo es mejor, así que el verde es el número chico; en «calificación de
+      rutina» es al revés. Si los cargás al revés se rechaza el guardado, porque el tablero pintaría
+      de verde justo lo que hay que mirar.
+      <br><b>Los valores que vienen cargados son un punto de partida</b>, no una recomendación
+      técnica: poné los de tu tambo.
+      <br><b>Desactivar</b> un indicador lo saca del tablero sin perder sus límites.
+    </p>
+    <div class="aviso" id="config-tablero-estado" style="margin:8px 0"></div>
+    <div style="overflow-x:auto"><table class="tabla" id="config-tablero-tabla"></table></div>
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+      <button id="config-tablero-guardar">Guardar límites</button>
+      <button class="secundario" id="config-tablero-reset">Volver a los valores por defecto</button>
     </div>
   </section>
   </div>
@@ -5696,6 +5801,227 @@ const PROD_LABEL = {
   lactancias: 'Lactancias', kg_dia_prom: 'kg/día promedio', kg_dia_max: 'mejor día (kg)',
 };
 
+// Fecha y hora corta, en el formato de acá: "30/07 14:35".
+function fechaHora(iso) {
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso || '');
+  const p = n => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// --- Configuración del Tablero de Diagnóstico --------------------------------
+let tabCfg = null;
+
+async function cargarConfigTablero() {
+  const est = document.getElementById('config-tablero-estado');
+  try {
+    tabCfg = await pedirJSON('/api/tablero/config?tambo=' + encodeURIComponent(tamboActual));
+    pintarConfigTablero();
+    est.textContent = '';
+  } catch (e) { est.textContent = 'Error: ' + e.message; }
+}
+
+function pintarConfigTablero() {
+  const cat = tabCfg.catalogo || [], cfg = tabCfg.config || {};
+  const filas = cat.map(i => {
+    const c = cfg[i.clave] || {};
+    // Se dice EN CADA FILA para qué lado va la escala. Es el error que la
+    // validación rechaza, así que conviene evitarlo antes de que ocurra.
+    const dir = i.direccion === 'bajo_mejor'
+      ? '<span class="chip">más bajo es mejor</span>'
+      : '<span class="chip">más alto es mejor</span>';
+    return `<tr data-clave="${escHtml(i.clave)}">
+      <td><input type="checkbox" class="tb-cfg-activo" ${c.activo === false ? '' : 'checked'}
+            title="Mostrar esta tarjeta en el tablero"></td>
+      <td><b>${escHtml(i.nombre)}</b><br>
+          <span class="aviso">${dir} ${escHtml(i.unidad)} · ${escHtml(i.destino)}</span><br>
+          <span class="aviso" style="opacity:.8">${escHtml(i.ayuda)}</span></td>
+      <td><input type="number" step="any" class="tb-cfg-verde" value="${c.verde ?? i.verde}"
+            style="width:92px;padding:5px 7px"></td>
+      <td><input type="number" step="any" class="tb-cfg-rojo" value="${c.rojo ?? i.rojo}"
+            style="width:92px;padding:5px 7px"></td>
+      <td class="aviso" style="white-space:nowrap">${i.verde} / ${i.rojo}
+          ${c.modificado ? '<br><span class="chip rojo">cambiado</span>' : ''}</td>
+      <td><div class="tb-escala" style="width:110px"></div></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('config-tablero-tabla').innerHTML =
+    `<thead><tr><th title="Mostrar en el tablero">Ver</th><th>Indicador</th>
+       <th style="color:var(--good)">Verde</th><th style="color:var(--critical)">Rojo</th>
+       <th>Por defecto</th><th>Escala</th></tr></thead><tbody>${filas}</tbody>`;
+}
+
+async function guardarConfigTablero() {
+  const est = document.getElementById('config-tablero-estado');
+  const umbrales = {};
+  document.querySelectorAll('#config-tablero-tabla tbody tr').forEach(tr => {
+    umbrales[tr.dataset.clave] = {
+      verde: Number(tr.querySelector('.tb-cfg-verde').value),
+      rojo: Number(tr.querySelector('.tb-cfg-rojo').value),
+      activo: tr.querySelector('.tb-cfg-activo').checked,
+    };
+  });
+  est.textContent = 'Guardando…';
+  try {
+    tabCfg = await pedirJSON('/api/tablero/config?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({umbrales}),
+    });
+    pintarConfigTablero();
+    est.innerHTML = '<b style="color:var(--good)">Guardado.</b> El tablero usa los nuevos límites.';
+    tabDatos = null;   // que el tablero se repinte con la escala nueva
+  } catch (e) {
+    // El backend rechaza los semáforos invertidos con un texto que se puede
+    // mostrar tal cual: dice qué indicador y por qué.
+    est.innerHTML = `<b style="color:var(--critical)">No se guardó.</b> ${escHtml(e.message)}`;
+  }
+}
+
+document.getElementById('config-tablero-guardar').addEventListener('click', guardarConfigTablero);
+document.getElementById('config-tablero-reset').addEventListener('click', async () => {
+  const est = document.getElementById('config-tablero-estado');
+  try {
+    tabCfg = await pedirJSON('/api/tablero/config?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({restablecer: true}),
+    });
+    pintarConfigTablero();
+    est.innerHTML = '<b>Listo.</b> Todos los indicadores volvieron a sus valores por defecto.';
+    tabDatos = null;
+  } catch (e) { est.textContent = 'Error: ' + e.message; }
+});
+
+// --- Tablero de Diagnóstico --------------------------------------------------
+let tabDatos = null, tabReintento = null;
+
+function pintarTablero() {
+  const d = tabDatos, r = d.resumen || {};
+  // El aviso de base caída va PRIMERO y en rojo: explica de una vez por qué
+  // todo el tablero muestra datos viejos, en vez de que haya que deducirlo
+  // tarjeta por tarjeta.
+  document.getElementById('tab-info').innerHTML =
+    (d.base_caida
+      ? `<div style="padding:6px 0"><span class="chip rojo">Sin conexión</span>
+         <b style="color:var(--critical)">${escHtml(d.base_caida)}</b></div>` : '') +
+    `${r.con_dato} de ${r.total} indicadores con dato` +
+    (r.viejos ? ` · <b>${r.viejos} de la última lectura</b>` : '') +
+    (r.calculando ? ` · <b>${r.calculando} calculándose</b> (abrí su pantalla o esperá el refresco)` : '') +
+    ` · al hacer clic se abre el detalle desde el <b>${d.historico.desde}</b>.`;
+
+  document.getElementById('tab-resumen').innerHTML = [
+    ['En verde', r.en_verde, 'var(--good)'],
+    ['En naranja', r.en_naranja, 'var(--warning)'],
+    ['En rojo', r.en_rojo, 'var(--critical)'],
+    ['Sin dato', r.total - r.con_dato, 'var(--muted)'],
+  ].map(([l, v, c]) => `<div class="tile" style="border-top-color:${c}">
+      <div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+
+  // Agrupadas por área: doce tarjetas sueltas no se leen, agrupadas sí.
+  const grupos = {};
+  (d.tarjetas || []).forEach(t => { (grupos[t.grupo] = grupos[t.grupo] || []).push(t); });
+  document.getElementById('tab-grupos').innerHTML = Object.entries(grupos).map(([g, ts]) =>
+    `<div class="tb-grupo"><h3>${escHtml(g)}</h3><div class="tb-grid">
+      ${ts.map(tarjetaTablero).join('')}</div></div>`).join('');
+
+  document.querySelectorAll('#tab-grupos .tb-card').forEach(el => {
+    el.addEventListener('click', () => saltarDesdeTablero(el.dataset.pagina, el.dataset.tab));
+  });
+}
+
+function tarjetaTablero(t) {
+  const hayValor = t.valor != null;
+  const val = hayValor ? Number(t.valor).toLocaleString('es-AR',
+      {minimumFractionDigits: t.decimales, maximumFractionDigits: t.decimales}) : '—';
+  // La marca en la escala usa `posicion` (0 = verde, 1 = rojo), que ya viene
+  // calculada por el backend con la dirección del indicador aplicada. Calcularla
+  // acá otra vez sería una segunda implementación del semáforo que puede
+  // desincronizarse de la primera.
+  const marca = t.posicion == null ? '' :
+    `<div class="tb-escala"><i style="left:calc(${(t.posicion * 100).toFixed(1)}% - 1.5px)"></i></div>
+     <div class="tb-lims"><span>${t.verde}</span><span>${t.rojo}</span></div>`;
+  const sub = hayValor ? (t.detalle || '')
+    : `<span style="color:var(--muted)">${escHtml(t.calculando ? 'Calculando…' : (t.falta || 'Sin dato'))}</span>`;
+  // Cuándo se leyó el dato, siempre que haya uno. Con el servidor caído es lo
+  // que separa "esto es de ahora" de "esto es de ayer", y sin eso un número
+  // viejo se lee como actual.
+  const leido = t.leido
+    ? `<div class="tb-leido${t.viejo ? ' viejo' : ''}">${t.viejo ? '⏳ ' : ''}última lectura: ` +
+      `${escHtml(fechaHora(t.leido))}${t.hace ? ` <span style="opacity:.75">(${escHtml(t.hace)})</span>` : ''}</div>`
+    : '';
+  return `<button class="tb-card${hayValor ? '' : ' sin'}${t.viejo ? ' viejo' : ''}"
+      data-pagina="${escHtml(t.pagina)}" data-tab="${escHtml(t.tab || '')}"
+      style="${hayValor ? `border-left-color:${t.color}` : ''}"
+      title="${escHtml(t.ayuda)}">
+    ${t.calculando ? '<span class="tb-chip">calculando</span>'
+      : (t.viejo ? '<span class="tb-chip viejo">última lectura</span>' : '')}
+    <div class="tb-nom">${escHtml(t.nombre)}</div>
+    <div class="tb-val" style="${hayValor ? `color:${t.color}` : 'color:var(--muted);font-size:19px'}">${val}${
+      hayValor ? `<small>${escHtml(t.unidad)}</small>` : ''}</div>
+    <div class="tb-sub">${sub}</div>
+    ${marca}
+    ${leido}
+    <div class="tb-ir">Ver ${escHtml(t.destino)} →</div>
+  </button>`;
+}
+
+// El clic abre la pantalla de origen con el último mes ya puesto. Si el destino
+// tiene un selector de período propio, se le pide el rango más cercano al mes
+// en vez de dejarlo en su valor por defecto: la tarjeta prometió un histórico.
+function saltarDesdeTablero(pagina, tab) {
+  if (!pagina) return;
+  const dias = (tabDatos && tabDatos.historico && tabDatos.historico.dias) || 30;
+  irAPagina(pagina);
+  setTimeout(() => {
+    // Selector de días (Alimentación): se elige la opción más cercana al mes.
+    ['cv-dias', 'll-dias'].forEach(id => {
+      const s = document.getElementById(id);
+      if (!s) return;
+      const op = [...s.options].map(o => Number(o.value))
+        .reduce((a, b) => Math.abs(b - dias) < Math.abs(a - dias) ? b : a);
+      if (String(op) !== s.value) { s.value = String(op); s.dispatchEvent(new Event('change')); }
+    });
+    // Pestaña dentro de la página (Alimentación tiene varias).
+    if (tab) {
+      const b = document.querySelector(`#alim-tabs [data-tab="${tab}"]`);
+      if (b) b.click();
+    }
+    // Rango por fechas (Rendimiento Sala).
+    const desde = document.getElementById('rend-desde');
+    const hasta = document.getElementById('rend-hasta');
+    if (desde && hasta && tabDatos && tabDatos.historico) {
+      desde.value = tabDatos.historico.desde;
+      hasta.value = tabDatos.historico.hasta;
+      const btn = document.getElementById('rend-aplicar');
+      if (btn) btn.click();
+    }
+  }, 60);
+}
+
+async function cargarTablero() {
+  const info = document.getElementById('tab-info');
+  clearTimeout(tabReintento);
+  try {
+    tabDatos = await pedirJSON('/api/tablero?tambo=' + encodeURIComponent(tamboActual));
+    pintarTablero();
+    // Se reintenta SOLO si hay algo realmente en curso. Con el servidor caído no
+    // se está calculando nada, así que reintentar cada 8 segundos era girar en
+    // falso: no avanzaba nunca y encima cada llamada esperaba el timeout de
+    // conexión, apilando peticiones hasta colgar la pantalla. Con la base caída
+    // se espera un minuto, que es lo que tarda en volver a probar el servidor.
+    const r = tabDatos.resumen || {};
+    if (tabDatos.base_caida) tabReintento = setTimeout(cargarTablero, 60000);
+    else if (r.calculando) tabReintento = setTimeout(cargarTablero, 8000);
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; tabReintento = setTimeout(cargarTablero, 5000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('tab-refrescar').addEventListener('click', () => {
+  tabDatos = null;
+  cargarTablero();
+});
+
 // --- Índice de mérito y línea de tiempo --------------------------------------
 // Cada tipo de evento con su color y su carril. Los carriles agrupan por lo que
 // el que mira está buscando: la carrera reproductiva, la sanitaria y el manejo.
@@ -8214,7 +8540,7 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas', 'configuracion']
+const PAGINAS = ['dashboard', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas', 'configuracion']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -8503,6 +8829,7 @@ function cargarDatosDePagina(id) {
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
   else if (id === 'consultas') cargarPredefinidas();
+  else if (id === 'tablero') cargarTablero();
   else if (id === 'configuracion') cargarConfiguracion();
   // 'evolucion' no se autocarga: solo con "Aplicar" / "Ver mes completo".
 }
@@ -8533,6 +8860,7 @@ function irAPagina(id) {
   if (id !== 'sala_cms') clearTimeout(salaReintento);
   if (id !== 'proyeccion') clearTimeout(proyReintento);
   if (id !== 'repro') clearTimeout(reproReintento);
+  if (id !== 'tablero') clearTimeout(tabReintento);
   // Cámaras y actividad en vivo de "Problemas podales": solo mientras se ve la página.
   if (id === 'salud') iniciarPodalVivo(); else detenerPodalVivo();
   // Estado en vivo de Monitoreo IoT: solo mientras se ve esa página.
@@ -8583,6 +8911,7 @@ async function cargarConfiguracion() {
     pintarEstadoArchivos(d);
 
     await _actualizarPuestosConfig(cfg.sala_efectiva === 'convencional');
+    cargarConfigTablero();
     estado.textContent = '';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;

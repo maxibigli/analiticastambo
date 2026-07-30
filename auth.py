@@ -27,7 +27,7 @@ ROLES = ("admin", "operario")
 # Páginas del sidebar visibles por rol. El frontend oculta las que no
 # corresponden y el backend además bloquea sus endpoints (ver requiere_rol).
 PAGINAS_POR_ROL = {
-    "admin": ["dashboard", "ordeno", "sala_cms", "rutina", "rendimiento", "flujos", "evolucion",
+    "admin": ["dashboard", "tablero", "ordeno", "sala_cms", "rutina", "rendimiento", "flujos", "evolucion",
               "proyeccion", "repro", "alimentacion", "entregas", "salud", "ficha", "iot", "tareas",
               "consultas", "configuracion"],
     # "rendimiento" (Rendimiento Sala) estaba dentro de la página "rutina", así

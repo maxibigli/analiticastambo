@@ -55,3 +55,13 @@ Padres_del_rodeo_SIMULADO.xlsx
 # `conciliacion_grupos.json`. Por eso mismo la ruta es configurable desde
 # ⚙ Configuración: se puede dejar el archivo en una carpeta del tambo.
 Precios_alimentos.xlsx
+
+# Límites del Tablero de Diagnóstico. Estado propio de cada instalación, como
+# `metas_reproductivas.json`: los umbrales de un tambo no son los de otro, y el
+# del servidor de producción no tiene por qué venir de la PC de desarrollo.
+tablero_umbrales.json
+
+# Última lectura buena de cada indicador del tablero. Es un caché en disco para
+# poder mostrar datos cuando SERVER-DELPRO no está accesible: estado propio de
+# cada instalación, con valores del rodeo. No va al repo.
+tablero_lecturas.json

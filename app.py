@@ -51,6 +51,7 @@ import sala_convencional
 import salas
 import salud
 import simulador
+import tablero
 import tambos
 import telegram_bot
 import whatsapp
@@ -607,6 +608,520 @@ def _rentabilidad_animal(tambo: str, rp: int, herd=None, info: dict = None) -> d
     salida.update({"desde": desde.isoformat(), "hasta": hasta.isoformat(),
                    "precios": res_precios})
     return salida
+
+
+TABLERO_CACHE_TTL_S = 30 * 60
+# Cuánto se recuerda que la base no responde antes de volver a probar. Con la
+# base caída cada intento de conexión cuesta ~11 segundos de timeout, así que sin
+# esto el tablero pagaba un timeout POR INDICADOR: se midió en 43 segundos por
+# request, y con el frontend reintentando cada 8 segundos las peticiones se
+# apilaban y colgaban la pantalla. Con esto se paga un timeout cada minuto y el
+# resto de las llamadas responden al instante con la última lectura buena.
+BASE_CAIDA_TTL_S = 60
+
+
+def _base_responde(tambo: str):
+    """None si la base responde; el motivo si no.
+
+    Se prueba UNA vez y se recuerda el resultado un minuto. La pregunta no es
+    «¿esta consulta anda?» sino «¿tiene sentido intentar consultar?», y con el
+    servidor apagado la respuesta es la misma para todas.
+    """
+    k = _clave(tambo, "__base_caida__")
+    estado, _ = _cache_get(k, allow_stale=False, ttl=BASE_CAIDA_TTL_S)
+    if estado is not None:
+        return estado.get("motivo")
+    try:
+        db.run_query("SELECT 1 AS ok", tambo=tambo, max_rows=1, validate=False)
+        _cache_set(k, {"motivo": None})
+        return None
+    except Exception as exc:  # noqa: BLE001
+        s = str(exc)
+        # El 08001 es "no se pudo abrir la conexión": el servidor no está o no
+        # es alcanzable por red. Se distingue de un error de consulta porque lo
+        # que hay que hacer al respecto es distinto.
+        motivo = ("No hay conexión con el servidor de la base (SERVER-DELPRO). "
+                  "El tablero muestra la última lectura de cada indicador."
+                  if "08001" in s or "SQLDriverConnect" in s
+                  else f"La base no respondió: {s[:120]}")
+        _cache_set(k, {"motivo": motivo})
+        return motivo
+
+
+_calentando_tablero = set()
+
+
+def _ultimo_dia_datos(tambo: str, herd=None) -> datetime.date:
+    """Último día COMPLETO de `AnimalDaily`, cacheado.
+
+    El tablero tiene que anclar sus ventanas acá y NO en `date.today()`. La base
+    viene atrasada varios días (medido el 30/07/2026: el último día completo era
+    el 21/07), así que «la última semana» contada desde hoy caía entera en el
+    hueco y las tarjetas de Rendimiento Sala salían vacías con la base andando
+    perfecto. Es el mismo criterio que ya usan `salud.py` y las pantallas de
+    alimentación — ver el `_ANCLA` de salud.py.
+    """
+    k = _clave(tambo, "__ultimo_dia_datos__")
+    d, _ = _cache_get(k, allow_stale=True, ttl=TABLERO_CACHE_TTL_S)
+    if d and d.get("fecha"):
+        return datetime.date.fromisoformat(d["fecha"])
+    hoy = datetime.date.today()
+    try:
+        data = db.run_query(conciliacion.sql_dias_animaldaily(herd), tambo=tambo, max_rows=60)
+        ultimo = conciliacion.ultimo_dia_completo(data)
+        fecha = (datetime.date.fromisoformat(ultimo["fecha"]) if ultimo["fecha"] else hoy)
+    except Exception:  # noqa: BLE001
+        fecha = hoy
+    _cache_set(k, {"fecha": fecha.isoformat()})
+    return fecha
+
+
+def _calentar_tablero(tambo: str, faltan: set):
+    """Dispara los cálculos que le faltan al tablero, EN SERIE y en segundo plano.
+
+    Sin esto el tablero solo LEE cachés: si nadie abría cada pantalla, las
+    tarjetas se quedaban en «calculando» para siempre y el reintento del
+    frontend giraba en falso. La pantalla prometía completarse sola y no podía.
+
+    EN SERIE Y NO EN PARALELO, por el mismo motivo que `_warmup`: esta base
+    corre con poca memoria y nueve consultas pesadas a la vez la tumban. Cada
+    `_refresh_*` además ya se protege de dispararse dos veces (`_refreshing`),
+    así que llamar de más no duplica trabajo.
+
+    Solo se calienta lo que de verdad falta: si el tambo ya abrió Alimentación,
+    ese cálculo no se rehace.
+    """
+    with _cache_lock:
+        if tambo in _calentando_tablero:
+            return
+        _calentando_tablero.add(tambo)
+
+    def worker():
+        try:
+            hoy = datetime.date.today()
+            herd = rebano.por_defecto(tambo)
+
+            # 1. KPIs primero: de ahí sale la fecha del último día con datos, que
+            #    es lo que necesita la rutina para saber qué día calcular.
+            if {"rutina_score"} & faltan:
+                try:
+                    _calcular_kpis(tambo)
+                except Exception:  # noqa: BLE001
+                    pass
+                try:
+                    kpis, _ = _cache_get(_clave(tambo, "__kpis__"), allow_stale=True)
+                    if kpis and kpis.get("fecha_dato"):
+                        _refresh_rutina_async(tambo, str(kpis["fecha_dato"])[:10])
+                except Exception:  # noqa: BLE001
+                    pass
+
+            if {"rcs_altas", "rcs_cronicas"} & faltan:
+                try:
+                    _refresh_async(tambo, "salud_rcs_grupo",
+                                    salud.sql_rcs_por_grupo(salas.de(tambo).sql_grupos()))
+                except Exception:  # noqa: BLE001
+                    pass
+
+            if {"horas_ordeno", "pct_identificacion"} & faltan:
+                try:
+                    ancla = _ultimo_dia_datos(tambo, herd)
+                    _refresh_rendimiento_async(tambo, ancla - datetime.timedelta(days=6), ancla)
+                except Exception:  # noqa: BLE001
+                    pass
+
+            if {"ufc"} & faltan:
+                try:
+                    _refresh_laser_async()
+                except Exception:  # noqa: BLE001
+                    pass
+
+            # 2. Alimentación al final: es la más pesada (baja los consumos del
+            #    mixer por HTTP además de consultar la base).
+            if {"costo_litro", "litros_libres_pct", "conversion"} & faltan:
+                try:
+                    _calentar_alimentacion(tambo, herd)
+                except Exception:  # noqa: BLE001
+                    pass
+        finally:
+            with _cache_lock:
+                _calentando_tablero.discard(tambo)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _calentar_alimentacion(tambo: str, herd):
+    """Llena el caché de /api/alimentacion/conversion con sus días por defecto.
+
+    Se arma con las MISMAS piezas y la MISMA clave que el endpoint, para que la
+    pantalla de Alimentación encuentre el trabajo ya hecho en vez de rehacerlo.
+    """
+    key = f"{tambo}:alim_conversion:{herd}:{alimentacion.DIAS_DEFECTO}"
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+    try:
+        if not conciliacion.lote_de_grupo(tambo):
+            return                     # sin mapeo de lotes no hay nada que calcular
+        d_dias = db.run_query(conciliacion.sql_dias_animaldaily(herd), tambo=tambo, max_rows=60)
+        ultimo = conciliacion.ultimo_dia_completo(d_dias)
+        hasta = (datetime.date.fromisoformat(ultimo["fecha"]) if ultimo["fecha"]
+                 else datetime.date.today())
+        desde = hasta - datetime.timedelta(days=alimentacion.DIAS_DEFECTO - 1)
+        consumos = proveedores.de(tambo).consumos(desde, hasta)
+        ms, diag = alimentacion.ms_por_lote_dia(consumos)
+        costo, diag_costo, precio_litro = {}, {}, None
+        try:
+            pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+            if pr.get("precios"):
+                costo, diag_costo = alimentacion.costo_por_lote_dia(consumos, pr["precios"])
+            precio_litro = pr.get("precio_litro")
+            diag_costo["precios"] = precios_alimentos.resumen(
+                configuracion_tambo.ruta_precios(tambo))
+        except Exception as exc:  # noqa: BLE001
+            diag_costo = {"precios": {"error": str(exc)}}
+        _cache_set(key, {
+            "desde": desde.isoformat(), "hasta": hasta.isoformat(),
+            "ms": {f"{l}|{f.isoformat()}": v for (l, f), v in ms.items()},
+            "costo": {f"{l}|{f.isoformat()}": v for (l, f), v in costo.items()},
+            "precio_litro": precio_litro,
+            "diagnostico": {**diag, **diag_costo},
+            "prod_dia": db.run_query(alimentacion.sql_produccion_grupo_dia(desde, hasta, herd),
+                                     tambo=tambo, max_rows=4000),
+            "prod_vaca": db.run_query(alimentacion.sql_produccion_vaca(desde, hasta, herd),
+                                      tambo=tambo, max_rows=5000),
+            "solidos": db.run_query(alimentacion.sql_solidos_vaca(desde, hasta, herd),
+                                    tambo=tambo, max_rows=5000),
+            "grupos": db.run_query(conciliacion.sql_grupos(salas.grupos_subquery(tambo), herd),
+                                   tambo=tambo, max_rows=500),
+        })
+    except Exception as exc:  # noqa: BLE001
+        _cache_set(key, {"error": str(exc)})
+    finally:
+        with _cache_lock:
+            _refreshing.discard(key)
+
+
+def _valores_tablero(tambo: str) -> dict:
+    """{clave: {"valor"|"falta"|"calculando"}} para cada indicador del tablero.
+
+    CADA INDICADOR SALE DE LA MISMA FUENTE QUE SU PANTALLA. Donde la pantalla ya
+    deja un caché, se lee ese caché: así el tablero no puede mostrar un número
+    distinto del que muestra el detalle, que es la peor falla posible acá. Donde
+    no hay un caché con clave estable, se calcula con el MISMO rango por defecto
+    que usa la pantalla y se cachea aparte.
+
+    NINGÚN INDICADOR PUEDE TIRAR ABAJO EL RESTO: cada uno va en su propio
+    try/except y, si falla, la tarjeta explica qué falta en vez de mostrar un
+    cero — que en un semáforo se pintaría de un color y se leería como medido.
+    """
+    herd = rebano.por_defecto(tambo)
+    out = {}
+    # Si la base no responde, NINGUNA consulta va a andar: se saltean todas en
+    # vez de pagar 11 segundos de timeout por cada una. Los indicadores que
+    # salen de un caché ya calentado se sirven igual — no necesitan la base.
+    caida = _base_responde(tambo)
+
+    def poner(clave, valor=None, falta=None, calculando=False, detalle=None):
+        out[clave] = {"valor": valor, "falta": falta,
+                      "calculando": calculando, "detalle": detalle}
+
+    # --- Alimentación: costo por litro, litros libres y conversión ----------
+    # Misma clave de caché que /api/alimentacion/conversion con sus días por
+    # defecto, que es como abre la pantalla.
+    try:
+        k = f"{tambo}:alim_conversion:{herd}:{alimentacion.DIAS_DEFECTO}"
+        data, _ = _cache_get(k, allow_stale=True, ttl=CONVERSION_CACHE_TTL_S)
+        if data is None:
+            for c in ("costo_litro", "litros_libres_pct", "conversion"):
+                poner(c, calculando=True,
+                      falta="La pantalla de Alimentación todavía no se calculó.")
+        elif data.get("error"):
+            for c in ("costo_litro", "litros_libres_pct", "conversion"):
+                poner(c, falta=data["error"])
+        else:
+            mapeo = conciliacion.lote_de_grupo(tambo)
+            sal = alimentacion.analizar(
+                data["prod_dia"], data["prod_vaca"], data["solidos"],
+                _tablero_por_lote(data.get("ms")),
+                conciliacion.grupos_de(data["grupos"]), mapeo, data.get("diagnostico"),
+                costo_lote_dia=_tablero_por_lote(data.get("costo")),
+                precio_litro=data.get("precio_litro"))
+            ec, res = sal.get("economia") or {}, sal.get("resumen") or {}
+            poner("costo_litro", ec.get("costo_por_litro"),
+                  falta=ec.get("falta") or "Falta la planilla de precios.",
+                  detalle=f"{ec.get('vacas') or 0} vacas valorizadas")
+            poner("litros_libres_pct", ec.get("pct_litros_libres"),
+                  falta=ec.get("falta") or "Falta la planilla de precios.",
+                  detalle=(f"{ec.get('litros_libres')} de "
+                           f"{ec.get('kg_leche_vaca_dia')} litros"
+                           if ec.get("litros_libres") is not None else None))
+            poner("conversion", res.get("conversion_tambo"),
+                  falta="Sin grupos con materia seca y sólidos en el período.",
+                  detalle=f"{res.get('grupos_confiables') or 0} grupo(s) confiables")
+    except Exception as exc:  # noqa: BLE001
+        for c in ("costo_litro", "litros_libres_pct", "conversion"):
+            poner(c, falta=f"Error al leer Alimentación: {exc}")
+
+    # --- Rendimiento de sala: horas de ordeño e identificación --------------
+    # Mismo rango por defecto que /api/rutina/rendimiento (la última semana).
+    try:
+        # La MISMA ventana que usa `_calentar_tablero`, anclada en el último día
+        # con datos: si difirieran, el lector miraría un caché que nadie llena.
+        ancla = _ultimo_dia_datos(tambo, herd)
+        k = (f"{tambo}:rendimiento:{(ancla - datetime.timedelta(days=6)).isoformat()}"
+             f":{ancla.isoformat()}")
+        data, _ = _cache_get(k, allow_stale=True)
+        if data is None:
+            for c in ("horas_ordeno", "pct_identificacion"):
+                poner(c, calculando=True,
+                      falta="La pantalla de Rendimiento Sala todavía no se calculó.")
+        else:
+            # El caché guarda las CONSULTAS CRUDAS ({"visitas", "ident"}), no el
+            # análisis: lo arma el endpoint al servir. Así que acá hay que
+            # analizarlas igual que él, o el tablero lee campos que no existen.
+            ident = (data or {}).get("ident")
+            id_an = (rutina.armar_identificacion(ident["columns"], ident["rows"])
+                     if ident else None)
+            # `armar_identificacion` devuelve una fila por día: el indicador es
+            # el del último día con datos, no un promedio de la semana.
+            ultimo_id = (sorted(id_an, key=lambda x: x.get("fecha") or "")[-1]
+                         if id_an else None)
+            poner("pct_identificacion", (ultimo_id or {}).get("pct_identificacion"),
+                  falta="Sin ordeños en la semana previa al último día con datos.",
+                  detalle=(f"{ultimo_id.get('desconocidos')} sin identificar el "
+                           f"{ultimo_id.get('fecha')}" if ultimo_id else None))
+
+            vis = (data or {}).get("visitas")
+            sesiones = []
+            if vis:
+                sesiones = salas.de(tambo).analizar_rendimiento(
+                    tambo, vis["columns"], vis["rows"],
+                    desde=(ancla - datetime.timedelta(days=6)).isoformat(),
+                    hasta=ancla.isoformat(),
+                    nombres=_nombres_grupos(tambo),
+                    grupos_ordene=_grupos_ordene(tambo)) or []
+            horas, n_ses = None, 0
+            if sesiones:
+                ult = max(x.get("fecha") for x in sesiones if x.get("fecha"))
+                dia = [x for x in sesiones if x.get("fecha") == ult]
+                mins = sum((x.get("duracion_min") or 0) for x in dia)
+                horas, n_ses = (round(mins / 60.0, 1) if mins else None), len(dia)
+            poner("horas_ordeno", horas,
+                  falta="Sin sesiones en la semana previa al último día con datos.",
+                  detalle=(f"{n_ses} sesión(es) del {ult}" if horas is not None else None))
+    except Exception as exc:  # noqa: BLE001
+        for c in ("horas_ordeno", "pct_identificacion"):
+            poner(c, falta=f"Error al leer Rendimiento Sala: {exc}")
+
+    # --- RCS: vacas altas y crónicas ---------------------------------------
+    try:
+        data, _ = _cache_get(_clave(tambo, "salud_rcs_grupo"), allow_stale=True)
+        if data is None:
+            for c in ("rcs_altas", "rcs_cronicas"):
+                poner(c, calculando=True,
+                      falta="La pantalla de Salud del rodeo todavía no se calculó.")
+        else:
+            idx = {c: i for i, c in enumerate(data["columns"])}
+            altas = sum((f[idx["altas_ultimo"]] or 0) for f in data["rows"]
+                        if "altas_ultimo" in idx)
+            cron = sum((f[idx["cronicas"]] or 0) for f in data["rows"]
+                       if "cronicas" in idx)
+            poner("rcs_altas", altas,
+                  detalle=f"sobre {salud.UMBRAL_RCS:,} cél/ml".replace(",", "."))
+            poner("rcs_cronicas", cron, detalle="altas en dos controles seguidos")
+    except Exception as exc:  # noqa: BLE001
+        for c in ("rcs_altas", "rcs_cronicas"):
+            poner(c, falta=f"Error al leer RCS: {exc}")
+
+    # --- UFC: de la usina, NO de DelPro ------------------------------------
+    try:
+        data, _ = _cache_get("laser:actual", allow_stale=True, ttl=LASER_CACHE_TTL_S)
+        if data is None:
+            poner("ufc", calculando=True,
+                  falta="Todavía no se consultaron las entregas de la usina.")
+        else:
+            entregas = (data or {}).get("entregas") or []
+            ufcs = sorted(e["ufc"] for e in entregas if e.get("ufc") is not None)
+            # MEDIANA y no promedio: la distribución tiene cola larga y el
+            # promedio la exagera. Medido el 30/07/2026 sobre 47 entregas: la
+            # mediana da 75 y el promedio 210, arrastrado por una sola de 1.093.
+            # El tablero mostraba 210 en rojo profundo por ese único valor.
+            med = None
+            if ufcs:
+                n = len(ufcs)
+                med = (ufcs[n // 2] if n % 2 else (ufcs[n // 2 - 1] + ufcs[n // 2]) / 2)
+            poner("ufc", med,
+                  falta="Las entregas cargadas no traen UFC.",
+                  detalle=(f"mediana de {len(ufcs)} entrega(s)" if ufcs else None))
+    except Exception as exc:  # noqa: BLE001
+        poner("ufc", falta=f"Error al leer las entregas: {exc}")
+
+    # --- IoT: sensores fuera de rango o sin reportar ------------------------
+    # `estado_sistema` consulta la base para saber si se está ordeñando, así que
+    # con el servidor caído también se cuelga en el timeout.
+    try:
+        if caida:
+            raise RuntimeError(caida)
+        est = iot_monitoreo.estado_sistema(tambo) or {}
+        sensores = est.get("sensores") or est.get("canales") or []
+        if not sensores:
+            poner("iot_alarmas", falta="No hay gateway IoT conectado en este tambo.")
+        else:
+            alarmas = sum(1 for s in sensores
+                          if s.get("alarma") or s.get("estado") in ("alarma", "sin_datos"))
+            poner("iot_alarmas", alarmas, detalle=f"de {len(sensores)} sensor(es)")
+    except Exception as exc:  # noqa: BLE001
+        poner("iot_alarmas", falta=f"Error al leer el monitoreo IoT: {exc}")
+
+    # --- Rutina y días abiertos: con caché propio del tablero --------------
+    # No tienen una clave de caché estable (la de rutina depende de la fecha y
+    # la de reproducción de dos rangos), así que se calculan con el mismo rango
+    # por defecto de su pantalla y se guardan aparte. El TTL largo evita que
+    # abrir el tablero dispare trabajo pesado.
+    # Rutina: la fecha sale de `__kpis__` y el resultado del caché `rutina:<fecha>`,
+    # que son exactamente los que usa /api/rutina. Así el tablero muestra la
+    # misma nota que la pantalla, sin recalcularla.
+    try:
+        kpis, _ = _cache_get(_clave(tambo, "__kpis__"), allow_stale=True)
+        fecha = str(kpis["fecha_dato"])[:10] if kpis and kpis.get("fecha_dato") else None
+        if not fecha:
+            poner("rutina_score", calculando=True,
+                  falta="Todavía no se sabe cuál fue el último día con datos.")
+        else:
+            data, _ = _cache_get(_clave(tambo, f"rutina:{fecha}"), allow_stale=True)
+            if data is None:
+                poner("rutina_score", calculando=True,
+                      falta=f"La rutina del {fecha} todavía no se calculó.")
+            else:
+                # Mismo caso que rendimiento: el caché tiene la consulta cruda.
+                an = salas.de(tambo).analizar_dia(
+                    tambo, data["columns"], data["rows"], fecha,
+                    nombres=_nombres_grupos(tambo)) or {}
+                # `analizar_dia` NO devuelve un resumen: devuelve una sesión por
+                # ordeño, cada una con su score y sus vacas. La nota del día es
+                # el promedio PONDERADO POR VACAS —igual que en `rutina.py`—, no
+                # el promedio simple: una sesión de 40 vacas no puede pesar lo
+                # mismo que una de 400.
+                ses = [x for x in (an.get("sesiones") or [])
+                       if x.get("score") is not None and x.get("vacas")]
+                vacas = sum(x["vacas"] for x in ses)
+                score = (round(sum(x["score"] * x["vacas"] for x in ses) / vacas)
+                         if vacas else None)
+                poner("rutina_score", score,
+                      falta=f"La rutina del {fecha} no tiene sesiones puntuables.",
+                      detalle=(f"rutina del {fecha} · {len(ses)} sesión(es), "
+                               f"{vacas} vacas" if score is not None else None))
+    except Exception as exc:  # noqa: BLE001
+        poner("rutina_score", falta=f"Error al leer la rutina: {exc}")
+
+    # Días abiertos: no hay un caché de pantalla con clave estable (la de
+    # reproducción depende de dos rangos), así que se calcula con su propio
+    # caché de media hora. Es una sola consulta agregada, barata.
+    try:
+        k = _clave(tambo, "__tablero_abiertos__")
+        extra, _ = _cache_get(k, allow_stale=True, ttl=TABLERO_CACHE_TTL_S)
+        if extra is None:
+            if caida:
+                raise RuntimeError(caida)
+            extra = _tablero_dias_abiertos(tambo, herd)
+            _cache_set(k, extra)
+        poner("dias_abiertos", extra.get("dias_abiertos"),
+              falta=extra.get("falta") or "Sin lactancias cerradas para promediar.",
+              detalle=extra.get("detalle"))
+    except Exception as exc:  # noqa: BLE001
+        poner("dias_abiertos", falta=f"Error al calcular días abiertos: {exc}")
+
+    return out
+
+
+def _tablero_por_lote(d):
+    """El caché guarda {(lote, fecha)} como 'lote|fecha'; acá se deshace."""
+    out = {}
+    for clave, v in (d or {}).items():
+        lote, fecha = clave.rsplit("|", 1)
+        out[(lote, datetime.date.fromisoformat(fecha))] = v
+    return out
+
+
+def _tablero_dias_abiertos(tambo: str, herd) -> dict:
+    """Días abiertos promedio: días entre el parto y la concepción.
+
+    `HistoryAnimalLactationInfo.OpenDays` es la fuente que ya usa
+    `reproduccion.py`. Se acota a 0 < OpenDays < 400 con el mismo criterio: un 0
+    o un NULL es "todavía no concibió", no cero días, y meterlo al promedio lo
+    hunde; arriba de 400 son cargas viejas o erróneas.
+    """
+    d = db.run_query(f"""
+        SELECT CAST(AVG(CAST(h.OpenDays AS float)) AS decimal(6,1)) AS dias,
+               COUNT(*) AS lactancias
+        FROM HistoryAnimalLactationInfo h
+        JOIN BasicAnimal b ON b.OID = h.Animal
+        WHERE h.OpenDays > 0 AND h.OpenDays < 400
+          AND {rebano.filtro('b', herd)}
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """, tambo=tambo, max_rows=5)
+    if not d["rows"] or d["rows"][0][0] is None:
+        return {"falta": "No hay lactancias con días abiertos cargados."}
+    return {"dias_abiertos": float(d["rows"][0][0]),
+            "detalle": f"{d['rows'][0][1]} lactancias"}
+
+
+@app.get("/api/tablero")
+@auth.requiere_rol("admin")
+def api_tablero():
+    """Tablero de Diagnóstico: los indicadores del tambo con su semáforo."""
+    tambo = _tambo_del_request()
+    try:
+        valores = _valores_tablero(tambo)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+    # Cada valor que se pudo leer queda guardado con su fecha y hora: es lo que
+    # permite que el tablero siga sirviendo cuando el servidor no está.
+    try:
+        tablero.guardar_lecturas(tambo, valores)
+    except Exception:  # noqa: BLE001
+        pass            # no poder guardar el histórico no puede romper la respuesta
+
+    caida = _base_responde(tambo)
+    # Lo que falta se manda a calcular en segundo plano. Sin esto el tablero
+    # solo leía cachés y las tarjetas se quedaban en «calculando» hasta que
+    # alguien abriera cada pantalla a mano. Con la base caída no se dispara
+    # nada: no hay con qué calcular y solo se acumularían timeouts.
+    faltan = {c for c, v in valores.items()
+              if v.get("valor") is None and v.get("calculando")}
+    if faltan and not caida:
+        try:
+            _calentar_tablero(tambo, faltan)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return jsonify(tablero.armar(valores, tablero.config_de(tambo),
+                                  lecturas=tablero.lecturas_de(tambo),
+                                  base_caida=caida))
+
+
+@app.get("/api/tablero/config")
+@auth.requiere_rol("admin")
+def api_tablero_config():
+    tambo = _tambo_del_request()
+    return jsonify({"config": tablero.config_de(tambo),
+                    "catalogo": tablero.catalogo()})
+
+
+@app.post("/api/tablero/config")
+@auth.requiere_rol("admin")
+def api_tablero_guardar():
+    tambo = _tambo_del_request()
+    datos = request.json or {}
+    try:
+        if datos.get("restablecer"):
+            cfg = tablero.restablecer(tambo, datos.get("clave"))
+        else:
+            cfg = tablero.guardar(tambo, datos.get("umbrales") or {})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"config": cfg, "catalogo": tablero.catalogo()})
 
 
 def _estado_archivos(tambo: str) -> dict:
