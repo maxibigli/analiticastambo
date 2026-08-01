@@ -3510,31 +3510,106 @@ async function cargarRendimiento() {
       diaRF[g.grupo] = (diaRF[g.grupo] || 0) + (g.retiradas_forzadas || 0);
     }));
 
+    // Valor de un rodeo en un día, SIN redondear -- se reusa para dibujar la
+    // línea del rodeo y para promediar entre rodeos (si se promediara sobre
+    // el número ya redondeado, el promedio arrastraría un redondeo doble).
+    const ordeniosHoraDia = (f, g) => promediar((ordeniosHoraPorDiaGrupo[f] || {})[g] || []);
+    const colorProm = css('--text-primary');
+    const promedioOHPara = (gruposActivos) => fechasPerm.map(f => {
+      const v = promediar(gruposActivos.map(g => ordeniosHoraDia(f, g)).filter(v => v != null));
+      return v != null ? Math.round(10 * v) / 10 : null;
+    });
+
+    const datasetsOH = gruposPerm.map((g, i) => linea(g, fechasPerm.map(f => {
+      const v = ordeniosHoraDia(f, g);
+      return v != null ? Math.round(10 * v) / 10 : null;
+    }), SERIES[i % SERIES.length]));
+    // Promedio simple entre los rodeos VISIBLES (no ponderado por tamaño de
+    // rodeo) -- línea propia, más gruesa y de color neutro para que se lea
+    // como el agregado y no como un rodeo más. Se recalcula en el onClick de
+    // la leyenda de más abajo cada vez que se prende/apaga un rodeo, para que
+    // siempre refleje el promedio de lo que está tildado en ese momento.
+    const datasetPromedioOH = linea('Promedio', promedioOHPara(gruposPerm), colorProm,
+      { borderWidth: 3, pointRadius: 3, borderDash: [6, 3] });
+
     const oOrdeniosHoraEvol = baseOpts(true);
     oOrdeniosHoraEvol.scales.y.title = { display: true, text: 'ordeños/hora' };
+    oOrdeniosHoraEvol.plugins.legend.onClick = (e, legendItem, legend) => {
+      const ci = legend.chart;
+      const idx = legendItem.datasetIndex;
+      ci.isDatasetVisible(idx) ? ci.hide(idx) : ci.show(idx);
+      // Los datasets de rodeo son los primeros gruposPerm.length, en el mismo
+      // orden -- ver datasetsOH más arriba.
+      const gruposActivos = gruposPerm.filter((g, i) => ci.isDatasetVisible(i));
+      datasetPromedioOH.data = promedioOHPara(gruposActivos);
+      ci.update();
+    };
     chartRendOrdeniosHoraEvolucion = dibujar('chart-rend-ordenios-hora-evolucion', chartRendOrdeniosHoraEvolucion, {
       type: 'line',
-      data: { labels: fechasPerm.map(etiquetaDia), datasets: gruposPerm.map((g, i) =>
-        linea(g, fechasPerm.map(f => {
-          const v = promediar((ordeniosHoraPorDiaGrupo[f] || {})[g] || []);
-          return v != null ? Math.round(10 * v) / 10 : null;
-        }), SERIES[i % SERIES.length])) },
+      data: { labels: fechasPerm.map(etiquetaDia), datasets: [...datasetsOH, datasetPromedioOH] },
       options: oOrdeniosHoraEvol,
     });
 
-    // % de retiradas forzadas sobre los ordeños de ese rodeo ese día -- una
-    // TASA, no una cantidad, para poder comparar rodeos de distinto tamaño
-    // (el gráfico "por rodeo" de arriba ya muestra la cantidad absoluta).
-    const oRetiradasEvol = baseOpts(true);
-    oRetiradasEvol.scales.y.title = { display: true, text: '% de los ordeños' };
+    // % de un rodeo en un día, SIN redondear -- se reusa para la línea del
+    // rodeo y para el promedio entre rodeos.
+    const pctRetiradasDia = (f, g) => {
+      const ord = (ordeniosPorDiaGrupo[f] || {})[g];
+      const ret = (retiradasPorDiaGrupo[f] || {})[g];
+      return ord ? 100 * ret / ord : null;
+    };
+    const cantRetiradasDia = (f, g) => (retiradasPorDiaGrupo[f] || {})[g];
+    const promedioPctPara = (gruposActivos) => fechasPerm.map(f => {
+      const v = promediar(gruposActivos.map(g => pctRetiradasDia(f, g)).filter(v => v != null));
+      return v != null ? Math.round(10 * v) / 10 : null;
+    });
+    const promedioCantPara = (gruposActivos) => fechasPerm.map(f => {
+      const vals = gruposActivos.map(g => cantRetiradasDia(f, g)).filter(v => v != null);
+      return vals.length ? Math.round(promediar(vals)) : null;
+    });
+
+    const datasetsPct = gruposPerm.map((g, i) => linea(g, fechasPerm.map(f => {
+      const v = pctRetiradasDia(f, g);
+      return v != null ? Math.round(10 * v) / 10 : null;
+    }), SERIES[i % SERIES.length], { _rodeo: g }));
+    const datasetsCant = gruposPerm.map((g, i) => linea(`${g} · cantidad`,
+      fechasPerm.map(f => cantRetiradasDia(f, g) ?? 0), SERIES[i % SERIES.length],
+      { yAxisID: 'y1', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5, _leyenda: false, _rodeo: g }));
+    // Promedio simple entre los rodeos VISIBLES, mismo criterio y estilo que
+    // en el gráfico de arriba. El "· cantidad" comparte `_rodeo` con el "%"
+    // para que se oculten juntos, igual que con cada rodeo.
+    const datasetPromedioPct = linea('Promedio', promedioPctPara(gruposPerm), colorProm,
+      { borderWidth: 3, pointRadius: 3, borderDash: [6, 3], _rodeo: '__promedio__' });
+    const datasetPromedioCant = linea('Promedio · cantidad', promedioCantPara(gruposPerm), colorProm,
+      { yAxisID: 'y1', borderDash: [2, 2], pointRadius: 0, borderWidth: 2,
+        _leyenda: false, _rodeo: '__promedio__' });
+
+    const oRetiradasEvol = optsDobleEje('% de los ordeños', 'retiradas forzadas');
+    oRetiradasEvol.plugins.legend.display = true;
+    // Solo la línea de % entra a la leyenda -- la de cantidad comparte color
+    // y rodeo, duplicarla ahí solo agrega ruido (mismo criterio que ya se usa
+    // en otros gráficos de esta página con dos series por rodeo).
+    oRetiradasEvol.plugins.legend.labels = {
+      filter: (item, data) => data.datasets[item.datasetIndex]._leyenda !== false,
+    };
+    // Clic en un rodeo: ocultar/mostrar juntas sus dos líneas (% y cantidad),
+    // no solo la clickeada, y recalcular el promedio con los rodeos que
+    // queden visibles (los datasets de % son los primeros gruposPerm.length).
+    oRetiradasEvol.plugins.legend.onClick = (e, legendItem, legend) => {
+      const ci = legend.chart;
+      const rodeo = ci.data.datasets[legendItem.datasetIndex]._rodeo;
+      const ocultando = ci.isDatasetVisible(legendItem.datasetIndex);
+      ci.data.datasets.forEach((d, i) => {
+        if (d._rodeo === rodeo) { ocultando ? ci.hide(i) : ci.show(i); }
+      });
+      const gruposActivos = gruposPerm.filter((g, i) => ci.isDatasetVisible(i));
+      datasetPromedioPct.data = promedioPctPara(gruposActivos);
+      datasetPromedioCant.data = promedioCantPara(gruposActivos);
+      ci.update();
+    };
     chartRendRetiradasEvolucion = dibujar('chart-rend-retiradas-evolucion', chartRendRetiradasEvolucion, {
       type: 'line',
-      data: { labels: fechasPerm.map(etiquetaDia), datasets: gruposPerm.map((g, i) =>
-        linea(g, fechasPerm.map(f => {
-          const ord = (ordeniosPorDiaGrupo[f] || {})[g];
-          const ret = (retiradasPorDiaGrupo[f] || {})[g];
-          return ord ? Math.round(1000 * ret / ord) / 10 : null;
-        }), SERIES[i % SERIES.length])) },
+      data: { labels: fechasPerm.map(etiquetaDia),
+              datasets: [...datasetsPct, ...datasetsCant, datasetPromedioPct, datasetPromedioCant] },
       options: oRetiradasEvol,
     });
 
