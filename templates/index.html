@@ -3516,16 +3516,29 @@ async function cargarRendimiento() {
     oVacasHoraEvol.plugins.legend.labels = {
       filter: (item, data) => data.datasets[item.datasetIndex]._leyenda !== false,
     };
+    // Clic en un rodeo de la leyenda: por defecto Chart.js solo esconde EL
+    // dataset clickeado (ordeños/hora), y la línea punteada de retiradas de
+    // ese mismo rodeo queda visible por su cuenta. Acá se ocultan/muestran
+    // juntos los dos datasets que comparten `_rodeo`.
+    oVacasHoraEvol.plugins.legend.onClick = (e, legendItem, legend) => {
+      const ci = legend.chart;
+      const rodeo = ci.data.datasets[legendItem.datasetIndex]._rodeo;
+      const ocultando = ci.isDatasetVisible(legendItem.datasetIndex);
+      ci.data.datasets.forEach((d, i) => {
+        if (d._rodeo === rodeo) { ocultando ? ci.hide(i) : ci.show(i); }
+      });
+    };
     chartRendVacasHoraEvolucion = dibujar('chart-rend-vacas-hora-evolucion', chartRendVacasHoraEvolucion, {
       type: 'line',
       data: { labels: fechasPerm.map(etiquetaDia), datasets: [
         ...gruposPerm.map((g, i) => linea(g, fechasPerm.map(f => {
           const v = promediar((ordeniosHoraPorDiaGrupo[f] || {})[g] || []);
           return v != null ? Math.round(10 * v) / 10 : null;
-        }), SERIES[i % SERIES.length])),
+        }), SERIES[i % SERIES.length], { _rodeo: g })),
         ...gruposPerm.map((g, i) => linea(`${g} · retiradas forzadas`,
           fechasPerm.map(f => (retiradasPorDiaGrupo[f] || {})[g] ?? 0), SERIES[i % SERIES.length],
-          { yAxisID: 'y1', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5, _leyenda: false })),
+          { yAxisID: 'y1', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5,
+            _leyenda: false, _rodeo: g })),
       ] },
       options: oVacasHoraEvol,
     });
