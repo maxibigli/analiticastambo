@@ -1866,8 +1866,8 @@
     <div style="margin-top:14px">
       <div class="aviso" style="margin-bottom:6px">Ordeños/hora y retiradas forzadas — evolución por rodeo</div>
       <p class="explica" style="margin-top:0">
-        Líneas: ordeños/hora de cada rodeo, por día (eje izquierdo). Barras semitransparentes,
-        mismo color que su línea: retiradas forzadas de ese rodeo ese día (eje derecho).
+        Línea sólida: ordeños/hora de cada rodeo, por día (eje izquierdo). Línea punteada, mismo
+        color: retiradas forzadas de ese rodeo ese día (eje derecho).
       </p>
       <div class="chart-box" style="height:300px"><canvas id="chart-rend-vacas-hora-evolucion"></canvas></div>
     </div>
@@ -3494,8 +3494,9 @@ async function cargarRendimiento() {
     // "Horas/día en ordeño — evolución"). La tasa se PROMEDIA entre las
     // sesiones de un mismo día (igual que arriba); las retiradas, al ser una
     // cantidad, se SUMAN (son ordeños distintos el mismo día). Un solo
-    // gráfico superpuesto: líneas para ordeños/hora (eje izq.), barras
-    // semitransparentes del mismo color para retiradas forzadas (eje der.).
+    // gráfico superpuesto: línea sólida para ordeños/hora (eje izq.), línea
+    // punteada del mismo color para retiradas forzadas (eje der.) -- más fácil
+    // de leer superpuestas que una línea contra una barra.
     const ordeniosHoraPorDiaGrupo = {};   // {fecha: {grupo: [tasas de ese día]}}
     const retiradasPorDiaGrupo = {};      // {fecha: {grupo: total retiradas de ese día}}
     sesiones.forEach(s => (s.grupos || []).forEach(g => {
@@ -3508,21 +3509,23 @@ async function cargarRendimiento() {
     }));
     const oVacasHoraEvol = optsDobleEje('ordeños/hora', 'retiradas forzadas');
     oVacasHoraEvol.plugins.legend.display = true;
-    // Solo las líneas entran a la leyenda -- las barras comparten color con
-    // su línea (mismo rodeo), duplicarlas ahí solo agrega ruido.
-    oVacasHoraEvol.plugins.legend.labels = { filter: item => item.text && !item.text.startsWith('_') };
+    // Solo la línea de ordeños/hora entra a la leyenda -- la de retiradas
+    // comparte color y rodeo, duplicarla ahí solo agrega ruido. Se marca con
+    // una propiedad propia (Chart.js ignora las que no reconoce) en vez de
+    // un truco de texto, para que el tooltip muestre la etiqueta real.
+    oVacasHoraEvol.plugins.legend.labels = {
+      filter: (item, data) => data.datasets[item.datasetIndex]._leyenda !== false,
+    };
     chartRendVacasHoraEvolucion = dibujar('chart-rend-vacas-hora-evolucion', chartRendVacasHoraEvolucion, {
-      type: 'bar',
+      type: 'line',
       data: { labels: fechasPerm.map(etiquetaDia), datasets: [
-        ...gruposPerm.map((g, i) => ({
-          type: 'bar', label: '_' + g, yAxisID: 'y1',
-          data: fechasPerm.map(f => (retiradasPorDiaGrupo[f] || {})[g] ?? 0),
-          backgroundColor: SERIES[i % SERIES.length] + '40', borderRadius: 3, maxBarThickness: 18,
-        })),
         ...gruposPerm.map((g, i) => linea(g, fechasPerm.map(f => {
           const v = promediar((ordeniosHoraPorDiaGrupo[f] || {})[g] || []);
           return v != null ? Math.round(10 * v) / 10 : null;
-        }), SERIES[i % SERIES.length], { type: 'line' })),
+        }), SERIES[i % SERIES.length])),
+        ...gruposPerm.map((g, i) => linea(`${g} · retiradas forzadas`,
+          fechasPerm.map(f => (retiradasPorDiaGrupo[f] || {})[g] ?? 0), SERIES[i % SERIES.length],
+          { yAxisID: 'y1', borderDash: [5, 4], pointRadius: 0, borderWidth: 1.5, _leyenda: false })),
       ] },
       options: oVacasHoraEvol,
     });
