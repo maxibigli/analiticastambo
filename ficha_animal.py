@@ -234,10 +234,16 @@ def sql_eventos(rp: int) -> str:
         JOIN BasicAnimal b ON b.OID = a.BasicAnimal
         WHERE b.Number = {rp} AND a.GCRecord IS NULL
 
+        -- El motivo real de la baja (ExitReason es un lookup de DelPro, no un
+        -- texto libre). Antes decía siempre "Baja del rodeo" sin distinguir
+        -- una venta de una muerte — con el motivo a la vista se puede ver acá
+        -- mismo por qué salió un animal puntual, sin ir a buscarlo aparte.
         UNION ALL
-        SELECT a.DateAndTime, 'Salida', 'Baja del rodeo'
+        SELECT a.DateAndTime, 'Salida',
+               CONCAT('Baja del rodeo — ', ISNULL(tn.ItemValue, 'sin motivo cargado'))
         FROM EventExit e JOIN AbstractAnimalEvent a ON a.OID = e.OID
         JOIN BasicAnimal b ON b.OID = a.BasicAnimal
+        LEFT JOIN TextLookupItem tn ON tn.OID = e.ExitReason
         WHERE b.Number = {rp} AND a.GCRecord IS NULL
 
         -- Diagnósticos y tratamientos. Faltaban, y son justamente la parte de

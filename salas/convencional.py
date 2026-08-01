@@ -190,7 +190,8 @@ def sql_rendimiento(desde: str, hasta: str) -> str:
     return f"""
         SELECT ex.MPCNo AS puesto, b.Number AS rp, b.[Group] AS grupo,
                ex.IdTimestamp AS hora_id, y.BeginTime AS hora_coloc, y.EndTime AS hora_fin,
-               y.TotalYield AS kg, ex.SideNo AS lado, ex.BatchNo AS bloque
+               y.TotalYield AS kg, CAST(ex.ForcedRetract AS int) AS retirada_forzada,
+               ex.SideNo AS lado, ex.BatchNo AS bloque
         FROM SessionMilkYield y
         JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
         JOIN BasicAnimal b ON b.OID = y.BasicAnimal

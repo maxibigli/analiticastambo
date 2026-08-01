@@ -679,6 +679,7 @@
         <button class="lac-segment__item" data-tab="preneces" aria-pressed="false">Indicadores de Preñez</button>
         <button class="lac-segment__item" data-tab="performance" aria-pressed="false">Performance</button>
         <button class="lac-segment__item" data-tab="partos" aria-pressed="false">Partos y Secados</button>
+        <button class="lac-segment__item" data-tab="terneros" aria-pressed="false">Bajas de Terneros</button>
         <button class="lac-segment__item" data-tab="tasa" aria-pressed="false">Tasa de Preñez</button>
         <button class="lac-segment__item" data-tab="gestacion" aria-pressed="false">Análisis de Gestación</button>
       </div>
@@ -920,6 +921,36 @@
         <h3 class="g-titulo">Partos esperados</h3>
         <div style="overflow-x:auto;max-height:460px;overflow-y:auto" id="ps-tabla-partos"></div>
       </div>
+    </div>
+
+    <div id="repro-panel-terneros" hidden>
+      <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Rebaño
+          <select id="bj-rebano" style="padding:6px 8px"></select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Meses de nacimiento
+          <input type="number" id="bj-meses" min="1" max="24" value="6" style="padding:6px 8px;width:70px">
+        </label>
+        <button class="secundario" id="bj-aplicar">Aplicar</button>
+      </div>
+      <p class="explica" style="margin-top:10px">
+        <b>Qué muestra.</b> Terneros nacidos en el período elegido que se dieron de baja antes de
+        los 90 días de vida, con el motivo real de la salida.
+        <br><b>Este tambo NO usa un motivo específico de «muerte» para terneros.</b> DelPro tiene un
+        código de sistema para eso ("Death") y no tiene ni un caso cargado acá — se usa para las
+        salidas de los otros tambos que comparten esta base. Así que la tabla trae
+        <b>cualquier salida temprana</b>, sea cual sea el motivo cargado: puede incluir traslados o
+        ventas de terneros, además de mortandad real. Es lo más cerca que se puede llegar con lo que
+        carga hoy el tambo — mirá el motivo de cada fila antes de sacar una conclusión.
+        <br><b>Se filtra por NACIMIENTO, no por la fecha de la baja</b>: contesta "de los que
+        nacieron en este período, cuáles se perdieron". Por eso los últimos 90 días de nacimientos
+        quedan afuera del <i>porcentaje</i> — todavía no cumplieron la ventana de riesgo, no se sabe
+        si van a tener una baja temprana o no. Contarlos ya como "sanos" subestimaría la mortandad,
+        la misma trampa que ya está documentada para la tasa de concepción reciente.
+      </p>
+      <div class="aviso" id="bj-info" style="margin-top:8px"></div>
+      <section class="kpis" id="bj-kpis" style="margin-top:10px"></section>
+      <div style="overflow-x:auto;margin-top:16px" id="bj-tabla"></div>
     </div>
 
     <div id="repro-panel-performance" hidden>
@@ -1814,6 +1845,31 @@
     <div style="margin-top:14px">
       <div class="aviso" style="margin-bottom:6px">Horas/día en ordeño — evolución por rodeo</div>
       <div class="chart-box" style="height:280px"><canvas id="chart-rend-permanencia"></canvas></div>
+    </div>
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Ordeños/hora y retiradas forzadas — por rodeo</div>
+      <p class="explica" style="margin-top:0">
+        <b>Qué muestra.</b> La velocidad de paso por la rotativa de cada rodeo (ordeños de ese
+        grupo por hora, mientras está efectivamente pasando por la máquina) contra cuántas veces
+        la máquina tuvo que retirar la pezonera de forma forzada en ese mismo turno — para ver si
+        el rodeo que pasa más rápido es también el que más "apura" el retiro.
+        <br><b>Cómo se calcula.</b> Por sesión y grupo: ordeños del grupo ÷ el tiempo en que ese
+        grupo estuvo efectivamente circulando (se descartan los huecos anormalmente largos entre
+        sus propias visitas —otro grupo pasando en el medio, o dos rondas de ordeñe que quedaron
+        bajo la misma tarjeta de sesión—, que no son parte de su ritmo real; mismo criterio que ya
+        usa la rutina para detectar huecos). Se promedia entre las sesiones del período elegido.
+        Las retiradas forzadas son la bandera <code>ForcedRetract</code> de la propia máquina,
+        sumadas —no promediadas— sobre todo el período: es una cantidad, no una tasa.
+      </p>
+      <div class="chart-box" style="height:280px"><canvas id="chart-rend-vacas-hora-grupo"></canvas></div>
+    </div>
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Ordeños/hora y retiradas forzadas — evolución por rodeo</div>
+      <p class="explica" style="margin-top:0">
+        Líneas: ordeños/hora de cada rodeo, por día (eje izquierdo). Barras semitransparentes,
+        mismo color que su línea: retiradas forzadas de ese rodeo ese día (eje derecho).
+      </p>
+      <div class="chart-box" style="height:300px"><canvas id="chart-rend-vacas-hora-evolucion"></canvas></div>
     </div>
   </section>
   </div>
@@ -3189,7 +3245,8 @@ document.getElementById('incid-aplicar').addEventListener('click', cargarInciden
 // --- Rendimiento Sala: throughput de la rotativa por sesión, rango elegible -
 let chartRendProd = null, chartRendThroughput = null, chartRendIdent = null,
     chartRendVacasPuesto = null, chartRendVacasPersona = null, chartRendPermanencia = null,
-    chartRendPermanenciaGrupo = null, rendReintento = null;
+    chartRendPermanenciaGrupo = null, chartRendVacasHoraGrupo = null,
+    chartRendVacasHoraEvolucion = null, rendReintento = null;
 
 function etiquetaSesion(s) {
   const [, m, d] = s.fecha.split('-');
@@ -3392,6 +3449,82 @@ async function cargarRendimiento() {
               SERIES[7], { yAxisID: 'y1', type: 'line' }),
       ] },
       options: oPermGrupo,
+    });
+
+    // Ordeños/hora por rodeo (velocidad de paso por la rotativa) y retiradas
+    // forzadas por rodeo. La tasa usa g.duracion_activa_min (huecos anormales
+    // ya descontados en el backend -- ver _duracion_activa_grupo en rutina.py;
+    // NO usar g.permanencia_min acá: esa ventana quiere los huecos, es la de
+    // "Horas/día en ordeño"). Se promedia simple entre sesiones (mismo
+    // criterio que ordenios_por_hora/kg_por_hora del tambo entero); las
+    // retiradas se SUMAN sobre el período porque el pedido es una cantidad.
+    const ordeniosHoraPorGrupo = {};    // {grupo: [ordeños/hora de cada sesión]}
+    const retiradasPorGrupo = {};       // {grupo: total retiradas forzadas del período}
+    sesiones.forEach(s => (s.grupos || []).forEach(g => {
+      if (g.duracion_activa_min > 0) {
+        const tasa = g.n_ordenios / (g.duracion_activa_min / 60);
+        (ordeniosHoraPorGrupo[g.grupo] = ordeniosHoraPorGrupo[g.grupo] || []).push(tasa);
+      }
+      retiradasPorGrupo[g.grupo] = (retiradasPorGrupo[g.grupo] || 0) + (g.retiradas_forzadas || 0);
+    }));
+    const ordeniosHoraPromPorGrupo = {};   // {grupo: ordeños/hora promedio}
+    Object.keys(ordeniosHoraPorGrupo).forEach(g => { ordeniosHoraPromPorGrupo[g] = promediar(ordeniosHoraPorGrupo[g]); });
+    const gruposOH = [...new Set([...Object.keys(ordeniosHoraPromPorGrupo), ...Object.keys(retiradasPorGrupo)])]
+      .sort((a, b) => (ordeniosHoraPromPorGrupo[b] ?? 0) - (ordeniosHoraPromPorGrupo[a] ?? 0));
+
+    const oVacasHoraGrupo = optsDobleEje('ordeños/hora', 'retiradas forzadas');
+    oVacasHoraGrupo.plugins.legend.display = true;
+    chartRendVacasHoraGrupo = dibujar('chart-rend-vacas-hora-grupo', chartRendVacasHoraGrupo, {
+      type: 'bar',
+      data: { labels: gruposOH, datasets: [
+        {
+          type: 'bar', label: 'Ordeños/hora (promedio)',
+          data: gruposOH.map(g => ordeniosHoraPromPorGrupo[g] != null ? Math.round(10 * ordeniosHoraPromPorGrupo[g]) / 10 : null),
+          backgroundColor: gruposOH.map((_, i) => SERIES[i % SERIES.length]),
+          maxBarThickness: 40, borderRadius: 4,
+        },
+        linea('Retiradas forzadas', gruposOH.map(g => retiradasPorGrupo[g] ?? 0), SERIES[7],
+              { yAxisID: 'y1', type: 'line' }),
+      ] },
+      options: oVacasHoraGrupo,
+    });
+
+    // Ordeños/hora y retiradas forzadas, en el tiempo: un punto por día y por
+    // grupo, reusando fechasPerm/gruposPerm (mismos días y mismos rodeos que
+    // "Horas/día en ordeño — evolución"). La tasa se PROMEDIA entre las
+    // sesiones de un mismo día (igual que arriba); las retiradas, al ser una
+    // cantidad, se SUMAN (son ordeños distintos el mismo día). Un solo
+    // gráfico superpuesto: líneas para ordeños/hora (eje izq.), barras
+    // semitransparentes del mismo color para retiradas forzadas (eje der.).
+    const ordeniosHoraPorDiaGrupo = {};   // {fecha: {grupo: [tasas de ese día]}}
+    const retiradasPorDiaGrupo = {};      // {fecha: {grupo: total retiradas de ese día}}
+    sesiones.forEach(s => (s.grupos || []).forEach(g => {
+      const diaOH = ordeniosHoraPorDiaGrupo[s.fecha] = ordeniosHoraPorDiaGrupo[s.fecha] || {};
+      if (g.duracion_activa_min > 0) {
+        (diaOH[g.grupo] = diaOH[g.grupo] || []).push(g.n_ordenios / (g.duracion_activa_min / 60));
+      }
+      const diaRF = retiradasPorDiaGrupo[s.fecha] = retiradasPorDiaGrupo[s.fecha] || {};
+      diaRF[g.grupo] = (diaRF[g.grupo] || 0) + (g.retiradas_forzadas || 0);
+    }));
+    const oVacasHoraEvol = optsDobleEje('ordeños/hora', 'retiradas forzadas');
+    oVacasHoraEvol.plugins.legend.display = true;
+    // Solo las líneas entran a la leyenda -- las barras comparten color con
+    // su línea (mismo rodeo), duplicarlas ahí solo agrega ruido.
+    oVacasHoraEvol.plugins.legend.labels = { filter: item => item.text && !item.text.startsWith('_') };
+    chartRendVacasHoraEvolucion = dibujar('chart-rend-vacas-hora-evolucion', chartRendVacasHoraEvolucion, {
+      type: 'bar',
+      data: { labels: fechasPerm.map(etiquetaDia), datasets: [
+        ...gruposPerm.map((g, i) => ({
+          type: 'bar', label: '_' + g, yAxisID: 'y1',
+          data: fechasPerm.map(f => (retiradasPorDiaGrupo[f] || {})[g] ?? 0),
+          backgroundColor: SERIES[i % SERIES.length] + '40', borderRadius: 3, maxBarThickness: 18,
+        })),
+        ...gruposPerm.map((g, i) => linea(g, fechasPerm.map(f => {
+          const v = promediar((ordeniosHoraPorDiaGrupo[f] || {})[g] || []);
+          return v != null ? Math.round(10 * v) / 10 : null;
+        }), SERIES[i % SERIES.length], { type: 'line' })),
+      ] },
+      options: oVacasHoraEvol,
     });
 
     // Horas/día en ordeño, en el tiempo: un punto por día y por grupo —
@@ -4211,6 +4344,55 @@ async function cargarPartosSecados() {
   }
 }
 document.getElementById('ps-aplicar').addEventListener('click', cargarPartosSecados);
+
+// --- Bajas de terneros -------------------------------------------------------
+let bjDatos = null, bjReintento = null;
+
+function pintarBajasTerneros() {
+  const d = bjDatos, r = d.resumen || {};
+  document.getElementById('bj-info').innerHTML =
+    `Terneros nacidos entre <b>${r.desde}</b> y <b>${r.hasta}</b> (se excluyen los últimos ` +
+    `${r.riesgo_dias} días de nacimientos: todavía no cumplieron la ventana de riesgo).`;
+
+  document.getElementById('bj-kpis').innerHTML = [
+    ['Partos en el período', fmt(r.partos), ''],
+    ['Bajas tempranas', fmt(r.bajas), `antes de los ${r.riesgo_dias} días de vida`],
+    ['% sobre los partos', r.pct != null ? r.pct + '%' : '—',
+      'cualquier motivo — puede incluir ventas o traslados'],
+  ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
+    `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
+
+  tablaInteractiva('bj-tabla', [
+    { clave: 'rp', titulo: 'RP', tipo: 'num' },
+    { clave: 'nacimiento', titulo: 'Nacimiento' },
+    { clave: 'salida', titulo: 'Salida' },
+    { clave: 'edad_dias', titulo: 'Edad (días)', tipo: 'num' },
+    { clave: 'motivo', titulo: 'Motivo cargado' },
+  ], d.filas || [], { orden: 'salida' });
+}
+
+async function cargarBajasTerneros() {
+  const info = document.getElementById('bj-info');
+  clearTimeout(bjReintento);
+  await cargarRebanos();
+  const sel = document.getElementById('bj-rebano');
+  if (!sel.options.length && reproRebanos) {
+    const def = (reproRebanos.find(x => x.es_el_tambo) || {}).herd;
+    sel.innerHTML = reproRebanos.map(x =>
+      `<option value="${x.herd}"${x.herd === def ? ' selected' : ''}>${x.nombre}</option>`).join('');
+  }
+  const meses = document.getElementById('bj-meses').value || 6;
+  info.textContent = 'Calculando…';
+  try {
+    bjDatos = await pedirJSON(`/api/reproduccion/bajas_terneros?meses=${meses}` +
+      `&rebano=${encodeURIComponent(sel.value)}&tambo=${encodeURIComponent(tamboActual)}`);
+    pintarBajasTerneros();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; bjReintento = setTimeout(cargarBajasTerneros, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('bj-aplicar').addEventListener('click', cargarBajasTerneros);
 ['ps-categoria', 'ps-rebano', 'ps-meses'].forEach(id =>
   document.getElementById(id).addEventListener('change', cargarPartosSecados));
 
@@ -4788,6 +4970,7 @@ document.getElementById('repro-tabs').addEventListener('click', ev => {
   document.getElementById('repro-panel-preneces').hidden = tab !== 'preneces';
   document.getElementById('repro-panel-performance').hidden = tab !== 'performance';
   document.getElementById('repro-panel-partos').hidden = tab !== 'partos';
+  document.getElementById('repro-panel-terneros').hidden = tab !== 'terneros';
   document.getElementById('repro-panel-tasa').hidden = tab !== 'tasa';
   document.getElementById('repro-panel-gestacion').hidden = tab !== 'gestacion';
   document.getElementById('repro-panel-parametros').hidden = tab !== 'parametros';
@@ -4798,9 +4981,12 @@ document.getElementById('repro-tabs').addEventListener('click', ev => {
   if (tab !== 'gestacion') clearTimeout(gsReintento);
   if (tab === 'partos' && !psDatos)
     activarAPedido('ps-info', cargarPartosSecados, 'partos y secados', DEMORA);
+  if (tab === 'terneros' && !bjDatos)
+    activarAPedido('bj-info', cargarBajasTerneros, 'bajas de terneros', DEMORA);
   if (tab === 'tasa' && !tpDatos)
     activarAPedido('tp-info', cargarTasaPrenez, 'la tasa de preñez', DEMORA);
   if (tab !== 'partos') clearTimeout(psReintento);
+  if (tab !== 'terneros') clearTimeout(bjReintento);
   if (tab !== 'tasa') clearTimeout(tpReintento);
   if (tab === 'metas' && !reproMetas) cargarMetas();
   if (tab === 'preneces' && !prenDatos)

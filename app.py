@@ -722,7 +722,8 @@ def _calentar_tablero(tambo: str, faltan: set):
                 except Exception:  # noqa: BLE001
                     pass
 
-            if {"horas_ordeno", "pct_identificacion"} & faltan:
+            if {"horas_ordeno", "pct_identificacion", "ordenos_hora", "litros_hora",
+                "vacas_puesto", "vacas_persona"} & faltan:
                 try:
                     ancla = _ultimo_dia_datos(tambo, herd)
                     _refresh_rendimiento_async(tambo, ancla - datetime.timedelta(days=6), ancla)
@@ -897,21 +898,97 @@ def _valores_tablero(tambo: str) -> dict:
             if vis:
                 sesiones = salas.de(tambo).analizar_rendimiento(
                     tambo, vis["columns"], vis["rows"],
-                    desde=(ancla - datetime.timedelta(days=6)).isoformat(),
-                    hasta=ancla.isoformat(),
+                    (ancla - datetime.timedelta(days=6)).isoformat(), ancla.isoformat(),
+                    max_sesiones=_max_sesiones(tambo),
                     nombres=_nombres_grupos(tambo),
                     grupos_ordene=_grupos_ordene(tambo)) or []
-            horas, n_ses = None, 0
-            if sesiones:
-                ult = max(x.get("fecha") for x in sesiones if x.get("fecha"))
-                dia = [x for x in sesiones if x.get("fecha") == ult]
-                mins = sum((x.get("duracion_min") or 0) for x in dia)
-                horas, n_ses = (round(mins / 60.0, 1) if mins else None), len(dia)
-            poner("horas_ordeno", horas,
-                  falta="Sin sesiones en la semana previa al último día con datos.",
-                  detalle=(f"{n_ses} sesión(es) del {ult}" if horas is not None else None))
+
+            sin_sesiones = "Sin sesiones en la semana previa al último día con datos."
+            claves_rend = ("horas_ordeno", "ordenos_hora", "litros_hora",
+                           "vacas_puesto", "vacas_persona")
+            if not sesiones:
+                for c in claves_rend:
+                    poner(c, falta=sin_sesiones)
+            else:
+                # Ordeños/hora y litros/hora: promedio SIMPLE entre sesiones (no
+                # ponderado), igual que la tarjeta de Rendimiento Sala.
+                oh = [s["ordenios_por_hora"] for s in sesiones if s.get("ordenios_por_hora") is not None]
+                kh = [s["kg_por_hora"] for s in sesiones if s.get("kg_por_hora") is not None]
+                poner("ordenos_hora", round(sum(oh) / len(oh), 1) if oh else None,
+                      falta=sin_sesiones, detalle=f"{len(oh)} sesión(es)" if oh else None)
+                poner("litros_hora", round(sum(kh) / len(kh), 1) if kh else None,
+                      falta=sin_sesiones, detalle=f"{len(kh)} sesión(es)" if kh else None)
+
+                # Vacas por puesto / por persona: dotación del tambo. Mismas
+                # constantes que usa la propia pantalla (puestos de la sala,
+                # personas de ⚙ Configuración) contra las vacas DISTINTAS
+                # ordeñadas por día, promediadas en el período.
+                cfg = configuracion_tambo.config_de(tambo)
+                try:
+                    puestos = salas.de(tambo).cantidad_puestos(tambo)
+                except Exception:  # noqa: BLE001
+                    puestos = None
+                personas = cfg.get("personas")
+                vacas_por_dia = {s["fecha"]: s["vacas_dia"] for s in sesiones
+                                 if s.get("fecha") and s.get("vacas_dia") is not None}
+                vacas_dia_prom = (round(sum(vacas_por_dia.values()) / len(vacas_por_dia))
+                                  if vacas_por_dia else None)
+                falta_dot = ("Faltan los puestos o las personas del tambo en "
+                            "⚙ Configuración." if vacas_dia_prom is not None else sin_sesiones)
+                poner("vacas_puesto",
+                      (round(vacas_dia_prom / puestos, 1)
+                       if vacas_dia_prom and puestos else None),
+                      falta=falta_dot,
+                      detalle=(f"{vacas_dia_prom} vacas/día · {puestos} puestos"
+                               if vacas_dia_prom and puestos else None))
+                poner("vacas_persona",
+                      (round(vacas_dia_prom / personas)
+                       if vacas_dia_prom and personas else None),
+                      falta=falta_dot,
+                      detalle=(f"{vacas_dia_prom} vacas/día · {personas} persona(s)"
+                               if vacas_dia_prom and personas else None))
+
+                # Horas/día en ordeño: EXACTAMENTE la misma cuenta que la
+                # tarjeta de Rendimiento Sala (ver templates/index.html), no la
+                # duración de la sesión. El rodeo llega completo al corral de
+                # espera y entra de a una: la primera vaca casi no espera y la
+                # última espera toda la ventana, así que la permanencia medida
+                # se reparte por la mitad. El arreo (⚙ Configuración, no está
+                # en DDM) lo vive cada vaca entero, y se suma una vez por
+                # sesión. Por día se SUMAN las sesiones del mismo grupo (son
+                # ordeños distintos); por grupo y por período se PROMEDIA.
+                #
+                # Antes esta tarjeta sumaba `duracion_min` de la última sesión
+                # —el tiempo que la SALA estuvo funcionando, no el tiempo que
+                # cada VACA pasa fuera del corral— y dos métricas distintas
+                # quedaban con el mismo nombre y números que no coincidían con
+                # esta misma pantalla.
+                arreo_min = cfg.get("arreo_min") or 0
+                perm_por_dia_grupo = {}
+                for s in sesiones:
+                    dia = perm_por_dia_grupo.setdefault(s.get("fecha"), {})
+                    for g in (s.get("grupos") or []):
+                        nombre_g = g.get("grupo")
+                        perm = g.get("permanencia_min")
+                        if nombre_g is None or perm is None:
+                            continue
+                        dia[nombre_g] = dia.get(nombre_g, 0.0) + (arreo_min + perm / 2) / 60
+                grupos_perm = sorted({g for dia in perm_por_dia_grupo.values() for g in dia})
+                perm_prom_por_grupo = {}
+                for g in grupos_perm:
+                    vals = [dia[g] for dia in perm_por_dia_grupo.values() if g in dia]
+                    if vals:
+                        perm_prom_por_grupo[g] = sum(vals) / len(vals)
+                horas = (round(sum(perm_prom_por_grupo.values()) / len(perm_prom_por_grupo), 1)
+                         if perm_prom_por_grupo else None)
+                poner("horas_ordeno", horas,
+                      falta=sin_sesiones,
+                      detalle=(f"{len(perm_prom_por_grupo)} rodeo(s)"
+                               + ("" if arreo_min else " · sin arreo configurado")
+                               if horas is not None else None))
     except Exception as exc:  # noqa: BLE001
-        for c in ("horas_ordeno", "pct_identificacion"):
+        for c in ("horas_ordeno", "pct_identificacion", "ordenos_hora",
+                  "litros_hora", "vacas_puesto", "vacas_persona"):
             poner(c, falta=f"Error al leer Rendimiento Sala: {exc}")
 
     # --- RCS: vacas altas y crónicas ---------------------------------------
@@ -942,18 +1019,33 @@ def _valores_tablero(tambo: str) -> dict:
                   falta="Todavía no se consultaron las entregas de la usina.")
         else:
             entregas = (data or {}).get("entregas") or []
-            ufcs = sorted(e["ufc"] for e in entregas if e.get("ufc") is not None)
-            # MEDIANA y no promedio: la distribución tiene cola larga y el
-            # promedio la exagera. Medido el 30/07/2026 sobre 47 entregas: la
-            # mediana da 75 y el promedio 210, arrastrado por una sola de 1.093.
-            # El tablero mostraba 210 en rojo profundo por ese único valor.
-            med = None
-            if ufcs:
-                n = len(ufcs)
-                med = (ufcs[n // 2] if n % 2 else (ufcs[n // 2 - 1] + ufcs[n // 2]) / 2)
-            poner("ufc", med,
+
+            # LA ÚLTIMA ENTREGA CON RESULTADO, no la mediana de la ventana. Se
+            # probó primero con la mediana (evita que un solo pico como 1.093
+            # arrastre el número, que era el problema con el promedio), pero
+            # para UFC lo que importa operativamente es el dato MÁS RECIENTE:
+            # es lo que dispara una acción hoy, no el historial. La contraparte
+            # es que un solo pico puede pintar la tarjeta en rojo por un día —
+            # se acepta a propósito, es la lectura que se pidió.
+            #
+            # `fecha_entrega` es texto "DD/MM/AAAA HH:MM" (no ISO): no se puede
+            # ordenar como string (p.ej. "2/7/2026" > "10/7/2026" en texto), hay
+            # que parsearlo. Las entregas más recientes suelen llegar sin UFC
+            # todavía (el laboratorio tarda más que la carga del remito), así
+            # que se descartan las sin resultado en vez de reportar None como
+            # si fuera el dato de hoy.
+            def _fecha_entrega(e):
+                try:
+                    return datetime.datetime.strptime(e["fecha_entrega"], "%d/%m/%Y %H:%M")
+                except (KeyError, TypeError, ValueError):
+                    return None
+
+            con_ufc = [e for e in entregas if e.get("ufc") is not None and _fecha_entrega(e)]
+            con_ufc.sort(key=_fecha_entrega, reverse=True)
+            ultima = con_ufc[0] if con_ufc else None
+            poner("ufc", ultima.get("ufc") if ultima else None,
                   falta="Las entregas cargadas no traen UFC.",
-                  detalle=(f"mediana de {len(ufcs)} entrega(s)" if ufcs else None))
+                  detalle=(f"entrega del {ultima['fecha_entrega']}" if ultima else None))
     except Exception as exc:  # noqa: BLE001
         poner("ufc", falta=f"Error al leer las entregas: {exc}")
 
@@ -1032,6 +1124,22 @@ def _valores_tablero(tambo: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         poner("dias_abiertos", falta=f"Error al calcular días abiertos: {exc}")
 
+    # Mortandad de terneros: mismo patrón que días abiertos (sin caché de
+    # pantalla propio, se calcula aparte con su propio caché de media hora).
+    try:
+        k = _clave(tambo, "__tablero_mortandad__")
+        extra, _ = _cache_get(k, allow_stale=True, ttl=TABLERO_CACHE_TTL_S)
+        if extra is None:
+            if caida:
+                raise RuntimeError(caida)
+            extra = _tablero_mortandad_terneros(tambo, herd)
+            _cache_set(k, extra)
+        poner("mortandad_terneros", extra.get("mortandad"),
+              falta=extra.get("falta") or "Sin datos suficientes.",
+              detalle=extra.get("detalle"))
+    except Exception as exc:  # noqa: BLE001
+        poner("mortandad_terneros", falta=f"Error al calcular: {exc}")
+
     return out
 
 
@@ -1042,6 +1150,48 @@ def _tablero_por_lote(d):
         lote, fecha = clave.rsplit("|", 1)
         out[(lote, datetime.date.fromisoformat(fecha))] = v
     return out
+
+
+MORTANDAD_VENTANA_MESES = 6
+MORTANDAD_RIESGO_DIAS = 90
+
+
+def _tablero_mortandad_terneros(tambo: str, herd) -> dict:
+    """Bajas tempranas de terneros: salidas con menos de 90 días de vida sobre
+    los partos del mismo período.
+
+    ESTE TAMBO NO REGISTRA UN MOTIVO DE «MUERTE» PARA TERNEROS. Medido el
+    30/07/2026: el código `ExitReason = 50` ("Death") existe en la base y tiene
+    95 casos, pero NINGUNO es de La Ponderosa — son de los otros dos tambos que
+    comparten la instancia. Las 22 salidas de terneros de los últimos meses de
+    este tambo están TODAS bajo el motivo genérico "OTRAS CAUSAS". Por eso se
+    cuenta cualquier salida temprana, no solo la marcada como muerte: puede
+    incluir traslados o ventas de terneros, además de mortandad real. Es lo más
+    cerca que se puede llegar con lo que carga hoy el tambo.
+
+    VENTANA CENSURADA: un ternero nacido en los últimos 90 días todavía no
+    completó su ventana de riesgo — no se sabe si va a tener una salida
+    temprana o no—, así que se EXCLUYE del cálculo en vez de contarlo como
+    "sobrevivió". Es la misma trampa que ya está documentada para la tasa de
+    concepción en CLAUDE.md (servicios recientes sin resultado todavía).
+    """
+    hasta = _ultimo_dia_datos(tambo, herd) - datetime.timedelta(days=MORTANDAD_RIESGO_DIAS)
+    desde = hasta - datetime.timedelta(days=30 * MORTANDAD_VENTANA_MESES)
+    # Las mismas dos consultas que usa la tabla de "Análisis Reproductivo" (ver
+    # reproduccion.sql_bajas_terneros): una sola fuente de verdad para el
+    # criterio de "salida temprana", en vez de mantenerlo escrito dos veces.
+    dp = db.run_query(reproduccion.sql_partos_periodo(str(desde), str(hasta), herd),
+                      tambo=tambo, max_rows=5)
+    db_ = db.run_query(reproduccion.sql_bajas_terneros(str(desde), str(hasta),
+                                                       MORTANDAD_RIESGO_DIAS, herd),
+                       tambo=tambo, max_rows=500)
+    if not dp["rows"]:
+        return {"falta": "No se pudo consultar partos ni salidas tempranas."}
+    partos, bajas = int(dp["rows"][0][0] or 0), len(db_["rows"])
+    if not partos:
+        return {"falta": f"Sin partos registrados entre {desde} y {hasta}."}
+    return {"mortandad": round(100 * bajas / partos, 1),
+            "detalle": f"{bajas} de {partos} partos · {desde} a {hasta}"}
 
 
 def _tablero_dias_abiertos(tambo: str, herd) -> dict:
@@ -2879,6 +3029,56 @@ def api_reproduccion_performance():
         base.update(performance.armar_distribucion(
             {d: data[d] for d in ("lactancia", "grupo", "deo")}, data["concentracion"]))
     return jsonify(base)
+
+
+@app.get("/api/reproduccion/bajas_terneros")
+@auth.requiere_rol("admin")
+def api_bajas_terneros():
+    """Terneros nacidos en el período que se dieron de baja antes de los 90
+    días de vida, con el motivo real. Ver `reproduccion.sql_bajas_terneros` —
+    ESTE TAMBO NO USA UN MOTIVO ESPECÍFICO DE MUERTE PARA TERNEROS, así que la
+    lista trae cualquier salida temprana (puede incluir ventas/traslados)."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    try:
+        meses = max(1, min(24, int(request.args.get("meses") or 6)))
+        riesgo_dias = max(1, min(365, int(request.args.get("riesgo_dias")
+                                          or reproduccion.RIESGO_TERNEROS_DIAS)))
+    except ValueError:
+        return jsonify({"error": "Parámetros numéricos inválidos."}), 400
+    herd_param = (request.args.get("rebano") or "").strip()
+    if not herd_param:
+        herd = rebano.por_defecto(tambo)
+    elif herd_param.lower() == rebano.TODOS:
+        herd = rebano.TODOS
+    else:
+        try:
+            herd = int(herd_param)
+        except ValueError:
+            return jsonify({"error": f"Rebaño inválido: {herd_param!r}"}), 400
+
+    # La ventana se censura en el extremo reciente: un ternero nacido hace
+    # menos de `riesgo_dias` todavía no completó su ventana de riesgo, así que
+    # no se sabe si va a tener una salida temprana o no. Incluirlo como "no
+    # tuvo baja" infla el número de partos "sanos" con casos que en realidad
+    # todavía están en juego — misma trampa que la tasa de concepción censada
+    # documentada en CLAUDE.md.
+    hasta = _ultimo_dia_datos(tambo, herd) - datetime.timedelta(days=riesgo_dias)
+    desde = hasta - datetime.timedelta(days=30 * meses)
+
+    try:
+        dp = db.run_query(reproduccion.sql_partos_periodo(str(desde), str(hasta), herd),
+                          tambo=tambo, max_rows=5)
+        db_ = db.run_query(reproduccion.sql_bajas_terneros(str(desde), str(hasta),
+                                                           riesgo_dias, herd),
+                           tambo=tambo, max_rows=500)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+
+    partos = int(dp["rows"][0][0] or 0) if dp["rows"] else 0
+    salida = reproduccion.armar_bajas_terneros(
+        db_["columns"], db_["rows"], partos, str(desde), str(hasta), riesgo_dias)
+    return jsonify(salida)
 
 
 @app.get("/api/reproduccion/partos_secados")

@@ -392,6 +392,75 @@ def sql_abortos(desde: str, hasta: str, herd=None) -> str:
     """
 
 
+RIESGO_TERNEROS_DIAS = 90    # ventana de riesgo para contar una baja como "temprana"
+
+
+def sql_bajas_terneros(desde: str, hasta: str, riesgo_dias: int = RIESGO_TERNEROS_DIAS,
+                       herd=None) -> str:
+    """Terneros NACIDOS en [desde, hasta) que se dieron de baja antes de los
+    `riesgo_dias` días de vida, con el motivo real de la salida.
+
+    Se filtra por NACIMIENTO, no por fecha de la baja: contesta "de los que
+    nacieron en este período, cuáles se perdieron" — una salida ocurrida
+    después del rango pedido, de un ternero nacido DENTRO de él, entra igual
+    (si no, un ternero de fin de mes quedaría afuera de las dos consultas).
+
+    ESTE TAMBO NO USA UN MOTIVO ESPECÍFICO DE "MUERTE" PARA TERNEROS (ver
+    `app._tablero_mortandad_terneros`): el código de sistema `ExitReason = 50`
+    ("Death") no tiene ni un caso de La Ponderosa en toda la base. Por eso se
+    trae CUALQUIER motivo de salida temprana — puede incluir traslados o
+    ventas, además de mortandad real — y se muestra el texto tal cual para que
+    quien mira la tabla lo vea y lo pueda descartar caso por caso.
+
+    Usa `filtro_historico`: un animal dado de baja pierde su `[Group]`
+    (queda NULL), así que `rebano.filtro()` no lo encontraría — ver rebano.py.
+    """
+    return f"""
+        SELECT b.Number AS rp,
+               CONVERT(varchar(10), b.BirthDate, 120) AS nacimiento,
+               CONVERT(varchar(10), a.DateAndTime, 120) AS salida,
+               DATEDIFF(day, b.BirthDate, a.DateAndTime) AS edad_dias,
+               ISNULL(tn.ItemValue, 'sin motivo cargado') AS motivo
+        FROM EventExit e
+        JOIN AbstractAnimalEvent a ON a.OID = e.OID
+        JOIN BasicAnimal b ON b.OID = a.BasicAnimal
+        LEFT JOIN TextLookupItem tn ON tn.OID = e.ExitReason
+        WHERE a.GCRecord IS NULL AND {rebano.filtro_historico('b', herd)}
+          AND b.BirthDate >= '{desde}' AND b.BirthDate < '{hasta}'
+          AND DATEDIFF(day, b.BirthDate, a.DateAndTime) BETWEEN 0 AND {riesgo_dias}
+        ORDER BY a.DateAndTime DESC
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
+
+
+def sql_partos_periodo(desde: str, hasta: str, herd=None) -> str:
+    """Cantidad de partos en [desde, hasta) — el denominador de la mortandad."""
+    return f"""
+        SELECT COUNT(*) AS partos
+        FROM EventCalving e JOIN AbstractAnimalEvent a ON a.OID = e.OID
+        WHERE a.GCRecord IS NULL
+          AND a.DateAndTime >= '{desde}' AND a.DateAndTime < '{hasta}'
+          AND {rebano.filtro_por_animal('a.BasicAnimal', herd)}
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
+
+
+def armar_bajas_terneros(columns, rows, partos: int, desde: str, hasta: str,
+                         riesgo_dias: int = RIESGO_TERNEROS_DIAS) -> dict:
+    """Tabla de bajas + el resumen (%), listo para la pantalla."""
+    idx = {c: i for i, c in enumerate(columns)}
+    filas = [{c: f[idx[c]] for c in idx} for f in rows]
+    bajas = len(filas)
+    return {
+        "filas": filas,
+        "resumen": {
+            "partos": partos, "bajas": bajas,
+            "pct": round(100 * bajas / partos, 1) if partos else None,
+            "desde": desde, "hasta": hasta, "riesgo_dias": riesgo_dias,
+        },
+    }
+
+
 # Vacas marcadas para no inseminar, sobre las vacas en ordeñe.
 def sql_no_inseminar(herd=None) -> str:
     return f"""

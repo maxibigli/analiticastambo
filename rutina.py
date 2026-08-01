@@ -157,13 +157,17 @@ RANGO_RENDIMIENTO_MAX_DIAS = 31  # tope: consulta pesada, escanea todas las visi
 def sql_rendimiento(desde: str, hasta: str) -> str:
     """Visitas de un RANGO de fechas (con el mismo margen de 6h), + el kg de
     cada visita — para "Rendimiento de sala" (throughput/producción de la
-    rotativa), a diferencia de sql_rutina que es de calidad de rutina."""
+    rotativa), a diferencia de sql_rutina que es de calidad de rutina.
+
+    `retirada_forzada` (`CMSMilkYield.ForcedRetract`) viaja también acá, para
+    poder separar la cantidad de retiradas forzadas por rodeo (`_grupos_sesion`)
+    sin pagar una consulta aparte — mismo criterio de `sql_rutina`."""
     desde, hasta = validar_fecha(desde), validar_fecha(hasta)
     return f"""
         SELECT
           m.Place AS puesto, b.Number AS rp, b.[Group] AS grupo,
           m.IDTime AS hora_id, c.VerifiedTime AS hora_coloc, y.MilkConfirmTime AS hora_fin,
-          s.TotalYield AS kg
+          s.TotalYield AS kg, y.ForcedRetract AS retirada_forzada
         FROM MilkingDeviceVisit m
         JOIN BasicAnimal b ON b.OID = m.Animal
         LEFT JOIN CMSDeviceVisit c ON c.OID = m.OID
@@ -326,9 +330,14 @@ def _grupos_sesion(visitas: list, nombres: dict | None = None,
         if permitidos is not None and v["grupo"] not in permitidos:
             continue
         fin = v["hora_fin"] or v["hora_id"]
+        es_ordenio = v["kg"] is not None
+        es_forzada = bool(v.get("retirada_forzada"))
         g = por_grupo.get(v["grupo"])
         if g is None:
             por_grupo[v["grupo"]] = {"entrada": v["hora_id"], "salida": fin, "n_visitas": 1,
+                                     "n_ordenios": 1 if es_ordenio else 0,
+                                     "retiradas_forzadas": 1 if es_forzada else 0,
+                                     "horas": [v["hora_id"]],
                                      "rp": {v["rp"]} if v["rp"] else set()}
             continue
         if v["hora_id"] < g["entrada"]:
@@ -336,6 +345,11 @@ def _grupos_sesion(visitas: list, nombres: dict | None = None,
         if fin > g["salida"]:
             g["salida"] = fin
         g["n_visitas"] += 1
+        if es_ordenio:
+            g["n_ordenios"] += 1
+        if es_forzada:
+            g["retiradas_forzadas"] += 1
+        g["horas"].append(v["hora_id"])
         if v["rp"]:
             g["rp"].add(v["rp"])
 
@@ -346,12 +360,40 @@ def _grupos_sesion(visitas: list, nombres: dict | None = None,
             "grupo": _grupo_txt(g_oid, nombres),
             "n_vacas": len(info["rp"]),
             "n_visitas": info["n_visitas"],
+            "n_ordenios": info["n_ordenios"],
+            "retiradas_forzadas": info["retiradas_forzadas"],
             "entrada": info["entrada"].isoformat(),
             "salida": info["salida"].isoformat(),
             "permanencia_min": round(dur_seg / 60, 1),
+            "duracion_activa_min": round(_duracion_activa_grupo(info["horas"]) / 60, 1),
         })
     grupos.sort(key=lambda g: -g["permanencia_min"])
     return grupos
+
+
+def _duracion_activa_grupo(horas: list) -> float:
+    """Segundos en que un grupo estuvo EFECTIVAMENTE pasando por la máquina
+    dentro de una sesión -- para medir VELOCIDAD de paso (ordeños/hora por
+    rodeo), a diferencia de "permanencia_min" (entrada->salida sin descontar
+    nada), que mide tiempo fuera del corral y por eso SÍ quiere los huecos
+    (ver "Horas/día en ordeño" en Rendimiento Sala).
+
+    Se suman los huecos entre visitas CONSECUTIVAS DEL MISMO GRUPO, salvo los
+    que superen el umbral normal (mediana de esos huecos × FACTOR_HUECO, piso
+    UMBRAL_HUECO_MIN_S) -- mismo criterio que `_huecos_rotativa`. Un hueco así
+    de grande no es parte del ritmo de este rodeo: es otro grupo pasando en el
+    medio, o dos rondas de ordeñe físicamente separadas que `_fusionar_hasta`
+    unió bajo la misma tarjeta de "sesión" (medido: Rodeo 2 del 13/07/2026,
+    fusionado en una sesión de 11,5h con 638 ordeños para 327 vacas -es decir,
+    dos rondas- daba 28,8 vacas/hora con el criterio viejo; con este quedan
+    excluidos los ~600 min del hueco entre rondas)."""
+    tiempos = sorted(horas)
+    if len(tiempos) < 2:
+        return 0.0
+    gaps = [(b - a).total_seconds() for a, b in zip(tiempos, tiempos[1:])]
+    mediana = statistics.median(gaps)
+    umbral = max(mediana * FACTOR_HUECO, UMBRAL_HUECO_MIN_S)
+    return sum(g for g in gaps if g <= umbral)
 
 
 def analizar_rendimiento(columns, rows, desde: str, hasta: str, max_sesiones: int | None = None,
@@ -384,6 +426,8 @@ def analizar_rendimiento(columns, rows, desde: str, hasta: str, max_sesiones: in
             "hora_fin": _parse(r[idx["hora_fin"]]), "kg": r[idx["kg"]],
             "lado": r[idx["lado"]] if "lado" in idx else None,
             "bloque": r[idx["bloque"]] if "bloque" in idx else None,
+            "retirada_forzada": bool(r[idx["retirada_forzada"]])
+                if "retirada_forzada" in idx and r[idx["retirada_forzada"]] is not None else False,
         })
     visitas.sort(key=lambda v: v["hora_id"])
 

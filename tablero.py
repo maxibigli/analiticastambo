@@ -121,6 +121,69 @@ INDICADORES = [
                   "sesiones. Incluye el tiempo de arreo configurado."),
     },
     {
+        "clave": "ordenos_hora",
+        "nombre": "Ordeños/hora promedio",
+        "unidad": "ordeños/h", "decimales": 1,
+        "direccion": "alto_mejor", "verde": 300, "rojo": 200,
+        "fuente": "rendimiento", "pagina": "rendimiento",
+        "destino": "Rendimiento Sala",
+        "grupo": "Ordeño",
+        "ayuda": ("Promedio simple entre las sesiones del período: cuántos ordeños "
+                  "procesó la sala por hora de funcionamiento."),
+    },
+    {
+        "clave": "litros_hora",
+        "nombre": "Litros/hora promedio",
+        "unidad": "l/h", "decimales": 1,
+        "direccion": "alto_mejor", "verde": 4500, "rojo": 3000,
+        "fuente": "rendimiento", "pagina": "rendimiento",
+        "destino": "Rendimiento Sala",
+        "grupo": "Ordeño",
+        "ayuda": "Producción de la sala por hora de funcionamiento, promedio simple entre sesiones.",
+    },
+    {
+        "clave": "vacas_puesto",
+        "nombre": "Vacas por puesto",
+        "unidad": "vacas", "decimales": 1,
+        # "Alto mejor" como medida de USO de la capacidad instalada: un valor
+        # muy bajo es una sala sobredimensionada para el rodeo. Un valor
+        # excesivamente alto también puede señalar cuellos de botella —el
+        # tablero no distingue ese matiz, es una escala de dos puntos—, así que
+        # conviene mirarlo junto con las horas de ordeño y no de forma aislada.
+        "direccion": "alto_mejor", "verde": 25, "rojo": 12,
+        "fuente": "rendimiento", "pagina": "rendimiento",
+        "destino": "Rendimiento Sala",
+        "grupo": "Ordeño",
+        "ayuda": ("Vacas distintas ordeñadas por día sobre los puestos de la sala "
+                  "(⚙ Configuración). Uso de la capacidad instalada."),
+    },
+    {
+        "clave": "vacas_persona",
+        "nombre": "Vacas por persona",
+        "unidad": "vacas", "decimales": 0,
+        "direccion": "alto_mejor", "verde": 350, "rojo": 200,
+        "fuente": "rendimiento", "pagina": "rendimiento",
+        "destino": "Rendimiento Sala",
+        "grupo": "Ordeño",
+        "ayuda": ("Vacas distintas ordeñadas por día sobre la cantidad de personas "
+                  "del ordeño (⚙ Configuración). Productividad de la mano de obra."),
+    },
+    {
+        "clave": "mortandad_terneros",
+        "nombre": "Bajas tempranas de terneros",
+        "unidad": "%", "decimales": 1,
+        "direccion": "bajo_mejor", "verde": 5, "rojo": 12,
+        "fuente": "reproduccion", "pagina": "repro",
+        "destino": "Análisis Reproductivo",
+        "grupo": "Reproducción",
+        "ayuda": ("Salidas registradas antes de los 90 días de vida, sobre los partos "
+                  "del mismo período (6 meses, excluyendo los últimos 90 días para no "
+                  "contar crías que todavía no completaron la ventana de riesgo). "
+                  "OJO: DelPro no tiene acá un motivo específico de «muerte» para "
+                  "terneros — se cuenta cualquier salida temprana, que puede incluir "
+                  "traslados o ventas además de mortandad real."),
+    },
+    {
         "clave": "pct_identificacion",
         "nombre": "Identificación de ordeños",
         "unidad": "%", "decimales": 2,
@@ -161,8 +224,11 @@ INDICADORES = [
         "fuente": "laserenisima", "pagina": "entregas",
         "destino": "Entregas a la usina",
         "grupo": "Sanidad",
-        "ayuda": ("Unidades formadoras de colonia de las entregas. NO sale de "
-                  "DelPro: lo publica la usina con cada remito."),
+        "ayuda": ("La ENTREGA MÁS RECIENTE con resultado de laboratorio (no un "
+                  "promedio de la ventana: para actuar hoy importa el último dato, "
+                  "no el historial). NO sale de DelPro: lo publica la usina con "
+                  "cada remito. Un solo valor alto puede pintar la tarjeta en rojo "
+                  "por un día — es la lectura que se pidió, no un error."),
     },
     {
         "clave": "dias_abiertos",
