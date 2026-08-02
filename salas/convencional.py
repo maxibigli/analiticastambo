@@ -224,3 +224,8 @@ def analizar_rendimiento(tambo: str, columns, rows, desde: str, hasta: str, max_
     return rutina.analizar_rendimiento(columns, rows, desde, hasta, max_sesiones,
                                        rotaciones_fn=_rotaciones_tandas, nombres=nombres,
                                        grupos_ordene=grupos_ordene)
+
+
+def resumen_grupos_dia(tambo: str, columns, rows, fecha: str, grupos_ordene=None, nombres=None) -> dict:
+    return rutina.resumen_grupos_dia(columns, rows, fecha, grupos_ordene=grupos_ordene, nombres=nombres,
+                                     ocupacion_fn=_sin_ocupacion)

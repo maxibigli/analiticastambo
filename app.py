@@ -2516,6 +2516,37 @@ def api_rutina_rendimiento():
                     "truncated": visitas.get("truncated", False)})
 
 
+@app.get("/api/rutina/resumen_dia")
+@auth.requiere_rol("admin")
+def api_rutina_resumen_dia():
+    """Réplica del reporte "Rendimiento de Ordeño" de DelPro para UN día:
+    una fila por grupo (ordeños, producción, velocidad, tiempos, retiradas)
+    más los totales (identificación, ocupación). Mismo caché que
+    /api/rutina/rendimiento (mismas visitas, pidiendo desde=hasta=fecha) —
+    no es una consulta nueva."""
+    tambo = _tambo_del_request()
+    try:
+        fecha = (datetime.datetime.strptime(request.args["fecha"], "%Y-%m-%d").date()
+                 if request.args.get("fecha") else _ultimo_dia_datos(tambo))
+    except ValueError:
+        return jsonify({"error": "Fecha inválida (se espera AAAA-MM-DD)."}), 400
+
+    key = f"{tambo}:rendimiento:{fecha.isoformat()}:{fecha.isoformat()}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=RENDIMIENTO_CACHE_TTL_S)
+    if data is None:
+        _refresh_rendimiento_async(tambo, fecha, fecha)
+        return jsonify({"calentando": True, "mensaje": "Calculando rendimiento de ordeño…"}), 202
+    if not fresh:
+        _refresh_rendimiento_async(tambo, fecha, fecha)
+
+    visitas = data["visitas"]
+    resumen = salas.de(tambo).resumen_grupos_dia(tambo, visitas["columns"], visitas["rows"],
+                                                 fecha.isoformat(),
+                                                 grupos_ordene=_grupos_ordene(tambo),
+                                                 nombres=_nombres_grupos(tambo))
+    return jsonify({"fecha": fecha.isoformat(), **resumen})
+
+
 # --- Análisis de flujos de ordeño -------------------------------------------
 # Son cuatro escaneos de CMSMilkYield sobre el rango pedido (hasta 120 días),
 # así que el TTL es largo: los flujos de días cerrados no cambian, y el único

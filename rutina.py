@@ -475,6 +475,137 @@ def analizar_rendimiento(columns, rows, desde: str, hasta: str, max_sesiones: in
     return sesiones
 
 
+def resumen_grupos_dia(columns, rows, fecha: str, grupos_ordene=None,
+                       nombres: dict | None = None, ocupacion_fn=None) -> dict:
+    """Réplica del reporte "Rendimiento de Ordeño" de DelPro para UN día: una
+    fila por grupo (ordeños, producción promedio, velocidad, tiempo de
+    ordeñe, tiempo de estímulo, retiradas forzadas y su %), más los totales
+    del día (identificación, ocupación de la plataforma).
+
+    A diferencia de `analizar_rendimiento` (que arma "sesiones" para graficar
+    la evolución), acá NO importan las sesiones: se toman TODAS las visitas
+    del día -aunque hayan sido 2 o 3 rondas de ordeñe reales- y se agrupan
+    directo por grupo. `_duracion_activa_grupo` ya sabe descartar los huecos
+    grandes ENTRE rondas (mismo criterio que separa sesiones fusionadas en
+    `_grupos_sesion`), así que no hace falta partir por sesión para que la
+    velocidad no se hunda con el hueco de mediodía entre ordeños.
+
+    `grupos_ordene`/`nombres`: igual que en `analizar_rendimiento`. `ocupacion_fn`:
+    igual que en `_analizar_sesion` -- None = el de la rotativa; una sala de
+    tandas no tiene un equivalente real (ver `salas.convencional._sin_ocupacion`)
+    y pasa esa en su lugar."""
+    ocupacion_fn = ocupacion_fn or _ocupacion_rotativa
+    fecha_d = datetime.datetime.strptime(validar_fecha(fecha), "%Y-%m-%d").date()
+    idx = {c: i for i, c in enumerate(columns)}
+    visitas = []
+    for r in rows:
+        hora_id = _parse(r[idx["hora_id"]])
+        if hora_id is None:
+            continue
+        visitas.append({
+            "puesto": r[idx["puesto"]], "rp": r[idx["rp"]], "grupo": r[idx["grupo"]],
+            "hora_id": hora_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
+            "hora_fin": _parse(r[idx["hora_fin"]]), "kg": r[idx["kg"]],
+            "retirada_forzada": bool(r[idx["retirada_forzada"]])
+                if "retirada_forzada" in idx and r[idx["retirada_forzada"]] is not None else False,
+        })
+    visitas.sort(key=lambda v: v["hora_id"])
+
+    # Separar en bloques (mismo criterio de gap que analizar_rendimiento) y
+    # quedarse con los del día pedido -- sql_rendimiento trae ±6h de margen
+    # para no cortar una sesión que arranca antes de medianoche.
+    bloques, actual, anterior = [], [], None
+    for v in visitas:
+        if anterior is not None and (v["hora_id"] - anterior).total_seconds() > GAP_SESION_MIN * 60:
+            bloques.append(actual)
+            actual = []
+        actual.append(v)
+        anterior = v["hora_id"]
+    if actual:
+        bloques.append(actual)
+    visitas_dia = [v for vs in bloques if vs and _dia_de_bloque(vs) == fecha_d for v in vs]
+    visitas_dia.sort(key=lambda v: v["hora_id"])
+
+    if not visitas_dia:
+        return {"grupos": [], "ordenos_total": 0, "identificadas": 0, "otros": 0,
+                "pct_identificacion": None, "ocupacion": None}
+
+    permitidos = set(grupos_ordene) if grupos_ordene else None
+    por_grupo: dict = {}
+    for v in visitas_dia:
+        if v["grupo"] is None or (permitidos is not None and v["grupo"] not in permitidos):
+            continue
+        g = por_grupo.setdefault(v["grupo"], {"horas": [], "n_ordenios": 0, "kg_total": 0.0,
+                                              "retiradas_forzadas": 0, "prep_segs": [], "ordeño_segs": []})
+        g["horas"].append(v["hora_id"])
+        if v["kg"] is not None:
+            g["n_ordenios"] += 1
+            g["kg_total"] += v["kg"]
+        if v["retirada_forzada"]:
+            g["retiradas_forzadas"] += 1
+        prep = _seg(v["hora_id"], v["hora_coloc"])
+        if prep is not None:
+            g["prep_segs"].append(prep)
+        ordeño = _seg(v["hora_coloc"], v["hora_fin"])
+        if ordeño is not None:
+            g["ordeño_segs"].append(ordeño)
+
+    grupos = []
+    for g_oid, info in por_grupo.items():
+        dur_activa_seg = _duracion_activa_grupo(info["horas"])
+        velocidad = (info["n_ordenios"] / (dur_activa_seg / 3600)) if dur_activa_seg else None
+        grupos.append({
+            "grupo": _grupo_txt(g_oid, nombres),
+            "ordenos": info["n_ordenios"],
+            "produccion_prom": (round(info["kg_total"] / info["n_ordenios"], 1)
+                               if info["n_ordenios"] else None),
+            "velocidad": round(velocidad, 1) if velocidad else None,
+            # MEDIANA, no promedio: un puñado de visitas con el mismo
+            # timestamp de retiro "pegado" (posible falla de confirmación)
+            # arrastra el promedio muy por encima de lo real -- mismo
+            # problema, y misma solución, que el de UFC en tablero.py. Medido
+            # el 29/07/2026 en Rodeo 9: ~10 visitas de 2618s (43,6 min, un
+            # cluster idéntico) subían el promedio a 985s (16,4 min) contra
+            # una mediana de 628s (10,5 min), en línea con el resto de los
+            # rodeos (9-11 min).
+            "ordeño_prom_seg": (round(statistics.median(info["ordeño_segs"]))
+                               if info["ordeño_segs"] else None),
+            "prep_prom_seg": round(statistics.median(info["prep_segs"])) if info["prep_segs"] else None,
+            "retiradas_forzadas": info["retiradas_forzadas"],
+            "pct_retiradas": (round(100 * info["retiradas_forzadas"] / info["n_ordenios"], 1)
+                             if info["n_ordenios"] else None),
+        })
+    grupos.sort(key=lambda g: g["grupo"])
+
+    # Totales del día. "Identificadas" usa el mismo criterio que
+    # sql_identificacion/armar_identificacion (BasicAnimal.Number = 0 es el
+    # placeholder "sin identificar" de DelPro). "otros" son vacas SÍ
+    # identificadas pero de un grupo que no es de ordeñe de este tambo --
+    # sueltas de otro rebaño de la misma base, o sin grupo asignado.
+    con_kg = [v for v in visitas_dia if v["kg"] is not None]
+    ordenos_total = len(con_kg)
+    desconocidos = sum(1 for v in con_kg if not v["rp"])
+    identificadas = ordenos_total - desconocidos
+    otros = identificadas - sum(g["ordenos"] for g in grupos)
+
+    # Ocupación de la plataforma con la duración ACTIVA del día entero (no el
+    # hueco entre rondas de ordeñe): si se usara el rango calendario completo,
+    # las "vueltas estimadas" se inflarían con tiempo muerto y la ocupación
+    # saldría subestimada -- mismo problema que ya se corrigió para la
+    # velocidad por rodeo.
+    dur_activa_dia_seg = _duracion_activa_grupo([v["hora_id"] for v in visitas_dia])
+    ocupacion = ocupacion_fn(visitas_dia, dur_activa_dia_seg)["score"] if dur_activa_dia_seg else None
+
+    return {
+        "grupos": grupos,
+        "ordenos_total": ordenos_total,
+        "identificadas": identificadas,
+        "otros": otros,
+        "pct_identificacion": round(100 * identificadas / ordenos_total, 1) if ordenos_total else None,
+        "ocupacion": round(ocupacion, 1) if ocupacion is not None else None,
+    }
+
+
 def _grupo_txt(g, nombres: dict | None = None):
     """Cómo se nombra un grupo en los textos de hallazgos. Se prefiere el
     nombre real de DelPro ("Rodeo 1"); si no se pudo cargar, se cae al OID

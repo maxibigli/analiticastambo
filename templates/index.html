@@ -1770,6 +1770,32 @@
   </div>
 
   <div class="page" id="page-rendimiento" hidden>
+  <section class="card" id="rendimiento-dia-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Rendimiento de Ordeño — por día</h2>
+      <span class="aviso">Una fila por rodeo, réplica del reporte de DelPro.</span>
+      <div class="controls" style="margin-left:auto">
+        <button class="secundario" id="rend-dia-ant" title="Día anterior">◀</button>
+        <input type="date" id="rend-dia-fecha" style="padding:7px 8px">
+        <button class="secundario" id="rend-dia-sig" title="Día siguiente">▶</button>
+      </div>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Cómo se calcula.</b> Ordeños y producción son el total del rodeo ese día;
+      la velocidad (V/h) descarta los huecos entre rondas de ordeño para no
+      subestimarla, mismo criterio que "Ordeños/hora" más abajo. El tiempo de
+      ordeñe es la <b>mediana</b> (no el promedio) del tramo colocación→retiro por
+      vaca: un puñado de lecturas con el mismo horario "pegado" puede arrastrar un
+      promedio muy por encima de lo real.
+      <br><b>Ojo con "Tiempo estímulo".</b> Es el tramo identificación→colocación
+      de pezonera — el dato más cercano que tenemos a esa columna del reporte de
+      DelPro, pero no está confirmado que sea EXACTAMENTE el mismo cálculo.
+      Comparalo contra el reporte real si te da un número muy distinto.
+    </p>
+    <div class="aviso" id="rend-dia-info" style="margin-top:8px"></div>
+    <div style="overflow-x:auto;margin-top:10px" id="rend-dia-tabla"></div>
+  </section>
+
   <section class="card" id="rendimiento-sala-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">Rendimiento Sala</h2>
@@ -3241,6 +3267,76 @@ async function cargarIncidentesDia() {
   }
 }
 document.getElementById('incid-aplicar').addEventListener('click', cargarIncidentesDia);
+
+// --- Rendimiento de Ordeño por día: réplica del reporte de DelPro, una fila
+// por rodeo, con selector de un solo día (mismo patrón que Rutina de ordeño).
+let rendDiaDatos = null, rendDiaReintento = null;
+
+function fmtMinSeg(seg) {
+  const m = Math.floor(seg / 60), s = Math.round(seg % 60);
+  return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function pintarRendimientoDia() {
+  const d = rendDiaDatos;
+  document.getElementById('rend-dia-tabla').innerHTML = (d.grupos || []).length ? `
+    <table>
+      <thead><tr>
+        <th>Grupo</th><th>Ordeños</th><th>Prod. prom (lt/VO)</th><th>Veloc. (V/h)</th>
+        <th>Tiempo ordeñe</th><th>Tiempo estímulo (sg)</th><th>Retiradas forzadas</th><th>%</th>
+      </tr></thead>
+      <tbody>
+        ${d.grupos.map(g => `<tr>
+          <td>${escHtml(g.grupo)}</td>
+          <td style="text-align:right">${fmt(g.ordenos)}</td>
+          <td style="text-align:right">${g.produccion_prom != null ? fmt(g.produccion_prom) : '—'}</td>
+          <td style="text-align:right">${g.velocidad != null ? fmt(g.velocidad) : '—'}</td>
+          <td style="text-align:right">${g.ordeño_prom_seg != null ? fmtMinSeg(g.ordeño_prom_seg) : '—'}</td>
+          <td style="text-align:right">${g.prep_prom_seg != null ? fmt(g.prep_prom_seg) : '—'}</td>
+          <td style="text-align:right">${fmt(g.retiradas_forzadas)}</td>
+          <td style="text-align:right">${g.pct_retiradas != null ? fmt(g.pct_retiradas) + '%' : '—'}</td>
+        </tr>`).join('')}
+        <tr><td>otros</td><td style="text-align:right">${fmt(d.otros)}</td><td colspan="6"></td></tr>
+        <tr><td>Identificadas</td><td style="text-align:right">${fmt(d.identificadas)}</td><td colspan="6"></td></tr>
+        <tr><td>Visitas TTL</td><td style="text-align:right">${fmt(d.ordenos_total)}</td>
+          <td style="text-align:right">${d.pct_identificacion != null ? fmt(d.pct_identificacion) + '%' : '—'}</td>
+          <td colspan="5"></td></tr>
+        <tr><td>Ocupación</td>
+          <td style="text-align:right">${d.ocupacion != null ? fmt(d.ocupacion) + '%' : '—'}</td>
+          <td colspan="6"></td></tr>
+      </tbody>
+    </table>` : '';
+}
+
+async function cargarRendimientoDia(fecha) {
+  clearTimeout(rendDiaReintento);
+  const info = document.getElementById('rend-dia-info');
+  info.textContent = 'Calculando…';
+  try {
+    let url = `/api/rutina/resumen_dia?tambo=${encodeURIComponent(tamboActual)}`;
+    if (fecha) url += `&fecha=${encodeURIComponent(fecha)}`;
+    const d = await pedirJSON(url);
+    rendDiaDatos = d;
+    const inp = document.getElementById('rend-dia-fecha');
+    if (inp.value !== d.fecha) inp.value = d.fecha;
+    pintarRendimientoDia();
+    info.textContent = d.grupos.length ? `${d.fecha}` : `Sin ordeños registrados el ${d.fecha}.`;
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; rendDiaReintento = setTimeout(() => cargarRendimientoDia(fecha), 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+    document.getElementById('rend-dia-tabla').innerHTML = '';
+  }
+}
+document.getElementById('rend-dia-fecha').addEventListener('change', () =>
+  cargarRendimientoDia(document.getElementById('rend-dia-fecha').value));
+function moverDiaRendimiento(delta) {
+  const inp = document.getElementById('rend-dia-fecha');
+  const base = inp.value ? new Date(inp.value + 'T00:00:00') : new Date();
+  base.setDate(base.getDate() + delta);
+  cargarRendimientoDia(base.toISOString().slice(0, 10));
+}
+document.getElementById('rend-dia-ant').addEventListener('click', () => moverDiaRendimiento(-1));
+document.getElementById('rend-dia-sig').addEventListener('click', () => moverDiaRendimiento(1));
 
 // --- Rendimiento Sala: throughput de la rotativa por sesión, rango elegible -
 let chartRendProd = null, chartRendThroughput = null, chartRendIdent = null,
@@ -9085,7 +9181,10 @@ function cargarDatosDePagina(id) {
   else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
   else if (id === 'sala_cms') { cargarSalaConfig().then(cargarSala); }
   else if (id === 'rutina') cargarRutina();
-  else if (id === 'rendimiento') activarAPedido('rend-info', cargarRendimiento, 'rendimiento de sala', DEMORA);
+  else if (id === 'rendimiento') {
+    activarAPedido('rend-dia-info', cargarRendimientoDia, 'rendimiento de ordeño por día', DEMORA);
+    activarAPedido('rend-info', cargarRendimiento, 'rendimiento de sala', DEMORA);
+  }
   else if (id === 'flujos') activarAPedido('flu-info', cargarFlujos, 'flujos de ordeño', DEMORA);
   else if (id === 'proyeccion') activarAPedido('proy-info', cargarProyeccion, 'la proyección', DEMORA);
   // Arranca en Parámetros Reproductivos: es la primera pestaña y la consulta
@@ -9128,7 +9227,7 @@ function irAPagina(id) {
   if (id !== 'salud') clearTimeout(saludReintento);
   // Ídem el reintento del análisis de flujos mientras el caché se calienta.
   if (id !== 'flujos') clearTimeout(fluReintento);
-  if (id !== 'rendimiento') clearTimeout(rendReintento);
+  if (id !== 'rendimiento') { clearTimeout(rendReintento); clearTimeout(rendDiaReintento); }
   if (id !== 'sala_cms') clearTimeout(salaReintento);
   if (id !== 'proyeccion') clearTimeout(proyReintento);
   if (id !== 'repro') clearTimeout(reproReintento);
