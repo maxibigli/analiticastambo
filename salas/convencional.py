@@ -204,7 +204,7 @@ def sql_rendimiento(desde: str, hasta: str) -> str:
                ex.IdTimestamp AS hora_id, y.BeginTime AS hora_creacion,
                y.BeginTime AS hora_coloc, y.EndTime AS hora_fin,
                y.TotalYield AS kg, CAST(ex.ForcedRetract AS int) AS retirada_forzada,
-               NULL AS rotacion,
+               NULL AS rotacion, NULL AS turno,
                ex.SideNo AS lado, ex.BatchNo AS bloque
         FROM SessionMilkYield y
         JOIN SessionMilkYieldEx ex ON ex.OID = y.OID

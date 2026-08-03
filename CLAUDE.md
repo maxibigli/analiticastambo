@@ -424,32 +424,45 @@ y al reunirlas podía pegar dos rondas REALES en una (medido el 13/07/2026: una
 hueco queda solo de respaldo, para la sala convencional y para `sql_rutina`,
 que no traen ese campo.
 
-## "Ordeños/hora POR RODEO" no existe: la velocidad es de la plataforma
+## Ordeños/hora POR RODEO: se mide con el rodeo del DÍA, no el de hoy
 
-Se intentó medir a qué ritmo pasa cada rodeo, y **no es una métrica válida en
-una rotativa**. Los datos del 06/07/2026: las 22 rotaciones de la sesión
-tenían vacas de más de un rodeo, LAS 22. Hay un rodeo dominante por tramo
-(Rodeo 4 → 1 → 2 → 3 → 5), pero cada vuelta lleva rezagados de otros, y el de
-enfermería gotea de a una en todas. La plataforma gira a un ritmo y todos
-comparten sus vueltas: la velocidad es de la SALA, no del rodeo.
+Cada rodeo tiene su velocidad y sí se puede medir, pero hay que agrupar por
+`CMSDeviceVisit.VisitedInGroup` — **el rodeo con el que la vaca pasó ese día**.
+Agrupando por `BasicAnimal.[Group]` (el rodeo que tiene HOY) todo se rompe: una
+vaca que cambió de rodeo desde entonces queda mal asignada en un ordeño viejo,
+y las 22 rotaciones del 06/07/2026 salían "con vacas de varios rodeos", como si
+la sala los mezclara. Con el campo correcto son bloques limpios —Rodeo 4 → 1 →
+2 → 3 → 5 → 9— y solo se comparten las vueltas de transición (5 de 22).
 
-Los dos intentos y por qué fallan, para no reintentarlos:
+Ese error mandó a dos callejones sin salida, ambos ya descartados:
 
-- **Ventana entrada→salida del rodeo**: da ~250 min de una sesión de 279, o
-  sea casi toda la sesión, porque incluye el tiempo en que pasaban los otros.
-  Daba 32 ordeños/hora, absurdo.
-- **Descontar los huecos "anormales"** (`_duracion_activa_grupo`): daba 422 a
-  462 ordeños/hora, **por encima del máximo físico de la sala** (80 puestos ÷
-  12,7 min de vuelta = 378). Descarta como hueco tiempo en que la plataforma
-  sí giraba, con vacas de otro rodeo.
+- **Ventana entrada→salida del rodeo**: daba ~250 min de una sesión de 279 (o
+  sea casi toda), porque las "rezagadas" mal asignadas la estiraban → 32
+  ordeños/hora, absurdo.
+- **Descontar los huecos "anormales"** (`_duracion_activa_grupo`): 422 a 462
+  ordeños/hora, por ENCIMA del máximo físico de la sala.
 
-Lo que SÍ es propio de cada rodeo es **cuántos puestos ocupa cuando pasa**
-(`vacas_por_vuelta`), y eso es lo que muestra la pantalla. Se calcula como
-promedio ponderado por presencia —suma(n²)/suma(n) sobre las vacas del grupo
-en cada vuelta—, que le da peso a las vueltas del bloque real y casi ninguno a
-las rezagadas sueltas, y **queda acotado por los puestos de la plataforma sin
-ningún umbral inventado**. Discrimina bien: los rodeos grandes llenan 45-55 de
-los 80 puestos, y el de enfermería 3 (llega goteando).
+**Cómo se calcula ahora** (`_grupos_sesion`):
+
+1. Cada vuelta se asigna al turno que la ocupa, por mayoría de
+   `VisitedInGroup`. Hace falta porque ese campo viene NULL en ~19% de las
+   visitas identificadas; resolviendo la vuelta entera, esas visitas caen en el
+   turno que de verdad estaba pasando y **no se pierde ningún ordeño**
+   (verificado: los 1.460 de esa sesión quedan asignados).
+2. El tiempo del turno es la SUMA de lo que duraron sus vueltas, y la duración
+   de una vuelta va de su arranque **al arranque de la siguiente**. No de su
+   arranque a su propio fin: ese tramo incluye el ordeño de la última vaca, que
+   sigue mientras la vuelta siguiente ya empezó, y contarlo dos veces inflaba
+   los tiempos un 50% (los rodeos de una sesión de 279 min sumaban 415). Medido
+   así, las vueltas suman la sesión.
+3. Tampoco sirve medir de la primera vaca del rodeo a la última: alcanza con
+   que una vuelta suelta del final le toque por mayoría para estirar la ventana
+   a toda la sesión (pasó el 13/07/2026: bloques de 347 min en una sesión de
+   347).
+
+Resultado: los rodeos se reparten alrededor del valor de la sala y la
+comparación sirve. En julio de 2026, Rodeo 3 promedia 371 ordeños/hora y el de
+enfermería 164.
 
 ## Problemas de datos en DDM (no son bugs del código)
 
