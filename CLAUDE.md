@@ -30,7 +30,21 @@ ver `tambos.py` e `INSTALL.md`). Si aparece un secreto en texto plano en
 algún archivo, es un error: sacarlo y pedirle al usuario que lo setee él
 mismo con `setx`.
 
-## Dónde quedamos (27/07/2026)
+## Dónde quedamos (01/08/2026)
+
+**Rendimiento Sala tenía un error de fondo, ya corregido**: la consulta que
+alimenta toda esa pantalla descartaba en silencio ~5% de los ordeños del día, y
+además leía cuatro campos "parecidos" en vez de los correctos. Ahora la tabla
+replica el reporte de DelPro con 162 de 162 campos exactos sobre tres días.
+El detalle está abajo en "Rendimiento de ordeño: qué campo es cada cosa", y
+conviene leerlo antes de tocar `rutina.py`: los errores no daban excepción, solo
+números malos que parecían plausibles.
+
+**Base local actualizada al 31/07/2026** (antes llegaba al 21/07). El backup
+partido de DelPro viene en tres archivos que hay que concatenar (`copy /b`)
+antes de restaurar; el `RESTORE` se corre conectado a `master`, no a `DDM`.
+
+## Antes (27/07/2026)
 
 **Alimentación quedó implementada**: conciliación de grupos y eficiencia de
 conversión, más el gráfico de ITH reconectado. Detalle abajo en sus secciones.
@@ -318,7 +332,11 @@ descarte una vaca creyendo que es un dato medido.
   promediados (`Flow0To15`/`Flow15To30`/`Flow30To60`/`Flow60To120`), NO segundo
   a segundo. Por eso la bimodalidad calculada acá da bastante más baja que la
   de DelPro (la tendencia sí coincide). `LowFlowDurationInSec` es el "tiempo de
-  colocación" e `IsoDuration` la duración del ordeño, ambos en segundos.
+  colocación" e `IsoDuration` la duración del ordeño, ambos en segundos
+  (`IsoDuration` = `SessionMilkYield.EndTime` − `.BeginTime`, verificado).
+- **`CMSMilkYield.MilkConfirmTime` NO es el fin del ordeño**, es cuándo se
+  confirma el registro: cae unos 6 minutos después. Ver la sección
+  "Rendimiento de ordeño: qué campo es cada cosa".
 - Umbrales de retirada: NO inventarlos ni hacerlos editables. Salen de
   `CMSMpcSetting.TakeoffLimit` (0,80 en este tambo) y la banda del informe es
   ±25% de ese valor → 0,60 y 1,00, que son las tres tarjetas de DelPro.
@@ -338,6 +356,63 @@ descarte una vaca creyendo que es un dato medido.
   `lactantes × kg/vaca/día del año pasado × días del mes` (ambas verificadas
   exactas). Los partos previstos NO se pueden replicar: DelPro simula preñeces
   futuras. Detalle completo en `proyeccion.py`.
+
+## Rendimiento de ordeño: qué campo es cada cosa (01/08/2026)
+
+Se replicó el reporte **"Rendimiento de ordeño"** de DelPro (el de una fila por
+sesión, con rotaciones/horarios/producción/identificación). Quedó verificado
+campo por campo contra el reporte real de tres días: **162 campos, 162
+coinciden**. El script queda en el scratchpad (`verificar_delpro.py`) con los
+tres días cargados: conviene volver a correrlo después de tocar `rutina.py`.
+
+Los cuatro errores que hubo que corregir para llegar ahí — todos por leer un
+campo "parecido" en vez del correcto. Ninguno daba error, solo números malos:
+
+- **NO filtrar `IDTime IS NOT NULL` en `sql_rendimiento`.** Ese filtro
+  descartaba en silencio las visitas cuya identificación falló del todo (no
+  llegan a tener hora de ID, pero son ordeños REALES con leche). Eran 71 de
+  1.508 en una sesión: faltaban ordeños, visitas, kg, y sobre todo los
+  "desconocidos" daban 2 contra los 69 reales — la app parecía identificar
+  mucho mejor de lo que identifica. Como esa consulta alimenta TODA la pantalla
+  Rendimiento Sala, todos los gráficos venían subcontando ~5%. Para ubicarlas
+  en el tiempo se usa `CreationTime` de respaldo (cae a 7,5s de `IDTime` en
+  promedio) y viajan marcadas con `sin_id`, para no medir con ellas nada que
+  arranque en la identificación.
+- **Duración del ordeño = `SessionMilkYield.BeginTime` → `.EndTime`**, NO
+  `CMSDeviceVisit.VerifiedTime` → `CMSMilkYield.MilkConfirmTime`.
+  `MilkConfirmTime` es cuándo se CONFIRMA el registro, no cuándo terminó el
+  ordeño: cae unos 6 minutos después. Con los campos viejos daba 11:19 contra
+  los 05:17 del reporte, el doble. (`BeginTime`→`EndTime` coincide con
+  `CMSMilkYield.IsoDuration`, que promedia los mismos 317s.)
+- **Inicio y fin de sesión** son el primer `BeginTime` y el último `EndTime`,
+  no la primera identificación ni la última confirmación. Daba ~10 minutos de
+  más, y la duración se usa para todos los promedios por hora: ese error los
+  corría a todos.
+- **Rotaciones: NO estimarlas.** `CMSDeviceVisit.BatchOrRotation` es el número
+  de vuelta que graba la propia máquina; contar sus valores distintos da el
+  número exacto. La estimación vieja (duración ÷ mediana del tramo ID→retiro)
+  daba 28 contra 22: ese tramo es más corto que la vuelta completa de la
+  plataforma. `CMSDeviceVisit.ParlorSession` identifica la sesión sin
+  heurísticas, por si alguna vez conviene usarlo en vez del corte por hueco.
+
+`VerifiedTime` SÍ es el campo correcto en `sql_rutina` (score de calidad): ahí
+se mide cuándo se COLOCÓ la pezonera, no cuándo empezó a bajar la leche. Son
+dos preguntas distintas sobre los mismos datos, y por eso esa consulta sigue
+exigiendo `IDTime` (sin identificación no hay tramo que puntuar).
+
+**Las dos formas de quedar "sin dueño"**, que el reporte separa en columnas y
+acá dan exacto: *vacas no identificadas* = nunca se leyó nada (sin hora de ID);
+*transponders desconocidos* = SÍ se leyó un collar, pero no es de ninguna vaca
+del rodeo (hay hora de ID y el animal igual resuelve al comodín). Y las *vacas
+identificadas* del reporte NO son vacas distintas: son visitas con dueño
+(1.508 − 67 − 2 = 1.439). Las vacas distintas son otra cuenta, y es la que
+usan vacas/puesto y vacas/persona.
+
+**DelPro TRUNCA los tiempos, no los redondea** (04:39:55 para una sesión de
+16.795,66s). Redondear daba 1 segundo de más en 3 de las 9 sesiones probadas.
+Y en su fila de totales **promedia** algunas columnas en vez de sumarlas: los
+4.213 kg/h son el promedio de 4.686, 3.998 y 3.954, no los kg del día sobre
+las horas del día.
 
 ## Problemas de datos en DDM (no son bugs del código)
 
