@@ -3673,16 +3673,22 @@ async function cargarRendimiento() {
     // ese día, y el tiempo del turno es la suma de sus vueltas. Se promedia
     // simple entre sesiones; las retiradas se SUMAN (es una cantidad, no una
     // tasa).
-    const ordHoraPorGrupo = {};         // {grupo: [ordeños/hora de cada sesión]}
+    // Se SUMAN ordeños y minutos y recién ahí se divide -- no se promedian las
+    // tasas de cada sesión. Es lo mismo que hace la tabla del día del final, y
+    // así los dos muestran el mismo número para la misma fecha (promediar
+    // tasas le da el mismo peso a una sesión corta que a una completa).
+    const ordPorGrupo = {};             // {grupo: ordeños del período}
+    const minPorGrupo = {};             // {grupo: minutos de sus vueltas}
     const retiradasPorGrupo = {};       // {grupo: total retiradas forzadas del período}
     sesiones.forEach(s => (s.grupos || []).forEach(g => {
-      if (g.ordenios_por_hora != null) {
-        (ordHoraPorGrupo[g.grupo] = ordHoraPorGrupo[g.grupo] || []).push(g.ordenios_por_hora);
-      }
+      ordPorGrupo[g.grupo] = (ordPorGrupo[g.grupo] || 0) + (g.n_ordenios || 0);
+      minPorGrupo[g.grupo] = (minPorGrupo[g.grupo] || 0) + (g.bloque_min || 0);
       retiradasPorGrupo[g.grupo] = (retiradasPorGrupo[g.grupo] || 0) + (g.retiradas_forzadas || 0);
     }));
-    const ordHoraPromPorGrupo = {};     // {grupo: ordeños/hora promedio}
-    Object.keys(ordHoraPorGrupo).forEach(g => { ordHoraPromPorGrupo[g] = promediar(ordHoraPorGrupo[g]); });
+    const ordHoraPromPorGrupo = {};     // {grupo: ordeños/hora del período}
+    Object.keys(ordPorGrupo).forEach(g => {
+      ordHoraPromPorGrupo[g] = minPorGrupo[g] ? ordPorGrupo[g] / (minPorGrupo[g] / 60) : null;
+    });
     const gruposOH = [...new Set([...Object.keys(ordHoraPromPorGrupo), ...Object.keys(retiradasPorGrupo)])]
       .sort((a, b) => (ordHoraPromPorGrupo[b] ?? 0) - (ordHoraPromPorGrupo[a] ?? 0));
 
@@ -3705,21 +3711,19 @@ async function cargarRendimiento() {
 
     // Ordeños/hora y retiradas forzadas, en el tiempo: un punto por día y
     // por grupo, reusando fechasPerm/gruposPerm (mismos días y mismos rodeos
-    // que "Horas/día en ordeño — evolución"). Las vacas/vuelta se PROMEDIAN
-    // entre las sesiones de un mismo día; las retiradas y los ordeños del día
-    // se SUMAN (son ordeños distintos el mismo día) para poder sacar despues
-    // el % de retiradas sobre los ordeños de ESE día -- dos gráficos aparte,
-    // uno debajo del otro, cada uno con su propia leyenda por rodeo.
-    const ordeniosHoraPorDiaGrupo = {};   // {fecha: {grupo: [ordeños/hora de ese día]}}
+    // que "Horas/día en ordeño — evolución"). Todo se SUMA entre las sesiones
+    // del mismo día (ordeños, minutos de vueltas y retiradas) y la tasa se
+    // saca al final, igual que en el gráfico de barras de arriba y que en la
+    // tabla del día del final: así los tres muestran el mismo número para la
+    // misma fecha.
     const ordeniosPorDiaGrupo = {};       // {fecha: {grupo: total ordeños de ese día}}
+    const minutosPorDiaGrupo = {};        // {fecha: {grupo: minutos de sus vueltas}}
     const retiradasPorDiaGrupo = {};      // {fecha: {grupo: total retiradas de ese día}}
     sesiones.forEach(s => (s.grupos || []).forEach(g => {
-      const diaOH = ordeniosHoraPorDiaGrupo[s.fecha] = ordeniosHoraPorDiaGrupo[s.fecha] || {};
-      if (g.ordenios_por_hora != null) {
-        (diaOH[g.grupo] = diaOH[g.grupo] || []).push(g.ordenios_por_hora);
-      }
       const diaOrd = ordeniosPorDiaGrupo[s.fecha] = ordeniosPorDiaGrupo[s.fecha] || {};
       diaOrd[g.grupo] = (diaOrd[g.grupo] || 0) + (g.n_ordenios || 0);
+      const diaMin = minutosPorDiaGrupo[s.fecha] = minutosPorDiaGrupo[s.fecha] || {};
+      diaMin[g.grupo] = (diaMin[g.grupo] || 0) + (g.bloque_min || 0);
       const diaRF = retiradasPorDiaGrupo[s.fecha] = retiradasPorDiaGrupo[s.fecha] || {};
       diaRF[g.grupo] = (diaRF[g.grupo] || 0) + (g.retiradas_forzadas || 0);
     }));
@@ -3727,7 +3731,10 @@ async function cargarRendimiento() {
     // Valor de un rodeo en un día, SIN redondear -- se reusa para dibujar la
     // línea del rodeo y para promediar entre rodeos (si se promediara sobre
     // el número ya redondeado, el promedio arrastraría un redondeo doble).
-    const ordeniosHoraDia = (f, g) => promediar((ordeniosHoraPorDiaGrupo[f] || {})[g] || []);
+    const ordeniosHoraDia = (f, g) => {
+      const min = (minutosPorDiaGrupo[f] || {})[g];
+      return min ? (ordeniosPorDiaGrupo[f] || {})[g] / (min / 60) : null;
+    };
     const colorProm = css('--text-primary');
     const promedioOHPara = (gruposActivos) => fechasPerm.map(f => {
       const v = promediar(gruposActivos.map(g => ordeniosHoraDia(f, g)).filter(v => v != null));

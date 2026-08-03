@@ -451,30 +451,10 @@ def _grupos_sesion(visitas: list, nombres: dict | None = None,
     que ya usa `analizar_dia` vía su parámetro `grupos` (ver api_rutina en
     app.py). None = sin filtro (compatibilidad)."""
     permitidos = set(grupos_ordene) if grupos_ordene else None
-
-    # Turno de cada vuelta, por mayoría de `VisitedInGroup`.
-    votos: dict = {}
-    for v in visitas:
-        rot, turno = v.get("rotacion"), v.get("turno")
-        if rot is None or turno is None:
-            continue
-        votos.setdefault(rot, {})
-        votos[rot][turno] = votos[rot].get(turno, 0) + 1
-    turno_de_vuelta = {rot: max(c.items(), key=lambda kv: kv[1])[0]
-                       for rot, c in votos.items()}
-
-    def _rodeo_de(v):
-        """En qué rodeo cuenta esta visita: el turno de su vuelta; si la vuelta
-        no tiene turno resuelto, el suyo propio; y si tampoco, el grupo del
-        animal (sala convencional, que no trae ninguno de los dos)."""
-        rot = v.get("rotacion")
-        if rot is not None and rot in turno_de_vuelta:
-            return turno_de_vuelta[rot]
-        return v.get("turno") or v["grupo"]
+    _marcar_rodeo(visitas)
 
     por_grupo: dict = {}
     for v in visitas:
-        v["_rodeo"] = _rodeo_de(v)
         if v["_rodeo"] is None:
             continue
         if permitidos is not None and v["_rodeo"] not in permitidos:
@@ -510,33 +490,7 @@ def _grupos_sesion(visitas: list, nombres: dict | None = None,
         if v["rp"]:
             g["rp"].add(v["rp"])
 
-    # Cuánto le llevó a la plataforma cada vuelta: de su arranque al de la
-    # siguiente. NO de su arranque a su propio fin -- ese tramo incluye el
-    # ordeño de la última vaca, que sigue mientras la vuelta siguiente ya
-    # arrancó, y contarlo dos veces inflaba los tiempos un 50% (los rodeos de
-    # una sesión de 279 min sumaban 415). Medido así, las vueltas suman la
-    # sesión y cada una refleja su ritmo real: una vuelta lenta dura más.
-    extremos: dict = {}
-    for v in visitas:
-        rot = v.get("rotacion")
-        if rot is None:
-            continue
-        ini = v["hora_coloc"] or v["hora_id"]
-        fin = v["hora_fin"] or v["hora_id"]
-        r = extremos.get(rot)
-        if r is None:
-            extremos[rot] = [ini, fin]
-            continue
-        if ini < r[0]:
-            r[0] = ini
-        if fin > r[1]:
-            r[1] = fin
-    orden = sorted(extremos, key=lambda rot: extremos[rot][0])
-    dur_vuelta: dict = {}
-    for i, rot in enumerate(orden):
-        ini, fin = extremos[rot]
-        sig = extremos[orden[i + 1]][0] if i + 1 < len(orden) else None
-        dur_vuelta[rot] = max(((sig or fin) - ini).total_seconds(), 0)
+    dur_vuelta = _duraciones_de_vuelta(visitas)
 
     grupos = []
     for g_oid, info in por_grupo.items():
@@ -572,6 +526,75 @@ def _grupos_sesion(visitas: list, nombres: dict | None = None,
         })
     grupos.sort(key=lambda g: -g["permanencia_min"])
     return grupos
+
+
+def _marcar_rodeo(visitas: list) -> None:
+    """Deja en cada visita `_rodeo`: EN QUÉ RODEO cuenta ese ordeño.
+
+    Los rodeos pasan en bloques, uno tras otro, así que la unidad es la VUELTA:
+    cada una se asigna al turno que la ocupa, por mayoría de `VisitedInGroup`
+    (el rodeo con el que la vaca pasó ese día, ver `sql_rendimiento`). Hace
+    falta resolverlo por vuelta y no visita por visita porque ese campo viene
+    NULL en ~19% de las visitas identificadas; así esas visitas caen igual en
+    el turno que de verdad estaba pasando y no se pierde ningún ordeño.
+
+    Sin `VisitedInGroup` ni rotación —sala convencional— se cae al grupo del
+    animal, que es el comportamiento de siempre.
+
+    Lo usan `_grupos_sesion` y `resumen_grupos_dia`: es lo que garantiza que el
+    gráfico por rodeo y la tabla del día cuenten lo mismo."""
+    votos: dict = {}
+    for v in visitas:
+        rot, turno = v.get("rotacion"), v.get("turno")
+        if rot is None or turno is None:
+            continue
+        votos.setdefault(rot, {})
+        votos[rot][turno] = votos[rot].get(turno, 0) + 1
+    turno_de_vuelta = {rot: max(c.items(), key=lambda kv: kv[1])[0]
+                       for rot, c in votos.items()}
+    for v in visitas:
+        rot = v.get("rotacion")
+        if rot is not None and rot in turno_de_vuelta:
+            v["_rodeo"] = turno_de_vuelta[rot]
+        else:
+            v["_rodeo"] = v.get("turno") or v["grupo"]
+
+
+def _duraciones_de_vuelta(visitas: list) -> dict:
+    """{rotación: segundos que le llevó a la plataforma esa vuelta}.
+
+    Una vuelta va de su arranque AL ARRANQUE DE LA SIGUIENTE, no de su arranque
+    a su propio fin: ese tramo incluye el ordeño de la última vaca, que sigue
+    mientras la vuelta siguiente ya empezó, y contarlo dos veces inflaba los
+    tiempos un 50% (los rodeos de una sesión de 279 min sumaban 415). Medido
+    así las vueltas suman la sesión, y cada una refleja su ritmo real: una
+    vuelta lenta dura más.
+
+    OJO: hay que llamarlo POR SESIÓN, no con el día entero -- entre la última
+    vuelta de un ordeñe y la primera del siguiente hay horas de pausa, y esa
+    pausa se le cargaría a la última vuelta del turno."""
+    extremos: dict = {}
+    for v in visitas:
+        rot = v.get("rotacion")
+        if rot is None:
+            continue
+        ini = v["hora_coloc"] or v["hora_id"]
+        fin = v["hora_fin"] or v["hora_id"]
+        r = extremos.get(rot)
+        if r is None:
+            extremos[rot] = [ini, fin]
+            continue
+        if ini < r[0]:
+            r[0] = ini
+        if fin > r[1]:
+            r[1] = fin
+    orden = sorted(extremos, key=lambda rot: extremos[rot][0])
+    dur: dict = {}
+    for i, rot in enumerate(orden):
+        ini, fin = extremos[rot]
+        sig = extremos[orden[i + 1]][0] if i + 1 < len(orden) else None
+        dur[rot] = max(((sig or fin) - ini).total_seconds(), 0)
+    return dur
 
 
 def _separar_sesiones(visitas: list) -> list:
@@ -770,13 +793,29 @@ def resumen_grupos_dia(columns, rows, fecha: str, grupos_ordene=None,
                 "pct_identificacion": None, "ocupacion": None}
 
     permitidos = set(grupos_ordene) if grupos_ordene else None
+    # MISMO criterio que el gráfico por rodeo: se agrupa por el turno en que la
+    # vaca pasó (ver `_marcar_rodeo`) y el tiempo de cada rodeo es la suma de
+    # lo que duraron sus vueltas (`_duraciones_de_vuelta`), calculadas POR
+    # SESIÓN para no cargarle a la última vuelta de un ordeñe la pausa hasta el
+    # siguiente. Antes esta tabla agrupaba por el rodeo actual del animal y
+    # medía con `_duracion_activa_grupo`: daba números distintos de los del
+    # gráfico para el mismo día, y hasta imposibles (494 ordeños/hora).
+    _marcar_rodeo(visitas_dia)
+    dur_vuelta: dict = {}
+    for vs in bloques:
+        if vs and _dia_de_bloque(vs) == fecha_d:
+            dur_vuelta.update(_duraciones_de_vuelta(vs))
+
     por_grupo: dict = {}
     for v in visitas_dia:
-        if v["grupo"] is None or (permitidos is not None and v["grupo"] not in permitidos):
+        if v["_rodeo"] is None or (permitidos is not None and v["_rodeo"] not in permitidos):
             continue
-        g = por_grupo.setdefault(v["grupo"], {"horas": [], "n_ordenios": 0, "kg_total": 0.0,
-                                              "retiradas_forzadas": 0, "prep_segs": [], "ordeño_segs": []})
+        g = por_grupo.setdefault(v["_rodeo"], {"horas": [], "n_ordenios": 0, "kg_total": 0.0,
+                                               "retiradas_forzadas": 0, "prep_segs": [],
+                                               "ordeño_segs": [], "rotaciones": set()})
         g["horas"].append(v["hora_id"])
+        if v.get("rotacion") is not None:
+            g["rotaciones"].add(v["rotacion"])
         if v["kg"] is not None:
             g["n_ordenios"] += 1
             g["kg_total"] += v["kg"]
@@ -796,8 +835,10 @@ def resumen_grupos_dia(columns, rows, fecha: str, grupos_ordene=None,
 
     grupos = []
     for g_oid, info in por_grupo.items():
-        dur_activa_seg = _duracion_activa_grupo(info["horas"])
-        velocidad = (info["n_ordenios"] / (dur_activa_seg / 3600)) if dur_activa_seg else None
+        bloque_seg = sum(dur_vuelta[rot] for rot in info["rotaciones"] if rot in dur_vuelta)
+        if not bloque_seg:   # sin dato de vueltas (sala convencional)
+            bloque_seg = _duracion_activa_grupo(info["horas"])
+        velocidad = (info["n_ordenios"] / (bloque_seg / 3600)) if bloque_seg else None
         grupos.append({
             "grupo": _grupo_txt(g_oid, nombres),
             "ordenos": info["n_ordenios"],
