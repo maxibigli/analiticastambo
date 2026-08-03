@@ -1783,14 +1783,12 @@
     <p class="explica" style="margin-top:10px">
       <b>Cómo se calcula.</b> Ordeños y producción son el total del rodeo ese día;
       la velocidad (V/h) descarta los huecos entre rondas de ordeño para no
-      subestimarla, mismo criterio que "Ordeños/hora" más abajo. El tiempo de
-      ordeñe es la <b>mediana</b> (no el promedio) del tramo colocación→retiro por
-      vaca: un puñado de lecturas con el mismo horario "pegado" puede arrastrar un
-      promedio muy por encima de lo real.
-      <br><b>Ojo con "Tiempo estímulo".</b> Es el tramo identificación→colocación
-      de pezonera — el dato más cercano que tenemos a esa columna del reporte de
-      DelPro, pero no está confirmado que sea EXACTAMENTE el mismo cálculo.
-      Comparalo contra el reporte real si te da un número muy distinto.
+      subestimarla, mismo criterio que "Ordeños/hora" más abajo. El
+      <b>tiempo de ordeñe</b> va del arranque de la bajada de leche a su fin, y
+      el <b>tiempo de estímulo</b>, de la identificación de la vaca al arranque
+      de la leche. Los dos se muestran como <b>mediana</b> (no promedio): un
+      puñado de lecturas con el horario "pegado" arrastra un promedio muy por
+      encima de lo real.
     </p>
     <div class="aviso" id="rend-dia-info" style="margin-top:8px"></div>
     <div style="overflow-x:auto;margin-top:10px" id="rend-dia-tabla"></div>
@@ -1902,20 +1900,16 @@
       <p class="explica" style="margin-top:0">
         Una fila por sesión de ordeño del día elegido arriba en "Rendimiento de
         Ordeño — por día" (mismo selector, misma fecha).
-        <br><b>Los conteos coinciden exactamente con el reporte de DelPro</b>
-        (verificado contra las tres sesiones del 06/07/2026): ordeños, visitas,
-        producción, ordeños desconocidos, vacas identificadas y no identificadas.
+        <br><b>Todas las columnas coinciden exactamente con el reporte de
+        DelPro</b> — verificado campo por campo contra las tres sesiones del
+        06/07/2026: rotaciones, horarios, duración, ordeños, visitas, producción,
+        promedios por hora e identificación.
+        <br>Las <b>rotaciones</b> son el número de vuelta que graba la propia
+        máquina, no una estimación. La <b>duración de la sesión</b> va del
+        arranque de leche de la primera vaca al fin de ordeño de la última.
         <b>Vacas no identificadas</b> son las visitas donde no se llegó a leer
         nada; <b>transponders desconocidos</b>, aquellas donde sí se leyó un
         collar pero no corresponde a ninguna vaca del rodeo.
-        <br><b>Dos columnas son estimación propia y no coinciden con DelPro.</b>
-        Las <b>rotaciones</b> se estiman con el tiempo que tarda una vaca desde
-        que se la identifica hasta que se le retira la pezonera, y ese tramo es
-        más corto que la vuelta completa de la plataforma: da alrededor de un
-        25% de más (28 contra las 22 del reporte). La <b>duración de la sesión</b>
-        se mide de la primera identificación al último retiro, y da unos 10
-        minutos más larga (3%), lo que arrastra hacia abajo los promedios por
-        hora. Para el dato exacto de rotaciones, mirar el reporte de DelPro.
       </p>
       <div style="overflow-x:auto;margin-top:10px" id="rend-sesiones-tabla"></div>
     </div>
@@ -3338,30 +3332,40 @@ function horaCorta(iso) {
   return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
-// Fila "Total": suma directa entre sesiones, SIN deduplicar vacas repetidas
-// entre sesiones -- es el mismo criterio que usa el propio reporte de DelPro
-// para su fila Σ (verificado: 1.439+1.275+1.471 identificadas da justo su
-// 4.185, no separa vacas que pasaron en más de una sesión el mismo día).
+// Fila "Total", con el mismo criterio POR COLUMNA que la fila Σ del reporte de
+// DelPro (verificado contra el 06/07/2026):
+//   * Suma: rotaciones, ordeños, visitas, desconocidos, kg e identificación.
+//     No deduplica vacas que pasaron en más de una sesión -- DelPro tampoco
+//     (1.439 + 1.275 + 1.471 da justo su 4.185).
+//   * PROMEDIO entre sesiones, no total sobre duración total: duración de
+//     ordeño, kg/hora, kg/ordeño, ordeños/hora y visitas/hora. Su 4.213 kg/h
+//     es el promedio de 4.686, 3.998 y 3.954, no los 61.105 kg divididos por
+//     las horas del día.
+//   * Máximo: la duración de sesión (muestra 05:34:59, la sesión más larga).
 function filaTotalSesiones(sesiones) {
   const suma = campo => sesiones.reduce((a, s) => a + (s[campo] || 0), 0);
-  const durTotalSeg = suma('duracion_seg'), durHoras = durTotalSeg / 3600;
-  const ordTotal = suma('n_ordenios'), visTotal = suma('n_visitas'), kgTotal = suma('kg_total');
-  const r1 = n => Math.round(10 * n) / 10;
+  const prom = campo => {
+    const v = sesiones.map(s => s[campo]).filter(x => x != null);
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  };
+  const r1 = n => n == null ? '—' : fmt(Math.round(10 * n) / 10);
+  const durMax = Math.max(...sesiones.map(s => s.duracion_seg || 0));
+  const promDurOrd = prom('dur_prom_ordeño_seg');
   return `<tr style="font-weight:600">
     <td>Total</td>
     <td style="text-align:right">${fmt(suma('n_rotaciones'))}</td>
     <td></td><td></td>
-    <td style="text-align:right">${durTotalSeg ? fmtHMS(durTotalSeg) : '—'}</td>
-    <td style="text-align:right">${fmt(ordTotal)}</td>
-    <td style="text-align:right">${fmt(visTotal)}</td>
+    <td style="text-align:right">${durMax ? fmtHMS(durMax) : '—'}</td>
+    <td style="text-align:right">${fmt(suma('n_ordenios'))}</td>
+    <td style="text-align:right">${fmt(suma('n_visitas'))}</td>
     <td style="text-align:right">${fmt(suma('n_desconocidos'))}</td>
-    <td style="text-align:right">${fmt(r1(suma('kg_desconocidos')))}</td>
-    <td style="text-align:right">${fmt(r1(kgTotal))}</td>
-    <td></td>
-    <td style="text-align:right">${durHoras ? fmt(r1(kgTotal / durHoras)) : '—'}</td>
-    <td style="text-align:right">${ordTotal ? fmt(r1(kgTotal / ordTotal)) : '—'}</td>
-    <td style="text-align:right">${durHoras ? fmt(r1(ordTotal / durHoras)) : '—'}</td>
-    <td style="text-align:right">${durHoras ? fmt(r1(visTotal / durHoras)) : '—'}</td>
+    <td style="text-align:right">${r1(suma('kg_desconocidos'))}</td>
+    <td style="text-align:right">${r1(suma('kg_total'))}</td>
+    <td style="text-align:right">${promDurOrd != null ? fmtMinSeg(promDurOrd) : '—'}</td>
+    <td style="text-align:right">${r1(prom('kg_por_hora'))}</td>
+    <td style="text-align:right">${r1(prom('kg_por_ordeño'))}</td>
+    <td style="text-align:right">${r1(prom('ordenios_por_hora'))}</td>
+    <td style="text-align:right">${r1(prom('visitas_por_hora'))}</td>
     <td style="text-align:right">${fmt(suma('n_identificadas'))}</td>
     <td style="text-align:right">${fmt(suma('n_no_identificadas'))}</td>
     <td style="text-align:right">${fmt(suma('n_transponders_desconocidos'))}</td>

@@ -191,14 +191,39 @@ def sql_rendimiento(desde: str, hasta: str) -> str:
     `sql_rutina` (calidad de rutina) SÍ sigue exigiendo `IDTime`: ahí todo el
     puntaje se apoya en el tramo identificación→colocación, que para estas
     visitas no existe. Son dos preguntas distintas sobre los mismos datos.
-    """
+
+    QUÉ CAMPO ES CADA COSA, medido contra ese mismo reporte (importa, porque
+    los "parecidos" dan el doble):
+
+      * `hora_coloc` / `hora_fin` salen de `SessionMilkYield.BeginTime` y
+        `.EndTime` (arranque y fin de la bajada de leche), NO de
+        `CMSDeviceVisit.VerifiedTime` / `CMSMilkYield.MilkConfirmTime`, que es
+        lo que esta consulta usaba. `MilkConfirmTime` es cuándo se CONFIRMA el
+        registro, no cuándo terminó el ordeño: cae unos 6 minutos después.
+        Con los campos viejos la duración promedio de ordeño daba 11:19 y el
+        reporte marca 05:17; con `BeginTime`→`EndTime` da 05:17 exacto (y es
+        lo mismo que `CMSMilkYield.IsoDuration`, que promedia 317s). De rebote
+        arregla el inicio y el fin de la sesión (00:14:38 y 04:54:34, exactos)
+        y con ellos su duración y todos los promedios por hora.
+      * `rotacion` es `CMSDeviceVisit.BatchOrRotation`, el número de vuelta que
+        graba la propia máquina: contar sus valores distintos da las 22
+        rotaciones del reporte, EXACTO. Antes se estimaba dividiendo la
+        duración por la mediana del tramo ID→retiro, y daba 28: ese tramo es
+        más corto que la vuelta completa de la plataforma.
+      * `sesion_parlor` es `CMSDeviceVisit.ParlorSession`: la sesión de ordeño
+        según la máquina (un solo valor para toda la primera sesión del día).
+
+    `VerifiedTime` sigue estando para `sql_rutina`, donde sí corresponde: ahí
+    lo que se mide es cuándo se COLOCÓ la pezonera, no cuándo empezó a bajar
+    la leche."""
     desde, hasta = validar_fecha(desde), validar_fecha(hasta)
     return f"""
         SELECT
           m.Place AS puesto, b.Number AS rp, b.[Group] AS grupo,
           m.IDTime AS hora_id, m.CreationTime AS hora_creacion,
-          c.VerifiedTime AS hora_coloc, y.MilkConfirmTime AS hora_fin,
-          s.TotalYield AS kg, y.ForcedRetract AS retirada_forzada
+          s.BeginTime AS hora_coloc, s.EndTime AS hora_fin,
+          s.TotalYield AS kg, y.ForcedRetract AS retirada_forzada,
+          c.BatchOrRotation AS rotacion, c.ParlorSession AS sesion_parlor
         FROM MilkingDeviceVisit m
         JOIN BasicAnimal b ON b.OID = m.Animal
         LEFT JOIN CMSDeviceVisit c ON c.OID = m.OID
@@ -284,9 +309,19 @@ def _rotaciones_rotativa(visitas: list, duracion_seg: float) -> int | None:
     es lo único de "Rendimiento Sala" que depende de que haya una plataforma
     girando — una sala convencional cuenta TANDAS en su lugar.
 
-    Las visitas sin identificación quedan afuera de la mediana: su `hora_id` es
-    una hora de creación de respaldo (ver `sql_rendimiento`), así que el tramo
-    ID→retiro no mide una vuelta real. Sí cuentan para todo lo demás."""
+    Si las visitas traen `rotacion` (`CMSDeviceVisit.BatchOrRotation`, el
+    número de vuelta que graba la propia máquina) se cuentan sus valores
+    distintos: es el dato REAL, y da exacto contra el reporte de DelPro (22
+    rotaciones en la primera sesión del 06/07/2026).
+
+    Sin ese dato se cae a la estimación vieja —duración sobre la mediana del
+    tramo ID→retiro—, que para esa misma sesión daba 28: ese tramo es más
+    corto que la vuelta completa de la plataforma, así que sobrestima. Queda
+    solo como respaldo. Las visitas sin identificación no entran en la
+    mediana: su `hora_id` es una hora de respaldo (ver `sql_rendimiento`)."""
+    rotaciones = {v["rotacion"] for v in visitas if v.get("rotacion") is not None}
+    if rotaciones:
+        return len(rotaciones)
     totales_vuelta = [_seg(v["hora_id"], v["hora_fin"]) for v in visitas
                       if v["hora_fin"] is not None and not v.get("sin_id")]
     t_vuelta = statistics.median(totales_vuelta) if totales_vuelta else None
@@ -301,8 +336,16 @@ def _resumen_sesion_rendimiento(visitas: list, rotaciones_fn=None) -> dict:
     `rotaciones_fn(visitas, duracion_seg) -> int | None`: None = el de la
     rotativa (ver `_rotaciones_rotativa`)."""
     rotaciones_fn = rotaciones_fn or _rotaciones_rotativa
-    inicio = visitas[0]["hora_id"]
-    fin = max((v["hora_fin"] or v["hora_id"]) for v in visitas)
+    # La sesión va del ARRANQUE DE LECHE de la primera vaca al FIN DE ORDEÑO de
+    # la última, que es como la mide DelPro (00:14:38 → 04:54:34 en la primera
+    # sesión del 06/07/2026, exacto). Antes arrancaba en la primera
+    # identificación y terminaba en la última confirmación de registro, y por
+    # eso daba ~10 minutos larga: la duración se usa para todos los promedios
+    # por hora, así que ese error los corría a todos.
+    arranques = [v["hora_coloc"] for v in visitas if v["hora_coloc"]]
+    finales = [v["hora_fin"] for v in visitas if v["hora_fin"]]
+    inicio = min(arranques) if arranques else visitas[0]["hora_id"]
+    fin = max(finales) if finales else max(v["hora_id"] for v in visitas)
     duracion_seg = max((fin - inicio).total_seconds(), 1)
     duracion_h = duracion_seg / 3600
 
@@ -341,7 +384,9 @@ def _resumen_sesion_rendimiento(visitas: list, rotaciones_fn=None) -> dict:
     return {
         "inicio": inicio.isoformat(), "fin": fin.isoformat(),
         "duracion_min": round(duracion_seg / 60),
-        "duracion_seg": round(duracion_seg),
+        # TRUNCADO, no redondeado: es como lo muestra DelPro (04:39:55 para una
+        # sesión de 16.795,66 s; redondeando daría 04:39:56).
+        "duracion_seg": int(duracion_seg),
         "n_rotaciones": n_rotaciones,
         "n_visitas": n_visitas, "n_ordenios": n_ordenios,
         "n_desconocidos": n_desconocidos,
@@ -489,6 +534,7 @@ def analizar_rendimiento(columns, rows, desde: str, hasta: str, max_sesiones: in
             "puesto": r[idx["puesto"]], "rp": r[idx["rp"]], "grupo": r[idx["grupo"]],
             "hora_id": hora_id, "sin_id": sin_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
             "hora_fin": _parse(r[idx["hora_fin"]]), "kg": r[idx["kg"]],
+            "rotacion": r[idx["rotacion"]] if "rotacion" in idx else None,
             "lado": r[idx["lado"]] if "lado" in idx else None,
             "bloque": r[idx["bloque"]] if "bloque" in idx else None,
             "retirada_forzada": bool(r[idx["retirada_forzada"]])
@@ -576,6 +622,7 @@ def resumen_grupos_dia(columns, rows, fecha: str, grupos_ordene=None,
             "puesto": r[idx["puesto"]], "rp": r[idx["rp"]], "grupo": r[idx["grupo"]],
             "hora_id": hora_id, "sin_id": sin_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
             "hora_fin": _parse(r[idx["hora_fin"]]), "kg": r[idx["kg"]],
+            "rotacion": r[idx["rotacion"]] if "rotacion" in idx else None,
             "retirada_forzada": bool(r[idx["retirada_forzada"]])
                 if "retirada_forzada" in idx and r[idx["retirada_forzada"]] is not None else False,
         })
@@ -908,9 +955,13 @@ def _ocupacion_rotativa(visitas: list, duracion_seg: float) -> dict:
 
     Devuelve {"label", "score" (0-100), "info", "hallazgos"}.
     """
-    # Las visitas sin identificación no entran en la mediana del tiempo de
-    # vuelta (su `hora_id` es de respaldo, ver `sql_rendimiento`), pero sí en
-    # `con_puesto`: ocuparon un puesto real de la plataforma.
+    # Cuántas vueltas dio la plataforma. Si las visitas traen el número de
+    # rotación de la máquina (`sql_rendimiento`), se cuenta el dato REAL; si no
+    # —el caso de `sql_rutina`, que no lo trae— se estima con la mediana del
+    # tramo ID→retiro. Las visitas sin identificación quedan fuera de esa
+    # mediana (su `hora_id` es de respaldo) pero sí entran en `con_puesto`:
+    # ocuparon un puesto real de la plataforma.
+    rotaciones = {v["rotacion"] for v in visitas if v.get("rotacion") is not None}
     totales = [_seg(v["hora_id"], v["hora_fin"]) for v in visitas
                if v["hora_fin"] is not None and not v.get("sin_id")]
     t_vuelta = statistics.median(totales) if totales else None
@@ -920,11 +971,13 @@ def _ocupacion_rotativa(visitas: list, duracion_seg: float) -> dict:
         usos[v["puesto"]] = usos.get(v["puesto"], 0) + 1
 
     hallazgos = []
-    if t_vuelta and con_puesto:
-        n_vueltas = max(duracion_seg / t_vuelta, 1)
+    if (rotaciones or t_vuelta) and con_puesto:
+        medido = bool(rotaciones)
+        n_vueltas = len(rotaciones) if medido else max(duracion_seg / t_vuelta, 1)
         score = min(100.0, 100.0 * len(con_puesto) / (PUESTOS_ROTATIVA * n_vueltas))
-        info = (f"{len(con_puesto)} vacas reales de ~{round(PUESTOS_ROTATIVA * n_vueltas)} "
-                f"puestos-vuelta disponibles ({round(n_vueltas)} vueltas estimadas).")
+        info = (f"{len(con_puesto)} vacas reales de {round(PUESTOS_ROTATIVA * n_vueltas)} "
+                f"puestos-vuelta disponibles ({round(n_vueltas)} vueltas"
+                f"{'' if medido else ' estimadas'}).")
         vacios_por_puesto = {p: round(n_vueltas) - usos.get(p, 0)
                              for p in range(1, PUESTOS_ROTATIVA + 1)}
         peor_puesto, peor_vacios = max(vacios_por_puesto.items(), key=lambda kv: kv[1])
