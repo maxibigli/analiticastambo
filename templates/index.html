@@ -1847,6 +1847,17 @@
       <div class="chart-box" style="height:280px"><canvas id="chart-rend-permanencia"></canvas></div>
     </div>
     <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Horas/día en ordeño — cómo se llega al número, día por día</div>
+      <p class="explica" style="margin-top:0">
+        Una fila por día y rodeo, con la cuenta abierta: la <b>ventana en sala</b> de cada
+        sesión (desde que entra su primera vaca hasta que sale la última), la mitad de esa
+        ventana —que es lo que espera la vaca promedio— más el <b>arreo</b> de ⚙ Configuración,
+        una vez por sesión. La suma de las sesiones del día es el total de esa fila.
+        <span id="rend-perm-arreo-nota"></span>
+      </p>
+      <div style="overflow-x:auto;margin-top:10px" id="rend-perm-tabla"></div>
+    </div>
+    <div style="margin-top:14px">
       <div class="aviso" style="margin-bottom:6px">Ordeños/hora y retiradas forzadas — por rodeo</div>
       <p class="explica" style="margin-top:0">
         <b>Qué muestra.</b> A qué ritmo pasa cada rodeo por la rotativa: cuántos ordeños suyos
@@ -3531,11 +3542,19 @@ async function cargarRendimiento() {
     const arreoMin = infoTambo.arreo_min || 0;
     const permPorDiaGrupo = {};    // {fecha: {grupo: horas de ordeño ESE día}}
     const vacasPorDiaGrupo = {};   // {fecha: {grupo: [n_vacas de cada sesión ese día]}}
+    // Detalle del cálculo, para la tabla que lo abre paso a paso más abajo:
+    // una fila por día y rodeo con las permanencias de cada sesión.
+    const detallePerm = {};        // {"fecha|grupo": {fecha, grupo, permanencias[], vacas[]}}
     sesiones.forEach(s => (s.grupos || []).forEach(g => {
       const dia = permPorDiaGrupo[s.fecha] = permPorDiaGrupo[s.fecha] || {};
       dia[g.grupo] = (dia[g.grupo] || 0) + (arreoMin + g.permanencia_min / 2) / 60;
       const diaV = vacasPorDiaGrupo[s.fecha] = vacasPorDiaGrupo[s.fecha] || {};
       (diaV[g.grupo] = diaV[g.grupo] || []).push(g.n_vacas);
+      const k = s.fecha + '|' + g.grupo;
+      const det = detallePerm[k] = detallePerm[k] ||
+        { fecha: s.fecha, grupo: g.grupo, permanencias: [], vacas: [] };
+      det.permanencias.push(g.permanencia_min);
+      det.vacas.push(g.n_vacas);
     }));
     const fechasPerm = Object.keys(permPorDiaGrupo).sort();
     const gruposPerm = [...new Set(fechasPerm.flatMap(f => Object.keys(permPorDiaGrupo[f])))];
@@ -3853,6 +3872,37 @@ async function cargarRendimiento() {
         }), SERIES[i % SERIES.length])) },
       options: oPerm,
     });
+
+    // La misma cuenta del gráfico, abierta paso a paso. Se arma desde
+    // `detallePerm`, que se llenó junto con `permPorDiaGrupo`: es literalmente
+    // el mismo dato, así que la tabla no puede discrepar del gráfico.
+    document.getElementById('rend-perm-arreo-nota').textContent = arreoMin
+      ? ` El arreo configurado es de ${arreoMin} min por sesión.`
+      : ' ⚠ No hay arreo configurado (⚙ Configuración → Sala de ordeño): las horas salen de menos.';
+    const filasPerm = Object.values(detallePerm).map(d => {
+      const perm = d.permanencias.reduce((a, b) => a + b, 0);
+      const arreo = arreoMin * d.permanencias.length;
+      return {
+        fecha: d.fecha,
+        grupo: d.grupo,
+        sesiones: d.permanencias.length,
+        vacas: Math.round(promediar(d.vacas) || 0),
+        ventanas: d.permanencias.map(p => Math.round(p)).join(' + '),
+        espera: Math.round(perm / 2),
+        arreo,
+        horas: Math.round(10 * ((perm / 2 + arreo) / 60)) / 10,
+      };
+    }).sort((a, b) => (b.fecha.localeCompare(a.fecha)) || a.grupo.localeCompare(b.grupo));
+    tablaInteractiva('rend-perm-tabla', [
+      { clave: 'fecha', titulo: 'Día' },
+      { clave: 'grupo', titulo: 'Rodeo' },
+      { clave: 'sesiones', titulo: 'Sesiones', tipo: 'num' },
+      { clave: 'vacas', titulo: 'Vacas', tipo: 'num' },
+      { clave: 'ventanas', titulo: 'Ventana en sala por sesión (min)' },
+      { clave: 'espera', titulo: 'Espera de la vaca (mitad, min)', tipo: 'num' },
+      { clave: 'arreo', titulo: 'Arreo del día (min)', tipo: 'num' },
+      { clave: 'horas', titulo: 'Horas/día', tipo: 'num' },
+    ], filasPerm, { orden: 'fecha' });
 
     info.textContent = `${sesiones.length} sesión(es) entre ${desde} y ${hasta}.` +
       (d.truncated ? ' ⚠ Datos truncados por volumen, probá un rango más corto.' : '');
