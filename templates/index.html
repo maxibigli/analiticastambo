@@ -1853,6 +1853,10 @@
         sesión (desde que entra su primera vaca hasta que sale la última), la mitad de esa
         ventana —que es lo que espera la vaca promedio— más el <b>arreo</b> de ⚙ Configuración,
         una vez por sesión. La suma de las sesiones del día es el total de esa fila.
+        <br>La última columna es la <b>suma de todos los rodeos</b> de ese día: cuántas horas
+        del día le consume el ordeñe al tambo. Las dos tarjetas de arriba muestran las dos
+        cosas — el promedio dice cuánto le lleva a <b>una vaca</b>, la suma cuánto al
+        <b>tambo entero</b>.
         <span id="rend-perm-arreo-nota"></span>
       </p>
       <div style="overflow-x:auto;margin-top:10px" id="rend-perm-tabla"></div>
@@ -3575,6 +3579,15 @@ async function cargarRendimiento() {
       permPromPorGrupo[g] = promediar(fechasPerm.map(f => permPorDiaGrupo[f][g]).filter(v => v != null));
     });
     const permPromedioGeneral = promediar(Object.values(permPromPorGrupo).filter(v => v != null));
+    // SUMA de todos los rodeos: cuántas horas del día le consume el ordeñe al
+    // tambo entero. Es otra pregunta que el promedio de arriba —ese dice
+    // cuánto le lleva a UNA vaca—, y las dos sirven: con seis rodeos, 2,5 h
+    // por vaca son unas 8 h de ordeñe en el día. Se suma por día y recién
+    // después se promedian los días, para que un día con un rodeo sin ordeñar
+    // no infle el total.
+    const permSumaPorDia = fechasPerm.map(f =>
+      Object.values(permPorDiaGrupo[f]).reduce((a, b) => a + b, 0));
+    const permSumaGeneral = promediar(permSumaPorDia);
 
     // % de identificación: viene de su propia consulta (d.identificacion), NO
     // de las sesiones — la consulta de sesiones descarta las visitas sin
@@ -3600,6 +3613,8 @@ async function cargarRendimiento() {
       ['Vacas por persona (promedio)', vacasPorPersonaProm ?? '—'],
       ['Horas/día en ordeño (promedio de todos los rodeos)',
         permPromedioGeneral != null ? (Math.round(10 * permPromedioGeneral) / 10) + ' h' : '—'],
+      ['Horas/día en ordeño (suma de todos los rodeos)',
+        permSumaGeneral != null ? (Math.round(10 * permSumaGeneral) / 10) + ' h' : '—'],
     ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
     const faltan = [];
     if (!personas) faltan.push('la cantidad de personas (para "vacas por persona")');
@@ -3882,6 +3897,7 @@ async function cargarRendimiento() {
     const filasPerm = Object.values(detallePerm).map(d => {
       const perm = d.permanencias.reduce((a, b) => a + b, 0);
       const arreo = arreoMin * d.permanencias.length;
+      const totalDia = Object.values(permPorDiaGrupo[d.fecha] || {}).reduce((a, b) => a + b, 0);
       return {
         fecha: d.fecha,
         grupo: d.grupo,
@@ -3891,6 +3907,10 @@ async function cargarRendimiento() {
         espera: Math.round(perm / 2),
         arreo,
         horas: Math.round(10 * ((perm / 2 + arreo) / 60)) / 10,
+        // Se repite en todas las filas del mismo día a propósito: así el total
+        // se ve al lado de cada rodeo sin tener que sumar a mano ni romper el
+        // filtro/orden de la tabla con una fila especial.
+        total_dia: Math.round(10 * totalDia) / 10,
       };
     }).sort((a, b) => (b.fecha.localeCompare(a.fecha)) || a.grupo.localeCompare(b.grupo));
     tablaInteractiva('rend-perm-tabla', [
@@ -3901,7 +3921,8 @@ async function cargarRendimiento() {
       { clave: 'ventanas', titulo: 'Ventana en sala por sesión (min)' },
       { clave: 'espera', titulo: 'Espera de la vaca (mitad, min)', tipo: 'num' },
       { clave: 'arreo', titulo: 'Arreo del día (min)', tipo: 'num' },
-      { clave: 'horas', titulo: 'Horas/día', tipo: 'num' },
+      { clave: 'horas', titulo: 'Horas/día del rodeo', tipo: 'num' },
+      { clave: 'total_dia', titulo: 'Total del día (todos los rodeos)', tipo: 'num' },
     ], filasPerm, { orden: 'fecha' });
 
     info.textContent = `${sesiones.length} sesión(es) entre ${desde} y ${hasta}.` +
