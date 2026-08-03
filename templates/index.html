@@ -1897,6 +1897,28 @@
       <div class="aviso" style="margin-bottom:6px">Retiradas forzadas (% de los ordeños) — evolución por rodeo</div>
       <div class="chart-box" style="height:260px"><canvas id="chart-rend-retiradas-evolucion"></canvas></div>
     </div>
+    <div style="margin-top:20px">
+      <div class="aviso" style="margin-bottom:6px">Rendimiento de Ordeño — por sesión (réplica del reporte de DelPro)</div>
+      <p class="explica" style="margin-top:0">
+        Una fila por sesión de ordeño del día elegido arriba en "Rendimiento de
+        Ordeño — por día" (mismo selector, misma fecha).
+        <br><b>Los conteos coinciden exactamente con el reporte de DelPro</b>
+        (verificado contra las tres sesiones del 06/07/2026): ordeños, visitas,
+        producción, ordeños desconocidos, vacas identificadas y no identificadas.
+        <b>Vacas no identificadas</b> son las visitas donde no se llegó a leer
+        nada; <b>transponders desconocidos</b>, aquellas donde sí se leyó un
+        collar pero no corresponde a ninguna vaca del rodeo.
+        <br><b>Dos columnas son estimación propia y no coinciden con DelPro.</b>
+        Las <b>rotaciones</b> se estiman con el tiempo que tarda una vaca desde
+        que se la identifica hasta que se le retira la pezonera, y ese tramo es
+        más corto que la vuelta completa de la plataforma: da alrededor de un
+        25% de más (28 contra las 22 del reporte). La <b>duración de la sesión</b>
+        se mide de la primera identificación al último retiro, y da unos 10
+        minutos más larga (3%), lo que arrastra hacia abajo los promedios por
+        hora. Para el dato exacto de rotaciones, mirar el reporte de DelPro.
+      </p>
+      <div style="overflow-x:auto;margin-top:10px" id="rend-sesiones-tabla"></div>
+    </div>
   </section>
   </div>
 
@@ -3308,6 +3330,84 @@ function pintarRendimientoDia() {
     </table>` : '';
 }
 
+function fmtHMS(seg) {
+  const h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60), s = Math.round(seg % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+function horaCorta(iso) {
+  return new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+// Fila "Total": suma directa entre sesiones, SIN deduplicar vacas repetidas
+// entre sesiones -- es el mismo criterio que usa el propio reporte de DelPro
+// para su fila Σ (verificado: 1.439+1.275+1.471 identificadas da justo su
+// 4.185, no separa vacas que pasaron en más de una sesión el mismo día).
+function filaTotalSesiones(sesiones) {
+  const suma = campo => sesiones.reduce((a, s) => a + (s[campo] || 0), 0);
+  const durTotalSeg = suma('duracion_seg'), durHoras = durTotalSeg / 3600;
+  const ordTotal = suma('n_ordenios'), visTotal = suma('n_visitas'), kgTotal = suma('kg_total');
+  const r1 = n => Math.round(10 * n) / 10;
+  return `<tr style="font-weight:600">
+    <td>Total</td>
+    <td style="text-align:right">${fmt(suma('n_rotaciones'))}</td>
+    <td></td><td></td>
+    <td style="text-align:right">${durTotalSeg ? fmtHMS(durTotalSeg) : '—'}</td>
+    <td style="text-align:right">${fmt(ordTotal)}</td>
+    <td style="text-align:right">${fmt(visTotal)}</td>
+    <td style="text-align:right">${fmt(suma('n_desconocidos'))}</td>
+    <td style="text-align:right">${fmt(r1(suma('kg_desconocidos')))}</td>
+    <td style="text-align:right">${fmt(r1(kgTotal))}</td>
+    <td></td>
+    <td style="text-align:right">${durHoras ? fmt(r1(kgTotal / durHoras)) : '—'}</td>
+    <td style="text-align:right">${ordTotal ? fmt(r1(kgTotal / ordTotal)) : '—'}</td>
+    <td style="text-align:right">${durHoras ? fmt(r1(ordTotal / durHoras)) : '—'}</td>
+    <td style="text-align:right">${durHoras ? fmt(r1(visTotal / durHoras)) : '—'}</td>
+    <td style="text-align:right">${fmt(suma('n_identificadas'))}</td>
+    <td style="text-align:right">${fmt(suma('n_no_identificadas'))}</td>
+    <td style="text-align:right">${fmt(suma('n_transponders_desconocidos'))}</td>
+    <td style="text-align:right">${fmt(suma('n_visitas') - suma('n_ordenios'))}</td>
+  </tr>`;
+}
+
+function pintarRendimientoSesiones() {
+  const sesiones = (rendDiaDatos && rendDiaDatos.sesiones) || [];
+  document.getElementById('rend-sesiones-tabla').innerHTML = sesiones.length ? `
+    <table>
+      <thead><tr>
+        <th>Sesión</th><th>Rotaciones</th><th>Hora inicio</th><th>Hora fin</th><th>Duración sesión</th>
+        <th>Ordeños</th><th>Visitas</th><th>Ordeños desc.</th><th>Prod. desc. (kg)</th><th>Producción (kg)</th>
+        <th>Prom. duración ordeño</th><th>Prom. prod/hora</th><th>Prom. prod/ordeño</th>
+        <th>Ordeños/hora</th><th>Visitas/hora</th><th>Vacas identificadas</th>
+        <th>Vacas no identificadas</th><th>Transponders desconocidos</th>
+        <th>Visitas sin ordeños</th>
+      </tr></thead>
+      <tbody>
+        ${sesiones.map(s => `<tr>
+          <td>${s.sesion}</td>
+          <td style="text-align:right">${s.n_rotaciones != null ? fmt(s.n_rotaciones) : '—'}</td>
+          <td>${horaCorta(s.inicio)}</td>
+          <td>${horaCorta(s.fin)}</td>
+          <td style="text-align:right">${s.duracion_seg != null ? fmtHMS(s.duracion_seg) : '—'}</td>
+          <td style="text-align:right">${fmt(s.n_ordenios)}</td>
+          <td style="text-align:right">${fmt(s.n_visitas)}</td>
+          <td style="text-align:right">${fmt(s.n_desconocidos)}</td>
+          <td style="text-align:right">${fmt(s.kg_desconocidos)}</td>
+          <td style="text-align:right">${fmt(s.kg_total)}</td>
+          <td style="text-align:right">${s.dur_prom_ordeño_seg != null ? fmtMinSeg(s.dur_prom_ordeño_seg) : '—'}</td>
+          <td style="text-align:right">${s.kg_por_hora != null ? fmt(s.kg_por_hora) : '—'}</td>
+          <td style="text-align:right">${s.kg_por_ordeño != null ? fmt(s.kg_por_ordeño) : '—'}</td>
+          <td style="text-align:right">${s.ordenios_por_hora != null ? fmt(s.ordenios_por_hora) : '—'}</td>
+          <td style="text-align:right">${s.visitas_por_hora != null ? fmt(s.visitas_por_hora) : '—'}</td>
+          <td style="text-align:right">${fmt(s.n_identificadas)}</td>
+          <td style="text-align:right">${fmt(s.n_no_identificadas)}</td>
+          <td style="text-align:right">${fmt(s.n_transponders_desconocidos)}</td>
+          <td style="text-align:right">${fmt(s.n_visitas - s.n_ordenios)}</td>
+        </tr>`).join('')}
+        ${filaTotalSesiones(sesiones)}
+      </tbody>
+    </table>` : '<div class="aviso">Sin sesiones ese día.</div>';
+}
+
 async function cargarRendimientoDia(fecha) {
   clearTimeout(rendDiaReintento);
   const info = document.getElementById('rend-dia-info');
@@ -3320,11 +3420,13 @@ async function cargarRendimientoDia(fecha) {
     const inp = document.getElementById('rend-dia-fecha');
     if (inp.value !== d.fecha) inp.value = d.fecha;
     pintarRendimientoDia();
+    pintarRendimientoSesiones();
     info.textContent = d.grupos.length ? `${d.fecha}` : `Sin ordeños registrados el ${d.fecha}.`;
   } catch (e) {
     if (e.calentando) { info.textContent = e.message; rendDiaReintento = setTimeout(() => cargarRendimientoDia(fecha), 4000); return; }
     info.textContent = 'Error: ' + e.message;
     document.getElementById('rend-dia-tabla').innerHTML = '';
+    document.getElementById('rend-sesiones-tabla').innerHTML = '';
   }
 }
 document.getElementById('rend-dia-fecha').addEventListener('change', () =>

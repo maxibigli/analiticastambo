@@ -186,19 +186,31 @@ def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
 
 
 def sql_rendimiento(desde: str, hasta: str) -> str:
-    """Igual que `sql_rutina`, + el kg de cada visita — para "Rendimiento Sala"."""
+    """Igual que `sql_rutina`, + el kg de cada visita — para "Rendimiento Sala".
+
+    NO se filtra `IdTimestamp IS NOT NULL`, por el mismo motivo que en la
+    rotativa (ver el detalle medido en `rutina.sql_rendimiento`): un ordeño
+    cuya identificación falló sigue siendo un ordeño real con leche, y
+    excluirlo desviaba todas las métricas de la pantalla. Acá el respaldo de
+    hora es `BeginTime` (arranque de leche), que en esta sala existe siempre
+    porque la fila SALE de `SessionMilkYield`.
+
+    OJO: esto está portado del arreglo de la rotativa, donde sí se pudo medir
+    contra el reporte de DelPro. En una sala convencional real todavía no se
+    verificó cuántas filas tienen `IdTimestamp` nulo — si son cero, el cambio
+    no altera nada; si no, las incluye, que es lo correcto."""
     return f"""
         SELECT ex.MPCNo AS puesto, b.Number AS rp, b.[Group] AS grupo,
-               ex.IdTimestamp AS hora_id, y.BeginTime AS hora_coloc, y.EndTime AS hora_fin,
+               ex.IdTimestamp AS hora_id, y.BeginTime AS hora_creacion,
+               y.BeginTime AS hora_coloc, y.EndTime AS hora_fin,
                y.TotalYield AS kg, CAST(ex.ForcedRetract AS int) AS retirada_forzada,
                ex.SideNo AS lado, ex.BatchNo AS bloque
         FROM SessionMilkYield y
         JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
         JOIN BasicAnimal b ON b.OID = y.BasicAnimal
-        WHERE ex.IdTimestamp IS NOT NULL
-          AND ex.IdTimestamp >= DATEADD(hour, -6, '{desde}')
-          AND ex.IdTimestamp < DATEADD(hour, 6, DATEADD(day, 1, '{hasta}'))
-        ORDER BY ex.IdTimestamp
+        WHERE COALESCE(ex.IdTimestamp, y.BeginTime) >= DATEADD(hour, -6, '{desde}')
+          AND COALESCE(ex.IdTimestamp, y.BeginTime) < DATEADD(hour, 6, DATEADD(day, 1, '{hasta}'))
+        ORDER BY COALESCE(ex.IdTimestamp, y.BeginTime)
         OPTION (MAX_GRANT_PERCENT = 25)
     """
 

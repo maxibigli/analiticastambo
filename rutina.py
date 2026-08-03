@@ -161,22 +161,53 @@ def sql_rendimiento(desde: str, hasta: str) -> str:
 
     `retirada_forzada` (`CMSMilkYield.ForcedRetract`) viaja también acá, para
     poder separar la cantidad de retiradas forzadas por rodeo (`_grupos_sesion`)
-    sin pagar una consulta aparte — mismo criterio de `sql_rutina`."""
+    sin pagar una consulta aparte — mismo criterio de `sql_rutina`.
+
+    **NO se filtra `IDTime IS NOT NULL`**, y es importante que siga así. Ese
+    filtro (que esta consulta tenía) descartaba en silencio las visitas cuya
+    identificación falló del todo: no llegan a tener hora de ID, pero SÍ son
+    ordeños reales, con leche medida. Medido contra el reporte "Rendimiento de
+    ordeño" de DelPro del 06/07/2026, primera sesión — con el filtro faltaban
+    71 visitas y todo quedaba corto; sin él, cierra exacto:
+
+        ordeños     1.389 + 71 = 1.460   (DelPro: 1.460)
+        visitas     1.437 + 71 = 1.508   (DelPro: 1.508)
+        producción  20.885,5 + 974,8 = 21.860,3 kg  (DelPro: 21.860)
+        desconocidos     2 + 67 = 69     (DelPro: 69)
+
+    O sea que 67 de esas 71 son además la mayor parte de los "ordeños
+    desconocidos" del reporte: al excluirlas, la aplicación mostraba ~2
+    desconocidos por sesión contra los ~69 reales, y parecía identificar
+    mucho mejor de lo que identifica.
+
+    Como esas visitas no tienen `IDTime`, se usa `CreationTime` de respaldo
+    para ubicarlas en el tiempo (medido sobre las 1.437 visitas con ambos
+    datos ese día: `CreationTime` cae a 7,5s de `IDTime` en promedio, con un
+    rango de -230s a +344s — suficiente para ordenarlas y asignarlas a su
+    sesión, que dura horas). El consumidor recibe `sin_id` para saber cuáles
+    son y no medir con ellas tiempos que arrancan en la identificación (ver
+    `analizar_rendimiento`).
+
+    `sql_rutina` (calidad de rutina) SÍ sigue exigiendo `IDTime`: ahí todo el
+    puntaje se apoya en el tramo identificación→colocación, que para estas
+    visitas no existe. Son dos preguntas distintas sobre los mismos datos.
+    """
     desde, hasta = validar_fecha(desde), validar_fecha(hasta)
     return f"""
         SELECT
           m.Place AS puesto, b.Number AS rp, b.[Group] AS grupo,
-          m.IDTime AS hora_id, c.VerifiedTime AS hora_coloc, y.MilkConfirmTime AS hora_fin,
+          m.IDTime AS hora_id, m.CreationTime AS hora_creacion,
+          c.VerifiedTime AS hora_coloc, y.MilkConfirmTime AS hora_fin,
           s.TotalYield AS kg, y.ForcedRetract AS retirada_forzada
         FROM MilkingDeviceVisit m
         JOIN BasicAnimal b ON b.OID = m.Animal
         LEFT JOIN CMSDeviceVisit c ON c.OID = m.OID
         LEFT JOIN CMSMilkYield y ON y.MilkingDeviceVisit = m.OID
         LEFT JOIN SessionMilkYield s ON s.OID = y.OID
-        WHERE m.GCRecord IS NULL AND m.IDTime IS NOT NULL
-          AND m.IDTime >= DATEADD(hour, -6, '{desde}')
-          AND m.IDTime < DATEADD(hour, 6, DATEADD(day, 1, '{hasta}'))
-        ORDER BY m.IDTime
+        WHERE m.GCRecord IS NULL
+          AND COALESCE(m.IDTime, m.CreationTime) >= DATEADD(hour, -6, '{desde}')
+          AND COALESCE(m.IDTime, m.CreationTime) < DATEADD(hour, 6, DATEADD(day, 1, '{hasta}'))
+        ORDER BY COALESCE(m.IDTime, m.CreationTime)
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
     """
 
@@ -251,8 +282,13 @@ def _rotaciones_rotativa(visitas: list, duracion_seg: float) -> int | None:
     `_ocupacion_rotativa`: la rotativa es mecánica, todos los puestos giran al
     mismo ritmo). Intercambiable (`rotaciones_fn`) porque, como la ocupación,
     es lo único de "Rendimiento Sala" que depende de que haya una plataforma
-    girando — una sala convencional cuenta TANDAS en su lugar."""
-    totales_vuelta = [_seg(v["hora_id"], v["hora_fin"]) for v in visitas if v["hora_fin"] is not None]
+    girando — una sala convencional cuenta TANDAS en su lugar.
+
+    Las visitas sin identificación quedan afuera de la mediana: su `hora_id` es
+    una hora de creación de respaldo (ver `sql_rendimiento`), así que el tramo
+    ID→retiro no mide una vuelta real. Sí cuentan para todo lo demás."""
+    totales_vuelta = [_seg(v["hora_id"], v["hora_fin"]) for v in visitas
+                      if v["hora_fin"] is not None and not v.get("sin_id")]
     t_vuelta = statistics.median(totales_vuelta) if totales_vuelta else None
     return round(duracion_seg / t_vuelta) if t_vuelta else None
 
@@ -277,7 +313,24 @@ def _resumen_sesion_rendimiento(visitas: list, rotaciones_fn=None) -> dict:
     desconocidos = [v for v in ordenios if not v["rp"]]
     n_desconocidos = len(desconocidos)
     kg_desconocidos = sum(v["kg"] for v in desconocidos)
-    n_identificadas = len({v["rp"] for v in ordenios if v["rp"]})
+
+    # Las dos formas en que una visita queda sin dueño, que el reporte de
+    # DelPro separa en columnas distintas y acá dan EXACTO (verificado contra
+    # las tres sesiones del 06/07/2026):
+    #   * "Vacas no identificadas": nunca se leyó nada -- la visita ni siquiera
+    #     tiene hora de identificación (`sin_id`).
+    #   * "Transponders desconocidos": SÍ se leyó un transponder, pero no
+    #     corresponde a ninguna vaca del rodeo -- hay hora de ID y aun así el
+    #     animal resuelve al registro comodín de DelPro.
+    # Y "Vacas identificadas" del reporte NO son vacas distintas: son las
+    # visitas que sí tienen dueño (1.508 - 67 - 2 = 1.439 en la sesión 1).
+    # `n_vacas_distintas` queda aparte porque es otra pregunta, y es la que
+    # usan las métricas de dotación (vacas por puesto / por persona).
+    sin_dueno = [v for v in visitas if not v["rp"]]
+    n_no_identificadas = sum(1 for v in sin_dueno if v.get("sin_id"))
+    n_transponders_desconocidos = len(sin_dueno) - n_no_identificadas
+    n_identificadas = n_visitas - len(sin_dueno)
+    n_vacas_distintas = len({v["rp"] for v in ordenios if v["rp"]})
 
     tiempos_ordeño = [_seg(v["hora_coloc"], v["hora_fin"]) for v in visitas
                       if v["hora_coloc"] and v["hora_fin"]]
@@ -288,12 +341,16 @@ def _resumen_sesion_rendimiento(visitas: list, rotaciones_fn=None) -> dict:
     return {
         "inicio": inicio.isoformat(), "fin": fin.isoformat(),
         "duracion_min": round(duracion_seg / 60),
+        "duracion_seg": round(duracion_seg),
         "n_rotaciones": n_rotaciones,
         "n_visitas": n_visitas, "n_ordenios": n_ordenios,
         "n_desconocidos": n_desconocidos,
         "kg_desconocidos": round(kg_desconocidos, 1),
         "kg_total": round(kg_total, 1),
         "n_identificadas": n_identificadas,
+        "n_no_identificadas": n_no_identificadas,
+        "n_transponders_desconocidos": n_transponders_desconocidos,
+        "n_vacas_distintas": n_vacas_distintas,
         "dur_prom_ordeño_seg": round(dur_prom_ordeño) if dur_prom_ordeño else None,
         "kg_por_hora": round(kg_total / duracion_h, 1) if duracion_h else None,
         "kg_por_ordeño": round(kg_total / n_ordenios, 1) if n_ordenios else None,
@@ -417,12 +474,20 @@ def analizar_rendimiento(columns, rows, desde: str, hasta: str, max_sesiones: in
     idx = {c: i for i, c in enumerate(columns)}
     visitas = []
     for r in rows:
+        # Sin hora de identificación se usa la de creación del registro como
+        # respaldo: son ordeños reales (con leche) cuya identificación falló
+        # del todo, y dejarlos afuera desviaba TODAS las métricas de esta
+        # pantalla — ver el detalle medido en `sql_rendimiento`. `sin_id`
+        # viaja para no medir con ellos tiempos que arrancan en la ID.
         hora_id = _parse(r[idx["hora_id"]])
+        sin_id = hora_id is None
+        if sin_id and "hora_creacion" in idx:
+            hora_id = _parse(r[idx["hora_creacion"]])
         if hora_id is None:
             continue
         visitas.append({
             "puesto": r[idx["puesto"]], "rp": r[idx["rp"]], "grupo": r[idx["grupo"]],
-            "hora_id": hora_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
+            "hora_id": hora_id, "sin_id": sin_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
             "hora_fin": _parse(r[idx["hora_fin"]]), "kg": r[idx["kg"]],
             "lado": r[idx["lado"]] if "lado" in idx else None,
             "bloque": r[idx["bloque"]] if "bloque" in idx else None,
@@ -499,12 +564,17 @@ def resumen_grupos_dia(columns, rows, fecha: str, grupos_ordene=None,
     idx = {c: i for i, c in enumerate(columns)}
     visitas = []
     for r in rows:
+        # Respaldo de hora para las visitas sin identificación — ver el mismo
+        # bloque en `analizar_rendimiento` y el detalle en `sql_rendimiento`.
         hora_id = _parse(r[idx["hora_id"]])
+        sin_id = hora_id is None
+        if sin_id and "hora_creacion" in idx:
+            hora_id = _parse(r[idx["hora_creacion"]])
         if hora_id is None:
             continue
         visitas.append({
             "puesto": r[idx["puesto"]], "rp": r[idx["rp"]], "grupo": r[idx["grupo"]],
-            "hora_id": hora_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
+            "hora_id": hora_id, "sin_id": sin_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
             "hora_fin": _parse(r[idx["hora_fin"]]), "kg": r[idx["kg"]],
             "retirada_forzada": bool(r[idx["retirada_forzada"]])
                 if "retirada_forzada" in idx and r[idx["retirada_forzada"]] is not None else False,
@@ -543,9 +613,14 @@ def resumen_grupos_dia(columns, rows, fecha: str, grupos_ordene=None,
             g["kg_total"] += v["kg"]
         if v["retirada_forzada"]:
             g["retiradas_forzadas"] += 1
-        prep = _seg(v["hora_id"], v["hora_coloc"])
-        if prep is not None:
-            g["prep_segs"].append(prep)
+        # El tiempo de estímulo arranca en la IDENTIFICACIÓN: en una visita sin
+        # ID, `hora_id` es la hora de creación de respaldo y el tramo no
+        # significa nada. La duración del ordeñe, en cambio, va de colocación a
+        # retiro y no depende de la ID, así que esas visitas sí entran.
+        if not v.get("sin_id"):
+            prep = _seg(v["hora_id"], v["hora_coloc"])
+            if prep is not None:
+                g["prep_segs"].append(prep)
         ordeño = _seg(v["hora_coloc"], v["hora_fin"])
         if ordeño is not None:
             g["ordeño_segs"].append(ordeño)
@@ -833,7 +908,11 @@ def _ocupacion_rotativa(visitas: list, duracion_seg: float) -> dict:
 
     Devuelve {"label", "score" (0-100), "info", "hallazgos"}.
     """
-    totales = [_seg(v["hora_id"], v["hora_fin"]) for v in visitas if v["hora_fin"] is not None]
+    # Las visitas sin identificación no entran en la mediana del tiempo de
+    # vuelta (su `hora_id` es de respaldo, ver `sql_rendimiento`), pero sí en
+    # `con_puesto`: ocuparon un puesto real de la plataforma.
+    totales = [_seg(v["hora_id"], v["hora_fin"]) for v in visitas
+               if v["hora_fin"] is not None and not v.get("sin_id")]
     t_vuelta = statistics.median(totales) if totales else None
     con_puesto = [v for v in visitas if v["puesto"]]
     usos = {}

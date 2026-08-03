@@ -2521,9 +2521,11 @@ def api_rutina_rendimiento():
 def api_rutina_resumen_dia():
     """Réplica del reporte "Rendimiento de Ordeño" de DelPro para UN día:
     una fila por grupo (ordeños, producción, velocidad, tiempos, retiradas)
-    más los totales (identificación, ocupación). Mismo caché que
-    /api/rutina/rendimiento (mismas visitas, pidiendo desde=hasta=fecha) —
-    no es una consulta nueva."""
+    más los totales (identificación, ocupación) y, además, `sesiones`: una
+    fila por sesión de ordeño de ese día (rotaciones, horas, producción, igual
+    que la tabla densa "por sala/fecha/sesión" del reporte de DelPro). Mismo
+    caché que /api/rutina/rendimiento (mismas visitas, pidiendo
+    desde=hasta=fecha) — no es una consulta nueva."""
     tambo = _tambo_del_request()
     try:
         fecha = (datetime.datetime.strptime(request.args["fecha"], "%Y-%m-%d").date()
@@ -2544,7 +2546,12 @@ def api_rutina_resumen_dia():
                                                  fecha.isoformat(),
                                                  grupos_ordene=_grupos_ordene(tambo),
                                                  nombres=_nombres_grupos(tambo))
-    return jsonify({"fecha": fecha.isoformat(), **resumen})
+    sesiones = salas.de(tambo).analizar_rendimiento(tambo, visitas["columns"], visitas["rows"],
+                                                    fecha.isoformat(), fecha.isoformat(),
+                                                    max_sesiones=_max_sesiones(tambo),
+                                                    nombres=_nombres_grupos(tambo),
+                                                    grupos_ordene=_grupos_ordene(tambo))
+    return jsonify({"fecha": fecha.isoformat(), "sesiones": sesiones, **resumen})
 
 
 # --- Análisis de flujos de ordeño -------------------------------------------

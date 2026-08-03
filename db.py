@@ -65,7 +65,7 @@ QUERY_TIMEOUT_S = 180
 _FORBIDDEN = re.compile(
     r"\b(insert|update|delete|drop|alter|create|truncate|merge|grant|revoke|"
     r"exec|execute|backup|restore|shutdown|dbcc|openrowset|opendatasource|"
-    r"openquery|waitfor)\b|xp_\w+|sp_\w+",
+    r"openquery|waitfor)\b|\bxp_\w+|\bsp_\w+",
     re.IGNORECASE,
 )
 _SELECT_INTO = re.compile(r"\binto\s+[#\[\w]", re.IGNORECASE)
