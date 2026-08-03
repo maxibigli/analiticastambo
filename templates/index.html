@@ -1770,30 +1770,6 @@
   </div>
 
   <div class="page" id="page-rendimiento" hidden>
-  <section class="card" id="rendimiento-dia-card">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">Rendimiento de Ordeño — por día</h2>
-      <span class="aviso">Una fila por rodeo, réplica del reporte de DelPro.</span>
-      <div class="controls" style="margin-left:auto">
-        <button class="secundario" id="rend-dia-ant" title="Día anterior">◀</button>
-        <input type="date" id="rend-dia-fecha" style="padding:7px 8px">
-        <button class="secundario" id="rend-dia-sig" title="Día siguiente">▶</button>
-      </div>
-    </div>
-    <p class="explica" style="margin-top:10px">
-      <b>Cómo se calcula.</b> Ordeños y producción son el total del rodeo ese día;
-      la velocidad (V/h) descarta los huecos entre rondas de ordeño para no
-      subestimarla, mismo criterio que "Ordeños/hora" más abajo. El
-      <b>tiempo de ordeñe</b> va del arranque de la bajada de leche a su fin, y
-      el <b>tiempo de estímulo</b>, de la identificación de la vaca al arranque
-      de la leche. Los dos se muestran como <b>mediana</b> (no promedio): un
-      puñado de lecturas con el horario "pegado" arrastra un promedio muy por
-      encima de lo real.
-    </p>
-    <div class="aviso" id="rend-dia-info" style="margin-top:8px"></div>
-    <div style="overflow-x:auto;margin-top:10px" id="rend-dia-tabla"></div>
-  </section>
-
   <section class="card" id="rendimiento-sala-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">Rendimiento Sala</h2>
@@ -1882,7 +1858,8 @@
         (medido el 06/07: las 22 vueltas de la sesión tenían más de un rodeo, y el de enfermería
         aparecía en todas). Repartir esa velocidad por rodeo daba números imposibles —hasta 462
         ordeños/hora contra un máximo físico de unos 378—, así que se muestra lo que sí es propio
-        de cada rodeo. Los ordeños/hora reales de la sala están en la tabla por sesión, más abajo.
+        de cada rodeo. Los ordeños/hora reales de la sala están más abajo, en su propio gráfico y
+        en la tabla por sesión del final.
         <br><b>Cómo se calcula.</b> Promedio de vacas del rodeo por vuelta, ponderado por cuántas
         de sus vacas viajaron en cada una: así una vuelta con 60 vacas del rodeo pesa sesenta
         veces más que una en la que pasó una sola rezagada. Las retiradas forzadas son la bandera
@@ -1911,15 +1888,41 @@
       </p>
       <div class="chart-box" style="height:260px"><canvas id="chart-rend-vacas-hora-sala"></canvas></div>
     </div>
-    <div style="margin-top:20px">
-      <div class="aviso" style="margin-bottom:6px">Rendimiento de Ordeño — por sesión (réplica del reporte de DelPro)</div>
+  </section>
+
+  <section class="card" id="rendimiento-dia-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Rendimiento de Ordeño — un día</h2>
+      <span class="aviso">Réplica del reporte de DelPro: por rodeo y por sesión.</span>
+      <div class="controls" style="margin-left:auto">
+        <button class="secundario" id="rend-dia-ant" title="Día anterior">◀</button>
+        <input type="date" id="rend-dia-fecha" style="padding:7px 8px">
+        <button class="secundario" id="rend-dia-sig" title="Día siguiente">▶</button>
+      </div>
+    </div>
+    <div class="aviso" id="rend-dia-info" style="margin-top:8px"></div>
+
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Por rodeo</div>
       <p class="explica" style="margin-top:0">
-        Una fila por sesión de ordeño del día elegido arriba en "Rendimiento de
-        Ordeño — por día" (mismo selector, misma fecha).
-        <br><b>Todas las columnas coinciden exactamente con el reporte de
-        DelPro</b> — verificado campo por campo contra las tres sesiones del
-        06/07/2026: rotaciones, horarios, duración, ordeños, visitas, producción,
-        promedios por hora e identificación.
+        <b>Cómo se calcula.</b> Ordeños y producción son el total del rodeo ese día;
+        la velocidad (V/h) descarta los huecos entre rondas de ordeño para no
+        subestimarla. El <b>tiempo de ordeñe</b> va del arranque de la bajada de
+        leche a su fin, y el <b>tiempo de estímulo</b>, de la identificación de la
+        vaca al arranque de la leche. Los dos se muestran como <b>mediana</b> (no
+        promedio): un puñado de lecturas con el horario "pegado" arrastra un
+        promedio muy por encima de lo real.
+      </p>
+      <div style="overflow-x:auto;margin-top:10px" id="rend-dia-tabla"></div>
+    </div>
+
+    <div style="margin-top:20px">
+      <div class="aviso" style="margin-bottom:6px">Por sesión de ordeño</div>
+      <p class="explica" style="margin-top:0">
+        <b>Todas las columnas coinciden exactamente con el reporte de DelPro</b>
+        — verificado campo por campo contra tres días: rotaciones, horarios,
+        duración, ordeños, visitas, producción, promedios por hora e
+        identificación.
         <br>Las <b>rotaciones</b> son el número de vuelta que graba la propia
         máquina, no una estimación. La <b>duración de la sesión</b> va del
         arranque de leche de la primera vaca al fin de ordeño de la última.
