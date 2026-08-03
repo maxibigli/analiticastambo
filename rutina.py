@@ -396,7 +396,10 @@ def _resumen_sesion_rendimiento(visitas: list, rotaciones_fn=None) -> dict:
         "n_no_identificadas": n_no_identificadas,
         "n_transponders_desconocidos": n_transponders_desconocidos,
         "n_vacas_distintas": n_vacas_distintas,
-        "dur_prom_ordeño_seg": round(dur_prom_ordeño) if dur_prom_ordeño else None,
+        # También truncado, por lo mismo que `duracion_seg`: verificado contra
+        # tres días del reporte, redondear daba 1 segundo de más en 3 de las 9
+        # sesiones (04:58 contra 04:57, etc.).
+        "dur_prom_ordeño_seg": int(dur_prom_ordeño) if dur_prom_ordeño else None,
         "kg_por_hora": round(kg_total / duracion_h, 1) if duracion_h else None,
         "kg_por_ordeño": round(kg_total / n_ordenios, 1) if n_ordenios else None,
         "ordenios_por_hora": round(n_ordenios / duracion_h, 1) if duracion_h else None,
