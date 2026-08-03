@@ -443,6 +443,7 @@ def _grupos_sesion(visitas: list, nombres: dict | None = None,
                                      "n_ordenios": 1 if es_ordenio else 0,
                                      "retiradas_forzadas": 1 if es_forzada else 0,
                                      "horas": [v["hora_id"]],
+                                     "rotaciones": {v["rotacion"]} if v.get("rotacion") is not None else set(),
                                      "rp": {v["rp"]} if v["rp"] else set()}
             continue
         if v["hora_id"] < g["entrada"]:
@@ -455,12 +456,42 @@ def _grupos_sesion(visitas: list, nombres: dict | None = None,
         if es_forzada:
             g["retiradas_forzadas"] += 1
         g["horas"].append(v["hora_id"])
+        if v.get("rotacion") is not None:
+            g["rotaciones"].add(v["rotacion"])
         if v["rp"]:
             g["rp"].add(v["rp"])
+
+    # Cuántas vacas del grupo hay en la plataforma cuando pasa el grupo, por
+    # vuelta. Un rodeo NO ocupa vueltas enteras: medido el 06/07/2026, las 22
+    # rotaciones de la sesión tenían vacas de más de un rodeo, y el de
+    # enfermería goteaba de a una en TODAS. Así que:
+    #   * dividir por "vueltas donde es mayoría" da valores imposibles (Rodeo
+    #     4 llegó a 121 vacas/vuelta con la plataforma de 80): sus vacas están
+    #     en más vueltas de las que gana.
+    #   * dividir por "vueltas donde aparece" diluye el bloque real con las
+    #     vueltas en que solo pasó una rezagada.
+    # Se usa el promedio PONDERADO POR PRESENCIA -- suma(n²)/suma(n) sobre las
+    # vacas del grupo en cada vuelta. Una vuelta con 60 vacas del grupo pesa
+    # sesenta veces más que una con una sola, así que las rezagadas casi no
+    # mueven el número, y queda acotado por los puestos de la plataforma sin
+    # necesidad de ningún umbral inventado (el máximo, todas las vueltas
+    # llenas del mismo grupo, da exactamente los puestos).
+    por_rotacion: dict = {}
+    for v in visitas:
+        rot = v.get("rotacion")
+        if rot is None or v["grupo"] is None:
+            continue
+        if permitidos is not None and v["grupo"] not in permitidos:
+            continue
+        por_rotacion.setdefault(v["grupo"], {})
+        por_rotacion[v["grupo"]][rot] = por_rotacion[v["grupo"]].get(rot, 0) + 1
 
     grupos = []
     for g_oid, info in por_grupo.items():
         dur_seg = max((info["salida"] - info["entrada"]).total_seconds(), 0)
+        cuenta = por_rotacion.get(g_oid, {})
+        total = sum(cuenta.values())
+        vacas_por_vuelta = (sum(n * n for n in cuenta.values()) / total) if total else None
         grupos.append({
             "grupo": _grupo_txt(g_oid, nombres),
             "n_vacas": len(info["rp"]),
@@ -471,9 +502,44 @@ def _grupos_sesion(visitas: list, nombres: dict | None = None,
             "salida": info["salida"].isoformat(),
             "permanencia_min": round(dur_seg / 60, 1),
             "duracion_activa_min": round(_duracion_activa_grupo(info["horas"]) / 60, 1),
+            "n_rotaciones": len(info["rotaciones"]) or None,
+            "vacas_por_vuelta": round(vacas_por_vuelta, 1) if vacas_por_vuelta else None,
         })
     grupos.sort(key=lambda g: -g["permanencia_min"])
     return grupos
+
+
+def _separar_sesiones(visitas: list) -> list:
+    """Parte las visitas en sesiones de ordeño.
+
+    Si vienen con `sesion_parlor` (`CMSDeviceVisit.ParlorSession`) se usa ESE
+    dato: es la sesión que declara la propia máquina, y coincide exacto con el
+    reporte de DelPro. Resuelve de raíz el problema que motivó
+    `_fusionar_hasta`: el corte por hueco parte una sesión si adentro hubo una
+    pausa larga, y al volver a unirlas por el tope de ordeños/día podía pegar
+    dos rondas REALES (medido el 13/07/2026: daba una sesión de 11,5 h con 46
+    rotaciones, que en realidad eran dos ordeños distintos).
+
+    Sin ese campo —sala convencional, o `sql_rutina`, que no lo trae— se cae al
+    criterio de siempre: cortar por hueco mayor a `GAP_SESION_MIN`. El llamador
+    sigue aplicando `_fusionar_hasta` sobre el resultado; con `ParlorSession`
+    esa fusión no encuentra nada que unir, que es lo correcto."""
+    if visitas and visitas[0].get("sesion_parlor") is not None:
+        por_sesion: dict = {}
+        for v in visitas:
+            por_sesion.setdefault(v.get("sesion_parlor"), []).append(v)
+        return [vs for _, vs in sorted(por_sesion.items(),
+                                       key=lambda kv: kv[1][0]["hora_id"])]
+    bloques, actual, anterior = [], [], None
+    for v in visitas:
+        if anterior is not None and (v["hora_id"] - anterior).total_seconds() > GAP_SESION_MIN * 60:
+            bloques.append(actual)
+            actual = []
+        actual.append(v)
+        anterior = v["hora_id"]
+    if actual:
+        bloques.append(actual)
+    return bloques
 
 
 def _duracion_activa_grupo(horas: list) -> float:
@@ -538,6 +604,7 @@ def analizar_rendimiento(columns, rows, desde: str, hasta: str, max_sesiones: in
             "hora_id": hora_id, "sin_id": sin_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
             "hora_fin": _parse(r[idx["hora_fin"]]), "kg": r[idx["kg"]],
             "rotacion": r[idx["rotacion"]] if "rotacion" in idx else None,
+            "sesion_parlor": r[idx["sesion_parlor"]] if "sesion_parlor" in idx else None,
             "lado": r[idx["lado"]] if "lado" in idx else None,
             "bloque": r[idx["bloque"]] if "bloque" in idx else None,
             "retirada_forzada": bool(r[idx["retirada_forzada"]])
@@ -545,15 +612,7 @@ def analizar_rendimiento(columns, rows, desde: str, hasta: str, max_sesiones: in
         })
     visitas.sort(key=lambda v: v["hora_id"])
 
-    bloques, actual, anterior = [], [], None
-    for v in visitas:
-        if anterior is not None and (v["hora_id"] - anterior).total_seconds() > GAP_SESION_MIN * 60:
-            bloques.append(actual)
-            actual = []
-        actual.append(v)
-        anterior = v["hora_id"]
-    if actual:
-        bloques.append(actual)
+    bloques = _separar_sesiones(visitas)
 
     por_dia: dict = {}
     for vs in bloques:
@@ -626,23 +685,16 @@ def resumen_grupos_dia(columns, rows, fecha: str, grupos_ordene=None,
             "hora_id": hora_id, "sin_id": sin_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
             "hora_fin": _parse(r[idx["hora_fin"]]), "kg": r[idx["kg"]],
             "rotacion": r[idx["rotacion"]] if "rotacion" in idx else None,
+            "sesion_parlor": r[idx["sesion_parlor"]] if "sesion_parlor" in idx else None,
             "retirada_forzada": bool(r[idx["retirada_forzada"]])
                 if "retirada_forzada" in idx and r[idx["retirada_forzada"]] is not None else False,
         })
     visitas.sort(key=lambda v: v["hora_id"])
 
-    # Separar en bloques (mismo criterio de gap que analizar_rendimiento) y
-    # quedarse con los del día pedido -- sql_rendimiento trae ±6h de margen
-    # para no cortar una sesión que arranca antes de medianoche.
-    bloques, actual, anterior = [], [], None
-    for v in visitas:
-        if anterior is not None and (v["hora_id"] - anterior).total_seconds() > GAP_SESION_MIN * 60:
-            bloques.append(actual)
-            actual = []
-        actual.append(v)
-        anterior = v["hora_id"]
-    if actual:
-        bloques.append(actual)
+    # Sesiones de la máquina (ver `_separar_sesiones`) y quedarse con las del
+    # día pedido -- `sql_rendimiento` trae ±6h de margen para no cortar una
+    # sesión que arranca antes de medianoche.
+    bloques = _separar_sesiones(visitas)
     visitas_dia = [v for vs in bloques if vs and _dia_de_bloque(vs) == fecha_d for v in vs]
     visitas_dia.sort(key=lambda v: v["hora_id"])
 

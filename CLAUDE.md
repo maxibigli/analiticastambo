@@ -414,6 +414,43 @@ Y en su fila de totales **promedia** algunas columnas en vez de sumarlas: los
 4.213 kg/h son el promedio de 4.686, 3.998 y 3.954, no los kg del día sobre
 las horas del día.
 
+**LAS SESIONES SALEN DE `CMSDeviceVisit.ParlorSession`**, no de cortar por
+hueco. El criterio viejo (cortar donde hay un hueco > `GAP_SESION_MIN` y
+después volver a unir con `_fusionar_hasta` hasta el tope de ordeños/día) se
+equivocaba en los dos sentidos: partía una sesión con una pausa larga adentro,
+y al reunirlas podía pegar dos rondas REALES en una (medido el 13/07/2026: una
+"sesión" de 11,5 h con 46 rotaciones, que eran dos ordeños distintos). Con
+`ParlorSession` las sesiones coinciden exacto con el reporte. El corte por
+hueco queda solo de respaldo, para la sala convencional y para `sql_rutina`,
+que no traen ese campo.
+
+## "Ordeños/hora POR RODEO" no existe: la velocidad es de la plataforma
+
+Se intentó medir a qué ritmo pasa cada rodeo, y **no es una métrica válida en
+una rotativa**. Los datos del 06/07/2026: las 22 rotaciones de la sesión
+tenían vacas de más de un rodeo, LAS 22. Hay un rodeo dominante por tramo
+(Rodeo 4 → 1 → 2 → 3 → 5), pero cada vuelta lleva rezagados de otros, y el de
+enfermería gotea de a una en todas. La plataforma gira a un ritmo y todos
+comparten sus vueltas: la velocidad es de la SALA, no del rodeo.
+
+Los dos intentos y por qué fallan, para no reintentarlos:
+
+- **Ventana entrada→salida del rodeo**: da ~250 min de una sesión de 279, o
+  sea casi toda la sesión, porque incluye el tiempo en que pasaban los otros.
+  Daba 32 ordeños/hora, absurdo.
+- **Descontar los huecos "anormales"** (`_duracion_activa_grupo`): daba 422 a
+  462 ordeños/hora, **por encima del máximo físico de la sala** (80 puestos ÷
+  12,7 min de vuelta = 378). Descarta como hueco tiempo en que la plataforma
+  sí giraba, con vacas de otro rodeo.
+
+Lo que SÍ es propio de cada rodeo es **cuántos puestos ocupa cuando pasa**
+(`vacas_por_vuelta`), y eso es lo que muestra la pantalla. Se calcula como
+promedio ponderado por presencia —suma(n²)/suma(n) sobre las vacas del grupo
+en cada vuelta—, que le da peso a las vueltas del bloque real y casi ninguno a
+las rezagadas sueltas, y **queda acotado por los puestos de la plataforma sin
+ningún umbral inventado**. Discrimina bien: los rodeos grandes llenan 45-55 de
+los 80 puestos, y el de enfermería 3 (llega goteando).
+
 ## Problemas de datos en DDM (no son bugs del código)
 
 - `EventPregCheck.DaysFromInsemination` viene en 0 en TODA la base: el parto

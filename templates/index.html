@@ -1871,24 +1871,27 @@
       <div class="chart-box" style="height:280px"><canvas id="chart-rend-permanencia"></canvas></div>
     </div>
     <div style="margin-top:14px">
-      <div class="aviso" style="margin-bottom:6px">Ordeños/hora y retiradas forzadas — por rodeo</div>
+      <div class="aviso" style="margin-bottom:6px">Vacas por vuelta y retiradas forzadas — por rodeo</div>
       <p class="explica" style="margin-top:0">
-        <b>Qué muestra.</b> La velocidad de paso por la rotativa de cada rodeo (ordeños de ese
-        grupo por hora, mientras está efectivamente pasando por la máquina) contra cuántas veces
-        la máquina tuvo que retirar la pezonera de forma forzada en ese mismo turno — para ver si
-        el rodeo que pasa más rápido es también el que más "apura" el retiro.
-        <br><b>Cómo se calcula.</b> Por sesión y grupo: ordeños del grupo ÷ el tiempo en que ese
-        grupo estuvo efectivamente circulando (se descartan los huecos anormalmente largos entre
-        sus propias visitas —otro grupo pasando en el medio, o dos rondas de ordeñe que quedaron
-        bajo la misma tarjeta de sesión—, que no son parte de su ritmo real; mismo criterio que ya
-        usa la rutina para detectar huecos). Se promedia entre las sesiones del período elegido.
-        Las retiradas forzadas son la bandera <code>ForcedRetract</code> de la propia máquina,
-        sumadas —no promediadas— sobre todo el período: es una cantidad, no una tasa.
+        <b>Qué muestra.</b> Qué tan llena viaja la plataforma cuando pasa cada rodeo: de los
+        puestos de la rotativa, cuántos ocupa ese rodeo en las vueltas en que está pasando. Un
+        rodeo que llega junto llena la plataforma; uno que llega goteando la deja girar a medias.
+        Al lado, cuántas veces la máquina retiró la pezonera de forma forzada en ese rodeo.
+        <br><b>Por qué esto y no "ordeños por hora".</b> La velocidad es de la <b>plataforma</b>,
+        no del rodeo: gira a un ritmo y en cada vuelta viajan vacas de varios rodeos mezcladas
+        (medido el 06/07: las 22 vueltas de la sesión tenían más de un rodeo, y el de enfermería
+        aparecía en todas). Repartir esa velocidad por rodeo daba números imposibles —hasta 462
+        ordeños/hora contra un máximo físico de unos 378—, así que se muestra lo que sí es propio
+        de cada rodeo. Los ordeños/hora reales de la sala están en la tabla por sesión, más abajo.
+        <br><b>Cómo se calcula.</b> Promedio de vacas del rodeo por vuelta, ponderado por cuántas
+        de sus vacas viajaron en cada una: así una vuelta con 60 vacas del rodeo pesa sesenta
+        veces más que una en la que pasó una sola rezagada. Las retiradas forzadas son la bandera
+        <code>ForcedRetract</code> de la máquina, sumadas sobre el período.
       </p>
       <div class="chart-box" style="height:280px"><canvas id="chart-rend-vacas-hora-grupo"></canvas></div>
     </div>
     <div style="margin-top:14px">
-      <div class="aviso" style="margin-bottom:6px">Ordeños/hora — evolución por rodeo</div>
+      <div class="aviso" style="margin-bottom:6px">Vacas por vuelta — evolución por rodeo</div>
       <div class="chart-box" style="height:260px"><canvas id="chart-rend-ordenios-hora-evolucion"></canvas></div>
     </div>
     <div style="margin-top:14px">
@@ -3654,34 +3657,38 @@ async function cargarRendimiento() {
     });
 
     // Ordeños/hora por rodeo (velocidad de paso por la rotativa) y retiradas
-    // forzadas por rodeo. La tasa usa g.duracion_activa_min (huecos anormales
-    // ya descontados en el backend -- ver _duracion_activa_grupo en rutina.py;
-    // NO usar g.permanencia_min acá: esa ventana quiere los huecos, es la de
-    // "Horas/día en ordeño"). Se promedia simple entre sesiones (mismo
-    // criterio que ordenios_por_hora/kg_por_hora del tambo entero); las
-    // retiradas se SUMAN sobre el período porque el pedido es una cantidad.
-    const ordeniosHoraPorGrupo = {};    // {grupo: [ordeños/hora de cada sesión]}
+    // forzadas por rodeo. `vacas_por_vuelta` viene calculado del backend (ver
+    // _grupos_sesion en rutina.py): es cuántos puestos de la plataforma ocupa
+    // el rodeo en las vueltas en que pasa. NO se usa "ordeños/hora por rodeo":
+    // la velocidad es de la plataforma, que gira a un ritmo con vacas de
+    // varios rodeos mezcladas en cada vuelta, y repartirla por rodeo daba
+    // números por encima del máximo físico de la sala. Se promedia simple
+    // entre sesiones; las retiradas se SUMAN (es una cantidad, no una tasa).
+    const vacasVueltaPorGrupo = {};     // {grupo: [vacas/vuelta de cada sesión]}
     const retiradasPorGrupo = {};       // {grupo: total retiradas forzadas del período}
     sesiones.forEach(s => (s.grupos || []).forEach(g => {
-      if (g.duracion_activa_min > 0) {
-        const tasa = g.n_ordenios / (g.duracion_activa_min / 60);
-        (ordeniosHoraPorGrupo[g.grupo] = ordeniosHoraPorGrupo[g.grupo] || []).push(tasa);
+      if (g.vacas_por_vuelta != null) {
+        (vacasVueltaPorGrupo[g.grupo] = vacasVueltaPorGrupo[g.grupo] || []).push(g.vacas_por_vuelta);
       }
       retiradasPorGrupo[g.grupo] = (retiradasPorGrupo[g.grupo] || 0) + (g.retiradas_forzadas || 0);
     }));
-    const ordeniosHoraPromPorGrupo = {};   // {grupo: ordeños/hora promedio}
-    Object.keys(ordeniosHoraPorGrupo).forEach(g => { ordeniosHoraPromPorGrupo[g] = promediar(ordeniosHoraPorGrupo[g]); });
-    const gruposOH = [...new Set([...Object.keys(ordeniosHoraPromPorGrupo), ...Object.keys(retiradasPorGrupo)])]
-      .sort((a, b) => (ordeniosHoraPromPorGrupo[b] ?? 0) - (ordeniosHoraPromPorGrupo[a] ?? 0));
+    const vacasVueltaPromPorGrupo = {};   // {grupo: vacas/vuelta promedio}
+    Object.keys(vacasVueltaPorGrupo).forEach(g => { vacasVueltaPromPorGrupo[g] = promediar(vacasVueltaPorGrupo[g]); });
+    const gruposOH = [...new Set([...Object.keys(vacasVueltaPromPorGrupo), ...Object.keys(retiradasPorGrupo)])]
+      .sort((a, b) => (vacasVueltaPromPorGrupo[b] ?? 0) - (vacasVueltaPromPorGrupo[a] ?? 0));
 
-    const oVacasHoraGrupo = optsDobleEje('ordeños/hora', 'retiradas forzadas');
+    const oVacasHoraGrupo = optsDobleEje('vacas por vuelta', 'retiradas forzadas');
     oVacasHoraGrupo.plugins.legend.display = true;
+    // Los puestos de la sala son el techo de la métrica: con el eje fijo ahí
+    // se ve de una si el rodeo llena la plataforma o la deja girar a medias.
+    if (infoTambo.puestos) oVacasHoraGrupo.scales.y.suggestedMax = infoTambo.puestos;
     chartRendVacasHoraGrupo = dibujar('chart-rend-vacas-hora-grupo', chartRendVacasHoraGrupo, {
       type: 'bar',
       data: { labels: gruposOH, datasets: [
         {
-          type: 'bar', label: 'Ordeños/hora (promedio)',
-          data: gruposOH.map(g => ordeniosHoraPromPorGrupo[g] != null ? Math.round(10 * ordeniosHoraPromPorGrupo[g]) / 10 : null),
+          type: 'bar',
+          label: infoTambo.puestos ? `Vacas por vuelta (de ${infoTambo.puestos} puestos)` : 'Vacas por vuelta',
+          data: gruposOH.map(g => vacasVueltaPromPorGrupo[g] != null ? Math.round(10 * vacasVueltaPromPorGrupo[g]) / 10 : null),
           backgroundColor: gruposOH.map((_, i) => SERIES[i % SERIES.length]),
           maxBarThickness: 40, borderRadius: 4,
         },
@@ -3691,20 +3698,20 @@ async function cargarRendimiento() {
       options: oVacasHoraGrupo,
     });
 
-    // Ordeños/hora y retiradas forzadas, en el tiempo: un punto por día y por
-    // grupo, reusando fechasPerm/gruposPerm (mismos días y mismos rodeos que
-    // "Horas/día en ordeño — evolución"). La tasa de ordeños/hora se PROMEDIA
+    // Vacas por vuelta y retiradas forzadas, en el tiempo: un punto por día y
+    // por grupo, reusando fechasPerm/gruposPerm (mismos días y mismos rodeos
+    // que "Horas/día en ordeño — evolución"). Las vacas/vuelta se PROMEDIAN
     // entre las sesiones de un mismo día; las retiradas y los ordeños del día
     // se SUMAN (son ordeños distintos el mismo día) para poder sacar despues
     // el % de retiradas sobre los ordeños de ESE día -- dos gráficos aparte,
     // uno debajo del otro, cada uno con su propia leyenda por rodeo.
-    const ordeniosHoraPorDiaGrupo = {};   // {fecha: {grupo: [tasas de ese día]}}
+    const ordeniosHoraPorDiaGrupo = {};   // {fecha: {grupo: [vacas/vuelta de ese día]}}
     const ordeniosPorDiaGrupo = {};       // {fecha: {grupo: total ordeños de ese día}}
     const retiradasPorDiaGrupo = {};      // {fecha: {grupo: total retiradas de ese día}}
     sesiones.forEach(s => (s.grupos || []).forEach(g => {
       const diaOH = ordeniosHoraPorDiaGrupo[s.fecha] = ordeniosHoraPorDiaGrupo[s.fecha] || {};
-      if (g.duracion_activa_min > 0) {
-        (diaOH[g.grupo] = diaOH[g.grupo] || []).push(g.n_ordenios / (g.duracion_activa_min / 60));
+      if (g.vacas_por_vuelta != null) {
+        (diaOH[g.grupo] = diaOH[g.grupo] || []).push(g.vacas_por_vuelta);
       }
       const diaOrd = ordeniosPorDiaGrupo[s.fecha] = ordeniosPorDiaGrupo[s.fecha] || {};
       diaOrd[g.grupo] = (diaOrd[g.grupo] || 0) + (g.n_ordenios || 0);
@@ -3735,7 +3742,8 @@ async function cargarRendimiento() {
       { borderWidth: 3, pointRadius: 3, borderDash: [6, 3] });
 
     const oOrdeniosHoraEvol = baseOpts(true);
-    oOrdeniosHoraEvol.scales.y.title = { display: true, text: 'ordeños/hora' };
+    oOrdeniosHoraEvol.scales.y.title = { display: true, text: 'vacas por vuelta' };
+    if (infoTambo.puestos) oOrdeniosHoraEvol.scales.y.suggestedMax = infoTambo.puestos;
     oOrdeniosHoraEvol.plugins.legend.onClick = (e, legendItem, legend) => {
       const ci = legend.chart;
       const idx = legendItem.datasetIndex;
