@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1016">
+<link rel="manifest" href="/checklist/manifest.webmanifest">
+<title>Check-list — La Ponderosa</title>
+<style>
+  /* Pantalla de mano: se usa parado en la sala, con guantes y de apuro. Todo
+     lo tocable es grande (mínimo 44px) y no hay nada que dependa del hover. */
+  :root {
+    --fondo: #0b1016; --panel: #131c26; --panel2: #1b2733; --borde: #24323f;
+    --texto: #e8eef5; --suave: #8fa3b8; --ok: #1baf7a; --no: #d03b3b;
+    --acento: #1c5cb8; --acento-claro: #4f97e8;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--fondo); color: var(--texto);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  header {
+    position: sticky; top: 0; z-index: 10; background: var(--panel);
+    border-bottom: 1px solid var(--borde); padding: 10px 14px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+  }
+  header h1 { margin: 0; font-size: 17px; }
+  header .sub { color: var(--suave); font-size: 13px; margin-top: 2px; }
+  main { padding: 12px 14px 120px; }
+
+  .pastillas { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+  .pastilla {
+    flex: 1 1 auto; min-width: 92px; min-height: 46px; padding: 10px 12px;
+    border: 1px solid var(--borde); border-radius: 10px; background: var(--panel2);
+    color: var(--texto); font-size: 15px; font-weight: 600;
+  }
+  .pastilla[aria-pressed="true"] { background: var(--acento); border-color: var(--acento-claro); }
+  .pastilla[data-hecha="1"]::after { content: " ✓"; color: var(--ok); }
+
+  .item {
+    background: var(--panel); border: 1px solid var(--borde); border-radius: 12px;
+    padding: 12px; margin-bottom: 10px;
+  }
+  .item .sector {
+    font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--suave);
+  }
+  .item .tarea { margin: 4px 0 10px; font-size: 16px; }
+  .botones { display: flex; gap: 10px; }
+  .botones button {
+    flex: 1; min-height: 52px; font-size: 17px; font-weight: 700; color: var(--texto);
+    background: var(--panel2); border: 1px solid var(--borde); border-radius: 10px;
+  }
+  .botones button[aria-pressed="true"][value="ok"] { background: var(--ok); border-color: var(--ok); }
+  .botones button[aria-pressed="true"][value="no"] { background: var(--no); border-color: var(--no); }
+  .botones button[aria-pressed="true"][value="na"] { background: #4a5a6b; border-color: #4a5a6b; }
+
+  .detalle { margin-top: 10px; display: none; }
+  .item[data-estado="no"] .detalle { display: block; }
+  textarea {
+    width: 100%; min-height: 62px; padding: 10px; border-radius: 10px;
+    background: var(--panel2); border: 1px solid var(--borde); color: var(--texto);
+    font: inherit; resize: vertical;
+  }
+  .foto-fila { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .foto-btn {
+    min-height: 46px; padding: 10px 14px; border-radius: 10px; background: var(--panel2);
+    border: 1px solid var(--borde); color: var(--texto); font: inherit; font-weight: 600;
+  }
+  .miniaturas { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .miniaturas figure { margin: 0; position: relative; }
+  .miniaturas img { width: 76px; height: 76px; object-fit: cover; border-radius: 8px; }
+  .miniaturas button {
+    position: absolute; top: -6px; right: -6px; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--no); color: #fff; border: 0; font-size: 15px; line-height: 1;
+  }
+  input[type=file] { display: none; }
+
+  .pie {
+    position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 14px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom));
+    background: var(--panel); border-top: 1px solid var(--borde);
+  }
+  .pie button {
+    width: 100%; min-height: 56px; font-size: 18px; font-weight: 700;
+    background: var(--acento); color: #fff; border: 0; border-radius: 12px;
+  }
+  .pie button[disabled] { background: #33465a; color: #90a2b5; }
+  .estado { font-size: 13px; color: var(--suave); margin-bottom: 8px; text-align: center; }
+  .aviso { border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; font-size: 14px; }
+  .aviso.err { background: #3a1a1a; border: 1px solid #6a2a2a; }
+  .aviso.ok { background: #14352a; border: 1px solid #1f5c47; }
+  .aviso.pend { background: #33290f; border: 1px solid #5c4a1f; }
+  a.salir { color: var(--suave); font-size: 13px; float: right; }
+</style>
+</head>
+<body>
+<header>
+  <a class="salir" href="/logout">Salir</a>
+  <h1>Check-list de control</h1>
+  <div class="sub">{{ tambo }} · <span id="hoy"></span> · {{ usuario }}</div>
+</header>
+
+<main>
+  <div id="pendientes-aviso" class="aviso pend" hidden></div>
+
+  <div class="sub" style="color:var(--suave);font-size:13px">¿Qué estás cargando?</div>
+  <div class="pastillas" id="momentos">
+    <button class="pastilla" data-momento="sesion" aria-pressed="true">Ordeñe</button>
+    <button class="pastilla" data-momento="diario" aria-pressed="false">Diario</button>
+    <button class="pastilla" data-momento="semanal" aria-pressed="false">Semanal</button>
+  </div>
+
+  <div id="sesiones-wrap">
+    <div class="sub" style="color:var(--suave);font-size:13px;margin-top:10px">¿Qué ordeñe?</div>
+    <div class="pastillas" id="sesiones">
+      <button class="pastilla" data-sesion="1" aria-pressed="false">1º</button>
+      <button class="pastilla" data-sesion="2" aria-pressed="false">2º</button>
+      <button class="pastilla" data-sesion="3" aria-pressed="false">3º</button>
+    </div>
+  </div>
+
+  <div id="mensaje"></div>
+  <div id="lista" style="margin-top:14px"></div>
+</main>
+
+<div class="pie">
+  <div class="estado" id="estado"></div>
+  <button id="guardar" disabled>Guardar</button>
+</div>
+
+<script>
+const TAMBO = {{ tambo | tojson }};
+const COLA_KEY = 'checklist_cola_v1';
+const MAX_LADO = 1600;      // px del lado largo al que se achica cada foto
+const CALIDAD = 0.8;
+
+let plantilla = null;       // {id, version, items:[...]}
+let momento = 'sesion';
+let sesion = null;
+let hechas = [];
+const respuestas = new Map();   // item_id -> {estado, comentario, fotos:[{blob,url}]}
+
+const $ = s => document.querySelector(s);
+const hoyISO = () => new Date().toLocaleDateString('en-CA');   // AAAA-MM-DD local
+$('#hoy').textContent = new Date().toLocaleDateString('es-AR',
+  { weekday: 'long', day: '2-digit', month: '2-digit' });
+
+// --- Cola offline -----------------------------------------------------------
+// En la sala el celular puede quedarse sin señal. Si el envío falla, la carga
+// queda guardada en el teléfono y se reintenta sola: sin esto el operario
+// pierde lo cargado una vez y no usa más la app.
+//
+// Las fotos van a la cola como dataURL porque localStorage solo guarda texto.
+// Es la parte cara (base64 infla ~33%), y por eso las fotos ya vienen
+// redimensionadas: una carga con 2 o 3 fotos entra cómoda en el presupuesto de
+// localStorage, con las originales de 6 MB no entraría.
+function leerCola() {
+  try { return JSON.parse(localStorage.getItem(COLA_KEY) || '[]'); } catch (e) { return []; }
+}
+function escribirCola(c) { localStorage.setItem(COLA_KEY, JSON.stringify(c)); }
+
+async function encolar(carga) {
+  const c = leerCola();
+  c.push(carga);
+  escribirCola(c);
+  pintarPendientes();
+}
+
+async function enviar(carga) {
+  const fd = new FormData();
+  fd.append('datos', JSON.stringify(carga.datos));
+  for (const f of carga.fotos) {
+    const blob = await (await fetch(f.dataUrl)).blob();
+    fd.append('foto_' + f.item_id, blob, 'foto' + (blob.type === 'image/png' ? '.png' : '.jpg'));
+  }
+  // El tambo va en la URL: el body es multipart (lleva las fotos), así que el
+  // servidor no lo puede leer de un JSON.
+  const r = await fetch('/api/checklist/corrida?tambo=' + encodeURIComponent(TAMBO),
+                        { method: 'POST', body: fd });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    // 400 = la carga está mal armada; reintentarla eternamente no la va a
+    // arreglar y taparía la cola. Se descarta avisando.
+    const e = new Error(j.error || ('Error ' + r.status));
+    e.definitivo = r.status >= 400 && r.status < 500;
+    throw e;
+  }
+  return j;
+}
+
+async function vaciarCola() {
+  const c = leerCola();
+  if (!c.length) return;
+  const quedan = [];
+  const errores = [];
+  for (const carga of c) {
+    try { await enviar(carga); }
+    catch (e) {
+      if (e.definitivo) errores.push(e.message);
+      else quedan.push(carga);
+    }
+  }
+  escribirCola(quedan);
+  pintarPendientes(errores);
+  // Si se mandó algo, hay que releer: si no, los ✓ de los ordeñes ya cargados
+  // no aparecen hasta que el operario recarga a mano, y parece que la carga
+  // que acaba de sincronizar se perdió.
+  if (quedan.length < c.length && plantilla) await cargar();
+}
+
+function pintarPendientes(errores) {
+  const c = leerCola();
+  const av = $('#pendientes-aviso');
+  const partes = [];
+  if (c.length) partes.push(`${c.length} carga(s) sin enviar — se mandan solas cuando vuelva la señal.`);
+  if (errores && errores.length) partes.push('Se descartaron: ' + errores.join(' · '));
+  av.textContent = partes.join(' ');
+  av.hidden = !partes.length;
+}
+
+window.addEventListener('online', vaciarCola);
+
+// --- Fotos ------------------------------------------------------------------
+// Se achica EN EL CELULAR antes de subir. Una foto de cámara pesa 4-8 MB y por
+// el túnel, con señal de campo, no sube; a 1600px de lado largo queda en ~300 KB
+// y se ve perfecto para mostrar una fuga o un gancho roto.
+function achicar(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const escala = Math.min(1, MAX_LADO / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * escala);
+      c.height = Math.round(img.height * escala);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL('image/jpeg', CALIDAD));
+    };
+    img.onerror = () => reject(new Error('No se pudo leer la foto'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+// --- Pantalla ---------------------------------------------------------------
+function estadoDe(id) { return (respuestas.get(id) || {}).estado || null; }
+
+function pintarLista() {
+  const cont = $('#lista');
+  if (!plantilla) { cont.innerHTML = ''; return; }
+  if (!plantilla.items.length) {
+    cont.innerHTML = '<div class="aviso">No hay tareas cargadas para este momento.</div>';
+    return;
+  }
+  cont.innerHTML = plantilla.items.map(i => {
+    const r = respuestas.get(i.id) || {};
+    return `<div class="item" data-item="${i.id}" data-estado="${r.estado || ''}">
+      <div class="sector">${esc(i.sector)}</div>
+      <div class="tarea">${esc(i.tarea)}</div>
+      <div class="botones">
+        <button value="ok" aria-pressed="${r.estado === 'ok'}">OK</button>
+        <button value="no" aria-pressed="${r.estado === 'no'}">NO</button>
+        <button value="na" aria-pressed="${r.estado === 'na'}">N/A</button>
+      </div>
+      <div class="detalle">
+        <textarea placeholder="¿Qué pasó? (obligatorio)">${esc(r.comentario || '')}</textarea>
+        <div class="foto-fila">
+          <button class="foto-btn" data-foto="${i.id}">📷 Sacar foto</button>
+          <span class="sub" style="color:var(--suave);font-size:13px">Ayuda a ver el problema</span>
+        </div>
+        <input type="file" accept="image/*" capture="environment" multiple id="file-${i.id}">
+        <div class="miniaturas" id="minis-${i.id}"></div>
+      </div>
+    </div>`;
+  }).join('');
+  plantilla.items.forEach(i => pintarMiniaturas(i.id));
+  actualizarPie();
+}
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function pintarMiniaturas(id) {
+  const cont = document.getElementById('minis-' + id);
+  if (!cont) return;
+  const fotos = (respuestas.get(id) || {}).fotos || [];
+  cont.innerHTML = fotos.map((f, k) =>
+    `<figure><img src="${f.dataUrl}" alt=""><button data-quitar="${id}" data-idx="${k}">×</button></figure>`
+  ).join('');
+}
+
+function actualizarPie() {
+  const total = plantilla ? plantilla.items.length : 0;
+  const hechos = plantilla ? plantilla.items.filter(i => estadoDe(i.id)).length : 0;
+  const faltaSesion = momento === 'sesion' && !sesion;
+  $('#estado').textContent = total
+    ? `${hechos} de ${total} respondidas` + (faltaSesion ? ' · falta elegir el ordeñe' : '')
+    : '';
+  $('#guardar').disabled = !total || hechos < total || faltaSesion;
+}
+
+// Delegación: la lista se redibuja entera, así que los handlers van al
+// contenedor y no a cada botón.
+$('#lista').addEventListener('click', async ev => {
+  const item = ev.target.closest('.item');
+  if (!item) return;
+  const id = Number(item.dataset.item);
+
+  const btn = ev.target.closest('.botones button');
+  if (btn) {
+    const r = respuestas.get(id) || { fotos: [] };
+    r.estado = r.estado === btn.value ? null : btn.value;
+    respuestas.set(id, r);
+    item.dataset.estado = r.estado || '';
+    item.querySelectorAll('.botones button').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.value === r.estado)));
+    actualizarPie();
+    return;
+  }
+  if (ev.target.closest('[data-foto]')) {
+    document.getElementById('file-' + id).click();
+    return;
+  }
+  const quitar = ev.target.closest('[data-quitar]');
+  if (quitar) {
+    const r = respuestas.get(id);
+    r.fotos.splice(Number(quitar.dataset.idx), 1);
+    pintarMiniaturas(id);
+  }
+});
+
+$('#lista').addEventListener('input', ev => {
+  const item = ev.target.closest('.item');
+  if (!item || ev.target.tagName !== 'TEXTAREA') return;
+  const r = respuestas.get(Number(item.dataset.item)) || { fotos: [] };
+  r.comentario = ev.target.value;
+  respuestas.set(Number(item.dataset.item), r);
+});
+
+$('#lista').addEventListener('change', async ev => {
+  if (ev.target.type !== 'file') return;
+  const id = Number(ev.target.id.replace('file-', ''));
+  const r = respuestas.get(id) || { fotos: [] };
+  r.fotos = r.fotos || [];
+  for (const file of ev.target.files) {
+    try { r.fotos.push({ dataUrl: await achicar(file) }); }
+    catch (e) { alert('No se pudo agregar la foto: ' + e.message); }
+  }
+  respuestas.set(id, r);
+  ev.target.value = '';
+  pintarMiniaturas(id);
+});
+
+$('#momentos').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-momento]');
+  if (!b) return;
+  momento = b.dataset.momento;
+  document.querySelectorAll('#momentos .pastilla').forEach(p =>
+    p.setAttribute('aria-pressed', String(p === b)));
+  $('#sesiones-wrap').hidden = momento !== 'sesion';
+  cargar();
+});
+
+$('#sesiones').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-sesion]');
+  if (!b) return;
+  sesion = Number(b.dataset.sesion);
+  document.querySelectorAll('#sesiones .pastilla').forEach(p =>
+    p.setAttribute('aria-pressed', String(p === b)));
+  actualizarPie();
+});
+
+function marcarHechas() {
+  document.querySelectorAll('#sesiones .pastilla').forEach(p => {
+    const n = Number(p.dataset.sesion);
+    p.dataset.hecha = hechas.some(h => h.momento === 'sesion' && h.sesion === n) ? '1' : '';
+  });
+  document.querySelectorAll('#momentos .pastilla').forEach(p => {
+    const m = p.dataset.momento;
+    p.dataset.hecha = (m !== 'sesion' && hechas.some(h => h.momento === m)) ? '1' : '';
+  });
+}
+
+async function cargar() {
+  $('#mensaje').innerHTML = '';
+  respuestas.clear();
+  try {
+    const r = await fetch(`/api/checklist/plantilla?tambo=${encodeURIComponent(TAMBO)}`
+                          + `&momento=${momento}&fecha=${hoyISO()}`);
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Error ' + r.status);
+    plantilla = await r.json();
+    hechas = plantilla.hechas_hoy || [];
+    marcarHechas();
+  } catch (e) {
+    // Sin señal: el armazón lo sirve el service worker, pero la plantilla no
+    // se cachea a propósito (una vieja haría cargar tareas que ya cambiaron).
+    $('#mensaje').innerHTML =
+      `<div class="aviso err">No se pudo traer el check-list (${esc(e.message)}). ` +
+      `Si no tenés señal, esperá a recuperarla: lo ya cargado no se pierde.</div>`;
+    plantilla = null;
+  }
+  pintarLista();
+}
+
+$('#guardar').addEventListener('click', async () => {
+  const btn = $('#guardar');
+  btn.disabled = true;
+  const faltanComentario = plantilla.items.filter(i => {
+    const r = respuestas.get(i.id) || {};
+    return r.estado === 'no' && !(r.comentario || '').trim();
+  });
+  if (faltanComentario.length) {
+    $('#mensaje').innerHTML = '<div class="aviso err">Falta escribir qué pasó en: '
+      + faltanComentario.map(i => esc(i.tarea)).join(' · ') + '</div>';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    actualizarPie();
+    return;
+  }
+
+  const carga = {
+    datos: {
+      momento, sesion: momento === 'sesion' ? sesion : null, fecha: hoyISO(),
+      // Lo genera el celular: si el envío se corta y se reintenta, el servidor
+      // reconoce que es la MISMA carga y no la guarda dos veces.
+      offline_id: (crypto.randomUUID ? crypto.randomUUID()
+                                     : String(Date.now()) + Math.random()),
+      respuestas: plantilla.items.map(i => {
+        const r = respuestas.get(i.id) || {};
+        return { item_id: i.id, estado: r.estado, comentario: r.comentario || null };
+      }),
+    },
+    fotos: plantilla.items.flatMap(i =>
+      ((respuestas.get(i.id) || {}).fotos || []).map(f => ({ item_id: i.id, dataUrl: f.dataUrl }))),
+  };
+
+  let aviso;
+  try {
+    await enviar(carga);
+    aviso = '<div class="aviso ok">Guardado. ¡Gracias!</div>';
+  } catch (e) {
+    if (e.definitivo) {
+      $('#mensaje').innerHTML = `<div class="aviso err">${esc(e.message)}</div>`;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      actualizarPie();
+      return;
+    }
+    await encolar(carga);
+    aviso = '<div class="aviso pend">Sin señal: queda guardado en el celular y se manda solo.</div>';
+  }
+  // El aviso se pinta DESPUÉS de recargar: `cargar()` limpia el mensaje, así
+  // que ponerlo antes lo borraba y el operario no veía ninguna confirmación.
+  await cargar();
+  $('#mensaje').innerHTML = aviso;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+});
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/checklist/sw.js', { scope: '/checklist/' }).catch(() => {});
+}
+pintarPendientes();
+vaciarCola();
+cargar();
+</script>
+</body>
+</html>

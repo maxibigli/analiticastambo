@@ -65,3 +65,11 @@ tablero_umbrales.json
 # poder mostrar datos cuando SERVER-DELPRO no está accesible: estado propio de
 # cada instalación, con valores del rodeo. No va al repo.
 tablero_lecturas.json
+
+# Check-list de control del tambo (ver checklist.py). La base con las cargas
+# del operario y las fotos que saca son estado propio de cada instalación,
+# igual que `podal.db` o `iot_sensores.db`: no van al repo.
+checklist.db
+checklist.db-wal
+checklist.db-shm
+checklist_fotos/

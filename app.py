@@ -7,7 +7,8 @@ import statistics
 import threading
 import time
 
-from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
+from flask import (Flask, Response, jsonify, redirect, render_template, request,
+                   send_from_directory, session, url_for)
 
 import datetime
 
@@ -16,6 +17,7 @@ import os
 import ai
 import alimentacion
 import auth
+import checklist
 import cicla
 import conciliacion
 import conversion_historica
@@ -466,7 +468,17 @@ def _tambo_del_request() -> str:
     """
     tambo = request.args.get("tambo", "")
     if not tambo and request.method != "GET":
-        tambo = (request.json or {}).get("tambo", "")
+        # Solo se mira el body si REALMENTE es JSON. `request.json` a secas
+        # levanta 415 con cualquier otro content-type, y hay POST que no son
+        # JSON: la carga del check-list viaja como multipart porque lleva las
+        # fotos adentro (ver api_checklist_guardar). Se sigue usando `.json`
+        # y no `get_json(silent=True)` para que un JSON MAL FORMADO siga
+        # fallando fuerte en vez de caer callado al tambo por defecto — que es
+        # el bug que explica esta función.
+        if request.is_json:
+            tambo = (request.json or {}).get("tambo", "")
+        else:
+            tambo = request.form.get("tambo", "")
     tambo = tambos.resolver(tambo)
     with _calentados_lock:
         nuevo = tambo not in _calentados
@@ -1332,6 +1344,131 @@ def api_guardar_configuracion():
     cfg["sala_efectiva"] = tambos.tipo_sala(tambo)
     return jsonify({"config": cfg, "catalogos": CATALOGOS_CONFIGURACION,
                     **_estado_archivos(tambo)})
+
+
+# --- Check-list de control (la mini app del celular) ------------------------
+# Es una PANTALLA APARTE, no una sección de index.html: la usa el operario en
+# la sala, con el celular, y no tiene por qué ver el resto de la analítica.
+# Vive en la misma app Flask a propósito — un servicio separado duplicaría
+# login, usuarios, deploy, túnel y backup, y los datos tienen que volver acá
+# igual para cruzarlos con el ordeñe.
+
+@app.get("/checklist/")
+def checklist_pagina():
+    return render_template("checklist.html", usuario=auth.usuario_actual(),
+                           rol=auth.rol_actual(), tambo=_tambo_del_request())
+
+
+@app.get("/checklist/manifest.webmanifest")
+def checklist_manifest():
+    """Lo que hace que se instale en el celular como una app (ícono propio,
+    pantalla completa, sin barra del navegador)."""
+    return jsonify({
+        "name": "Check-list del tambo", "short_name": "Check-list",
+        "start_url": "/checklist/", "scope": "/checklist/",
+        "display": "standalone", "background_color": "#0b1016", "theme_color": "#0b1016",
+        # Se usa el SVG que ya está en el repo. Android prefiere un PNG de 192 y
+        # otro de 512 para el ícono del lanzador: si el tambo quiere el logo
+        # propio en el escritorio del celular, se agregan esos dos archivos y se
+        # suman acá, sin tocar nada más.
+        "icons": [{"src": "/static/img/logo.svg", "sizes": "any", "type": "image/svg+xml",
+                   "purpose": "any"}],
+    })
+
+
+@app.get("/checklist/sw.js")
+def checklist_sw():
+    """Service worker con scope /checklist/ — NO en la raíz. Con scope "/"
+    también interceptaría la app principal, y un caché viejo ahí se ve como
+    "el deploy no subió"."""
+    js = """
+const CACHE = 'checklist-v1';
+const SHELL = ['/checklist/', '/checklist/manifest.webmanifest'];
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys()
+    .then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    .then(() => self.clients.claim()));
+});
+self.addEventListener('fetch', e => {
+  // Solo el armazón se sirve del caché. Los POST y la plantilla NO: una
+  // respuesta vieja de la plantilla haría cargar un check-list que ya cambió.
+  if (e.request.method !== 'GET') return;
+  const url = new URL(e.request.url);
+  if (!url.pathname.startsWith('/checklist/') || url.pathname.includes('/api/')) return;
+  e.respondWith(
+    fetch(e.request).then(r => {
+      const copia = r.clone();
+      caches.open(CACHE).then(c => c.put(e.request, copia));
+      return r;
+    }).catch(() => caches.match(e.request))
+  );
+});
+"""
+    return Response(js, mimetype="application/javascript")
+
+
+@app.get("/api/checklist/plantilla")
+def api_checklist_plantilla():
+    """Los items que toca cargar en ese momento, más lo que ya se cargó hoy."""
+    tambo = _tambo_del_request()
+    momento = request.args.get("momento", "sesion")
+    fecha = request.args.get("fecha") or datetime.date.today().isoformat()
+    try:
+        datos = checklist.items_para(tambo, momento)
+        datos["hechas_hoy"] = checklist.hechas_hoy(tambo, fecha)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    datos["fecha"] = fecha
+    return jsonify(datos)
+
+
+@app.post("/api/checklist/corrida")
+def api_checklist_guardar():
+    """Guarda una carga del celular. Llega como multipart en UNA sola pieza
+    —el JSON en el campo `datos` y las fotos en `foto_<item_id>`— y no en dos
+    pasos: del otro lado hay una cola que reintenta cuando vuelve la señal, y
+    una carga que entró a medias es peor que una que no entró."""
+    tambo = _tambo_del_request()
+    try:
+        datos = json.loads(request.form.get("datos") or "{}")
+    except ValueError:
+        return jsonify({"error": "El cuerpo de la carga no es JSON válido"}), 400
+
+    fotos: dict = {}
+    try:
+        for campo, archivo in request.files.items(multi=True):
+            if not campo.startswith("foto_"):
+                continue
+            try:
+                item_id = int(campo[len("foto_"):])
+            except ValueError:
+                return jsonify({"error": f"Campo de foto inválido: {campo}"}), 400
+            contenido = archivo.read()
+            ext = checklist.validar_foto(archivo.filename or campo, archivo.mimetype, contenido)
+            fotos.setdefault(item_id, []).append((checklist.nombre_de_foto(ext), contenido))
+
+        res = checklist.guardar_corrida(
+            tambo=tambo, momento=datos.get("momento"), sesion=datos.get("sesion"),
+            usuario=auth.usuario_actual(), fecha=datos.get("fecha"),
+            respuestas=datos.get("respuestas") or [], offline_id=datos.get("offline_id"),
+            fotos=fotos)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(res)
+
+
+@app.get("/checklist/foto/<int:foto_id>")
+def checklist_foto(foto_id: int):
+    """Sirve una foto del check-list. La ruta se arma SIEMPRE desde lo que hay
+    en la base, nunca con algo del request (ver checklist.ruta_de_foto)."""
+    ruta = checklist.ruta_de_foto(foto_id)
+    if not ruta:
+        return jsonify({"error": "No existe esa foto"}), 404
+    carpeta, nombre = os.path.dirname(ruta[0]), ruta[1]
+    return send_from_directory(carpeta, nombre)
 
 
 @app.get("/api/health")
