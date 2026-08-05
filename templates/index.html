@@ -1931,6 +1931,24 @@
       <div class="chart-box" style="height:300px"><canvas id="chart-rend-retiradas-grupo-sesion"></canvas></div>
       <div style="overflow-x:auto;margin-top:10px" id="rend-retiradas-tabla"></div>
     </div>
+    <div style="margin-top:14px" id="rend-rf-rutina-bloque" hidden>
+      <div class="aviso" style="margin-bottom:6px">Retiradas forzadas contra la rutina — ¿el día o el rodeo?</div>
+      <p class="explica" style="margin-top:0">
+        <b>Para qué sirve.</b> Cuando las retiradas suben en varios rodeos <b>el mismo día</b>,
+        la causa no puede ser el rodeo: es algo de esa jornada —la máquina, la gente, el turno—.
+        Este gráfico pone las retiradas de todo el tambo contra los dos indicadores que miden
+        justamente eso: el <b>score de rutina</b> y el componente de <b>colocación ≤90s</b>.
+        <br><b>Cómo leerlo.</b> Las barras son cantidad (eje izquierdo); las dos líneas son
+        puntajes de 0 a 100 (eje derecho) donde <b>más alto es mejor</b>. Si un pico de barras
+        cae junto con un bajón de la línea de colocación, el problema es de rutina y se ataca
+        ahí. Si las barras suben y las líneas no se mueven, hay que buscar en otro lado
+        (equipo, umbral de retirada, estado de las vacas).
+        <br>Los dos puntajes salen de la misma cuenta que la pantalla ⚙ Rutina de ordeño, con
+        la configuración de pesos que tengas guardada — no es un cálculo aparte.
+      </p>
+      <div class="chart-box" style="height:300px"><canvas id="chart-rend-rf-rutina"></canvas></div>
+      <div class="aviso" id="rend-rf-rutina-nota" style="margin-top:6px"></div>
+    </div>
   </section>
 
   <section class="card" id="rendimiento-dia-card">
@@ -3511,7 +3529,60 @@ let chartRendProd = null, chartRendThroughput = null, chartRendIdent = null,
     chartRendVacasPuesto = null, chartRendVacasPersona = null, chartRendPermanencia = null,
     chartRendPermanenciaGrupo = null, chartRendVacasHoraGrupo = null,
     chartRendOrdeniosHoraEvolucion = null, chartRendRetiradasEvolucion = null,
-    chartRendVacasHoraSala = null, chartRendRetiradasGrupoSesion = null, rendReintento = null;
+    chartRendVacasHoraSala = null, chartRendRetiradasGrupoSesion = null,
+    chartRendRfRutina = null, rendReintento = null;
+
+// Cruce de las retiradas forzadas del día contra los dos indicadores que miden
+// la rutina de esa jornada (score y colocación ≤90s). Sirve para separar "es
+// del rodeo" de "es del día": si el pico de retiradas cae junto con un bajón de
+// colocación, el problema es de rutina.
+//
+// Los puntajes NO se recalculan acá: salen de /api/rutina/evolucion, la misma
+// cuenta y la misma configuración de pesos que la pantalla Rutina de ordeño, y
+// reusa su caché por fecha. Duplicarlos daría dos números distintos para lo
+// mismo, que es peor que no tenerlos.
+//
+// Va aparte de cargarRendimiento y sin await a propósito: ese endpoint es
+// pesado (una consulta por día, se completa de a poco) y además pide rol admin.
+// Si falla o no hay permiso, el bloque queda oculto y el resto de la pantalla
+// no se entera.
+async function cargarRetiradasVsRutina(desde, hasta, retiradasDeFecha) {
+  const bloque = document.getElementById('rend-rf-rutina-bloque');
+  try {
+    let url = '/api/rutina/evolucion?tambo=' + encodeURIComponent(tamboActual) + paramsRutinaConfig();
+    if (desde) url += '&desde=' + encodeURIComponent(desde);
+    if (hasta) url += '&hasta=' + encodeURIComponent(hasta);
+    const d = await pedirJSON(url);
+    const puntos = (d.puntos || []).filter(p => p.score != null);
+    if (!puntos.length) { bloque.hidden = true; return; }
+
+    const o = optsDobleEje('retiradas forzadas del día', 'puntaje (0-100, más alto mejor)');
+    o.scales.y1.min = 0;
+    o.scales.y1.max = 100;
+    chartRendRfRutina = dibujar('chart-rend-rf-rutina', chartRendRfRutina, {
+      type: 'bar',
+      data: { labels: puntos.map(p => etiquetaDia(p.fecha)), datasets: [
+        { type: 'bar', label: 'Retiradas forzadas (tambo)',
+          data: puntos.map(p => retiradasDeFecha(p.fecha)),
+          backgroundColor: SERIES[1], maxBarThickness: 34, borderRadius: 3, order: 2 },
+        linea('Score de rutina', puntos.map(p => p.score), SERIES[4],
+              { yAxisID: 'y1', type: 'line', order: 1 }),
+        linea('Colocación ≤90s', puntos.map(p => p.prep_90s), SERIES[3],
+              { yAxisID: 'y1', type: 'line', order: 0 }),
+      ] },
+      options: o,
+    });
+    bloque.hidden = false;
+    // El endpoint devuelve los días que ya tiene en caché y va calculando el
+    // resto en segundo plano: decirlo evita leer un bajón donde solo falta un
+    // día. `listas` y `total_puntos` los informa él mismo.
+    document.getElementById('rend-rf-rutina-nota').textContent = d.calculando
+      ? `Calculando: ${d.listas} de ${d.total_puntos} días listos. Volvé a consultar en un rato para verlo completo.`
+      : `${puntos.length} día(s) con rutina calculada.`;
+  } catch (e) {
+    bloque.hidden = true;   // sin permiso, o la rutina de esos días no está
+  }
+}
 
 function etiquetaSesion(s) {
   const [, m, d] = s.fecha.split('-');
@@ -4050,6 +4121,11 @@ async function cargarRendimiento() {
     // consulta y con addEventListener se irían apilando handlers repetidos.
     sel.onchange = pintarRFEvolucion;
     pintarRFEvolucion();
+
+    // Cruce contra la rutina de esos mismos días. Sin await: tarda y puede no
+    // estar disponible, y el resto de la pantalla no tiene por qué esperarlo.
+    cargarRetiradasVsRutina(desde, hasta,
+      f => rfSumar(gruposRF.map(g => rfTotalGrupo(f, g))));
 
     // Horas/día en ordeño, en el tiempo: un punto por día y por grupo —
     // ya es la suma de las sesiones de ese día (permPorDiaGrupo, armado
