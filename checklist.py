@@ -381,6 +381,186 @@ def corridas(tambo: str, desde: str, hasta: str) -> list:
     return salida
 
 
+def estadisticas(tambo: str, desde: str, hasta: str, ordenes_por_dia: int = 3) -> dict:
+    """Todo lo que muestra el panel del check-list, en una sola pasada.
+
+    DOS PREGUNTAS DISTINTAS, y las dos importan:
+
+      * **Cumplimiento**: de lo que se cargó, cuánto dio OK.
+      * **Adherencia**: cuántas de las cargas ESPERADAS se hicieron.
+
+    Un 100% de cumplimiento sobre el 40% de las sesiones no vale nada, y es el
+    error clásico de estos tableros: se mira solo lo primero y el número queda
+    hermoso justamente porque casi no se carga. Por eso van juntas y la
+    adherencia se calcula contra lo esperado, no contra lo cargado.
+
+    `ordenes_por_dia`: cuántos ordeñes tiene el día en este tambo. Sale de
+    DelPro (`CMSGroupMilkSetting.NumberOfMilkings`) — el llamador lo pasa, acá
+    no se asume un 3 fijo.
+
+    Los N/A NO cuentan como incumplimiento ni como cumplimiento: salen del
+    denominador. Marcar "no aplica" en una tarea que ese día no correspondía no
+    es un error del tambo y no tiene por qué ensuciar el porcentaje.
+    """
+    corrs = corridas(tambo, desde, hasta)
+
+    total_ok = total_no = total_na = 0
+    por_sector: dict = {}
+    por_usuario: dict = {}
+    por_tarea: dict = {}
+    por_dia: dict = {}
+    for c in corrs:
+        dia = por_dia.setdefault(c["fecha"], {"ok": 0, "no": 0, "na": 0, "corridas": 0})
+        dia["corridas"] += 1
+        for r in c["respuestas"]:
+            est = r["estado"]
+            if est == "ok":
+                total_ok += 1
+            elif est == "no":
+                total_no += 1
+            else:
+                total_na += 1
+            dia[est] = dia.get(est, 0) + 1
+            for clave, dic in ((r["sector"], por_sector), (c["usuario"], por_usuario),
+                               (r["tarea"], por_tarea)):
+                d = dic.setdefault(clave, {"ok": 0, "no": 0, "na": 0})
+                d[est] += 1
+            if est == "no":
+                por_tarea[r["tarea"]].setdefault("sector", r["sector"])
+
+    def _pct(d: dict):
+        base = d["ok"] + d["no"]
+        return round(100 * d["ok"] / base, 1) if base else None
+
+    evaluadas = total_ok + total_no
+    resumen = {
+        "respuestas": evaluadas + total_na, "ok": total_ok, "no": total_no, "na": total_na,
+        "cumplimiento": round(100 * total_ok / evaluadas, 1) if evaluadas else None,
+        "corridas": len(corrs),
+    }
+
+    # --- Adherencia: lo esperado contra lo cargado -------------------------
+    # Esperado por día = un check-list por ordeñe + uno diario. El semanal se
+    # cuenta aparte (uno por semana) para no castigar los seis días que no toca.
+    d0 = datetime.date.fromisoformat(desde)
+    d1 = datetime.date.fromisoformat(hasta)
+    dias = (d1 - d0).days + 1
+    hechas_ses = {(c["fecha"], c["sesion"]) for c in corrs if c["momento"] == "sesion"}
+    hechas_dia = {c["fecha"] for c in corrs if c["momento"] == "diario"}
+    semanas = {datetime.date.fromisoformat(c["fecha"]).isocalendar()[:2]
+               for c in corrs if c["momento"] == "semanal"}
+    esperado_ses = dias * max(1, ordenes_por_dia)
+    semanas_rango = len({(d0 + datetime.timedelta(days=k)).isocalendar()[:2] for k in range(dias)})
+    adherencia = {
+        "dias": dias,
+        "sesion": {"esperadas": esperado_ses, "hechas": len(hechas_ses),
+                   "pct": round(100 * len(hechas_ses) / esperado_ses, 1) if esperado_ses else None},
+        "diario": {"esperadas": dias, "hechas": len(hechas_dia),
+                   "pct": round(100 * len(hechas_dia) / dias, 1) if dias else None},
+        "semanal": {"esperadas": semanas_rango, "hechas": len(semanas),
+                    "pct": round(100 * len(semanas) / semanas_rango, 1) if semanas_rango else None},
+    }
+    # Los huecos concretos, para poder reclamarlos: qué día y qué ordeñe falta.
+    faltantes = []
+    for k in range(dias):
+        f = (d0 + datetime.timedelta(days=k)).isoformat()
+        for s in range(1, max(1, ordenes_por_dia) + 1):
+            if (f, s) not in hechas_ses:
+                faltantes.append({"fecha": f, "momento": "sesion", "sesion": s})
+        if f not in hechas_dia:
+            faltantes.append({"fecha": f, "momento": "diario", "sesion": None})
+    adherencia["faltantes"] = faltantes
+
+    return {
+        "desde": desde, "hasta": hasta, "resumen": resumen, "adherencia": adherencia,
+        "por_sector": [{"clave": k, **v, "cumplimiento": _pct(v)}
+                       for k, v in sorted(por_sector.items(), key=lambda x: -x[1]["no"])],
+        "por_usuario": [{"clave": k, **v, "cumplimiento": _pct(v)}
+                        for k, v in sorted(por_usuario.items(), key=lambda x: -x[1]["no"])],
+        # Ranking de lo que más falla: es lo que dice DÓNDE está el problema.
+        "ranking": [{"tarea": k, "sector": v.get("sector"), "ok": v["ok"], "no": v["no"],
+                     "na": v["na"], "cumplimiento": _pct(v)}
+                    for k, v in sorted(por_tarea.items(), key=lambda x: -x[1]["no"]) if v["no"]],
+        "por_dia": [{"fecha": f, **v, "cumplimiento": _pct(v)} for f, v in sorted(por_dia.items())],
+        "fallas": _fallas(corrs),
+    }
+
+
+def _fallas(corrs: list) -> list:
+    """Los problemas del período: cada tarea que estuvo mal, desde cuándo hasta
+    cuándo, con el comentario y la foto de la primera vez.
+
+    SE MIDE POR DÍA, NO POR SESIÓN, y hay un motivo. El check-list se llena en
+    cada ordeñe, así que lo normal es que una tarea dé NO a la mañana y OK al
+    mediodía; si se cerrara la falla en el primer OK, TODO daría "resuelta en 0
+    días" y la medida no serviría para nada. Además, dentro del mismo día un NO
+    y un OK sobre la misma tarea son dos lecturas contradictorias del mismo
+    estado: puede que se haya arreglado entre ordeñes, o que el del turno
+    siguiente no lo haya mirado. No hay forma de distinguirlo en el dato.
+
+    Entonces: un día "está mal" si tuvo al menos un NO. Los días malos SEGUIDOS
+    son UN problema (una racha), y se cierra el primer día posterior CON CARGA
+    en el que no hubo ningún NO. Los días sin carga no cortan la racha: no
+    saber no es lo mismo que estar bien.
+
+    Consecuencia a tener presente al leer: una falla que de verdad se arregló
+    entre ordeñes figura como "1 día", no como 0.
+    """
+    # Por tarea: qué días tuvieron NO, cuáles tuvieron carga, y el detalle del
+    # primer NO de cada racha (que es el que lleva el comentario y la foto).
+    dias_con_carga: dict = {}     # tarea -> {fecha}
+    dias_malos: dict = {}         # tarea -> {fecha}
+    primer_no: dict = {}          # (tarea, fecha) -> detalle
+    for c in corrs:
+        for r in c["respuestas"]:
+            t = r["tarea"]
+            dias_con_carga.setdefault(t, set()).add(c["fecha"])
+            if r["estado"] == "no":
+                dias_malos.setdefault(t, set()).add(c["fecha"])
+                clave = (t, c["fecha"])
+                # El primero del día en orden real (las corridas vienen de la
+                # más nueva a la más vieja, así que la última que se ve gana).
+                primer_no[clave] = {
+                    "momento": c["momento"], "sesion": c["sesion"], "usuario": c["usuario"],
+                    "sector": r["sector"], "comentario": r["comentario"], "fotos": r["fotos"],
+                }
+
+    fallas = []
+    for tarea, malos in dias_malos.items():
+        con_carga = sorted(dias_con_carga.get(tarea, set()))
+        malos_ord = sorted(malos)
+        # Racha = días malos consecutivos DENTRO de los días con carga: un día
+        # sin cargar en el medio no corta el problema.
+        idx = {f: i for i, f in enumerate(con_carga)}
+        rachas, actual = [], [malos_ord[0]]
+        for prev, f in zip(malos_ord, malos_ord[1:]):
+            if idx[f] == idx[prev] + 1:
+                actual.append(f)
+            else:
+                rachas.append(actual)
+                actual = [f]
+        rachas.append(actual)
+
+        for racha in rachas:
+            ini, fin = racha[0], racha[-1]
+            posteriores = [f for f in con_carga if f > fin]
+            resuelta = posteriores[0] if posteriores else None
+            det = primer_no[(tarea, ini)]
+            fallas.append({
+                "fecha": ini, "ultimo_dia_mal": fin, "dias_mal": len(racha),
+                "tarea": tarea, **det,
+                "resuelta_el": resuelta,
+                "dias_abierta": ((datetime.date.fromisoformat(resuelta)
+                                  - datetime.date.fromisoformat(ini)).days
+                                 if resuelta else None),
+                "abierta": resuelta is None,
+            })
+    # Las abiertas primero (es la lista de reclamo) y dentro de cada grupo, las
+    # más viejas arriba: una falla vieja sin resolver es la que más urge.
+    fallas.sort(key=lambda f: (not f["abierta"], f["fecha"]))
+    return fallas
+
+
 def hechas_hoy(tambo: str, fecha: str) -> list:
     """Qué se cargó ya ese día: [{momento, sesion}]. La pantalla lo usa para
     marcar lo que falta y no pedir dos veces lo mismo."""

@@ -1460,6 +1460,24 @@ def api_checklist_guardar():
     return jsonify(res)
 
 
+@app.get("/api/checklist/estadisticas")
+@auth.requiere_rol("admin")
+def api_checklist_estadisticas():
+    """Panel del check-list: cumplimiento, adherencia, ranking de lo que más
+    falla y las fallas con su tiempo de resolución. No toca DDM salvo para
+    saber cuántos ordeñes por día tiene el tambo, que es lo que define cuántas
+    cargas se ESPERABAN (ver checklist.estadisticas)."""
+    tambo = _tambo_del_request()
+    hasta = request.args.get("hasta") or datetime.date.today().isoformat()
+    desde = request.args.get("desde") or (
+        datetime.date.fromisoformat(hasta) - datetime.timedelta(days=29)).isoformat()
+    try:
+        datos = checklist.estadisticas(tambo, desde, hasta, ordenes_por_dia=_max_sesiones(tambo))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(datos)
+
+
 @app.get("/checklist/foto/<int:foto_id>")
 def checklist_foto(foto_id: int):
     """Sirve una foto del check-list. La ruta se arma SIEMPRE desde lo que hay

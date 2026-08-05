@@ -585,6 +585,7 @@
     {% if 'ficha' in paginas_visibles %}<button class="nav-item" data-pagina="ficha">🐄 <span>Ficha Animal</span></button>{% endif %}
     {% if 'iot' in paginas_visibles %}<button class="nav-item" data-pagina="iot">📡 <span>Monitoreo IoT</span></button>{% endif %}
     {% if 'tareas' in paginas_visibles %}<button class="nav-item" data-pagina="tareas">✅ <span>Tareas pendientes</span></button>{% endif %}
+    {% if 'checklist' in paginas_visibles %}<button class="nav-item" data-pagina="checklist">📋 <span>Check-list de control</span></button>{% endif %}
     {% if 'consultas' in paginas_visibles %}<button class="nav-item" data-pagina="consultas">🔍 <span>Consultas e IA</span></button>{% endif %}
     {% if 'configuracion' in paginas_visibles %}<button class="nav-item" data-pagina="configuracion">⚙ <span>Configuración</span></button>{% endif %}
   </nav>
@@ -2620,6 +2621,79 @@
     <div class="aviso" style="margin-bottom:10px">Listas derivadas del estado del rodeo y del equipo de ordeño, al estilo del To-Do de DelPro. Hacé clic en una tarjeta para ver el detalle.</div>
     <div id="tareas-grid" class="tareas-grid"></div>
     <div id="tareas-detalle"></div>
+  </section>
+  </div>
+
+  <div class="page" id="page-checklist" hidden>
+  <section class="card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Check-list de control</h2>
+      <span class="aviso">Lo que carga el operario desde el celular en
+        <a href="/checklist/" target="_blank">/checklist/</a>.</span>
+      <div class="controls" style="margin-left:auto">
+        <input type="date" id="cl-desde" style="padding:7px 8px">
+        <input type="date" id="cl-hasta" style="padding:7px 8px">
+        <button id="cl-aplicar">Aplicar</button>
+      </div>
+    </div>
+    <div class="aviso" id="cl-info" style="margin-top:8px"></div>
+    <div id="cl-kpis" class="kpis" style="margin-top:10px"></div>
+
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Cumplimiento y adherencia — por día</div>
+      <p class="explica" style="margin-top:0">
+        <b>Son dos preguntas distintas y las dos importan.</b> El
+        <b>cumplimiento</b> dice, de lo que se cargó, cuánto dio OK. La
+        <b>adherencia</b> dice cuántas de las cargas esperadas se hicieron —un
+        check-list por ordeñe más uno diario—. Un 100% de cumplimiento sobre el
+        40% de las sesiones no vale nada, y es el error clásico de estos
+        tableros: el número queda hermoso justamente porque casi no se carga.
+        <br>Los <b>N/A no cuentan</b>: salen del denominador. Marcar "no aplica"
+        en algo que ese día no correspondía no es un error del tambo.
+      </p>
+      <div class="chart-box" style="height:260px"><canvas id="chart-cl-dia"></canvas></div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Lo que más falla</div>
+      <p class="explica" style="margin-top:0">
+        Ordenado por cantidad de NO, no por porcentaje: una tarea que falló 12
+        veces importa más que una que falló la única vez que se controló.
+      </p>
+      <div style="overflow-x:auto;margin-top:10px" id="cl-ranking"></div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Por sector y por responsable</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px">
+        <div style="overflow-x:auto" id="cl-sectores"></div>
+        <div style="overflow-x:auto" id="cl-usuarios"></div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Fallas y cuánto tardaron en resolverse</div>
+      <p class="explica" style="margin-top:0">
+        Cada problema con su comentario y su foto, y <b>cuánto duró</b>: es lo
+        que la planilla de papel no puede decir —ahí se ve que algo estuvo mal,
+        pero no si se arregló ese día o siguió roto dos semanas—. Las
+        <b>abiertas</b> van primero: esa es la lista de reclamo.
+        <br><b>Se mide por día, no por ordeñe.</b> Como el check se llena en
+        cada ordeñe, lo normal es que algo dé NO a la mañana y OK al mediodía;
+        cerrando en el primer OK, todo daría "resuelto en 0 días" y la medida no
+        serviría. Un día está mal si tuvo al menos un NO, los días malos
+        seguidos son <b>un</b> problema, y se cierra el primer día posterior con
+        carga sin ningún NO. Un día sin cargar no corta el problema: no saber no
+        es lo mismo que estar bien. Ojo con esto al leer: algo que de verdad se
+        arregló entre ordeñes figura como 1 día, no como 0.
+      </p>
+      <div id="cl-fallas"></div>
+    </div>
+
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Cargas que faltan</div>
+      <div style="overflow-x:auto;margin-top:10px" id="cl-faltantes"></div>
+    </div>
   </section>
   </div>
 
@@ -7716,6 +7790,112 @@ function pintarDetalleTarea() {
   document.getElementById('btn-csv-tarea').addEventListener('click', () => exportarCSV(t.columns, t.rows, 'tarea_' + t.id + '.csv'));
 }
 
+// --- Check-list de control: el panel de lo que carga el operario -----------
+// Los datos NO salen de DDM: salen de `checklist.db`, la base propia que
+// escribe la mini app del celular (ver checklist.py). Por eso esta pantalla
+// responde al instante aunque SQL Express esté ocupado.
+let chartClDia = null;
+
+function clPct(v) { return v == null ? '—' : fmt(v) + '%'; }
+
+async function cargarChecklist() {
+  const info = document.getElementById('cl-info');
+  const hasta = document.getElementById('cl-hasta').value || hoyISO();
+  const desde = document.getElementById('cl-desde').value || menosDias(hasta, 29);
+  document.getElementById('cl-desde').value = desde;
+  document.getElementById('cl-hasta').value = hasta;
+  info.textContent = 'Calculando…';
+  try {
+    const d = await pedirJSON(`/api/checklist/estadisticas?tambo=${encodeURIComponent(tamboActual)}`
+                              + `&desde=${desde}&hasta=${hasta}`);
+    pintarChecklist(d);
+    info.textContent = d.resumen.corridas
+      ? `${d.resumen.corridas} carga(s) entre ${desde} y ${hasta}.`
+      : `Todavía no hay ninguna carga entre ${desde} y ${hasta}. `
+        + `El operario las hace desde /checklist/ en el celular.`;
+  } catch (e) {
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('cl-aplicar').addEventListener('click', cargarChecklist);
+
+function pintarChecklist(d) {
+  const r = d.resumen, a = d.adherencia;
+  // Cumplimiento y adherencia van uno al lado del otro a propósito: leídos por
+  // separado se malinterpretan (ver la explicación de la pantalla).
+  document.getElementById('cl-kpis').innerHTML = [
+    ['Cumplimiento', clPct(r.cumplimiento)],
+    ['Respuestas OK / NO', `${fmt(r.ok)} / ${fmt(r.no)}`],
+    ['Adherencia por ordeñe', `${clPct(a.sesion.pct)} (${a.sesion.hechas} de ${a.sesion.esperadas})`],
+    ['Adherencia diaria', `${clPct(a.diario.pct)} (${a.diario.hechas} de ${a.diario.dias ?? a.dias})`],
+    ['Adherencia semanal', `${clPct(a.semanal.pct)} (${a.semanal.hechas} de ${a.semanal.esperadas})`],
+    ['Fallas sin resolver', fmt(d.fallas.filter(f => f.abierta).length)],
+  ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+
+  // Cumplimiento (línea, 0-100) contra cargas del día (barras): si el
+  // cumplimiento sube justo donde bajan las cargas, es que se cargó poco, no
+  // que anduvo mejor.
+  const o = optsDobleEje('% de cumplimiento', 'cargas del día');
+  o.plugins.legend.display = true;
+  o.scales.y.min = 0; o.scales.y.max = 100;
+  chartClDia = dibujar('chart-cl-dia', chartClDia, {
+    type: 'bar',
+    data: { labels: d.por_dia.map(x => etiquetaDia(x.fecha)), datasets: [
+      { type: 'bar', label: 'Cargas del día', data: d.por_dia.map(x => x.corridas),
+        backgroundColor: SERIES[1], yAxisID: 'y1', maxBarThickness: 26, borderRadius: 3, order: 2 },
+      linea('Cumplimiento', d.por_dia.map(x => x.cumplimiento), SERIES[4], { order: 1 }),
+    ] },
+    options: o,
+  });
+
+  document.getElementById('cl-ranking').innerHTML = d.ranking.length ? `
+    <table><thead><tr><th>Sector</th><th>Tarea</th><th>Veces mal</th><th>OK</th><th>Cumplimiento</th></tr></thead>
+    <tbody>${d.ranking.map(x => `<tr>
+      <td>${escHtml(x.sector || '')}</td><td>${escHtml(x.tarea)}</td>
+      <td style="text-align:right">${fmt(x.no)}</td>
+      <td style="text-align:right">${fmt(x.ok)}</td>
+      <td style="text-align:right">${clPct(x.cumplimiento)}</td></tr>`).join('')}
+    </tbody></table>` : '<div class="aviso">Ninguna tarea dio NO en el período.</div>';
+
+  const tablita = (titulo, filas) => filas.length ? `
+    <table><thead><tr><th>${titulo}</th><th>OK</th><th>NO</th><th>Cumplimiento</th></tr></thead>
+    <tbody>${filas.map(x => `<tr><td>${escHtml(x.clave)}</td>
+      <td style="text-align:right">${fmt(x.ok)}</td>
+      <td style="text-align:right">${fmt(x.no)}</td>
+      <td style="text-align:right">${clPct(x.cumplimiento)}</td></tr>`).join('')}
+    </tbody></table>` : `<div class="aviso">Sin datos de ${titulo.toLowerCase()}.</div>`;
+  document.getElementById('cl-sectores').innerHTML = tablita('Sector', d.por_sector);
+  document.getElementById('cl-usuarios').innerHTML = tablita('Responsable', d.por_usuario);
+
+  document.getElementById('cl-fallas').innerHTML = d.fallas.length ? d.fallas.map(f => `
+    <div class="card" style="margin:0 0 10px;padding:12px;border-left:4px solid ${
+      f.abierta ? 'var(--peligro, #d03b3b)' : 'var(--ok, #1baf7a)'}">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:baseline">
+        <b>${escHtml(f.tarea)}</b>
+        <span class="aviso">${escHtml(f.sector)} · ${f.fecha}${
+          f.dias_mal > 1 ? ' al ' + f.ultimo_dia_mal + ` (${f.dias_mal} días mal)` : ''}${
+          f.sesion ? ' · ' + f.sesion + 'º ordeñe' : ''} · ${escHtml(f.usuario)}</span>
+        <span class="aviso" style="margin-left:auto">${f.abierta
+          ? '⚠ sin resolver'
+          : `resuelta el ${f.resuelta_el} (${f.dias_abierta} día/s)`}</span>
+      </div>
+      <div style="margin-top:6px">${escHtml(f.comentario || '')}</div>
+      ${f.fotos.length ? `<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">${
+        f.fotos.map(id => `<a href="/checklist/foto/${id}" target="_blank">
+          <img src="/checklist/foto/${id}" alt="foto de la falla"
+               style="width:110px;height:110px;object-fit:cover;border-radius:8px"></a>`).join('')
+      }</div>` : ''}
+    </div>`).join('') : '<div class="aviso">Ninguna falla registrada en el período.</div>';
+
+  // Los huecos concretos, para poder reclamarlos con fecha y ordeñe.
+  const falt = d.adherencia.faltantes;
+  document.getElementById('cl-faltantes').innerHTML = falt.length ? `
+    <table><thead><tr><th>Día</th><th>Qué falta</th></tr></thead>
+    <tbody>${falt.map(f => `<tr><td>${f.fecha}</td>
+      <td>${f.momento === 'sesion' ? f.sesion + 'º ordeñe' : 'Check-list diario'}</td></tr>`).join('')}
+    </tbody></table>` : '<div class="aviso">No falta ninguna carga en el período. 👌</div>';
+}
+
 async function cargarTareas() {
   try {
     const d = await pedirJSON('/api/tareas?tambo=' + encodeURIComponent(tamboActual));
@@ -9363,7 +9543,7 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'consultas', 'configuracion']
+const PAGINAS = ['dashboard', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'consultas', 'configuracion']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -9654,6 +9834,7 @@ function cargarDatosDePagina(id) {
   }
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
+  else if (id === 'checklist') cargarChecklist();
   else if (id === 'consultas') cargarPredefinidas();
   else if (id === 'tablero') cargarTablero();
   else if (id === 'configuracion') cargarConfiguracion();

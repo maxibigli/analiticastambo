@@ -59,6 +59,56 @@ restauró: la producción ya se actualizó desde DelPro. Extraer siempre a una
 carpeta propia por fecha, para no pisar los `.bak` partidos del backup
 anterior.
 
+## Check-list de control: la mini app del celular (05/08/2026)
+
+Las dos planillas de papel del tambo (Control Diario, 11 puntos; Control
+Semanal, 9) pasaron al teléfono. `checklist.py` + `templates/checklist.html`,
+ruta `/checklist/`, instalable como PWA.
+
+**Es la MISMA app Flask, no un servicio aparte.** Se ve como una app propia
+—ícono, pantalla completa, el operario no ve la analítica— pero separarla de
+verdad duplicaría login, usuarios, deploy, túnel y backup, y los datos tienen
+que volver acá igual para cruzarlos con el ordeñe. El rol `operario` ya
+existía en `auth.py`; la página de estadísticas es solo para `admin`.
+
+**Se guarda en SQLite propio (`checklist.db`), NUNCA en DDM.** Además de que
+DDM es de solo lectura, es la base de DeLaval: lo que se escriba ahí se pierde
+en el próximo restore. Las fotos van al disco (`checklist_fotos/AAAA/MM/`), no
+como blobs: hacen crecer la base y vuelven impracticable el backup.
+
+**La plantilla se versiona y NO se edita en el lugar.** Al agregar o sacar una
+tarea se crea una versión nueva; las corridas viejas siguen apuntando a lo que
+se preguntó ese día. Si no, un "95% de cumplimiento" del mes pasado pasaría a
+calcularse sobre preguntas que entonces no existían.
+
+**Tres frecuencias, no dos.** Los 11 puntos diarios completos en cada ordeñe
+son 33 checks por día: eso termina en tildar OK sin mirar. Quedaron 6 por
+ordeñe, 5 diarios y 9 semanales. El reparto es una propuesta a corregir por el
+tambo.
+
+**Cumplimiento y adherencia van SIEMPRE juntos.** El primero dice, de lo que se
+cargó, cuánto dio OK; el segundo, cuántas de las cargas esperadas se hicieron.
+Un 100% sobre el 40% de las sesiones no vale nada, y es el error clásico de
+estos tableros: el número queda hermoso porque casi no se carga.
+
+**El tiempo de resolución se mide POR DÍA, no por ordeñe.** Como el check se
+llena en cada ordeñe, lo normal es que algo dé NO a la mañana y OK al mediodía:
+cerrando la falla en el primer OK, TODO daba "resuelto en 0 días" y la medida
+no servía (se probó, daba eso). Un día está mal si tuvo al menos un NO, los
+días malos seguidos son UN problema, y se cierra el primer día posterior con
+carga sin ningún NO. Un día sin cargar no corta la racha: no saber no es lo
+mismo que estar bien. Contra: algo arreglado entre ordeñes figura como 1 día.
+
+**Trampa de Flask que costó encontrar:** `_tambo_del_request()` hacía
+`request.json` en TODO POST, y con un body multipart eso devuelve **415** sin
+llegar al endpoint. Ahora mira el body solo si `request.is_json`. Se sigue
+usando `.json` y no `get_json(silent=True)` a propósito: un JSON mal formado
+tiene que fallar fuerte, no caer callado al tambo por defecto.
+
+El service worker tiene scope `/checklist/`, **no la raíz**: con scope `/`
+también interceptaría la app principal y un caché viejo ahí se ve exactamente
+como "el deploy no subió". La plantilla no se cachea nunca.
+
 ## Antes (01/08/2026)
 
 **Rendimiento Sala tenía un error de fondo, ya corregido**: la consulta que
