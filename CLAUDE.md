@@ -30,7 +30,36 @@ ver `tambos.py` e `INSTALL.md`). Si aparece un secreto en texto plano en
 algún archivo, es un error: sacarlo y pedirle al usuario que lo setee él
 mismo con `setx`.
 
-## Dónde quedamos (01/08/2026)
+## Dónde quedamos (05/08/2026)
+
+**Restaurar DDM en SERVER-DELPRO DEJA A LA APP SIN LEER LA BASE.** El backup
+viene de la PC de DelPro del tambo (`DESKTOP-0QE9PNB`) y trae adentro SUS
+usuarios de base: al pisar DDM, el usuario `delpro_lectura` que vivía dentro se
+va con ella. El login sigue existiendo a nivel servidor —conecta a `master` sin
+problema— pero DDM lo rechaza con el 4060, *"Cannot open database DDM requested
+by the login"*. **Pasa en cada restore.** Se arregla en SERVER-DELPRO, con
+SSMS por autenticación de Windows o `sqlcmd -E`, como Administrador:
+
+    USE DDM;
+    IF EXISTS (SELECT 1 FROM sys.database_principals WHERE name = 'delpro_lectura')
+        ALTER USER delpro_lectura WITH LOGIN = delpro_lectura;   -- quedó huérfano
+    ELSE
+        CREATE USER delpro_lectura FOR LOGIN delpro_lectura;     -- se fue con el restore
+    ALTER ROLE db_datareader ADD MEMBER delpro_lectura;
+
+**Retiradas forzadas por rodeo y sesión: tabla nueva al final de Rendimiento
+Sala, y calca a DelPro.** Ahí se descubrió que **el reporte de DelPro agrupa
+por `BasicAnimal.[Group]`, el rodeo de HOY**, no por el rodeo del día. Detalle
+y números abajo, en "Los DOS criterios de rodeo".
+
+**Base local: sigue al 31/07.** El backup del 05/08 está extraído, concatenado
+y verificado (`RESTORE VERIFYONLY` OK) en
+`...\Documents\delaval\la ponderosa\05-08-26\DelPro_full.bak`, pero NO se
+restauró: la producción ya se actualizó desde DelPro. Extraer siempre a una
+carpeta propia por fecha, para no pisar los `.bak` partidos del backup
+anterior.
+
+## Antes (01/08/2026)
 
 **Rendimiento Sala tenía un error de fondo, ya corregido**: la consulta que
 alimenta toda esa pantalla descartaba en silencio ~5% de los ordeños del día, y
@@ -426,6 +455,9 @@ que no traen ese campo.
 
 ## Ordeños/hora POR RODEO: se mide con el rodeo del DÍA, no el de hoy
 
+> Vale para medir la RUTINA de un día. Para REPLICAR un reporte de DelPro el
+> criterio es el otro — ver "Los DOS criterios de rodeo" acá abajo.
+
 Cada rodeo tiene su velocidad y sí se puede medir, pero hay que agrupar por
 `CMSDeviceVisit.VisitedInGroup` — **el rodeo con el que la vaca pasó ese día**.
 Agrupando por `BasicAnimal.[Group]` (el rodeo que tiene HOY) todo se rompe: una
@@ -464,6 +496,41 @@ Resultado: los rodeos se reparten alrededor del valor de la sala y la
 comparación sirve. En julio de 2026, Rodeo 3 promedia 371 ordeños/hora y el de
 enfermería 164.
 
+## Los DOS criterios de rodeo, y cuándo va cada uno (05/08/2026)
+
+Lo de arriba sigue valiendo para MEDIR la rutina de un día. Pero al comparar la
+tabla nueva de retiradas forzadas contra el reporte real del tambo apareció el
+otro lado del asunto:
+
+**EL REPORTE DE DELPRO AGRUPA POR `BasicAnimal.[Group]`, EL RODEO DE HOY.**
+Medido del 28/07 al 04/08/2026, rodeos 2 y 3, sesión por sesión (64 celdas):
+
+    criterio                        celdas exactas
+    VisitedInGroup (rodeo del día)   ningún día cierra, cada celda a ±1-4
+    BasicAnimal.[Group] (hoy)        37/64, y 4 de los 8 días IDÉNTICOS
+
+Los cuatro días que dan clavados son los recientes (31/07, 02/08, 03/08,
+04/08); los totales del día coinciden en 11 de 16 (rodeo × día). Por eso ahora
+conviven las dos cuentas y **no hay que "unificarlas"**:
+
+- `_grupos_sesion` → agrupa por `_rodeo` (VisitedInGroup, resuelto por vuelta).
+  Alimenta ordeños/hora, tiempo en sala, horas/día. Deja FIJO lo que pasó.
+- `_retiradas_grupo_actual` → agrupa por el rodeo de hoy. Alimenta SOLO la
+  tabla de retiradas forzadas, que existe para compararse contra DelPro.
+
+**La contra del criterio de DelPro, medida: reescribe el pasado.** Si mañana se
+mueven vacas de rodeo, el número de una fecha vieja cambia solo. Se ve en los
+dos días que no cierran:
+
+- **28/07**: Rodeo 3 da 41 contra los 79 de DelPro. Ese día el **12,9% de las
+  visitas tienen un rodeo de hoy distinto del que pasaron** (contra 5,0% de un
+  día normal como el 31/07): hubo un movimiento grande de vacas justo ahí, y
+  con eso ni DelPro corriendo el reporte hoy daría lo que dio al exportarse.
+- **29/07 y 01/08**: el día cierra exacto y lo que se corre son ±2 vacas entre
+  la 1ª y la 2ª sesión. Es el CORTE entre sesiones: acá manda `ParlorSession`,
+  el número que graba la máquina, y DelPro corta un par de vacas distinto. Sin
+  su algoritmo no se puede afinar más; no vale la pena seguir tirando de ahí.
+
 ## Problemas de datos en DDM (no son bugs del código)
 
 - `EventPregCheck.DaysFromInsemination` viene en 0 en TODA la base: el parto
@@ -479,6 +546,14 @@ enfermería 164.
 - Faltan algunos eventos de parto: contar lactantes desde los partos da menos
   que el estado reproductivo. Por eso el histórico se reconstruye despejando
   el balance y se grafica al lado el conteo medido.
+- **Hay días a los que les faltan ordeños enteros, y se detectan por el número
+  de sesión de la máquina** (`CMSDeviceVisit.ParlorSession`, que es correlativo
+  y global). El 27/07/2026 va de la sesión **925 a la 927: la 926 no existe**, y
+  ese día quedaron 674 visitas contra las ~4.800 de un día normal (una sola
+  sesión, de 00:22 a 02:11). No es un problema del cálculo ni del restore — la
+  propia planilla del tambo, hecha desde DelPro, saltea el 27-jul. Antes de
+  investigar un día que "da raro", mirar si sus `ParlorSession` son
+  correlativas con las del día anterior.
 
 ## Entorno de desarrollo (esta PC)
 

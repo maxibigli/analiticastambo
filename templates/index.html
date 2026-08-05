@@ -1915,6 +1915,14 @@
         <br>Un guion es un rodeo que no pasó en esa sesión, que no es lo mismo que haber pasado
         sin ninguna retirada.
       </p>
+      <p class="explica" style="margin-top:0">
+        <b>El gráfico.</b> Una barra por rodeo, partida en las tres sesiones: lo alto de la
+        barra es el total del rodeo (la última fila de la tabla) y cada tramo, cuánto puso
+        cada ordeñe. La línea punteada es el <b>promedio por rodeo</b>, para ver de un vistazo
+        quién está por encima. Tocando una sesión en la leyenda se saca del apilado y el
+        promedio se recalcula con las que quedan.
+      </p>
+      <div class="chart-box" style="height:300px"><canvas id="chart-rend-retiradas-grupo-sesion"></canvas></div>
       <div style="overflow-x:auto;margin-top:10px" id="rend-retiradas-tabla"></div>
     </div>
   </section>
@@ -3497,7 +3505,7 @@ let chartRendProd = null, chartRendThroughput = null, chartRendIdent = null,
     chartRendVacasPuesto = null, chartRendVacasPersona = null, chartRendPermanencia = null,
     chartRendPermanenciaGrupo = null, chartRendVacasHoraGrupo = null,
     chartRendOrdeniosHoraEvolucion = null, chartRendRetiradasEvolucion = null,
-    chartRendVacasHoraSala = null, rendReintento = null;
+    chartRendVacasHoraSala = null, chartRendRetiradasGrupoSesion = null, rendReintento = null;
 
 function etiquetaSesion(s) {
   const [, m, d] = s.fecha.split('-');
@@ -3976,6 +3984,72 @@ async function cargarRendimiento() {
             () => rfSumar(rfFechas.flatMap(f => gruposRF.map(g => rfTotalGrupo(f, g)))), true)}
         </tbody>
       </table>` : '';
+
+    // La misma tabla, dibujada: una barra por rodeo partida en sus sesiones.
+    // Apilado y no barras al lado a propósito -- la pregunta primera es cuánto
+    // retira cada RODEO (la altura, que es la última fila de la tabla) y recién
+    // después cómo se reparte entre ordeñes; con tres barras sueltas por rodeo
+    // hay que sumarlas a ojo. La leyenda apaga sesiones y el apilado se rearma.
+    const rfTotalSesion = (g, t) => rfSumar(rfFechas.map(f => rfCelda(f, g, t)));
+    const rfTotalPeriodo = g => rfSumar(turnos.map(t => rfTotalSesion(g, t)));
+    // De mayor a menor: el rodeo con más retiradas es el que hay que mirar, y
+    // así se lee sin comparar alturas salteadas.
+    const rfOrden = [...gruposRF].sort((a, b) => (rfTotalPeriodo(b) ?? 0) - (rfTotalPeriodo(a) ?? 0));
+    // Promedio POR RODEO (no por celda): el total de las sesiones visibles
+    // repartido entre los rodeos que tienen dato. Es la referencia para saber
+    // quién está por encima; se recalcula al apagar una sesión en la leyenda,
+    // igual que en los gráficos de evolución de más arriba.
+    const rfPromedioDe = (sesionesVisibles) => {
+      const totales = rfOrden
+        .map(g => rfSumar(sesionesVisibles.map(t => rfTotalSesion(g, t))))
+        .filter(v => v != null);
+      if (!totales.length) return null;
+      return Math.round(10 * totales.reduce((a, b) => a + b, 0) / totales.length) / 10;
+    };
+    const rfLineaProm = linea('Promedio por rodeo', [], colorProm,
+      { borderWidth: 2, pointRadius: 0, borderDash: [6, 3], type: 'line', order: 0 });
+    const rfPintarProm = (sesionesVisibles) => {
+      const v = rfPromedioDe(sesionesVisibles);
+      rfLineaProm.data = rfOrden.map(() => v);
+    };
+    rfPintarProm(turnos);
+
+    const oRF = baseOpts(true);
+    oRF.scales.x.stacked = true;
+    oRF.scales.y.stacked = true;
+    oRF.scales.y.title = { display: true, text: 'retiradas forzadas del período' };
+    oRF.plugins.tooltip = { callbacks: {
+      // El pie del tooltip evita la trampa de comparar rodeos de distinto
+      // tamaño: 300 retiradas en un rodeo de 400 vacas no es lo mismo que en
+      // uno de 65.
+      footer: (items) => {
+        const g = items[0].label;
+        const tot = rfTotalPeriodo(g);
+        const dias = rfFechas.filter(f => rfTotalGrupo(f, g) != null).length;
+        return `Total del rodeo: ${fmt(tot)} en ${dias} día(s) — ${fmt(Math.round(10 * tot / (dias || 1)) / 10)} por día`;
+      },
+    } };
+    oRF.plugins.legend.onClick = (e, legendItem, legend) => {
+      const ci = legend.chart;
+      ci.isDatasetVisible(legendItem.datasetIndex) ? ci.hide(legendItem.datasetIndex)
+                                                  : ci.show(legendItem.datasetIndex);
+      // Los datasets de sesión son los primeros turnos.length, en orden.
+      rfPintarProm(turnos.filter((t, i) => ci.isDatasetVisible(i)));
+      ci.update();
+    };
+    chartRendRetiradasGrupoSesion = dibujar('chart-rend-retiradas-grupo-sesion',
+      chartRendRetiradasGrupoSesion, {
+        type: 'bar',
+        data: { labels: rfOrden, datasets: [
+          ...turnos.map((t, i) => ({
+            label: `${t}º ordeñe`, data: rfOrden.map(g => rfTotalSesion(g, t)),
+            backgroundColor: SERIES[i % SERIES.length], stack: 'rf',
+            maxBarThickness: 56, borderRadius: 2, order: 1,
+          })),
+          rfLineaProm,
+        ] },
+        options: oRF,
+      });
 
     // Horas/día en ordeño, en el tiempo: un punto por día y por grupo —
     // ya es la suma de las sesiones de ese día (permPorDiaGrupo, armado
