@@ -1896,6 +1896,19 @@
       </p>
       <div class="chart-box" style="height:260px"><canvas id="chart-rend-vacas-hora-sala"></canvas></div>
     </div>
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Retiradas forzadas — por rodeo y sesión de ordeñe</div>
+      <p class="explica" style="margin-top:0">
+        El conteo crudo, día por día: cuántas veces la máquina retiró la pezonera sola en cada
+        rodeo, abierto por sesión (1º, 2º y 3º ordeñe) y con el total de cada rodeo. Es la
+        bandera <code>ForcedRetract</code> de la máquina, sumada — no hay promedios ni
+        estimaciones acá.
+        <br>El rodeo de cada ordeño es aquel con el que la vaca <b>pasó ese día</b>, no el que
+        tiene hoy, igual que los gráficos de arriba. Un guion es un rodeo que no pasó en esa
+        sesión, que no es lo mismo que haber pasado sin ninguna retirada.
+      </p>
+      <div style="overflow-x:auto;margin-top:10px" id="rend-retiradas-tabla"></div>
+    </div>
   </section>
 
   <section class="card" id="rendimiento-dia-card">
@@ -3872,6 +3885,74 @@ async function cargarRendimiento() {
       ] },
       options: oVacasHoraSala,
     });
+
+    // Retiradas forzadas en crudo: una fila por día, una columna por rodeo y
+    // sesión. Es un CONTEO, así que se suma (a diferencia de los ordeños/hora
+    // de más arriba, que son una tasa y hay que rearmarla). Sale de los mismos
+    // `s.grupos` que alimentan los gráficos, así que la tabla no puede
+    // discrepar con ellos.
+    const rfPorDia = {};   // {fecha: {grupo: {sesion: retiradas}}}
+    sesiones.forEach(s => (s.grupos || []).forEach(g => {
+      const dia = rfPorDia[s.fecha] = rfPorDia[s.fecha] || {};
+      const gr = dia[g.grupo] = dia[g.grupo] || {};
+      gr[s.sesion] = (gr[s.sesion] || 0) + (g.retiradas_forzadas || 0);
+    }));
+    // null (no 0) cuando el rodeo no pasó: son cosas distintas y la tabla las
+    // muestra distinto — un cero real dice que pasó y no hubo retiradas.
+    const rfSumar = lista => {
+      const v = lista.filter(x => x != null);
+      return v.length ? v.reduce((a, b) => a + b, 0) : null;
+    };
+    const rfCelda = (f, g, t) => ((rfPorDia[f] || {})[g] || {})[t];
+    const rfTotalGrupo = (f, g) => rfSumar(turnos.map(t => rfCelda(f, g, t)));
+    const rfFechas = [...fechasSes].sort().reverse();   // el día más nuevo arriba
+    // Cada rodeo arranca con una línea de su color, el MISMO que usa en los
+    // gráficos de arriba: con seis rodeos por tres sesiones la tabla es ancha y
+    // sin eso no se ve dónde termina uno y empieza el otro.
+    const rfBorde = i => `border-left:2px solid ${SERIES[i % SERIES.length]}`;
+    const rfNum = v => v == null ? '—' : fmt(v);
+    const rfFila = (etq, celda, totalGrupo, totalFila, negrita) => {
+      const peso = negrita ? ';font-weight:600' : '';
+      return `<tr>
+        <td${negrita ? ' style="font-weight:600"' : ''}>${etq}</td>
+        ${gruposPerm.map((g, i) =>
+          turnos.map((t, j) =>
+            `<td style="text-align:right${j === 0 ? ';' + rfBorde(i) : ''}${peso}">${rfNum(celda(g, t))}</td>`
+          ).join('') +
+          `<td style="text-align:right;font-weight:600">${rfNum(totalGrupo(g))}</td>`
+        ).join('')}
+        <td style="text-align:right;font-weight:600">${rfNum(totalFila())}</td>
+      </tr>`;
+    };
+    document.getElementById('rend-retiradas-tabla').innerHTML = gruposPerm.length ? `
+      <table>
+        <thead>
+          <tr>
+            <th rowspan="2">Día</th>
+            ${gruposPerm.map((g, i) =>
+              `<th colspan="${turnos.length + 1}" style="text-align:center;${rfBorde(i)}">${escHtml(g)}</th>`
+            ).join('')}
+            <th rowspan="2" style="text-align:right">Total del día</th>
+          </tr>
+          <tr>
+            ${gruposPerm.map((g, i) =>
+              turnos.map((t, j) =>
+                `<th style="text-align:right${j === 0 ? ';' + rfBorde(i) : ''}">${t}º</th>`
+              ).join('') + '<th style="text-align:right">TOTAL</th>'
+            ).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${rfFechas.map(f => rfFila(etiquetaDia(f),
+            (g, t) => rfCelda(f, g, t),
+            g => rfTotalGrupo(f, g),
+            () => rfSumar(gruposPerm.map(g => rfTotalGrupo(f, g))))).join('')}
+          ${rfFila('Total del período',
+            (g, t) => rfSumar(rfFechas.map(f => rfCelda(f, g, t))),
+            g => rfSumar(rfFechas.map(f => rfTotalGrupo(f, g))),
+            () => rfSumar(rfFechas.flatMap(f => gruposPerm.map(g => rfTotalGrupo(f, g)))), true)}
+        </tbody>
+      </table>` : '';
 
     // Horas/día en ordeño, en el tiempo: un punto por día y por grupo —
     // ya es la suma de las sesiones de ese día (permPorDiaGrupo, armado
