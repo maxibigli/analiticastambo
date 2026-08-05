@@ -528,6 +528,56 @@ def _grupos_sesion(visitas: list, nombres: dict | None = None,
     return grupos
 
 
+def _retiradas_grupo_actual(visitas: list, nombres: dict | None = None,
+                            grupos_ordene=None) -> dict:
+    """Retiradas forzadas de la sesión repartidas con el criterio de DELPRO:
+    por `BasicAnimal.[Group]`, o sea el rodeo en el que la vaca está HOY.
+
+    Va aparte de `_grupos_sesion` a propósito, no es un duplicado: son dos
+    preguntas distintas y las dos se usan.
+
+      * `_grupos_sesion` agrupa por `_rodeo` (el rodeo con el que la vaca PASÓ
+        ese día, `VisitedInGroup`, resuelto por vuelta). Es lo correcto para
+        medir la rutina de un día -ordeños/hora, tiempo en sala-, porque deja
+        fijo lo que efectivamente pasó.
+      * Esto agrupa por el rodeo de hoy, que es lo que hace el reporte de
+        DelPro. Tiene la propiedad incómoda de reescribir el pasado (si mañana
+        se mueven 30 vacas de rodeo, el número de una fecha vieja cambia solo),
+        pero es contra lo que el tambo compara.
+
+    Medido contra el reporte real de DelPro del 28/07 al 04/08/2026, rodeos 2 y
+    3, sesión por sesión (64 celdas): con `VisitedInGroup` NINGÚN día daba
+    exacto; con el rodeo de hoy coinciden 37 celdas y **4 de los 8 días dan
+    idénticos** en los dos rodeos (31/07, 02/08, 03/08 y 04/08). Los totales
+    del día coinciden en 11 de 16 (rodeo × día). Lo que queda:
+
+      * ±2 vacas entre la 1ª y la 2ª sesión (01/08 y 29/07): el día cierra
+        exacto y lo que se corre es el CORTE entre sesiones. Acá se usa
+        `ParlorSession`, el número que graba la máquina; DelPro corta un par de
+        vacas distinto y sin su algoritmo no se puede replicar mejor.
+      * El 28/07 no cierra con ningún criterio (Rodeo 3: 41 contra 79). Ese día
+        el 12,9% de las visitas tienen un rodeo de hoy distinto al que pasaron,
+        contra 5,0% de un día normal: hubo un movimiento grande de vacas justo
+        ahí, y con eso ni DelPro corriendo el reporte HOY daría lo que dio
+        cuando se exportó. Es la contra de este criterio, medida: reescribe el
+        pasado a medida que las vacas cambian de rodeo.
+      * Aparte, al 27/07 le faltan dos ordeños EN LA BASE: la máquina numera
+        las sesiones y va de la 925 a la 927, la 926 no existe (674 visitas ese
+        día contra ~4.800 de uno normal). No es un problema del cálculo."""
+    permitidos = set(grupos_ordene) if grupos_ordene else None
+    por_grupo: dict = {}
+    for v in visitas:
+        g = v.get("grupo")
+        if g is None or (permitidos is not None and g not in permitidos):
+            continue
+        clave = _grupo_txt(g, nombres)
+        # Todos los grupos presentes arrancan en 0: un rodeo que pasó y no tuvo
+        # ninguna retirada es un dato (cero real), y el frontend lo distingue
+        # de un rodeo que no pasó en esa sesión (que no aparece).
+        por_grupo[clave] = por_grupo.get(clave, 0) + (1 if v.get("retirada_forzada") else 0)
+    return por_grupo
+
+
 def _marcar_rodeo(visitas: list) -> None:
     """Deja en cada visita `_rodeo`: EN QUÉ RODEO cuenta ese ordeño.
 
@@ -733,6 +783,10 @@ def analizar_rendimiento(columns, rows, desde: str, hasta: str, max_sesiones: in
             resumen["sesion"] = i + 1
             resumen["vacas_dia"] = vacas_dia
             resumen["grupos"] = _grupos_sesion(vs, nombres, grupos_ordene)
+            # Las mismas retiradas forzadas con el criterio de DelPro (rodeo de
+            # HOY), para la tabla que se compara contra su reporte. Ver
+            # `_retiradas_grupo_actual`: no reemplaza a `grupos`, convive.
+            resumen["retiradas_grupo_actual"] = _retiradas_grupo_actual(vs, nombres, grupos_ordene)
             sesiones.append(resumen)
     return sesiones
 

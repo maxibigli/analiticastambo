@@ -1903,9 +1903,17 @@
         rodeo, abierto por sesión (1º, 2º y 3º ordeñe) y con el total de cada rodeo. Es la
         bandera <code>ForcedRetract</code> de la máquina, sumada — no hay promedios ni
         estimaciones acá.
-        <br>El rodeo de cada ordeño es aquel con el que la vaca <b>pasó ese día</b>, no el que
-        tiene hoy, igual que los gráficos de arriba. Un guion es un rodeo que no pasó en esa
-        sesión, que no es lo mismo que haber pasado sin ninguna retirada.
+        <br><b>Esta tabla usa el criterio de DelPro</b>, para poder comparar contra su reporte:
+        cada ordeño va al rodeo en el que la vaca está <b>hoy</b>. Contrastado celda por celda
+        contra el reporte del tambo (28/07 al 04/08/2026): los días recientes dan idénticos, y
+        en los viejos se corre alguna vaca, porque el rodeo de hoy ya no es el de entonces. Eso
+        es propio del criterio, no del cálculo: mover vacas de rodeo cambia solo los números de
+        una fecha pasada, igual que en DelPro.
+        Los <b>gráficos de arriba</b> usan el otro criterio, el rodeo con el que la vaca
+        <b>pasó ese día</b>, que es el que corresponde para medir la rutina de esa jornada; por
+        eso pueden diferir en un par de vacas por celda.
+        <br>Un guion es un rodeo que no pasó en esa sesión, que no es lo mismo que haber pasado
+        sin ninguna retirada.
       </p>
       <div style="overflow-x:auto;margin-top:10px" id="rend-retiradas-tabla"></div>
     </div>
@@ -3888,15 +3896,30 @@ async function cargarRendimiento() {
 
     // Retiradas forzadas en crudo: una fila por día, una columna por rodeo y
     // sesión. Es un CONTEO, así que se suma (a diferencia de los ordeños/hora
-    // de más arriba, que son una tasa y hay que rearmarla). Sale de los mismos
-    // `s.grupos` que alimentan los gráficos, así que la tabla no puede
-    // discrepar con ellos.
+    // de más arriba, que son una tasa y hay que rearmarla).
+    //
+    // ACÁ SE USA EL CRITERIO DE DELPRO, no el de los gráficos de arriba:
+    // `retiradas_grupo_actual` reparte por el rodeo en el que la vaca está HOY
+    // (ver _retiradas_grupo_actual en rutina.py), que es como lo hace su
+    // reporte; los gráficos usan el rodeo con el que pasó ESE día. Esta tabla
+    // existe para compararse contra DelPro, así que tiene que dar igual que
+    // DelPro -- verificado celda por celda del 28/07 al 04/08/2026.
     const rfPorDia = {};   // {fecha: {grupo: {sesion: retiradas}}}
-    sesiones.forEach(s => (s.grupos || []).forEach(g => {
+    sesiones.forEach(s => Object.entries(s.retiradas_grupo_actual || {}).forEach(([grupo, n]) => {
       const dia = rfPorDia[s.fecha] = rfPorDia[s.fecha] || {};
-      const gr = dia[g.grupo] = dia[g.grupo] || {};
-      gr[s.sesion] = (gr[s.sesion] || 0) + (g.retiradas_forzadas || 0);
+      const gr = dia[grupo] = dia[grupo] || {};
+      gr[s.sesion] = (gr[s.sesion] || 0) + n;
     }));
+    // Las columnas salen de esta tabla, no de `gruposPerm`: los dos criterios
+    // pueden no traer exactamente los mismos rodeos. Se respeta el orden de
+    // los gráficos para los que están en ambos, y los que solo aparecen acá
+    // van al final.
+    const gruposRF = [...new Set(Object.values(rfPorDia).flatMap(d => Object.keys(d)))]
+      .sort((a, b) => {
+        const ia = gruposPerm.indexOf(a), ib = gruposPerm.indexOf(b);
+        if (ia !== ib) return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+        return a.localeCompare(b);
+      });
     // null (no 0) cuando el rodeo no pasó: son cosas distintas y la tabla las
     // muestra distinto — un cero real dice que pasó y no hubo retiradas.
     const rfSumar = lista => {
@@ -3915,7 +3938,7 @@ async function cargarRendimiento() {
       const peso = negrita ? ';font-weight:600' : '';
       return `<tr>
         <td${negrita ? ' style="font-weight:600"' : ''}>${etq}</td>
-        ${gruposPerm.map((g, i) =>
+        ${gruposRF.map((g, i) =>
           turnos.map((t, j) =>
             `<td style="text-align:right${j === 0 ? ';' + rfBorde(i) : ''}${peso}">${rfNum(celda(g, t))}</td>`
           ).join('') +
@@ -3924,18 +3947,18 @@ async function cargarRendimiento() {
         <td style="text-align:right;font-weight:600">${rfNum(totalFila())}</td>
       </tr>`;
     };
-    document.getElementById('rend-retiradas-tabla').innerHTML = gruposPerm.length ? `
+    document.getElementById('rend-retiradas-tabla').innerHTML = gruposRF.length ? `
       <table>
         <thead>
           <tr>
             <th rowspan="2">Día</th>
-            ${gruposPerm.map((g, i) =>
+            ${gruposRF.map((g, i) =>
               `<th colspan="${turnos.length + 1}" style="text-align:center;${rfBorde(i)}">${escHtml(g)}</th>`
             ).join('')}
             <th rowspan="2" style="text-align:right">Total del día</th>
           </tr>
           <tr>
-            ${gruposPerm.map((g, i) =>
+            ${gruposRF.map((g, i) =>
               turnos.map((t, j) =>
                 `<th style="text-align:right${j === 0 ? ';' + rfBorde(i) : ''}">${t}º</th>`
               ).join('') + '<th style="text-align:right">TOTAL</th>'
@@ -3946,11 +3969,11 @@ async function cargarRendimiento() {
           ${rfFechas.map(f => rfFila(etiquetaDia(f),
             (g, t) => rfCelda(f, g, t),
             g => rfTotalGrupo(f, g),
-            () => rfSumar(gruposPerm.map(g => rfTotalGrupo(f, g))))).join('')}
+            () => rfSumar(gruposRF.map(g => rfTotalGrupo(f, g))))).join('')}
           ${rfFila('Total del período',
             (g, t) => rfSumar(rfFechas.map(f => rfCelda(f, g, t))),
             g => rfSumar(rfFechas.map(f => rfTotalGrupo(f, g))),
-            () => rfSumar(rfFechas.flatMap(f => gruposPerm.map(g => rfTotalGrupo(f, g)))), true)}
+            () => rfSumar(rfFechas.flatMap(f => gruposRF.map(g => rfTotalGrupo(f, g)))), true)}
         </tbody>
       </table>` : '';
 
