@@ -59,6 +59,76 @@ restauró: la producción ya se actualizó desde DelPro. Extraer siempre a una
 carpeta propia por fecha, para no pisar los `.bak` partidos del backup
 anterior.
 
+## SenseHub / Allflex: dónde está el dato (06/08/2026)
+
+Investigación previa a cruzar salud y celo del tambo de **Bernardo Etchevers
+(Trenque Lauquen)** — OTRO tambo, otros animales, no La Ponderosa. Lo que hay
+en `C:\Users\MAXI\Documents\delaval\bernardo\SenseHub Tools` es la aplicación
+cliente, **no una base**: un Chromium empaquetado (CefSharp) más un servicio de
+integración. Al 06/08 el backup del tambo todavía no estaba en esa carpeta.
+
+**EL DATO VIVE EN EL CONTROLADOR**, un equipo en la red del tambo, no en la PC.
+Es un servidor Java (**WildFly 10 / Undertow**, visto en las cabeceras HTTP) que
+sirve la app web Angular (`/app/`), la API REST (`/rest/api/...`) y tiene su
+base adentro, **sin exponer**. En la PC no queda nada: el caché del navegador no
+tiene Local Storage ni IndexedDB y las cookies están vacías.
+
+**NO HAY BASE A LA QUE CONECTARSE** como con DDM. Allflex no publica el motor ni
+abre un puerto. La interfaz soportada es la API REST, y eso es "la base" para
+nosotros. Tres niveles:
+
+1. **Export de terceros, YA ANDANDO** (usuario `ThirdParty`, contraseña de
+   fábrica — vale saberlo, cualquiera en esa red lo lee):
+
+       GET /rest/api/thirdparty/export?exportDataType=healthIndex
+       GET /rest/api/thirdparty/export?exportDataType=systemHeats
+
+   El servicio los baja cada ~2 h y los escribe en `C:/DIRSA/SCR`
+   (`healthindex.txt`, `heatdetect.txt`). Campos medidos:
+   healthIndex → `cowNumber`, `healthIndex`; systemHeats → `cowNumber`,
+   `peakHeatIndex`, `currentHeatIndex`, `breedingWindowStartDateTime` (epoch),
+   `breedingWindowValue`.
+
+   **LIMITACIÓN QUE DEFINE TODO: ese export trae SOLO LA LISTA DE ALERTA, no el
+   rodeo.** Máximo 13-14 vacas por respuesta contra 686 collares. Sirve para
+   "quién está marcado hoy", no para la serie de todo el rodeo.
+
+2. **La API completa del web client** (requiere login, `/rest/api/v4/auth/login`).
+   Las rutas salieron del caché del navegador:
+
+       /rest/api/v3/server/sync?lastUpdateTime=<epoch>   <- sync incremental
+       /rest/api/animals/{animalId}/details | /events | /graphs/{n}
+       /rest/api/alerts/system | /alerts/farm | /dashboardkpis | /system/kpis
+       /rest/api/v2/reports/{id} | /v5/reports | /v3/groups/{id} | /farm/reproduction
+
+   `server/sync` es el mejor punto de integración: devuelve los cambios desde un
+   timestamp, sin machacar el controlador.
+
+**DOS CLAVES DE IDENTIDAD, no una.** `animalName` es el RP ("4116") y
+`animalId` es el id interno de SenseHub (1320). El export de terceros usa
+`cowNumber`, que **es el `animalName`**; los endpoints por animal piden el
+`animalId`. Hay que mantener el mapa entre los dos.
+
+**LAS BANDERAS DE SALUD NO ESTÁN EN EL EXPORT.** Son `isActivityAlert` e
+`isRuminationAlert`, y viven en `/animals/{id}/details` (nivel 2). El esquema
+por animal, tal cual cacheado:
+
+    {"animalId":1320,"animalName":"4116","groupName":"Rodeo 1","groupId":5,
+     "status":"Inseminated","isActivityAlert":true,"isRuminationAlert":false,...}
+    {"lactationStatus":"Inseminated","dim":106,"lactationNumber":3,
+     "breedingNumber":1,"pregnancyCheckResult":null,"breedingDate":1749697200}
+
+Los grupos se llaman igual que en DelPro ("Rodeo 1", "Rodeo 3"), lo que ayuda a
+conciliar — falta confirmarlo contra la base de ese tambo.
+
+**Reconstruido de los logs** (rotan cada 100 MB; quedan ~3 semanas útiles), del
+14/07 al 05/08/2026: 132 vacas distintas alertadas por salud, 218 por celo, 40
+en las dos listas; índice de salud de las alertadas entre 28 y 86, mediana 80;
+la 6695 con 15 días distintos de alerta.
+
+**OJO CON LA IP: cambió.** El caché de julio 2025 muestra el controlador en
+`192.168.0.19` y la configuración de hoy dice `192.168.0.11`.
+
 ## Check-list de control: la mini app del celular (05/08/2026)
 
 Las dos planillas de papel del tambo (Control Diario, 11 puntos; Control
