@@ -83,8 +83,10 @@ calcularse sobre preguntas que entonces no existían.
 
 **Tres frecuencias, no dos.** Los 11 puntos diarios completos en cada ordeñe
 son 33 checks por día: eso termina en tildar OK sin mirar. Quedaron 6 por
-ordeñe, 5 diarios y 9 semanales. El reparto es una propuesta a corregir por el
-tambo.
+ordeñe, 5 diarios y 9 semanales, como punto de partida. **Se edita desde
+⚙ Configuración → Check-list de control**, sin tocar código: ahí se agregan,
+sacan, reordenan tareas y se les cambia la frecuencia, y cada guardado crea una
+versión nueva.
 
 **Cumplimiento y adherencia van SIEMPRE juntos.** El primero dice, de lo que se
 cargó, cuánto dio OK; el segundo, cuántas de las cargas esperadas se hicieron.

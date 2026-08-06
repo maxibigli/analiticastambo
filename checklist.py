@@ -223,6 +223,20 @@ def guardar_plantilla(tambo: str, items: list, usuario: str) -> dict:
     return plantilla_vigente(tambo)
 
 
+def versiones(tambo: str) -> list:
+    """El historial de plantillas del tambo, con cuántos items tenía cada una y
+    cuántas cargas quedaron apuntando a ella. Se muestra en el editor para que
+    se vea que versionar NO pierde nada: las corridas viejas siguen colgando de
+    su versión."""
+    with _db_lock, _conectar() as con:
+        filas = con.execute("""
+            SELECT p.id, p.version, p.creada_en, p.creada_por,
+                   (SELECT COUNT(*) FROM item i WHERE i.plantilla_id = p.id) AS items,
+                   (SELECT COUNT(*) FROM corrida c WHERE c.plantilla_id = p.id) AS corridas
+            FROM plantilla p WHERE p.tambo = ? ORDER BY p.version DESC""", (tambo,)).fetchall()
+    return [dict(f) for f in filas]
+
+
 def items_para(tambo: str, momento: str) -> dict:
     """Los items que toca cargar en ese momento. `sesion` trae SOLO los de cada
     ordeñe; `diario` trae los diarios; `semanal`, los semanales. Se devuelven

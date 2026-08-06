@@ -1460,6 +1460,34 @@ def api_checklist_guardar():
     return jsonify(res)
 
 
+@app.get("/api/checklist/plantilla_completa")
+@auth.requiere_rol("admin")
+def api_checklist_plantilla_completa():
+    """La plantilla ENTERA (los tres momentos juntos) más el historial de
+    versiones, para el editor de ⚙ Configuración. La otra ruta, la que usa el
+    celular, devuelve solo los items del momento que toca."""
+    tambo = _tambo_del_request()
+    return jsonify({**checklist.plantilla_vigente(tambo),
+                    "versiones": checklist.versiones(tambo),
+                    "momentos": list(checklist.MOMENTOS)})
+
+
+@app.post("/api/checklist/plantilla")
+@auth.requiere_rol("admin")
+def api_checklist_guardar_plantilla():
+    """Guarda la plantilla editada. Siempre crea una VERSIÓN NUEVA: la anterior
+    queda intacta y las corridas viejas siguen colgando de ella (ver
+    checklist.guardar_plantilla)."""
+    tambo = _tambo_del_request()
+    datos = request.json or {}
+    try:
+        pl = checklist.guardar_plantilla(tambo, datos.get("items") or [], auth.usuario_actual())
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({**pl, "versiones": checklist.versiones(tambo),
+                    "momentos": list(checklist.MOMENTOS)})
+
+
 @app.get("/api/checklist/estadisticas")
 @auth.requiere_rol("admin")
 def api_checklist_estadisticas():

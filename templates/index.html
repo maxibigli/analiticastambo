@@ -2875,6 +2875,39 @@
       <button class="secundario" id="config-tablero-reset">Volver a los valores por defecto</button>
     </div>
   </section>
+
+  <section class="card" id="config-checklist-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">📋 Check-list de control</h2>
+      <span class="aviso">Las tareas que carga el operario en el celular.</span>
+      <span class="aviso" id="cfg-cl-version" style="margin-left:auto"></span>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      <b>La frecuencia es lo que más conviene pensar.</b> <b>Por ordeñe</b> son las que
+      pueden cambiar de un turno a otro y hay que mirar cada vez; <b>diario</b>, las de
+      inspección de equipo, que no cambian tres veces por día; <b>semanal</b>, el
+      mantenimiento. Cargar los 11 puntos diarios en cada ordeñe son 33 checks por día, y
+      eso termina en tildar OK sin mirar: el dato deja de servir. Menos tareas bien
+      elegidas valen más que muchas.
+      <br><b>Guardar crea una versión nueva</b> y no toca la anterior. Las cargas viejas
+      siguen mostrando lo que se preguntó ese día — si se editara en el lugar, un
+      cumplimiento del mes pasado pasaría a calcularse sobre preguntas que entonces no
+      existían. Por eso no hay forma de "romper" el histórico desde acá.
+      <br><b>Sacar una tarea no borra nada</b>: deja de pedirse de ahora en más, y lo ya
+      cargado sigue en el panel.
+    </p>
+    <div class="aviso" id="cfg-cl-estado" style="margin:8px 0"></div>
+    <div style="overflow-x:auto"><table class="tabla" id="cfg-cl-tabla"></table></div>
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+      <button class="secundario" id="cfg-cl-agregar">+ Agregar tarea</button>
+      <button id="cfg-cl-guardar">Guardar como versión nueva</button>
+      <button class="secundario" id="cfg-cl-deshacer">Descartar cambios</button>
+    </div>
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Versiones</div>
+      <div style="overflow-x:auto" id="cfg-cl-versiones"></div>
+    </div>
+  </section>
   </div>
     </main>
   </div>
@@ -9919,11 +9952,139 @@ async function cargarConfiguracion() {
 
     await _actualizarPuestosConfig(cfg.sala_efectiva === 'convencional');
     cargarConfigTablero();
+    cargarConfigChecklist();
     estado.textContent = '';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
   }
 }
+
+// --- Editor de la plantilla del check-list ---------------------------------
+// Se edita una COPIA en memoria y recién al guardar se manda entera: el
+// backend crea una versión nueva con lo que llegue (ver
+// checklist.guardar_plantilla). Por eso no hay guardado por fila — cada fila
+// suelta generaría una versión, y el historial quedaría ilegible.
+const CL_MOMENTO_LABEL = { sesion: 'Por ordeñe', diario: 'Diario', semanal: 'Semanal' };
+let cfgClItems = [];        // la copia que se está editando
+let cfgClOriginal = '';     // JSON de lo guardado, para saber si hay cambios
+
+async function cargarConfigChecklist() {
+  const estado = document.getElementById('cfg-cl-estado');
+  estado.textContent = 'Cargando…';
+  try {
+    const d = await pedirJSON('/api/checklist/plantilla_completa?tambo='
+                              + encodeURIComponent(tamboActual));
+    _clAplicar(d);
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+function _clAplicar(d) {
+  cfgClItems = (d.items || []).map(i => ({ frecuencia: i.frecuencia, sector: i.sector, tarea: i.tarea }));
+  cfgClOriginal = JSON.stringify(cfgClItems);
+  document.getElementById('cfg-cl-version').textContent =
+    `Versión ${d.version} · ${cfgClItems.length} tareas`;
+  document.getElementById('cfg-cl-versiones').innerHTML = (d.versiones || []).length ? `
+    <table><thead><tr><th>Versión</th><th>Creada</th><th>Por</th><th>Tareas</th><th>Cargas con esta versión</th></tr></thead>
+    <tbody>${d.versiones.map(v => `<tr>
+      <td>v${v.version}</td><td>${escHtml((v.creada_en || '').replace('T', ' '))}</td>
+      <td>${escHtml(v.creada_por || '')}</td>
+      <td style="text-align:right">${fmt(v.items)}</td>
+      <td style="text-align:right">${fmt(v.corridas)}</td></tr>`).join('')}
+    </tbody></table>` : '';
+  pintarConfigChecklist();
+}
+
+function pintarConfigChecklist() {
+  const t = document.getElementById('cfg-cl-tabla');
+  // Agrupadas por frecuencia y en el orden en que se van a cargar: así se ve
+  // de un vistazo cuántas tareas le estás poniendo a cada ordeñe.
+  const orden = ['sesion', 'diario', 'semanal'];
+  const cuenta = orden.map(m => `${CL_MOMENTO_LABEL[m]}: ${cfgClItems.filter(i => i.frecuencia === m).length}`);
+  t.innerHTML = `
+    <thead><tr><th style="width:150px">Frecuencia</th><th style="width:150px">Sector</th>
+      <th>Tarea</th><th style="width:110px"></th></tr></thead>
+    <tbody>${cfgClItems.map((it, k) => `<tr>
+      <td><select data-campo="frecuencia" data-k="${k}" style="width:100%;padding:6px">
+        ${orden.map(m => `<option value="${m}"${it.frecuencia === m ? ' selected' : ''}>${CL_MOMENTO_LABEL[m]}</option>`).join('')}
+      </select></td>
+      <td><input data-campo="sector" data-k="${k}" value="${escHtml(it.sector)}" style="width:100%;padding:6px"></td>
+      <td><input data-campo="tarea" data-k="${k}" value="${escHtml(it.tarea)}" style="width:100%;padding:6px"></td>
+      <td style="white-space:nowrap">
+        <button class="secundario" data-mover="${k}" data-dir="-1" title="Subir" ${k === 0 ? 'disabled' : ''}>↑</button>
+        <button class="secundario" data-mover="${k}" data-dir="1" title="Bajar" ${k === cfgClItems.length - 1 ? 'disabled' : ''}>↓</button>
+        <button class="secundario" data-quitar="${k}" title="Sacar">✕</button>
+      </td></tr>`).join('')}
+    </tbody>
+    <tfoot><tr><td colspan="4" class="aviso">${cuenta.join(' · ')}</td></tr></tfoot>`;
+  const cambiado = JSON.stringify(cfgClItems) !== cfgClOriginal;
+  document.getElementById('cfg-cl-guardar').disabled = !cambiado;
+  document.getElementById('cfg-cl-deshacer').disabled = !cambiado;
+}
+
+document.getElementById('cfg-cl-tabla').addEventListener('input', ev => {
+  const campo = ev.target.dataset.campo;
+  if (!campo) return;
+  cfgClItems[Number(ev.target.dataset.k)][campo] = ev.target.value;
+  // Solo se refresca el estado de los botones: repintar la tabla entera en
+  // cada tecla le sacaría el foco al campo que se está escribiendo.
+  const cambiado = JSON.stringify(cfgClItems) !== cfgClOriginal;
+  document.getElementById('cfg-cl-guardar').disabled = !cambiado;
+  document.getElementById('cfg-cl-deshacer').disabled = !cambiado;
+});
+
+document.getElementById('cfg-cl-tabla').addEventListener('click', ev => {
+  const mover = ev.target.closest('[data-mover]');
+  if (mover) {
+    const k = Number(mover.dataset.mover), d = Number(mover.dataset.dir);
+    if (k + d < 0 || k + d >= cfgClItems.length) return;
+    [cfgClItems[k], cfgClItems[k + d]] = [cfgClItems[k + d], cfgClItems[k]];
+    pintarConfigChecklist();
+    return;
+  }
+  const quitar = ev.target.closest('[data-quitar]');
+  if (quitar) {
+    cfgClItems.splice(Number(quitar.dataset.quitar), 1);
+    pintarConfigChecklist();
+  }
+});
+
+document.getElementById('cfg-cl-agregar').addEventListener('click', () => {
+  cfgClItems.push({ frecuencia: 'sesion', sector: '', tarea: '' });
+  pintarConfigChecklist();
+  const inputs = document.querySelectorAll('#cfg-cl-tabla input[data-campo="tarea"]');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+});
+
+document.getElementById('cfg-cl-deshacer').addEventListener('click', () => {
+  cfgClItems = JSON.parse(cfgClOriginal);
+  pintarConfigChecklist();
+  document.getElementById('cfg-cl-estado').textContent = '';
+});
+
+document.getElementById('cfg-cl-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('cfg-cl-estado');
+  const vacias = cfgClItems.filter(i => !(i.tarea || '').trim());
+  if (vacias.length) {
+    estado.textContent = 'Hay ' + vacias.length + ' tarea(s) sin texto: completalas o sacalas.';
+    pintarConfigChecklist();   // la tabla y los botones quedan en el mismo estado
+    return;
+  }
+  estado.textContent = 'Guardando…';
+  try {
+    const d = await pedirJSON('/api/checklist/plantilla?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items: cfgClItems }),
+    });
+    _clAplicar(d);
+    estado.textContent = `Guardado como versión ${d.version}. `
+      + 'Los celulares la toman en la próxima carga; lo ya cargado no cambia.';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+});
 
 // Estado real de las dos planillas. Lo importante no es repetir la ruta que el
 // tambo escribió, es decir QUÉ ARCHIVOS SE ESTÁN LEYENDO: una ruta con un error
