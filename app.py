@@ -734,8 +734,8 @@ def _calentar_tablero(tambo: str, faltan: set):
                 except Exception:  # noqa: BLE001
                     pass
 
-            if {"horas_ordeno", "pct_identificacion", "ordenos_hora", "litros_hora",
-                "vacas_puesto", "vacas_persona"} & faltan:
+            if {"horas_ordeno", "horas_ordeno_total", "pct_identificacion", "ordenos_hora",
+                "litros_hora", "vacas_puesto", "vacas_persona"} & faltan:
                 try:
                     ancla = _ultimo_dia_datos(tambo, herd)
                     _refresh_rendimiento_async(tambo, ancla - datetime.timedelta(days=6), ancla)
@@ -886,7 +886,7 @@ def _valores_tablero(tambo: str) -> dict:
              f":{ancla.isoformat()}")
         data, _ = _cache_get(k, allow_stale=True)
         if data is None:
-            for c in ("horas_ordeno", "pct_identificacion"):
+            for c in ("horas_ordeno", "horas_ordeno_total", "pct_identificacion"):
                 poner(c, calculando=True,
                       falta="La pantalla de Rendimiento Sala todavía no se calculó.")
         else:
@@ -916,8 +916,8 @@ def _valores_tablero(tambo: str) -> dict:
                     grupos_ordene=_grupos_ordene(tambo)) or []
 
             sin_sesiones = "Sin sesiones en la semana previa al último día con datos."
-            claves_rend = ("horas_ordeno", "ordenos_hora", "litros_hora",
-                           "vacas_puesto", "vacas_persona")
+            claves_rend = ("horas_ordeno", "horas_ordeno_total", "ordenos_hora",
+                           "litros_hora", "vacas_puesto", "vacas_persona")
             if not sesiones:
                 for c in claves_rend:
                     poner(c, falta=sin_sesiones)
@@ -993,14 +993,30 @@ def _valores_tablero(tambo: str) -> dict:
                         perm_prom_por_grupo[g] = sum(vals) / len(vals)
                 horas = (round(sum(perm_prom_por_grupo.values()) / len(perm_prom_por_grupo), 1)
                          if perm_prom_por_grupo else None)
+                nota_arreo = "" if arreo_min else " · sin arreo configurado"
                 poner("horas_ordeno", horas,
                       falta=sin_sesiones,
-                      detalle=(f"{len(perm_prom_por_grupo)} rodeo(s)"
-                               + ("" if arreo_min else " · sin arreo configurado")
+                      detalle=(f"promedio de {len(perm_prom_por_grupo)} rodeo(s)" + nota_arreo
                                if horas is not None else None))
+
+                # TOTAL de la sala: la SUMA de todos los rodeos, que es otra
+                # pregunta que el promedio de arriba —ese dice cuánto le lleva a
+                # UNA vaca, este cuánto le consume al TAMBO—. Se suma por día y
+                # recién después se promedian los días: sumar los promedios por
+                # rodeo daría distinto cuando algún rodeo no ordeña todos los
+                # días, y este es EXACTAMENTE el orden que usa la tarjeta de
+                # Rendimiento Sala (ver permSumaPorDia en templates/index.html).
+                # Que las dos pantallas muestren el mismo número no es un
+                # detalle: es la regla del tablero.
+                sumas_dia = [sum(dia.values()) for dia in perm_por_dia_grupo.values() if dia]
+                horas_total = (round(sum(sumas_dia) / len(sumas_dia), 1) if sumas_dia else None)
+                poner("horas_ordeno_total", horas_total,
+                      falta=sin_sesiones,
+                      detalle=(f"suma de {len(perm_prom_por_grupo)} rodeo(s)" + nota_arreo
+                               if horas_total is not None else None))
     except Exception as exc:  # noqa: BLE001
-        for c in ("horas_ordeno", "pct_identificacion", "ordenos_hora",
-                  "litros_hora", "vacas_puesto", "vacas_persona"):
+        for c in ("horas_ordeno", "horas_ordeno_total", "pct_identificacion",
+                  "ordenos_hora", "litros_hora", "vacas_puesto", "vacas_persona"):
             poner(c, falta=f"Error al leer Rendimiento Sala: {exc}")
 
     # --- RCS: vacas altas y crónicas ---------------------------------------

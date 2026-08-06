@@ -109,16 +109,41 @@ INDICADORES = [
         "ayuda": ("Nota de la última rutina de ordeño completa, combinando "
                   "colocación, flujo, repasos y bimodalidad."),
     },
+    # Las dos tarjetas de horas son la MISMA cuenta mirada de dos formas, y por
+    # eso van juntas: sin la de al lado, cada una se lee mal. La de arriba dice
+    # cuánto le lleva el ordeñe a UNA VACA; la de abajo, cuánto le consume al
+    # TAMBO. Con seis rodeos, 2,8 h por vaca son unas 17 h de ordeñe en el día.
     {
         "clave": "horas_ordeno",
-        "nombre": "Horas de ordeño por día",
+        "nombre": "Horas de ordeño por día — promedio por rodeo",
+        "unidad": "h/día", "decimales": 1,
+        # Punto de partida tomado de lo que ya tenía configurado La Ponderosa
+        # (6 y 8), no de un manual. Como todos los umbrales del tablero, se
+        # ajusta por tambo desde ⚙ Configuración.
+        "direccion": "bajo_mejor", "verde": 6, "rojo": 8,
+        "fuente": "rendimiento", "pagina": "rendimiento",
+        "destino": "Rendimiento Sala",
+        "grupo": "Ordeño",
+        "ayuda": ("Cuántas horas por día le lleva el ordeñe a una vaca de un rodeo "
+                  "PROMEDIO: arreo + espera + ordeño, o sea el tiempo que está fuera "
+                  "del corral sin comer ni descansar. Se suman las sesiones del día y "
+                  "se promedia entre rodeos. NO es lo que trabaja la sala — para eso "
+                  "está la tarjeta del total."),
+    },
+    {
+        "clave": "horas_ordeno_total",
+        "nombre": "Horas de ordeño por día — total de la sala",
         "unidad": "h/día", "decimales": 1,
         "direccion": "bajo_mejor", "verde": 12, "rojo": 18,
         "fuente": "rendimiento", "pagina": "rendimiento",
         "destino": "Rendimiento Sala",
         "grupo": "Ordeño",
-        "ayuda": ("Cuántas horas por día está trabajando la sala, sumando las "
-                  "sesiones. Incluye el tiempo de arreo configurado."),
+        "ayuda": ("Cuántas horas del día le consume el ordeñe al tambo entero: la "
+                  "SUMA de todos los rodeos, no el promedio. Es el mismo número que "
+                  "la tarjeta «Horas/día en ordeño (suma de todos los rodeos)» de "
+                  "Rendimiento Sala. Se suma por día y recién después se promedian "
+                  "los días, para que un día con un rodeo sin ordeñar no infle el "
+                  "total."),
     },
     {
         "clave": "ordenos_hora",
