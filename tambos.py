@@ -79,6 +79,16 @@ TAMBOS = {
         "rebanos": [1],
     },
 
+    # La Martina (Allflex/SenseHub). Copia restaurada en esta PC desde el backup
+    # del 06/08/2026 — su DDM es una base APARTE (`DDM_LAMARTINA`), no el rebaño
+    # de otro tambo dentro de la misma: acá `Herd` tiene una sola fila.
+    "lamartina_local": {
+        "nombre": "La Martina (local)",
+        "server": "localhost\\DELPRO",
+        "database": "DDM_LAMARTINA",
+        "auth": "windows",
+    },
+
     # --- Plantilla para agregar otro tambo (descomentar y completar) ---
     # "don_german": {
     #     "nombre": "Don Germán",

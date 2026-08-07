@@ -67,7 +67,8 @@ SALAS_LABEL = {"rotativa": "Rotativa", "convencional": "Convencional (espina de 
 # siempre. No se valida al guardar: el tambo puede querer dejar la ruta puesta
 # antes de copiar el archivo, y bloquear el guardado por eso sería molesto sin
 # necesidad — la pantalla informa el estado con `estado_rutas()`.
-_CAMPOS_TEXTO = ("nombre", "ip", "usuario", "contrasena", "ruta_toros", "ruta_precios")
+_CAMPOS_TEXTO = ("nombre", "ip", "usuario", "contrasena", "ruta_toros", "ruta_precios",
+                 "sensehub_ip")
 _CAMPOS_BOOL = ("tiene_bcs", "tiene_podal")
 _CAMPOS_ENUM = {
     "sistema_actividad": SISTEMAS_ACTIVIDAD,
@@ -100,6 +101,12 @@ DEFAULT = {
     "arreo_min": None,
     "ruta_toros": None,
     "ruta_precios": None,
+    # IP del controlador SenseHub/Allflex en la red del tambo (ver
+    # `sensehub.py`). Va acá y no como constante porque CAMBIA: los dos tambos
+    # mirados tenían una IP distinta en el caché de 2025 que hoy. El usuario y
+    # la contraseña NO se guardan acá: van por variable de entorno
+    # (`SENSEHUB_USER_<TAMBO>` / `SENSEHUB_PWD_<TAMBO>`).
+    "sensehub_ip": None,
 }
 
 # Nombres que se buscan cuando la ruta configurada es una CARPETA. Los de toros

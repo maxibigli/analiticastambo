@@ -20,6 +20,7 @@ import auth
 import checklist
 import cicla
 import conciliacion
+import cruce_sensehub
 import conversion_historica
 import config_alertas
 import configuracion_tambo
@@ -52,6 +53,7 @@ import rutina
 import sala_convencional
 import salas
 import salud
+import sensehub
 import simulador
 import tablero
 import tambos
@@ -1474,6 +1476,135 @@ def api_checklist_guardar():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify(res)
+
+
+# --- Cruce SenseHub (collares Allflex) x DelPro -----------------------------
+
+SQL_PADRON_SENSEHUB = """
+    SELECT b.Number AS rp, g.Name AS grupo, b.OID AS oid
+    FROM BasicAnimal b
+    LEFT JOIN AnimalGroup ag ON ag.OID = b.[Group]
+    LEFT JOIN AbstractGroup g ON g.OID = ag.OID
+    WHERE b.GCRecord IS NULL AND b.ExitDate IS NULL
+      AND {filtro}
+"""
+
+
+@app.get("/api/sensehub/cruce")
+@auth.requiere_rol("admin")
+def api_sensehub_cruce():
+    """Concilia el padrón de los collares con el de DelPro y cruza qué vaca
+    marca cada sistema.
+
+    Se resuelve en DOS PASOS INDEPENDIENTES a propósito. La conciliación de
+    identidad solo necesita DDM y el padrón de SenseHub, así que se sirve
+    aunque el índice de salud todavía se esté calculando o el controlador no
+    conteste. Si se pidiera todo junto, un problema de red dejaría la pantalla
+    en blanco cuando lo más útil —cuántas vacas emparejan— ya se podía mostrar.
+    """
+    tambo = _tambo_del_request()
+    cfg = configuracion_tambo.config_de(tambo)
+    ip = cfg.get("sensehub_ip")
+    if not ip:
+        return jsonify({"error": "Este tambo no tiene configurada la IP del controlador "
+                                 "SenseHub (⚙ Configuración)."}), 400
+
+    salida = {"tambo": tambo, "ip": ip,
+              "usuario_env": sensehub.variable_usuario(tambo),
+              "password_env": sensehub.variable_password(tambo)}
+
+    # 1) Padrón de DelPro. El filtro por rebaño es OBLIGATORIO cuando la base
+    #    la comparten varios tambos (la de La Ponderosa tiene tres): sin él
+    #    entran vacas de otro establecimiento y el cruce "mejora" con animales
+    #    que no son de acá.
+    #
+    #    Pero ese filtro deduce el rebaño desde `CMSGroupMilkSetting`, que es
+    #    una tabla de la ROTATIVA y no existe en una instalación Alpro — es el
+    #    caso de La Martina, donde la consulta filtrada muere con "Invalid
+    #    object name". Así que: si la base tiene UN SOLO rebaño no hace falta
+    #    filtrar y se sigue sin él; si tiene varios, no se puede seguir.
+    try:
+        h = db.run_query("SELECT COUNT(*) AS n FROM Herd", tambo=tambo, max_rows=5)
+        n_rebanos = h["rows"][0][0] if h["rows"] else 1
+    except Exception:  # noqa: BLE001
+        n_rebanos = None
+    salida["rebanos_en_la_base"] = n_rebanos
+
+    data = None
+    try:
+        herd = rebano.por_defecto(tambo)
+        data = db.run_query(SQL_PADRON_SENSEHUB.format(filtro=rebano.filtro("b", herd)),
+                            tambo=tambo, max_rows=20000)
+    except Exception as exc:  # noqa: BLE001
+        if n_rebanos == 1:
+            salida["sin_filtro_de_rebano"] = ("La base tiene un solo rebaño, así que se leyó "
+                                              "el padrón completo sin filtrar.")
+            try:
+                data = db.run_query(SQL_PADRON_SENSEHUB.format(filtro="1 = 1"),
+                                    tambo=tambo, max_rows=20000)
+            except Exception as exc2:  # noqa: BLE001
+                return jsonify({**salida,
+                                "error": f"No se pudo leer el padrón de DelPro: {exc2}"}), 502
+        else:
+            return jsonify({**salida, "error":
+                            f"No se pudo determinar el rebaño de este tambo y la base tiene "
+                            f"{n_rebanos} rebaños: sin filtrar entrarían vacas de otro "
+                            f"establecimiento. Detalle: {exc}"}), 502
+    i = {c: k for k, c in enumerate(data["columns"])}
+    padron_dp = [{"rp": r[i["rp"]], "grupo": r[i["grupo"]]} for r in data["rows"]]
+    salida["animales_delpro"] = len(padron_dp)
+
+    # 2) SenseHub. Todo lo que dependa del controlador va con su propio
+    #    try/except: que no conteste no puede tumbar la pantalla entera.
+    ctrl = sensehub.Controlador(ip, tambo)
+    try:
+        ctrl.login()
+        padron_sh = ctrl.animales()
+        salida["animales_sensehub"] = len(padron_sh)
+    except sensehub.SenseHubError as e:
+        return jsonify({**salida, "error_sensehub": str(e),
+                        "ayuda": ("El padrón de collares no se pudo leer, así que no hay "
+                                  "nada que conciliar. Revisá la IP, que el equipo esté "
+                                  "encendido y las variables de entorno con el usuario y "
+                                  "la contraseña.")})
+
+    conc = cruce_sensehub.conciliar(padron_sh, padron_dp)
+    salida["conciliacion"] = {k: v for k, v in conc.items() if k != "emparejadas"}
+    salida["emparejadas"] = len(conc["emparejadas"])
+
+    # 3) Marcas de salud de cada sistema. Las dos por separado y opcionales.
+    marcadas = {}
+    try:
+        marcadas = cruce_sensehub.marcadas_por_sensehub(
+            ctrl.exportar_salud(), [a for a in ctrl.alertas() if a.get("es_salud")])
+        salida["marcadas_sensehub"] = len(marcadas)
+    except sensehub.SenseHubError as e:
+        salida["error_marcas"] = str(e)
+
+    fichas = []
+    con_alarmas = tambos.tipo_sala(tambo) == "rotativa"
+    sql_v2 = salud.sql_atencion_v2(salas.de(tambo).sql_grupos(), con_alarmas)
+    datos_v2, _ = _cache_get(_clave(tambo, "salud_atencion_v2"), allow_stale=True)
+    if datos_v2 is None:
+        _refresh_async(tambo, "salud_atencion_v2", sql_v2)
+        salida["salud_calculando"] = True
+    else:
+        try:
+            fichas = salud.calcular_atencion_v2(datos_v2["columns"], datos_v2["rows"],
+                                                top=None) or []
+        except Exception as exc:  # noqa: BLE001
+            salida["error_salud"] = str(exc)
+
+    if marcadas or fichas:
+        cruce = cruce_sensehub.cruzar_salud(conc, marcadas, fichas)
+        salida["cruce"] = {k: v for k, v in cruce.items() if k != "filas"}
+        # Solo las filas que dicen algo: las que marca alguno de los dos.
+        salida["filas"] = [f for f in cruce["filas"]
+                           if f["sensehub_marca"] or f["lactia_marca"]]
+        salida["resumen"] = cruce_sensehub.resumen(conc, cruce)
+    else:
+        salida["resumen"] = cruce_sensehub.resumen(conc)
+    return jsonify(salida)
 
 
 @app.get("/api/checklist/plantilla_completa")

@@ -586,6 +586,7 @@
     {% if 'iot' in paginas_visibles %}<button class="nav-item" data-pagina="iot">📡 <span>Monitoreo IoT</span></button>{% endif %}
     {% if 'tareas' in paginas_visibles %}<button class="nav-item" data-pagina="tareas">✅ <span>Tareas pendientes</span></button>{% endif %}
     {% if 'checklist' in paginas_visibles %}<button class="nav-item" data-pagina="checklist">📋 <span>Check-list de control</span></button>{% endif %}
+    {% if 'sensehub' in paginas_visibles %}<button class="nav-item" data-pagina="sensehub">📶 <span>Collares SenseHub</span></button>{% endif %}
     {% if 'consultas' in paginas_visibles %}<button class="nav-item" data-pagina="consultas">🔍 <span>Consultas e IA</span></button>{% endif %}
     {% if 'configuracion' in paginas_visibles %}<button class="nav-item" data-pagina="configuracion">⚙ <span>Configuración</span></button>{% endif %}
   </nav>
@@ -2693,6 +2694,37 @@
     <div style="margin-top:14px">
       <div class="aviso" style="margin-bottom:6px">Cargas que faltan</div>
       <div style="overflow-x:auto;margin-top:10px" id="cl-faltantes"></div>
+    </div>
+  </section>
+  </div>
+
+  <div class="page" id="page-sensehub" hidden>
+  <section class="card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">📶 Collares SenseHub × DelPro</h2>
+      <span class="aviso">Qué vacas marca cada sistema, y si son las mismas vacas.</span>
+      <button id="sh-aplicar" style="margin-left:auto">Actualizar</button>
+    </div>
+    <div class="aviso" id="sh-info" style="margin-top:8px"></div>
+    <div id="sh-resumen" style="margin-top:10px"></div>
+    <div id="sh-kpis" class="kpis" style="margin-top:10px"></div>
+
+    <div style="margin-top:14px">
+      <div class="aviso" style="margin-bottom:6px">Vacas marcadas por alguno de los dos</div>
+      <p class="explica" style="margin-top:0">
+        <b>No se comparan los dos índices como números</b>, y es la trampa de este cruce: el
+        índice de SenseHub va de 0 a 100 y <b>más bajo es peor</b>; el de LactIA va de 0 a 10
+        y <b>más alto es peor</b>. Miden cosas distintas —rumia y actividad contra leche,
+        conductividad y células— y ninguno es la verdad. Lo único comparable es si cada
+        sistema marcó o no a la vaca.
+        <br>Que una la marque uno solo <b>no significa que el otro se equivocó</b>. El número
+        que sirve es cuántas ve cada uno que el otro no ve: si el collar no agrega vacas
+        nuevas, no justifica su costo; y al revés.
+        <br>El acuerdo se mide <b>solo sobre las vacas que los dos pueden ver</b>. Una sin
+        collar no puede ser marcada por SenseHub, y contarla como desacuerdo mediría
+        cobertura, no criterio.
+      </p>
+      <div style="overflow-x:auto;margin-top:10px" id="sh-tabla"></div>
     </div>
   </section>
   </div>
@@ -7823,6 +7855,89 @@ function pintarDetalleTarea() {
   document.getElementById('btn-csv-tarea').addEventListener('click', () => exportarCSV(t.columns, t.rows, 'tarea_' + t.id + '.csv'));
 }
 
+// --- Collares SenseHub x DelPro --------------------------------------------
+// El endpoint resuelve la conciliación de identidad y el cruce de salud por
+// separado, así que esta pantalla puede mostrar lo primero aunque el
+// controlador no conteste o el índice de salud todavía se esté calculando.
+async function cargarSenseHub() {
+  const info = document.getElementById('sh-info');
+  info.textContent = 'Consultando el controlador…';
+  ['sh-resumen', 'sh-kpis', 'sh-tabla'].forEach(id => document.getElementById(id).innerHTML = '');
+  try {
+    const d = await pedirJSON('/api/sensehub/cruce?tambo=' + encodeURIComponent(tamboActual));
+    pintarSenseHub(d);
+  } catch (e) {
+    info.innerHTML = `<div class="aviso err">${escHtml(e.message)}</div>`;
+  }
+}
+document.getElementById('sh-aplicar').addEventListener('click', cargarSenseHub);
+
+function pintarSenseHub(d) {
+  const info = document.getElementById('sh-info');
+  info.innerHTML = `Controlador <b>${escHtml(d.ip || '—')}</b> · `
+    + `${fmt(d.animales_delpro)} animales en DelPro`
+    + (d.animales_sensehub != null ? ` · ${fmt(d.animales_sensehub)} con collar` : '');
+
+  // Sin padrón de collares no hay nada que conciliar: se dice qué falta y se
+  // corta, en vez de mostrar tablas vacías que parecen un resultado.
+  if (d.error_sensehub) {
+    document.getElementById('sh-resumen').innerHTML =
+      `<div class="aviso err"><b>No se pudo leer el controlador.</b> ${escHtml(d.error_sensehub)}
+       <br>${escHtml(d.ayuda || '')}
+       <br>Variables de entorno esperadas: <code>${escHtml(d.usuario_env)}</code> y
+       <code>${escHtml(d.password_env)}</code>.</div>`;
+    return;
+  }
+
+  const c = d.conciliacion || {};
+  document.getElementById('sh-resumen').innerHTML = (d.resumen || []).map(l => {
+    const clase = l.nivel === 'problema' ? 'err' : (l.nivel === 'ok' ? 'ok' : 'pend');
+    const color = { err: 'var(--critical, #d03b3b)', ok: 'var(--ok, #1baf7a)', pend: '#c98500' }[clase];
+    return `<div class="aviso" style="border-left:4px solid ${color};padding-left:10px;margin-bottom:6px">
+      ${escHtml(l.texto)}</div>`;
+  }).join('');
+
+  const m = (d.cruce || {}).matriz;
+  const tiles = [
+    ['Emparejadas por RP', fmt(d.emparejadas)],
+    ['Cobertura de los collares', c.cobertura_sensehub != null ? c.cobertura_sensehub + '%' : '—'],
+    ['Solo con collar', fmt((c.solo_sensehub || []).length)],
+    ['Solo en DelPro', fmt((c.solo_delpro || []).length)],
+  ];
+  if (m) tiles.push(
+    ['Marca el collar', fmt(m.marcadas_sensehub)],
+    ['Marca LactIA', fmt(m.marcadas_lactia)],
+    ['Coinciden', `${fmt(m.ambos)}${m.solapamiento_pct != null ? ' (' + m.solapamiento_pct + '%)' : ''}`],
+    ['Aporta solo el collar', fmt(m.solo_sensehub)]);
+  document.getElementById('sh-kpis').innerHTML = tiles.map(([l, v]) =>
+    `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
+
+  if (d.salud_calculando) {
+    document.getElementById('sh-tabla').innerHTML =
+      '<div class="aviso">El índice de salud de LactIA se está calculando. '
+      + 'Volvé a actualizar en un rato para ver el cruce.</div>';
+    return;
+  }
+  const filas = d.filas || [];
+  document.getElementById('sh-tabla').innerHTML = filas.length ? `
+    <table><thead><tr>
+      <th>RP</th><th>Rodeo (collar)</th><th>Rodeo (DelPro)</th>
+      <th>Collar</th><th>Índice SH</th><th>LactIA</th><th>Score</th><th>Por qué</th>
+    </tr></thead><tbody>${filas.map(f => `<tr>
+      <td>${escHtml(f.rp)}</td>
+      <td>${escHtml(f.grupo_sensehub || '')}</td>
+      <td>${escHtml(f.grupo_delpro || '')}</td>
+      <td style="text-align:center">${f.sensehub_marca ? '⚠' : ''}</td>
+      <td style="text-align:right">${f.sensehub_indice != null ? fmt(f.sensehub_indice) : ''}</td>
+      <td style="text-align:center">${f.lactia_marca ? '⚠' : (f.lactia_evaluada ? '' : '·')}</td>
+      <td style="text-align:right">${f.lactia_score != null ? fmt(f.lactia_score) : ''}</td>
+      <td>${escHtml([...(f.sensehub_motivos || []), ...(f.lactia_motivos || [])].join(' · '))}</td>
+    </tr>`).join('')}</tbody></table>
+    <div class="aviso" style="margin-top:6px">Un punto en la columna LactIA significa que esa
+      vaca no tiene ficha: no es que no la marcó, es que no la evaluó.</div>`
+    : '<div class="aviso">Ningún sistema marcó vacas en este momento.</div>';
+}
+
 // --- Check-list de control: el panel de lo que carga el operario -----------
 // Los datos NO salen de DDM: salen de `checklist.db`, la base propia que
 // escribe la mini app del celular (ver checklist.py). Por eso esta pantalla
@@ -9576,7 +9691,7 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'consultas', 'configuracion']
+const PAGINAS = ['dashboard', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'consultas', 'configuracion']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -9868,6 +9983,7 @@ function cargarDatosDePagina(id) {
   else if (id === 'salud') cargarSalud();
   else if (id === 'tareas') cargarTareas();
   else if (id === 'checklist') cargarChecklist();
+  else if (id === 'sensehub') cargarSenseHub();
   else if (id === 'consultas') cargarPredefinidas();
   else if (id === 'tablero') cargarTablero();
   else if (id === 'configuracion') cargarConfiguracion();
