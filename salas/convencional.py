@@ -38,6 +38,21 @@ import sala_convencional
 
 NOMBRE = "Convencional"
 
+# Esta sala NO registra el instante en que se COLOCA la pezonera. El único
+# sello anterior a la leche es `SessionMilkYieldEx.IdTimestamp`, y la vaca se
+# identifica AL ENTRAR a la sala, no en el puesto: medido en La Martina el
+# 10/08/2026 sobre 2.027 ordeños, el tramo identificación→arranque de leche
+# promedia 300 segundos y baja hasta -434 (la ID cae después de que empezó a
+# bajar la leche). O sea que ese tramo es la espera en el puesto, no la rutina
+# de preparación, y `MilkStartTimestamp` resulta ser el mismo instante que
+# `BeginTime`, así que no hay un tercer sello para separarlas.
+#
+# Puntuarlo igual daba 0 de 727 vacas "en hora" y hundía el score a 37 contra
+# el ~81 de la rotativa: un número que acusa al tambo de trabajar mal cuando el
+# dato no dice eso. Con esto el componente se excluye y su peso se reparte
+# entre los demás, igual que "ocupación" (ver `_sin_ocupacion`).
+MIDE_COLOCACION = False
+
 
 def sql_grupos() -> str:
     """Grupos con producción real y sostenida, con nombre y número — mismo
@@ -176,13 +191,15 @@ def analizar_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
     # depende de `puestos_por_lado`, ver `_sin_ocupacion`) — queda en la firma
     # solo para cumplir la interfaz común (ver salas/rotativa.py).
     return rutina.analizar_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
-                               _sin_ocupacion, _huecos_tandas, umbral_prep_s)
+                               _sin_ocupacion, _huecos_tandas, umbral_prep_s,
+                               mide_colocacion=MIDE_COLOCACION)
 
 
 def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                 max_sesiones=None, nombres=None, umbral_prep_s=None):
     return rutina.resumen_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
-                              _sin_ocupacion, _huecos_tandas, umbral_prep_s)
+                              _sin_ocupacion, _huecos_tandas, umbral_prep_s,
+                              mide_colocacion=MIDE_COLOCACION)
 
 
 def sql_rendimiento(desde: str, hasta: str) -> str:

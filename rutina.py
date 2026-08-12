@@ -1025,7 +1025,8 @@ def _fusionar_hasta(bloques: list, maximo: int) -> list:
 
 def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = None,
                  max_sesiones: int | None = None, nombres: dict | None = None,
-                 ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None) -> dict:
+                 ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None,
+                 mide_colocacion: bool = True) -> dict:
     """Separa las visitas del día (+ margen) en sesiones y puntúa cada una.
     Solo se devuelven las sesiones que se solapan con el día pedido.
 
@@ -1090,7 +1091,8 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
         del_dia.append(vs)
     if max_sesiones:
         del_dia = _fusionar_hasta(del_dia, max_sesiones)
-    sesiones = [_analizar_sesion(vs, pesos, nombres, ocupacion_fn, huecos_fn, umbral_prep_s) for vs in del_dia]
+    sesiones = [_analizar_sesion(vs, pesos, nombres, ocupacion_fn, huecos_fn, umbral_prep_s,
+                                 mide_colocacion) for vs in del_dia]
     sesiones.sort(key=lambda s: s["inicio"])
     for i, s in enumerate(sesiones):
         s["indice"] = i
@@ -1102,14 +1104,15 @@ DETALLE_CLAVES = ["prep_90s", "lerdas", "entre_grupos", "manejo_corral", "mezcla
 
 def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = None,
                 max_sesiones: int | None = None, nombres: dict | None = None,
-                ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None):
+                ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None,
+                mide_colocacion: bool = True):
     """Reduce las sesiones de un día a UN punto (promedio ponderado por vacas)
     para graficar la evolución de la rutina a lo largo del tiempo. None si el
     día no tiene ordeños (fin de semana sin datos, feriado, hueco de la copia).
-    `grupos`/`pesos`/`max_sesiones`/`ocupacion_fn`/`huecos_fn`/`umbral_prep_s`:
-    igual que en analizar_dia."""
+    `grupos`/`pesos`/`max_sesiones`/`ocupacion_fn`/`huecos_fn`/`umbral_prep_s`/
+    `mide_colocacion`: igual que en analizar_dia."""
     dia = analizar_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
-                       ocupacion_fn, huecos_fn, umbral_prep_s)
+                       ocupacion_fn, huecos_fn, umbral_prep_s, mide_colocacion)
     sesiones = dia["sesiones"]
     total_vacas = sum(s["vacas"] for s in sesiones)
     if not sesiones or total_vacas == 0:
@@ -1246,8 +1249,21 @@ def _huecos_rotativa(visitas: list, duracion_seg: float, nombres: dict | None = 
 
 
 def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = None,
-                     ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None) -> dict:
-    """`ocupacion_fn(visitas, duracion_seg) -> {label, score, info, hallazgos}`:
+                     ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None,
+                     mide_colocacion: bool = True) -> dict:
+    """`mide_colocacion`: si esta sala tiene un instante real de COLOCACIÓN de
+    la pezonera. En la rotativa sí (`VerifiedTime`). En una sala de tandas tipo
+    Alpro NO: el único sello previo a la leche es la identificación, y la vaca
+    se identifica AL ENTRAR a la sala, no en el puesto. Medido en La Martina el
+    10/08/2026 sobre 2.027 ordeños, ese tramo promedia **300 segundos** y llega
+    a **-434** (la ID queda después del arranque de leche), o sea que incluye
+    toda la espera en el puesto y a veces ni siquiera es un intervalo válido.
+    Puntuar "colocación ≤90s" con eso daba 0/727 vacas en hora y hundía el
+    score a 37 contra el ~81 de la rotativa: un número que dice que el tambo
+    trabaja mal cuando el dato no lo dice. Con False el componente se excluye y
+    su peso se redistribuye, igual que "ocupación".
+
+    `ocupacion_fn(visitas, duracion_seg) -> {label, score, info, hallazgos}`:
     el componente "ocupación" es lo único que depende de la mecánica de la
     sala (ver `_ocupacion_rotativa`). None = el de la rotativa, para no
     cambiarle el comportamiento a ningún llamador existente. Puede devolver
@@ -1283,7 +1299,9 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     # se excluye del score en vez de penalizar (ver más abajo).
     cumplen = sum(1 for v in visitas if v["cumple_90"])
     frac_sin_coloc = sum(1 for v in visitas if v["hora_coloc"] is None) / len(visitas)
-    if frac_sin_coloc >= UMBRAL_SIN_DATOS_PREP:
+    if not mide_colocacion or frac_sin_coloc >= UMBRAL_SIN_DATOS_PREP:
+        # Dos motivos distintos para no evaluar, y el `info` de más abajo los
+        # distingue: la sala no mide colocación, o ese día faltó el dato.
         s1 = None
     else:
         s1 = 100.0 * sum(_credito_prep(v["prep_seg"], umbral_prep_s) for v in visitas) / len(visitas)
@@ -1393,8 +1411,12 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
              "info": (f"{cumplen}/{len(visitas)} exactas dentro de los {umbral_prep_s}s (pasarse por "
                       "poco no resta todo; recién pesa fuerte pasados los "
                       f"{round((umbral_prep_s + TOLERANCIA_PREP_S) / 60, 1)} min).") if s1 is not None else
-                     "Sin datos de colocación suficientes ese día (falla de instrumentación/lectura, "
-                     "no se evalúa para no penalizar la rutina injustamente)."},
+                     ("Esta sala no registra el momento de COLOCACIÓN de la pezonera: la vaca se "
+                      "identifica al entrar, no en el puesto, así que ese tramo incluye toda la "
+                      "espera y no mide la rutina. No se evalúa (su peso se reparte entre el resto)."
+                      if not mide_colocacion else
+                      "Sin datos de colocación suficientes ese día (falla de instrumentación/lectura, "
+                      "no se evalúa para no penalizar la rutina injustamente).")},
             {"clave": "lerdas", "label": "Sin vacas lerdas", "valor": round(s2),
              "peso": pesos["lerdas"],
              "info": (f"{lerdas} vaca(s) con ordeño 50%+ más largo que la mediana "
