@@ -25,6 +25,11 @@ TOLERANCIA_PREP_S = 90   # zona de gracia: pasado el objetivo, el crédito baja 
 CREDITO_SIN_COLOCAR = 0.3  # sin dato de colocación: puede ser falla de lectura, no
                            # necesariamente mal manejo, así que no cuenta como fracaso total
 UMBRAL_SIN_DATOS_PREP = 0.8  # si esta fracción o más de la sesión no tiene colocación
+# Peso mínimo (sobre 100) que tiene que quedar VIVO para animarse a publicar un
+# score. Ver la nota en `_analizar_sesion`: por debajo de esto lo que queda no
+# califica la rutina, y además tiende a dar alto porque los componentes que
+# sobreviven son los benignos.
+PESO_MINIMO_SCORE = 50
                              # registrada, el componente no se evalúa ese día (se excluye)
 FACTOR_HUECO = 3         # un gap > mediana de la sesión * este factor cuenta como "hueco"
 UMBRAL_HUECO_MIN_S = 20  # piso del umbral, para sesiones con ritmo naturalmente lento
@@ -1102,6 +1107,20 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
 DETALLE_CLAVES = ["prep_90s", "lerdas", "entre_grupos", "manejo_corral", "mezcla_rodeos", "ocupacion"]
 
 
+def _score_ponderado(sesiones: list):
+    """Score del día: promedio de las sesiones ponderado por vacas.
+
+    Las sesiones SIN score (la sala no registra lo suficiente como para
+    calificar, ver `_analizar_sesion`) se saltean en vez de contarse como cero
+    — un cero arrastraría el día entero y diría algo que el dato no dice. Si
+    ninguna sesión tiene score, el día tampoco."""
+    con_score = [s for s in sesiones if s.get("score") is not None]
+    vacas = sum(s["vacas"] for s in con_score)
+    if not vacas:
+        return None
+    return round(sum(s["score"] * s["vacas"] for s in con_score) / vacas)
+
+
 def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = None,
                 max_sesiones: int | None = None, nombres: dict | None = None,
                 ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None,
@@ -1119,7 +1138,7 @@ def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = Non
         return None
     duracion_total_min = sum(s["duracion_min"] for s in sesiones)
     punto = {"fecha": fecha, "vacas": total_vacas, "num_sesiones": len(sesiones),
-             "score": round(sum(s["score"] * s["vacas"] for s in sesiones) / total_vacas),
+             "score": _score_ponderado(sesiones),
              "vacas_por_hora": (round(total_vacas / (duracion_total_min / 60), 1)
                                 if duracion_total_min else None),
              "retiradas_forzadas": sum(s["retiradas_forzadas"] for s in sesiones)}
@@ -1353,8 +1372,17 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                    "manejo_corral": s4, "mezcla_rodeos": s5, "ocupacion": s6}
     disponibles = {c: v for c, v in componentes.items() if v is not None}
     peso_total = sum(pesos[c] for c in disponibles)
+    # SI QUEDA MUY POCO PESO VIVO, NO HAY SCORE. Excluir un componente que no
+    # aplica es correcto, pero con la mitad del peso afuera lo que queda ya no
+    # es una calificación de la rutina: es el promedio de lo poco que se pudo
+    # medir, y encima sale ALTO porque los componentes que sobreviven suelen
+    # ser los benignos. Medido en La Martina: al excluir colocación, ocupación
+    # y los dos de huecos quedaban 2 de 6 componentes (20% del peso) y el score
+    # saltaba de 37 a 93 — de acusar al tambo injustamente a felicitarlo
+    # injustamente. Ninguna de las dos cosas es un dato. None = "no se puede
+    # calificar con lo que registra esta sala".
     score = (round(sum(pesos[c] * v for c, v in disponibles.items()) / peso_total)
-             if peso_total else 0)
+             if peso_total >= PESO_MINIMO_SCORE else None)
 
     # Colores por grupo, en orden de aparición.
     color_de_grupo, grupos = {}, []
@@ -1402,7 +1430,8 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     return {
         "inicio": inicio.isoformat(), "fin": fin.isoformat(),
         "duracion_min": round(duracion_seg / 60),
-        "vacas": len(visitas), "score": max(0, min(100, score)),
+        "vacas": len(visitas),
+        "score": max(0, min(100, score)) if score is not None else None,
         "retiradas_forzadas": retiradas_forzadas,
         "detalle": [
             {"clave": "prep_90s", "label": f"Colocación ≤{umbral_prep_s}s",
@@ -1421,9 +1450,15 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
              "peso": pesos["lerdas"],
              "info": (f"{lerdas} vaca(s) con ordeño 50%+ más largo que la mediana "
                       f"({round(mediana_ordeño)}s).") if mediana_ordeño else "Sin datos de duración."},
-            {"clave": "entre_grupos", "label": "Sin tiempos muertos entre grupos", "valor": round(s3),
+            # s3/s4 pueden venir en None: la sala puede no tener cómo separar
+            # una pausa real de un cambio de tanda (ver
+            # `salas.convencional._huecos_tandas`). Se excluyen del score igual
+            # que "ocupación" y "colocación".
+            {"clave": "entre_grupos", "label": "Sin tiempos muertos entre grupos",
+             "valor": round(s3) if s3 is not None else None,
              "peso": pesos["entre_grupos"], "info": huecos["info3"]},
-            {"clave": "manejo_corral", "label": "Manejo de corral (entrada fluida)", "valor": round(s4),
+            {"clave": "manejo_corral", "label": "Manejo de corral (entrada fluida)",
+             "valor": round(s4) if s4 is not None else None,
              "peso": pesos["manejo_corral"], "info": huecos["info4"]},
             {"clave": "mezcla_rodeos", "label": "Sin mezcla de rodeos", "valor": round(s5),
              "peso": pesos["mezcla_rodeos"],

@@ -138,6 +138,34 @@ def _rotaciones_tandas(visitas: list, duracion_seg: float) -> int | None:
     return len(tandas) or None
 
 
+# Qué proporción de los cambios de tanda pueden ser reapariciones antes de dar
+# por inservible la numeración. Con tandas sanas esto es 0: cada tanda entra,
+# se ordeña y no vuelve. San José daba 25 cambios limpios; La Martina, 112 de
+# 143 (78%). El corte en la mitad deja lugar a algún solapamiento puntual entre
+# lados sin tragarse un caso como el de La Martina.
+FRAGMENTACION_MAXIMA = 0.5
+
+
+def _fragmentacion_de_tandas(visitas: list) -> float:
+    """Qué fracción de los cambios de tanda son tandas que YA habían aparecido.
+
+    Es la prueba de si `BatchNo` sirve para segmentar: en una sala de tandas
+    sana, cada tanda ocupa un tramo continuo del tiempo. Si el mismo número va
+    y viene, no está identificando un grupo de vacas."""
+    cambios, repetidas, vistas, actual = 0, 0, set(), None
+    for v in visitas:
+        clave = (v.get("lado"), v.get("bloque"))
+        if clave == actual:
+            continue
+        if actual is not None:
+            cambios += 1
+            if clave in vistas:
+                repetidas += 1
+        vistas.add(clave)
+        actual = clave
+    return repetidas / cambios if cambios else 0.0
+
+
 def _huecos_tandas(visitas: list, duracion_seg: float, nombres: dict | None = None) -> dict:
     """Análogo de `rutina._huecos_rotativa`, pero NO se puede reusar tal cual:
     esa versión compara todo contra UNA mediana de sesión, y en una sala de
@@ -151,7 +179,33 @@ def _huecos_tandas(visitas: list, duracion_seg: float, nombres: dict | None = No
 
     Acá el corte es CAMBIO DE TANDA (lado, bloque), no cambio de grupo —la
     pausa estructural de esta sala es entre tandas, no entre rodeos—, y cada
-    lado del corte usa SU PROPIA mediana como referencia."""
+    lado del corte usa SU PROPIA mediana como referencia.
+
+    PERO ESO EXIGE QUE `BatchNo` MARQUE TANDAS DE VERDAD, y no siempre lo hace.
+    En La Martina (10/08/2026, sesión de 731 ordeños) los números de tanda se
+    cortan y REAPARECEN 112 veces sobre 143 cambios: las vacas de una tanda no
+    quedan juntas en el tiempo, ni ordenando por identificación ni por arranque
+    de leche. Con eso, lo que la métrica llama "cambio de tanda" son en su
+    mayoría reapariciones del mismo número, la mediana entre tandas cae a 5-7s
+    y CUALQUIER pausa real queda marcada como anormal: daba 12.850s "perdidos"
+    y entre_grupos=0 en las tres sesiones, o sea acusar al tambo de perder tres
+    horas por ordeñe cuando el dato no dice eso.
+
+    Cuando la fragmentación pasa de `FRAGMENTACION_MAXIMA`, los dos componentes
+    se devuelven en None y se excluyen del score (mismo mecanismo que
+    "ocupación" y "colocación"). Es preferible no medir a publicar un número
+    que parece un diagnóstico y no lo es."""
+    fragmentacion = _fragmentacion_de_tandas(visitas)
+    if fragmentacion > FRAGMENTACION_MAXIMA:
+        return {
+            "s3": None, "s4": None,
+            "info3": (f"No se puede evaluar: los números de tanda de esta sala no agrupan a las "
+                      f"vacas de forma contigua ({round(100 * fragmentacion)}% de los cambios son "
+                      f"tandas que ya habían aparecido antes), así que no hay forma de separar "
+                      f"una pausa real de un cambio de tanda."),
+            "info4": "No se puede evaluar por el mismo motivo que la fila de arriba.",
+            "hallazgos": [],
+        }
     gaps = [((b["hora_id"] - a["hora_id"]).total_seconds(),
              (a.get("lado"), a.get("bloque")) != (b.get("lado"), b.get("bloque")), a, b)
             for a, b in zip(visitas, visitas[1:])]
