@@ -58,6 +58,12 @@ PESOS = {
     # calificar la preparación — ver `salas.convencional.PESOS`, donde toma los
     # 30 puntos que allá no puede usar "prep_90s".
     "flujo": 0,
+    # Vacas que la sala no logró identificar (el comodín RP 0). PESA 0 POR
+    # DEFECTO por el mismo motivo que "flujo": en la rotativa el % de
+    # identificación ya se muestra en Rendimiento Sala como métrica propia, y
+    # meterlo al score movería el puntaje histórico de ese tambo. Las salas que
+    # lo quieran adentro le ponen peso — ver `salas.convencional.PESOS`.
+    "identificacion": 0,
 }
 
 # Bimodalidad: la vaca arranca a dar leche, la bajada se corta y vuelve. Es el
@@ -1052,7 +1058,10 @@ def _fusionar_hasta(bloques: list, maximo: int) -> list:
 def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = None,
                  max_sesiones: int | None = None, nombres: dict | None = None,
                  ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None,
-                 mide_colocacion: bool = True) -> dict:
+                 mide_colocacion: bool = True,
+                 prep_max_s: int | None = None, prep_label: str = "Colocación",
+                 sin_prep_info: str | None = None,
+                 incluir_sin_grupo: bool = False) -> dict:
     """Separa las visitas del día (+ margen) en sesiones y puntúa cada una.
     Solo se devuelven las sesiones que se solapan con el día pedido.
 
@@ -1076,8 +1085,17 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
         if hora_id is None:
             continue
         grupo = r[idx["grupo"]]
+        # UNA VACA SIN IDENTIFICAR NO TIENE RODEO, y el filtro por rodeo la
+        # tiraba justo cuando es lo que hay que contar: en La Martina el
+        # comodín se lleva el 17% de los ordeños y el score de identificación
+        # daba 100 igual. Las salas que la necesitan piden `incluir_sin_grupo`
+        # (ver `salas.convencional`); en la rotativa sigue filtrando como antes.
+        # CONTRA, y hay que saberla: si se mira UN rodeo suelto, esos ordeños
+        # entran igual aunque no se sepa de qué rodeo eran, así que el % sin
+        # identificar de esa vista es el de la sala entera, no el del rodeo.
         if grupos is not None and grupo not in grupos:
-            continue
+            if not (incluir_sin_grupo and grupo is None):
+                continue
         visitas.append({
             "puesto": r[idx["puesto"]], "rp": r[idx["rp"]], "grupo": grupo,
             "hora_id": hora_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
@@ -1124,14 +1142,16 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
     if max_sesiones:
         del_dia = _fusionar_hasta(del_dia, max_sesiones)
     sesiones = [_analizar_sesion(vs, pesos, nombres, ocupacion_fn, huecos_fn, umbral_prep_s,
-                                 mide_colocacion) for vs in del_dia]
+                                 mide_colocacion, prep_max_s, prep_label,
+                                 sin_prep_info) for vs in del_dia]
     sesiones.sort(key=lambda s: s["inicio"])
     for i, s in enumerate(sesiones):
         s["indice"] = i
     return {"fecha": fecha, "sesiones": sesiones}
 
 
-DETALLE_CLAVES = ["prep_90s", "lerdas", "entre_grupos", "manejo_corral", "mezcla_rodeos", "ocupacion"]
+DETALLE_CLAVES = ["prep_90s", "lerdas", "entre_grupos", "manejo_corral", "mezcla_rodeos",
+                  "ocupacion", "identificacion"]
 
 
 def componente_flujo(visitas: list) -> tuple:
@@ -1180,14 +1200,18 @@ def _score_ponderado(sesiones: list):
 def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = None,
                 max_sesiones: int | None = None, nombres: dict | None = None,
                 ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None,
-                mide_colocacion: bool = True):
+                mide_colocacion: bool = True,
+                prep_max_s: int | None = None, prep_label: str = "Colocación",
+                sin_prep_info: str | None = None,
+                incluir_sin_grupo: bool = False):
     """Reduce las sesiones de un día a UN punto (promedio ponderado por vacas)
     para graficar la evolución de la rutina a lo largo del tiempo. None si el
     día no tiene ordeños (fin de semana sin datos, feriado, hueco de la copia).
     `grupos`/`pesos`/`max_sesiones`/`ocupacion_fn`/`huecos_fn`/`umbral_prep_s`/
     `mide_colocacion`: igual que en analizar_dia."""
     dia = analizar_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
-                       ocupacion_fn, huecos_fn, umbral_prep_s, mide_colocacion)
+                       ocupacion_fn, huecos_fn, umbral_prep_s, mide_colocacion,
+                       prep_max_s, prep_label, sin_prep_info, incluir_sin_grupo)
     sesiones = dia["sesiones"]
     total_vacas = sum(s["vacas"] for s in sesiones)
     if not sesiones or total_vacas == 0:
@@ -1325,7 +1349,9 @@ def _huecos_rotativa(visitas: list, duracion_seg: float, nombres: dict | None = 
 
 def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = None,
                      ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None,
-                     mide_colocacion: bool = True) -> dict:
+                     mide_colocacion: bool = True,
+                     prep_max_s: int | None = None, prep_label: str = "Colocación",
+                     sin_prep_info: str | None = None) -> dict:
     """`mide_colocacion`: si esta sala tiene un instante real de COLOCACIÓN de
     la pezonera. En la rotativa sí (`VerifiedTime`). En una sala de tandas tipo
     Alpro NO: el único sello previo a la leche es la identificación, y la vaca
@@ -1359,7 +1385,15 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     umbral_prep_s = umbral_prep_s or UMBRAL_PREP_S
     pesos = pesos or PESOS
     for v in visitas:
-        v["prep_seg"] = _seg(v["hora_id"], v["hora_coloc"])
+        # `sin_id` y `prep_max_s` son para las salas donde `hora_id` es un
+        # respaldo y no la identificación real (ver `salas.convencional`): ahí
+        # la fila entra igual —es un ordeño de verdad, con leche— pero su tramo
+        # hasta la leche NO se puede puntuar. En la rotativa ninguna de las dos
+        # cosas viaja, así que esto no cambia nada de lo que ya calculaba.
+        v["prep_seg"] = None if v.get("sin_id") else _seg(v["hora_id"], v["hora_coloc"])
+        if (prep_max_s is not None and v["prep_seg"] is not None
+                and not 0 <= v["prep_seg"] <= prep_max_s):
+            v["prep_seg"] = None
         v["ordeño_seg"] = _seg(v["hora_coloc"], v["hora_fin"])
         v["cumple_90"] = v["prep_seg"] is not None and v["prep_seg"] <= umbral_prep_s
 
@@ -1374,12 +1408,31 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     # se excluye del score en vez de penalizar (ver más abajo).
     cumplen = sum(1 for v in visitas if v["cumple_90"])
     frac_sin_coloc = sum(1 for v in visitas if v["hora_coloc"] is None) / len(visitas)
-    if not mide_colocacion or frac_sin_coloc >= UMBRAL_SIN_DATOS_PREP:
-        # Dos motivos distintos para no evaluar, y el `info` de más abajo los
-        # distingue: la sala no mide colocación, o ese día faltó el dato.
+    # Las vacas que la sala NO identificó salen del denominador: sin lectura no
+    # hay instante desde el cual medir, y hacerlas contar como "colocación
+    # dudosa" cobraría dos veces el mismo problema, que ya tiene su propio
+    # componente ("identificacion"). En la rotativa `sin_id` no viaja, así que
+    # esto es la lista completa y el número no cambia.
+    evaluables = [v for v in visitas if not v.get("sin_id")]
+    info_sin_prep = None
+    if not mide_colocacion or frac_sin_coloc >= UMBRAL_SIN_DATOS_PREP or not evaluables:
+        # Tres motivos distintos para no evaluar, y el `info` los distingue: la
+        # sala no registra el instante, el tambo todavía no definió su objetivo
+        # (ver `salas.convencional.UMBRAL_PREP_S`), o ese día faltó el dato.
         s1 = None
+        info_sin_prep = (sin_prep_info if not mide_colocacion else
+                         "Sin datos de colocación suficientes ese día (falla de instrumentación/"
+                         "lectura, no se evalúa para no penalizar la rutina injustamente).")
     else:
-        s1 = 100.0 * sum(_credito_prep(v["prep_seg"], umbral_prep_s) for v in visitas) / len(visitas)
+        s1 = 100.0 * sum(_credito_prep(v["prep_seg"], umbral_prep_s) for v in evaluables) / len(evaluables)
+
+    # --- Vacas que la sala no logró identificar (el comodín RP 0) ------------
+    # Es una falla de lectura de collar/transponder, y en una sala convencional
+    # es además un problema de rutina: la vaca ordeñada sin identificar no
+    # queda registrada como suya (se le pierde la producción, la conductividad
+    # y el control). Ver `salas.convencional.sql_identificacion`.
+    sin_identificar = sum(1 for v in visitas if v.get("rp") == 0)
+    s8 = 100.0 * (1 - sin_identificar / len(visitas))
 
     # --- Vacas lerdas: ordeño bastante más largo que la mediana de la sesión ---
     ordenios = [v["ordeño_seg"] for v in visitas if v["ordeño_seg"] is not None]
@@ -1399,10 +1452,16 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     # en medio del bloque de otro, es un animal suelto que se coló en ese turno
     # (a diferencia de una tanda grande del mismo grupo llegada en dos oleadas,
     # que no es "mezcla" aunque también corte la secuencia).
+    # Se mide sobre `evaluables`, no sobre todas: una vaca que la sala no
+    # identificó NO TIENE RODEO, así que no se puede decir si se coló en el
+    # turno de otro. Contándola, los 2.677 ordeños del comodín de La Martina
+    # aparecían como "mezcla" — un problema de lectura de collar disfrazado de
+    # problema de manejo de corral. En la rotativa `sin_id` no viaja, así que
+    # esta lista es la completa y el número no cambia.
     corridas, ini_corrida = [], 0
-    for i in range(1, len(visitas) + 1):
-        if i == len(visitas) or visitas[i]["grupo"] != visitas[ini_corrida]["grupo"]:
-            corridas.append((visitas[ini_corrida]["grupo"], ini_corrida, i - 1))
+    for i in range(1, len(evaluables) + 1):
+        if i == len(evaluables) or evaluables[i]["grupo"] != evaluables[ini_corrida]["grupo"]:
+            corridas.append((evaluables[ini_corrida]["grupo"], ini_corrida, i - 1))
             ini_corrida = i
     for v in visitas:
         v["mezclada"] = False
@@ -1411,11 +1470,11 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
         for g, ini, fin_c in corridas:
             largo = fin_c - ini + 1
             if largo <= UMBRAL_CORRIDA_MEZCLA:
-                for v in visitas[ini:fin_c + 1]:
+                for v in evaluables[ini:fin_c + 1]:
                     v["mezclada"] = True
                 mezcladas_por_grupo[g] = mezcladas_por_grupo.get(g, 0) + largo
     total_mezcladas = sum(mezcladas_por_grupo.values())
-    s5 = 100.0 * (1 - total_mezcladas / len(visitas))
+    s5 = 100.0 * (1 - total_mezcladas / len(evaluables)) if evaluables else 100.0
 
     # --- Ocupación: componente intercambiable, ver `ocupacion_fn` más arriba ---
     ocupacion = ocupacion_fn(visitas, duracion_seg)
@@ -1428,7 +1487,7 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
 
     componentes = {"prep_90s": s1, "lerdas": s2, "entre_grupos": s3,
                    "manejo_corral": s4, "mezcla_rodeos": s5, "ocupacion": s6,
-                   "flujo": s7}
+                   "flujo": s7, "identificacion": s8}
     disponibles = {c: v for c, v in componentes.items() if v is not None}
     peso_total = sum(pesos[c] for c in disponibles)
     # SI QUEDA MUY POCO PESO VIVO, NO HAY SCORE. Excluir un componente que no
@@ -1493,18 +1552,23 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
         "score": max(0, min(100, score)) if score is not None else None,
         "retiradas_forzadas": retiradas_forzadas,
         "detalle": [
-            {"clave": "prep_90s", "label": f"Colocación ≤{umbral_prep_s}s",
+            # El umbral solo se nombra si de verdad se está midiendo contra él:
+            # con el componente apagado, un "≤90s" en la etiqueta se lee como el
+            # objetivo de esta sala cuando en realidad es el de la rotativa.
+            {"clave": "prep_90s",
+             "label": f"{prep_label} ≤{umbral_prep_s}s" if mide_colocacion else prep_label,
              "valor": round(s1) if s1 is not None else None,
              "peso": pesos["prep_90s"],
-             "info": (f"{cumplen}/{len(visitas)} exactas dentro de los {umbral_prep_s}s (pasarse por "
+             "info": (f"{cumplen}/{len(evaluables)} exactas dentro de los {umbral_prep_s}s (pasarse por "
                       "poco no resta todo; recién pesa fuerte pasados los "
-                      f"{round((umbral_prep_s + TOLERANCIA_PREP_S) / 60, 1)} min).") if s1 is not None else
-                     ("Esta sala no registra el momento de COLOCACIÓN de la pezonera: la vaca se "
-                      "identifica al entrar, no en el puesto, así que ese tramo incluye toda la "
-                      "espera y no mide la rutina. No se evalúa (su peso se reparte entre el resto)."
-                      if not mide_colocacion else
-                      "Sin datos de colocación suficientes ese día (falla de instrumentación/lectura, "
-                      "no se evalúa para no penalizar la rutina injustamente).")},
+                      f"{round((umbral_prep_s + TOLERANCIA_PREP_S) / 60, 1)} min).")
+                     if s1 is not None else info_sin_prep},
+            {"clave": "identificacion", "label": "Vacas identificadas", "valor": round(s8),
+             "peso": pesos["identificacion"],
+             "info": (f"{sin_identificar}/{len(visitas)} ordeños quedaron a nombre del comodín: la sala "
+                      "no leyó el collar, así que esa leche no se le acredita a ninguna vaca y ese "
+                      "animal queda sin control ese día."
+                      if sin_identificar else "Todos los ordeños quedaron a nombre de su vaca.")},
             {"clave": "lerdas", "label": "Sin vacas lerdas", "valor": round(s2),
              "peso": pesos["lerdas"],
              "info": (f"{lerdas} vaca(s) con ordeño 50%+ más largo que la mediana "
@@ -1529,7 +1593,7 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                       "Esta sala no registra la curva de flujo de cada ordeño.")},
             {"clave": "mezcla_rodeos", "label": "Sin mezcla de rodeos", "valor": round(s5),
              "peso": pesos["mezcla_rodeos"],
-             "info": (f"{total_mezcladas}/{len(visitas)} vacas sueltas coladas en el turno de otro grupo."
+             "info": (f"{total_mezcladas}/{len(evaluables)} vacas sueltas coladas en el turno de otro grupo."
                       if total_mezcladas else "Ningún animal suelto se coló en otro turno.")},
             {"clave": "ocupacion", "label": ocupacion["label"],
              "valor": round(s6) if s6 is not None else None,

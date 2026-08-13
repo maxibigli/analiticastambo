@@ -2538,11 +2538,19 @@ def _grupos_pesos_de_request(tambo: str):
 UMBRAL_PREP_S_MIN, UMBRAL_PREP_S_MAX = 10, 600  # sanidad: rango razonable en segundos
 
 
-def _umbral_prep_de_request():
-    """Objetivo de colocación (segundos) pedido por la interfaz — ver el
-    selector nuevo en "Configurar análisis". Ausente/inválido => None (cada
-    sala usa su propio valor por defecto, ver rutina.UMBRAL_PREP_S)."""
+def _umbral_prep_de_request(tambo: str | None = None):
+    """Objetivo de colocación (segundos), en orden de prioridad: lo que pide la
+    URL (el selector de "Configurar análisis", que es por sesión y por
+    navegador), después lo guardado del tambo en ⚙ Configuración, y si no hay
+    ninguno None — ahí cada sala decide, y una sala puede no puntuar el
+    componente hasta que el tambo fije su objetivo (ver
+    `salas.convencional.UMBRAL_PREP_S`).
+
+    El de la URL le gana al guardado a propósito: sirve para probar "¿cómo
+    quedaría con 240s?" sin pisarle la configuración al tambo."""
     valor = request.args.get("umbral_prep_s")
+    if not valor and tambo:
+        valor = (configuracion_tambo.config_de(tambo) or {}).get("umbral_prep_s")
     if not valor:
         return None
     try:
@@ -2566,7 +2574,7 @@ def api_rutina():
     un día completo, separado en sesiones y puntuado 0-100%."""
     tambo = _tambo_del_request()
     grupos, pesos = _grupos_pesos_de_request(tambo)
-    umbral_prep_s = _umbral_prep_de_request()
+    umbral_prep_s = _umbral_prep_de_request(tambo)
     fecha = request.args.get("fecha")
     if not fecha:
         kpis, _ = _cache_get(_clave(tambo, "__kpis__"), allow_stale=True)
@@ -2614,7 +2622,7 @@ def api_rutina_evolucion():
     progresivamente en segundo plano."""
     tambo = _tambo_del_request()
     grupos, pesos = _grupos_pesos_de_request(tambo)
-    umbral_prep_s = _umbral_prep_de_request()
+    umbral_prep_s = _umbral_prep_de_request(tambo)
 
     hasta = request.args.get("hasta")
     if hasta:

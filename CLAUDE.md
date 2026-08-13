@@ -460,6 +460,75 @@ corral. Sin comederos individuales solo se puede repartir el costo del grupo,
 ponderado por consumo estimado. Tiene que decirlo la pantalla, para que nadie
 descarte una vaca creyendo que es un dato medido.
 
+## El score de rutina de una sala convencional (13/08/2026)
+
+La espina de pescado tenía 4 de 7 componentes en "sin datos" y no llegaba a
+calificar. Ahora son OCHO componentes, siete vivos, y **no son los de la
+rotativa con otro reparto: son otras preguntas**, porque la sala es otra.
+
+**LA VACA SE IDENTIFICA AL ENTRAR, NO EN EL PUESTO.** De ahí sale casi todo lo
+demás. El tramo `IdTimestamp → BeginTime` NO es el tiempo de colocación de la
+pezonera: incluye la caminata, la espera a que se llene la mangada y recién al
+final la preparación. Medido del 05 al 11/08 sobre 12.926 ordeños con ID:
+
+    p05 152s   p25 227s   p50 281s   p75 341s   p95 497s
+    negativos 135 (1,0%)   más de 30 min 49 (0,4%)
+
+O sea que **el dato es medible y está limpio** — el diagnóstico anterior ("es
+ruido") salía de mirar solo el mínimo (−434s) de una muestra chica. Lo que no
+sirve es el objetivo: contra los 90s de DelPro daban 109 de 12.926 en hora
+(0,8%). Ese 0% no acusa a la rutina, acusa a la regla. **El objetivo lo carga el
+tambo en ⚙ Configuración (`umbral_prep_s`) y vacío = no se puntúa**: elegirlo
+nosotros —la mediana, por ejemplo— sería calificar a la sala contra sí misma y
+cualquier tambo daría 50. Misma regla que los umbrales de retirada.
+
+**EL 17% DE LOS ORDEÑOS NO TENÍAN DUEÑO Y NO SE VEÍAN.** El comodín es UN animal
+con `BasicAnimal.Number = 0` (igual que en la rotativa) y se lleva 2.728 de
+15.665 en una semana. Estaba oculto por partida DOBLE: `sql_rutina` filtraba
+`IdTimestamp IS NOT NULL` (y 2.677 de esos ordeños no tienen sello), y el filtro
+por rodeo lo tiraba de nuevo porque **una vaca sin identificar no tiene rodeo**.
+Con las dos cosas arregladas el componente da 81% la mañana del 11/08 contra 97%
+y 96% las otras dos sesiones de ESE MISMO DÍA — no es un problema constante de
+antena, es algo que pasa en una sesión puntual. En La Ponderosa el mismo
+componente da 100% (2 de 1.618), por eso allá pesa 0.
+
+Contra conocida: si se filtra a UN rodeo, esos ordeños entran igual (no se sabe
+de qué rodeo eran), así que el % sin identificar de esa vista es el de la sala
+entera. Está en el código, `rutina.analizar_dia(incluir_sin_grupo=...)`.
+
+**LOS RODEOS SÍ ENTRAN EN BLOQUE; LAS TANDAS NO.** `_huecos_tandas` cortaba por
+(`SideNo`, `BatchNo`) y quedó inservible porque esa numeración se fragmenta
+(112 de 143 cambios son reapariciones). Pero cortando por RODEO el dato cierra:
+el 11/08, en 796 ordeños hay corridas de hasta 122 vacas de un mismo rodeo, y
+las sueltas del medio son el ~11% que ya mide `mezcla_rodeos`. El cambio de
+rodeo en esa sala cuesta **3, 3, 4, 6 y 85 segundos**: no hay tiempo muerto
+entre rodeos, y eso ahora se puede afirmar en vez de dejarlo en "sin datos".
+
+**HAY UN TERCER TIPO DE HUECO QUE NO ES NI UNO NI OTRO: el cambio de mangada.**
+Los huecos dentro de un mismo rodeo son BIMODALES — mediana 5s (vaca tras vaca)
+con una cola de 78 huecos de 240 a 983s (la mangada que se vació). Con los dos
+en la misma bolsa la mediana es la chica, la cola entera queda marcada como
+anormal y daba **13.911s "perdidos" en una sesión de 5,4 h**: casi cuatro horas
+de pérdida inventadas por la estructura de la sala. Los huecos en que el lado
+quedó vacío se sacan de ahí y tienen su propio componente.
+
+**LOS DOS LADOS ALTERNAN, y está medido minuto a minuto** (11/08): el lado 1
+sube a 30 vacas, baja a 0 y se queda en 0 mientras el lado 2 sube a 30. Son 60
+puestos (`MPCNo` 1-30 y 31-60) de los que **la mitad está vacía por diseño todo
+el tiempo**. Por eso no se puede puntuar como una rotativa ni contra los 60
+puestos: cada lado pasa ~35% de su turno sin una sola vaca y eso es normal. Lo
+que se puntúa es el cambio de mangada que se ESTIRA, contra la mediana de la
+propia sesión. Da 100 en un día normal, y para eso está: cae cuando un lado se
+traba.
+
+Resultado, 11/08/2026 — **La Martina 77 · 80 · 80** (antes: sin calificar) y
+**La Ponderosa 84 · 82 · 78, sin moverse un punto**, que es el invariante que
+hay que revisar después de tocar `rutina.py`.
+
+El editor de pesos del frontend ya no tiene la lista de componentes escrita:
+sale del propio análisis (`componentesDelScore`), que trae clave/label/peso de
+la sala real. La lista fija mandaba los pesos de la rotativa a la convencional.
+
 ## Flujos en sala convencional: lo que NO se puede medir (13/08/2026)
 
 La pantalla de Flujos ya anda en La Martina (Alpro). Se portaron las cinco

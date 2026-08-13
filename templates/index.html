@@ -2834,11 +2834,22 @@
       <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Arreo por sesión (min)
         <input type="number" id="cfg-arreo" min="0" max="240" style="width:110px;padding:7px 8px">
       </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Objetivo hasta la leche (seg)
+        <input type="number" id="cfg-umbral-prep" min="10" max="600" style="width:130px;padding:7px 8px">
+      </label>
     </div>
-    <span class="aviso">Ninguno de los dos sale de DelPro, los carga el tambo. <b>Personas</b>
+    <span class="aviso">Ninguno de los tres sale de DelPro, los carga el tambo. <b>Personas</b>
       alimenta "vacas por persona"; <b>arreo</b> es lo que lleva traer el rodeo desde su corral
       hasta el corral de espera — tiempo en que la vaca ya salió del corral pero todavía no hay
       registro en la base. Los dos se usan en Rendimiento Sala.</span>
+    <br><span class="aviso" id="cfg-umbral-prep-ayuda"><b>Objetivo hasta la leche</b> es el tramo
+      que se puntúa en el score de rutina, y <b>no tiene un valor universal</b>: en una rotativa
+      la vaca se identifica en el puesto, así que ese tramo ES la colocación de la pezonera y
+      DelPro marca 90 s; en una sala convencional se identifica AL ENTRAR, así que el mismo tramo
+      incluye la caminata y la espera a que se llene la mangada, y la mediana real está en
+      minutos. Por eso lo define el tambo: poner acá un número sacado de la propia sala sería
+      calificarla contra sí misma. <b>Vacío = ese componente no se puntúa</b> (su peso se reparte
+      entre los demás).</span>
     <div id="config-puestos-cont" hidden style="margin-top:10px">
       <span class="aviso">Cantidad de lados y puestos por lado de la sala convencional.</span>
       <div class="controls" style="flex-wrap:wrap;gap:14px;margin-top:6px">
@@ -8248,27 +8259,31 @@ async function cargarGruposRutina() {
   }
 }
 
-// La sala convencional no tiene un equivalente real de "ocupación de la
-// plataforma" (ver salas/convencional.py._sin_ocupacion): el backend ya
-// excluye ese componente del score sea cual sea el peso pedido, así que se
-// oculta el input acá para no ofrecer un control que no hace nada.
-function salaEsConvencional() {
-  return (tambosInfo[tamboActual] || {}).sala === 'convencional';
+// Los componentes del score NO son los mismos en toda sala: la convencional
+// tiene ocho (entra "identificación", "ocupación" pasa a ser el tiempo vacío
+// entre mangadas) y la rotativa seis con peso. Por eso el editor se arma del
+// ÚLTIMO análisis cargado, que ya trae clave/label/peso de la sala real, y no
+// de una lista escrita acá: una lista fija se desactualiza en silencio y
+// termina mandando los pesos de una sala a la otra.
+function componentesDelScore() {
+  const s = rutinaData && rutinaData.sesiones && rutinaData.sesiones[0];
+  if (s && s.detalle && s.detalle.length) {
+    return s.detalle.map(d => ({ clave: d.clave, label: d.label, peso: d.peso }));
+  }
+  return Object.keys(RUTINA_PESOS_DEFECTO).map(clave => ({
+    clave, label: RUTINA_PESOS_LABELS[clave], peso: RUTINA_PESOS_DEFECTO[clave] }));
 }
 
 function pintarPesosRutina() {
   const cont = document.getElementById('rutina-pesos-inputs');
   if (!cont) return;
   const cfg = leerConfigRutina();
-  const pesos = cfg.pesos || RUTINA_PESOS_DEFECTO;
-  const umbralPrep = cfg.umbral_prep_s || UMBRAL_PREP_S_DEFECTO;
-  const convencional = salaEsConvencional();
-  cont.innerHTML = Object.keys(RUTINA_PESOS_DEFECTO)
-    .filter(clave => clave !== 'ocupacion' || !convencional)
-    .map(clave => `
+  cont.innerHTML = componentesDelScore().map(c => `
     <label class="aviso" style="display:flex;flex-direction:column;gap:3px">
-      ${clave === 'prep_90s' ? `Colocación ≤${umbralPrep}s` : RUTINA_PESOS_LABELS[clave]}
-      <input type="number" min="0" max="100" data-peso="${clave}" value="${pesos[clave]}" style="width:80px;padding:5px 7px">
+      ${c.label}
+      <input type="number" min="0" max="100" data-peso="${c.clave}"
+             value="${(cfg.pesos && cfg.pesos[c.clave] != null) ? cfg.pesos[c.clave] : c.peso}"
+             style="width:80px;padding:5px 7px">
     </label>`).join('');
 }
 
@@ -8296,11 +8311,13 @@ document.getElementById('rutina-config-aplicar').addEventListener('click', () =>
   document.querySelectorAll('#rutina-pesos-inputs input[data-peso]').forEach(inp => {
     pesos[inp.dataset.peso] = Number(inp.value) || 0;
   });
-  // Si la sala convencional escondió el input de "ocupación", se conserva el
-  // peso por defecto para esa clave: no se puede editar y el backend la
-  // excluye de todos modos, así que no cuenta como un cambio real.
-  if (salaEsConvencional()) pesos.ocupacion = RUTINA_PESOS_DEFECTO.ocupacion;
-  const esDefecto = JSON.stringify(pesos) === JSON.stringify(RUTINA_PESOS_DEFECTO);
+  // "Sin cambios" se compara contra los pesos de ESTA sala, no contra los de la
+  // rotativa: si no, abrir el panel en un tambo convencional y aplicar sin tocar
+  // nada le mandaba al backend los pesos de la otra sala como si fueran una
+  // elección del usuario.
+  const defecto = {};
+  componentesDelScore().forEach(c => { defecto[c.clave] = c.peso; });
+  const esDefecto = componentesDelScore().every(c => pesos[c.clave] === c.peso);
   const umbralInp = Number(document.getElementById('rutina-umbral-prep').value) || UMBRAL_PREP_S_DEFECTO;
   const umbral_prep_s = umbralInp === UMBRAL_PREP_S_DEFECTO ? null : umbralInp;
   guardarConfigRutina({ grupos, pesos: esDefecto ? null : pesos, umbral_prep_s });
@@ -8508,7 +8525,8 @@ const EVOLUCION_SERIES = [
   { clave: 'entre_grupos', label: 'Sin tiempos muertos entre grupos' },
   { clave: 'manejo_corral', label: 'Manejo de corral' },
   { clave: 'mezcla_rodeos', label: 'Sin mezcla de rodeos' },
-  { clave: 'ocupacion', label: 'Ocupación de la plataforma' },
+  { clave: 'ocupacion', label: 'Ocupación / tiempo vacío' },
+  { clave: 'identificacion', label: 'Vacas identificadas' },
 ];
 
 const EVOLUCION_PX_POR_PUNTO = 26;   // ancho por punto para poder desplazarse y ver el detalle
@@ -8528,10 +8546,14 @@ async function cargarEvolucion() {
 
     const labels = d.puntos.map(p => new Date(p.fecha + 'T00:00:00')
       .toLocaleDateString('es-AR', { day: '2-digit', month: 'short', year: '2-digit' }));
-    // "Ocupación de la plataforma" no existe para una sala convencional (ver
-    // salaEsConvencional más arriba): la serie daría siempre null, así que se
-    // saca del todo en vez de mostrar una leyenda vacía.
-    const series = EVOLUCION_SERIES.filter(s => s.clave !== 'ocupacion' || !salaEsConvencional());
+    // Una serie que viene entera en null es un componente que ESTA sala no
+    // puntúa (la rotativa no registra curva de flujo; una convencional sin
+    // objetivo cargado no puntúa entrada→leche). Se saca en vez de dibujar una
+    // leyenda vacía. Antes esto era un `if` contra "convencional" y la clave
+    // "ocupacion", y quedó mal cuando esa sala pasó a medir el tiempo vacío
+    // entre mangadas: escondía una serie que sí tenía datos.
+    const series = EVOLUCION_SERIES.filter(s =>
+      d.puntos.some(p => p[s.clave] != null));
     const datasets = series.map((s, k) => ({
       label: s.label, data: d.puntos.map(p => p[s.clave]),
       borderColor: SERIES[k % 8], backgroundColor: SERIES[k % 8],
@@ -10091,6 +10113,7 @@ async function cargarConfiguracion() {
     _llenarSelect('cfg-sala', [SIN_OVERRIDE, ...cat.sala], cfg.sala || '');
     document.getElementById('cfg-personas').value = cfg.personas || '';
     document.getElementById('cfg-arreo').value = cfg.arreo_min ?? '';
+    document.getElementById('cfg-umbral-prep').value = cfg.umbral_prep_s ?? '';
     document.getElementById('cfg-ruta-toros').value = cfg.ruta_toros || '';
     document.getElementById('cfg-ruta-precios').value = cfg.ruta_precios || '';
     pintarEstadoArchivos(d);
@@ -10305,6 +10328,7 @@ document.getElementById('config-guardar').addEventListener('click', async () => 
     sala: document.getElementById('cfg-sala').value || null,
     personas: numOrNull(document.getElementById('cfg-personas').value),
     arreo_min: numOrNull(document.getElementById('cfg-arreo').value),
+    umbral_prep_s: numOrNull(document.getElementById('cfg-umbral-prep').value),
     ruta_toros: document.getElementById('cfg-ruta-toros').value.trim() || null,
     ruta_precios: document.getElementById('cfg-ruta-precios').value.trim() || null,
   };

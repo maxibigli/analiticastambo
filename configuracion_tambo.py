@@ -87,7 +87,16 @@ _CAMPOS_ENUM = {
 #              todavía no entró a la sala, así que no hay ningún registro en
 #              la base: sin este dato las "horas/día en ordeño" quedan
 #              subestimadas. Ver Rendimiento Sala.
-_CAMPOS_INT = ("puerto", "personas", "arreo_min")
+#   umbral_prep_s  objetivo, en segundos, del tramo que va de la vaca entrando
+#              a la sala hasta que empieza a bajar la leche. NO tiene un valor
+#              universal: en la rotativa DelPro marca 90s y ahi se mide la
+#              colocacion de la pezonera; en una sala convencional la vaca se
+#              identifica AL ENTRAR, asi que el mismo tramo incluye la caminata
+#              y la espera en el puesto y la mediana real esta en minutos (281s
+#              en La Martina). Por eso lo pone el tambo y no el codigo: elegirlo
+#              nosotros seria calificar a la sala contra si misma. Vacio = el
+#              componente no se puntua. Ver `salas.convencional.UMBRAL_PREP_S`.
+_CAMPOS_INT = ("puerto", "personas", "arreo_min", "umbral_prep_s")
 
 DEFAULT = {
     "nombre": None, "ip": None, "puerto": None, "usuario": None, "contrasena": None,
@@ -99,6 +108,7 @@ DEFAULT = {
     "sala": None,
     "personas": None,
     "arreo_min": None,
+    "umbral_prep_s": None,
     "ruta_toros": None,
     "ruta_precios": None,
     # IP del controlador SenseHub/Allflex en la red del tambo (ver

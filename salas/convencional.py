@@ -19,16 +19,25 @@ Verificado contra San José (DelPro 10.11):
     vacas lerdas, huecos entre/dentro de grupo, mezcla de rodeos) es el mismo
     de `rutina.py` sin cambios: no depende de que haya una plataforma.
 
-Lo único que SÍ es distinto es la "ocupación": una rotativa gasta capacidad
-real cuando un puesto gira vacío (la plataforma sigue girando al mismo ritmo
-igual, haya vaca o no); acá no hay plataforma girando, hay TANDAS por lado
-(`SideNo`/`BatchNo`/`MPCNo`, ver `sala_convencional.py`) que simplemente
-procesan las vacas que estén listas en ese momento — una tanda más chica no
-cuesta tiempo de máquina de más, solo trae menos vacas. No hay un equivalente
-real de "ocupación de la plataforma" para puntuar, así que ese componente del
-score NO SE EVALÚA acá (ver `_sin_ocupacion`): se excluye y su peso se
-redistribuye entre el resto, con el mismo mecanismo que ya usa "prep_90s"
-cuando falta el dato de colocación (ver `rutina._analizar_sesion`).
+Lo que SÍ es distinto es qué se puede puntuar, y por eso esta sala tiene sus
+propios `PESOS` y sus propios componentes (no son los de la rotativa con otro
+reparto):
+
+    prep_90s        entrada a la sala → leche, NO colocación de pezonera, y con
+                    el objetivo puesto por el tambo (ver `UMBRAL_PREP_S`)
+    identificacion  ordeños que quedaron a nombre del comodín — en la rotativa
+                    pesa 0; acá es el 17% de los ordeños
+    entre_grupos    huecos entre rodeos, cortando por RODEO y no por tanda
+    manejo_corral   demoras dentro del turno del mismo rodeo
+    ocupacion       tiempo con un lado de la sala vacío entre mangadas
+
+La "ocupación" es el caso más claro: una rotativa gasta capacidad real cuando un
+puesto gira vacío (la plataforma gira al mismo ritmo haya vaca o no); acá los
+dos lados ALTERNAN por diseño —uno ordeña mientras el otro carga, medido minuto
+a minuto— así que la mitad de los puestos están vacíos todo el tiempo y contra
+esa referencia cualquier sala daría pésimo. Lo que sí cuesta plata es que un
+lado tarde de más en volver a llenarse: eso es lo que mide
+`_vacio_entre_mangadas`, contra la mediana de la propia sesión.
 """
 import statistics
 
@@ -38,39 +47,69 @@ import sala_convencional
 
 NOMBRE = "Convencional"
 
-# Esta sala NO registra el instante en que se COLOCA la pezonera. El único
-# sello anterior a la leche es `SessionMilkYieldEx.IdTimestamp`, y la vaca se
-# identifica AL ENTRAR a la sala, no en el puesto: medido en La Martina el
-# 10/08/2026 sobre 2.027 ordeños, el tramo identificación→arranque de leche
-# promedia 300 segundos y baja hasta -434 (la ID cae después de que empezó a
-# bajar la leche). O sea que ese tramo es la espera en el puesto, no la rutina
-# de preparación, y `MilkStartTimestamp` resulta ser el mismo instante que
+# ESTA SALA NO MIDE "COLOCACIÓN DE PEZONERA", MIDE ENTRADA A LA SALA → LECHE, y
+# la diferencia no es de nombre. El único sello anterior a la leche es
+# `SessionMilkYieldEx.IdTimestamp`, y la vaca se identifica AL ENTRAR, no en el
+# puesto: el tramo incluye la caminata, la espera a que se llene la mangada y
+# recién al final la preparación. `MilkStartTimestamp` es el mismo instante que
 # `BeginTime`, así que no hay un tercer sello para separarlas.
 #
-# Puntuarlo igual daba 0 de 727 vacas "en hora" y hundía el score a 37 contra
-# el ~81 de la rotativa: un número que acusa al tambo de trabajar mal cuando el
-# dato no dice eso. Con esto el componente se excluye y su peso se reparte
-# entre los demás, igual que "ocupación" (ver `_sin_ocupacion`).
+# Medido en La Martina del 05 al 11/08/2026, sobre 12.926 ordeños con ID:
 #
-# CUIDADO: ESTO NO ES CIERTO EN TODAS LAS SALAS CONVENCIONALES. El encabezado
-# de este módulo documenta que en SAN JOSÉ se verificó lo contrario —ahí
-# `IdTime` SÍ era el tiempo de colocación, el mismo que mide la rotativa—. O
-# sea que el mismo campo significa una cosa en una instalación y otra en otra,
-# y esta constante, al ser del módulo, se las aplica a las dos por igual: si
-# vuelve a entrar San José, le apaga un componente que allá funcionaba.
+#     p05 152s   p25 227s   p50 281s   p75 341s   p95 497s
+#     negativos 135 (1,0%)   más de 30 min 49 (0,4%)
 #
-# Lo correcto sería decidirlo POR INSTALACIÓN mirando el dato (si la mediana de
-# identificación→leche está en el orden de los segundos es colocación; si está
-# en minutos, es espera). Queda pendiente: con un solo tambo convencional
-# activo no se puede calibrar esa regla sin inventarla.
-MIDE_COLOCACION = False
+# O sea que el dato es MEDIBLE y está limpio —no es ruido, como parecía con la
+# primera muestra de 2.027 ordeños donde solo se miró el mínimo (-434s)—, pero
+# su escala es de minutos, no de segundos. Contra los 90s de DelPro daba 109 de
+# 12.926 vacas "en hora" (0,8%): un 0% que no acusa a la rutina, acusa a la
+# regla.
+#
+# POR ESO EL OBJETIVO LO PONE EL TAMBO Y NO ESTE CÓDIGO. `None` = todavía no lo
+# definió y el componente no se puntúa (se excluye y su peso se reparte). Elegir
+# acá un número —la mediana, por ejemplo— sería calificar a la sala contra sí
+# misma: cualquier tambo daría 50 y el componente no diría nada. Es la misma
+# regla de CLAUDE.md que rige los umbrales de retirada. Se carga en
+# ⚙ Configuración; la pantalla muestra la mediana real de la sala para elegirlo
+# con el dato a la vista.
+UMBRAL_PREP_S = None
 
-# Pesos propios de esta sala. Los 30 puntos que en la rotativa lleva
-# "colocación" acá no se pueden usar (ver MIDE_COLOCACION) y pasan a "flujo":
-# la bimodalidad es la única señal de la rutina de ESTÍMULO que esta sala sí
-# registra. El resto queda como en `rutina.PESOS` — no hay motivo para
-# moverlos, y cambiarlos haría incomparables los dos tambos.
-PESOS = {**rutina.PESOS, "prep_90s": 0, "flujo": 30}
+# Fuera de esta banda el tramo no es rutina, es un registro roto: 135 ordeños
+# con la ID DESPUÉS de la leche y 49 de más de media hora (hasta 16 h). Esos no
+# se puntúan ni para bien ni para mal — entran como "sin dato".
+PREP_MAX_S = 3600
+
+PREP_LABEL = "Entrada a la sala → leche"
+PREP_SIN_UMBRAL = (
+    "Esta sala no registra cuándo se COLOCA la pezonera: la vaca se identifica al entrar, "
+    "así que el tramo hasta la leche incluye la caminata y la espera en el puesto. Se puede "
+    "medir igual, pero el objetivo NO es el de una rotativa (acá la mediana está en minutos, "
+    "no en segundos). Cargá el objetivo de esta sala en ⚙ Configuración para que se puntúe.")
+
+# CUIDADO: ESTO NO ES IGUAL EN TODAS LAS SALAS CONVENCIONALES. El encabezado de
+# este módulo documenta que en SAN JOSÉ `IdTime` SÍ era el tiempo de colocación,
+# en el orden de los segundos. Como el objetivo ahora es por tambo y no por
+# módulo, las dos instalaciones pueden convivir: San José carga 90 y La Martina
+# el suyo. Lo que sigue siendo del módulo es que el tramo se llama
+# "entrada → leche"; en una sala donde la ID sea en el puesto, ese nombre queda
+# corto pero el número es el mismo.
+
+# Pesos propios de esta sala, y NO son los de la rotativa reordenados: son otros
+# componentes. Acá "prep_90s" mide entrada→leche (más ruidoso que la colocación
+# real, así que pesa menos que los 30 de allá), entra "identificacion" —que en
+# la rotativa pesa 0— porque en esta sala el 17% de los ordeños quedan a nombre
+# del comodín, y "ocupacion" pasa a ser el tiempo vacío entre mangadas
+# (ver `_vacio_entre_mangadas`). El total sigue siendo 100.
+PESOS = {
+    "prep_90s": 15,        # entrada a la sala → leche (objetivo del tambo)
+    "identificacion": 15,  # ordeños que quedaron a nombre del comodín
+    "lerdas": 10,          # atrasos por vacas lerdas
+    "entre_grupos": 15,    # tiempos muertos entre rodeos
+    "manejo_corral": 10,   # demoras trayendo animales dentro del mismo rodeo
+    "mezcla_rodeos": 10,   # vacas de un rodeo coladas en el turno de otro
+    "ocupacion": 10,       # lado de la sala completamente vacío (entre mangadas)
+    "flujo": 15,           # estímulo, leído en la bimodalidad de la curva
+}
 
 
 def sql_grupos() -> str:
@@ -118,12 +157,31 @@ def cantidad_puestos(tambo: str) -> int:
 
 def sql_rutina(fecha: str) -> str:
     """Visitas de un día (+6h de margen a cada lado, mismo criterio que
-    `rutina.sql_rutina`). `lado`/`bloque` viajan además de las columnas
-    comunes: los necesita `_huecos_tandas`/`_rotaciones_tandas` (ver
-    `analizar_dia`)."""
+    `rutina.sql_rutina`). `lado`/`bloque` viajan además de las columnas comunes:
+    los necesita `_huecos_por_rodeo`/`_vacio_entre_mangadas`/
+    `_rotaciones_tandas` (ver `analizar_dia`).
+
+    NO SE FILTRA `IdTimestamp IS NOT NULL`, y este es el cambio que hace visible
+    el problema más grande de esta sala. Ese filtro dejaba afuera a las vacas que
+    la sala no logró identificar —2.677 de 2.739 sin sello de ID son del comodín
+    RP 0— o sea justo los ordeños que hay que contar para medir la
+    identificación. Son ordeños REALES, con leche: en La Martina, 2.728 de
+    15.665 en una semana (17,4%), y la mañana del 11/08 llegó al 18,8% contra
+    3,3% y 4,1% de las otras dos sesiones de ese mismo día.
+
+    Es el mismo error que ya se había corregido en `rutina.sql_rendimiento` de
+    la rotativa, con la misma consecuencia: la pantalla parecía identificar
+    mucho mejor de lo que identifica.
+
+    `hora_id` cae a `BeginTime` cuando no hay sello (si no, la fila no tendría
+    eje de tiempo y se rompería el corte en sesiones), y `sin_id` viaja al lado
+    para que el tramo hasta la leche NO se puntúe en esas filas: sin lectura no
+    hay desde dónde medir. Ver `rutina._analizar_sesion`."""
     return f"""
         SELECT ex.MPCNo AS puesto, b.Number AS rp, b.[Group] AS grupo,
-               ex.IdTimestamp AS hora_id, y.BeginTime AS hora_coloc, y.EndTime AS hora_fin,
+               COALESCE(ex.IdTimestamp, y.BeginTime) AS hora_id,
+               CASE WHEN ex.IdTimestamp IS NULL THEN 1 ELSE 0 END AS sin_id,
+               y.BeginTime AS hora_coloc, y.EndTime AS hora_fin,
                CAST(ex.ForcedRetract AS int) AS retirada_forzada,
                ex.SideNo AS lado, ex.BatchNo AS bloque,
                -- Curva de flujo para el componente de estimulo, ya en kg/min
@@ -133,25 +191,101 @@ def sql_rutina(fecha: str) -> str:
         FROM SessionMilkYield y
         JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
         JOIN BasicAnimal b ON b.OID = y.BasicAnimal
-        WHERE ex.IdTimestamp IS NOT NULL
-          AND ex.IdTimestamp >= DATEADD(hour, -6, '{fecha}')
-          AND ex.IdTimestamp < DATEADD(hour, 6, DATEADD(day, 1, '{fecha}'))
-        ORDER BY ex.IdTimestamp
+        WHERE COALESCE(ex.IdTimestamp, y.BeginTime) >= DATEADD(hour, -6, '{fecha}')
+          AND COALESCE(ex.IdTimestamp, y.BeginTime) < DATEADD(hour, 6, DATEADD(day, 1, '{fecha}'))
+        ORDER BY COALESCE(ex.IdTimestamp, y.BeginTime)
         OPTION (MAX_GRANT_PERCENT = 25)
     """
 
 
-def _sin_ocupacion(visitas: list, duracion_seg: float) -> dict:
-    """Reemplaza a `rutina._ocupacion_rotativa` para esta sala: acá no hay
-    plataforma que gire, así que no hay un equivalente real de "capacidad
-    desperdiciada" para medir (ver el docstring del módulo). `score=None` hace
-    que `rutina._analizar_sesion` EXCLUYA este componente del score y
-    redistribuya su peso entre el resto, en vez de forzar un número que no
-    significa nada para esta sala."""
-    return {"label": "Ocupación de la plataforma (no aplica)", "score": None,
-            "info": "Esta sala no tiene plataforma: cada tanda procesa las vacas que estén "
-                    "listas, sin el costo de \"puesto girando vacío\" de una rotativa. No se "
-                    "puntúa.", "hallazgos": []}
+def _tramos_ocupados(visitas: list) -> list:
+    """Los intervalos [arranque de leche, fin] de una lista de visitas, unidos
+    cuando se solapan. Sirve para saber cuándo un lado tuvo AL MENOS una vaca
+    puesta."""
+    crudos = sorted((v["hora_coloc"], v["hora_fin"]) for v in visitas
+                    if v["hora_coloc"] and v["hora_fin"])
+    unidos = []
+    for ini, fin in crudos:
+        if unidos and ini <= unidos[-1][1]:
+            unidos[-1][1] = max(unidos[-1][1], fin)
+        else:
+            unidos.append([ini, fin])
+    return unidos
+
+
+def _vacios_por_lado(visitas: list) -> dict:
+    """{lado: [(desde, hasta), ...]} con los tramos en que ese lado NO tuvo
+    NINGUNA vaca puesta. Es el cambio de mangada: el lado se vació y todavía no
+    volvió a llenarse. Lo usan los dos componentes que necesitan distinguir una
+    pausa estructural de una demora real."""
+    vacios = {}
+    for lado in {v.get("lado") for v in visitas if v.get("lado") is not None}:
+        tramos = _tramos_ocupados([v for v in visitas if v.get("lado") == lado])
+        vacios[lado] = [(a[1], b[0]) for a, b in zip(tramos, tramos[1:]) if b[0] > a[1]]
+    return vacios
+
+
+def _vacio_entre_mangadas(visitas: list, duracion_seg: float) -> dict:
+    """Reemplaza a `rutina._ocupacion_rotativa`: el equivalente real de
+    "capacidad girando vacía" en una espina es EL LADO PARADO ENTRE MANGADAS.
+
+    Los dos lados ALTERNAN, y eso está medido, no supuesto: el 11/08/2026,
+    minuto a minuto, el lado 1 sube a 30 vacas, baja a 0 y se queda en 0
+    mientras el lado 2 sube a 30, y así toda la sesión (60 puestos, MPCNo 1-30
+    y 31-60). Por eso NO se puede puntuar como una rotativa —donde el puesto
+    vacío gira igual— ni tampoco contra los 60 puestos a la vez: la mitad de la
+    sala está vacía por diseño todo el tiempo.
+
+    Lo que sí es una pérdida es que un lado tarde MÁS DE LO NORMAL en volver a
+    llenarse. Se mide como todos los demás huecos de este motor: contra la
+    mediana de la propia sesión (ver `rutina.FACTOR_HUECO`), no contra un
+    objetivo inventado. Un cambio de mangada normal no descuenta nada; los que
+    se estiran, sí."""
+    lados = {v.get("lado") for v in visitas if v.get("lado") is not None}
+    if not lados:
+        return {"label": "Tiempo vacío entre mangadas", "score": None,
+                "info": "Esta sala no registra el lado de cada ordeño, así que no se puede "
+                        "separar el lado que trabaja del que está esperando. No se puntúa.",
+                "hallazgos": []}
+
+    huecos, vacio_total, ventana_total = [], 0.0, 0.0
+    for lado, tramos_vacios in sorted(_vacios_por_lado(visitas).items()):
+        ocupados = _tramos_ocupados([v for v in visitas if v.get("lado") == lado])
+        if len(ocupados) < 2:
+            continue
+        # La ventana de un lado va de su primera vaca a la última: si ese lado
+        # arranca más tarde o termina antes, eso NO es un hueco entre mangadas
+        # (es el principio y el fin de su turno, y ya lo miden otros componentes).
+        ventana_total += (ocupados[-1][1] - ocupados[0][0]).total_seconds()
+        for desde, hasta in tramos_vacios:
+            g = (hasta - desde).total_seconds()
+            huecos.append((g, lado, desde, hasta))
+            vacio_total += g
+    if not huecos:
+        return {"label": "Tiempo vacío entre mangadas", "score": 100.0,
+                "info": "Ningún lado quedó vacío entre mangadas.", "hallazgos": []}
+
+    largos = [g for g, _, _, _ in huecos]
+    mediana = statistics.median(largos)
+    umbral = max(mediana * rutina.FACTOR_HUECO, rutina.UMBRAL_HUECO_MIN_S)
+    exceso = sum(g - mediana for g in largos if g > umbral)
+    score = 100.0 * max(0.0, 1 - rutina.K_PENALIZACION * exceso / duracion_seg)
+    pct_vacio = 100 * vacio_total / ventana_total if ventana_total else 0
+
+    hallazgos = [{
+        "tipo": "vacio", "severidad": g, "puesto": None, "rp": None,
+        "texto": f"El lado {lado} quedó {round(g / 60, 1)} min sin ninguna vaca puesta "
+                 f"({desde.strftime('%H:%M')}–{hasta.strftime('%H:%M')}), bastante más que el "
+                 f"cambio de mangada normal de esta sesión ({round(mediana / 60, 1)} min).",
+    } for g, lado, desde, hasta in huecos if g > umbral]
+
+    return {
+        "label": "Tiempo vacío entre mangadas", "score": score,
+        "info": f"Cada lado pasó {round(pct_vacio)}% de su turno sin ninguna vaca puesta "
+                f"(cambio de mangada normal: {round(mediana / 60, 1)} min). Se descuentan solo "
+                f"los {round(exceso / 60)} min de más de los cambios que se estiraron.",
+        "hallazgos": hallazgos,
+    }
 
 
 def _rotaciones_tandas(visitas: list, duracion_seg: float) -> int | None:
@@ -187,6 +321,120 @@ def _fragmentacion_de_tandas(visitas: list) -> float:
         vistas.add(clave)
         actual = clave
     return repetidas / cambios if cambios else 0.0
+
+
+def _bloques_de_rodeo(visitas: list) -> list:
+    """Un número de bloque por visita: sube cada vez que EMPIEZA una corrida
+    larga de un rodeo distinto.
+
+    Las corridas cortas (≤ `rutina.UMBRAL_CORRIDA_MEZCLA`) y las vacas sin
+    rodeo (el comodín no tiene) NO abren bloque: heredan el de la corrida
+    anterior. Es la pieza que faltaba, y sale de un dato medido — el 11/08 en La
+    Martina, un bloque de 796 ordeños tenía 109 corridas por rodeo con mediana
+    de largo 1 pero máximos de 76 y 122, o sea RODEOS QUE SÍ ENTRAN EN BLOQUE
+    con vacas sueltas salpicadas en el medio. Tratando cada suelta como un
+    cambio de rodeo, "el hueco entre rodeos" pasaba a ser el hueco entre
+    cualquier par de vacas y la métrica no medía nada. Las sueltas ya tienen su
+    propio componente: `mezcla_rodeos`."""
+    bloques, actual, grupo_actual = [], 0, None
+    i = 0
+    while i < len(visitas):
+        g = visitas[i]["grupo"]
+        j = i
+        while j < len(visitas) and visitas[j]["grupo"] == g:
+            j += 1
+        largo = j - i
+        if g is not None and largo > rutina.UMBRAL_CORRIDA_MEZCLA and g != grupo_actual:
+            actual += 1
+            grupo_actual = g
+        bloques.extend([actual] * largo)
+        i = j
+    return bloques
+
+
+def _huecos_por_rodeo(visitas: list, duracion_seg: float, nombres: dict | None = None) -> dict:
+    """Los dos componentes de tiempo muerto, cortando POR RODEO.
+
+    `s3` (entre rodeos) mide las pausas en el cambio de un rodeo al siguiente:
+    el corral vacío esperando que traigan la próxima tanda de animales. `s4`
+    (manejo de corral) mide las demoras trayendo animales DENTRO del turno de un
+    mismo rodeo.
+
+    Cada lado del corte usa SU PROPIA mediana, porque son cosas de escalas muy
+    distintas. Y HAY UN TERCER TIPO DE HUECO QUE NO ENTRA EN NINGUNO DE LOS DOS:
+    el cambio de mangada. Los huecos dentro de un mismo rodeo son bimodales —
+    medido el 11/08 en La Martina: mediana 5s (vaca tras vaca en la misma
+    mangada) con una cola de 78 huecos de 240 a 983s (la mangada que se vació y
+    todavía no volvió a llenarse)—. Metiendo los dos en la misma bolsa, la
+    mediana es la chica, la cola entera queda marcada como anormal y daba
+    13.911s "perdidos" en una sesión de 5,4 h: casi cuatro horas de pérdida
+    inventadas por la estructura de la sala. Por eso los huecos en que el lado
+    quedó VACÍO se sacan de acá — los mide `_vacio_entre_mangadas`, que es su
+    componente propio.
+
+    Reemplaza a `_huecos_tandas`, que cortaba por (lado, tanda) y quedó
+    inservible: ver `_fragmentacion_de_tandas`."""
+    bloques = _bloques_de_rodeo(visitas)
+    vacios = _vacios_por_lado(visitas)
+
+    def en_cambio_de_mangada(a, b) -> bool:
+        """¿Durante este hueco el lado de `a` se quedó sin ninguna vaca?"""
+        return any(desde < b["hora_id"] and hasta > a["hora_id"]
+                   for desde, hasta in vacios.get(a.get("lado"), ()))
+
+    inter, intra = [], []
+    gaps = []
+    for i, (a, b) in enumerate(zip(visitas, visitas[1:])):
+        g = (b["hora_id"] - a["hora_id"]).total_seconds()
+        cambio = bloques[i] != bloques[i + 1]
+        gaps.append((g, cambio, a, b))
+        if cambio:
+            inter.append(g)
+        elif not en_cambio_de_mangada(a, b):
+            intra.append(g)
+    if not inter:
+        return {
+            "s3": None, "s4": _score_huecos(intra, duracion_seg) if intra else None,
+            "info3": "Esta sesión tuvo un solo rodeo, así que no hay cambio de rodeo que medir.",
+            "info4": _info_huecos(intra, duracion_seg, "demoras trayendo animales dentro del "
+                                                       "mismo rodeo") if intra else "Sin datos.",
+            "hallazgos": [],
+        }
+    mediana_inter = statistics.median(inter)
+    umbral_inter = max(mediana_inter * rutina.FACTOR_HUECO, rutina.UMBRAL_HUECO_MIN_S)
+    hallazgos = [{
+        "tipo": "hueco_grupo", "severidad": g, "puesto": None, "rp": None,
+        "texto": f"Hueco de {round(g / 60, 1)} min al cambiar de rodeo "
+                 f"({nombres.get(a['grupo'], a['grupo']) if nombres else a['grupo']} → "
+                 f"{nombres.get(b['grupo'], b['grupo']) if nombres else b['grupo']}) a las "
+                 f"{b['hora_id'].strftime('%H:%M')}, bastante más largo que el resto de los "
+                 "cambios de rodeo de esta sesión.",
+    } for g, cambio, a, b in gaps if cambio and g > umbral_inter]
+
+    return {
+        "s3": _score_huecos(inter, duracion_seg),
+        "s4": _score_huecos(intra, duracion_seg) if intra else None,
+        "info3": _info_huecos(inter, duracion_seg, "cambios de rodeo anormalmente largos"),
+        "info4": (_info_huecos(intra, duracion_seg, "demoras trayendo animales dentro del mismo "
+                                                    "rodeo") if intra else "Sin datos."),
+        "hallazgos": hallazgos,
+    }
+
+
+def _score_huecos(gaps: list, duracion_seg: float) -> float:
+    """Penaliza SOLO el exceso sobre la mediana de los huecos que se pasaron del
+    umbral — mismo criterio que `rutina._huecos_rotativa`."""
+    mediana = statistics.median(gaps)
+    umbral = max(mediana * rutina.FACTOR_HUECO, rutina.UMBRAL_HUECO_MIN_S)
+    exceso = sum(g - mediana for g in gaps if g > umbral)
+    return 100.0 * max(0.0, 1 - rutina.K_PENALIZACION * exceso / duracion_seg)
+
+
+def _info_huecos(gaps: list, duracion_seg: float, que: str) -> str:
+    mediana = statistics.median(gaps)
+    umbral = max(mediana * rutina.FACTOR_HUECO, rutina.UMBRAL_HUECO_MIN_S)
+    exceso = sum(g - mediana for g in gaps if g > umbral)
+    return f"{round(exceso)}s perdidos en {que} (lo normal en esta sesión: {round(mediana)}s)."
 
 
 def _huecos_tandas(visitas: list, duracion_seg: float, nombres: dict | None = None) -> dict:
@@ -262,21 +510,29 @@ def _huecos_tandas(visitas: list, duracion_seg: float, nombres: dict | None = No
     }
 
 
+def _opciones_score(umbral_prep_s):
+    """Los argumentos comunes de `analizar_dia`/`resumen_dia`. El objetivo de
+    entrada→leche sale del tambo (`umbral_prep_s`, de ⚙ Configuración) y, si no
+    lo definió, el componente no se puntúa: ver `UMBRAL_PREP_S`."""
+    umbral = umbral_prep_s or UMBRAL_PREP_S
+    return {"ocupacion_fn": _vacio_entre_mangadas, "huecos_fn": _huecos_por_rodeo,
+            "umbral_prep_s": umbral, "mide_colocacion": umbral is not None,
+            "prep_max_s": PREP_MAX_S, "prep_label": PREP_LABEL,
+            "sin_prep_info": PREP_SIN_UMBRAL, "incluir_sin_grupo": True}
+
+
 def analizar_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                  max_sesiones=None, nombres=None, umbral_prep_s=None) -> dict:
-    # `tambo` no hace falta acá (a diferencia de antes: la ocupación ya no
-    # depende de `puestos_por_lado`, ver `_sin_ocupacion`) — queda en la firma
-    # solo para cumplir la interfaz común (ver salas/rotativa.py).
+    # `tambo` no hace falta acá — queda en la firma solo para cumplir la
+    # interfaz común (ver salas/rotativa.py).
     return rutina.analizar_dia(columns, rows, fecha, grupos, pesos or PESOS, max_sesiones,
-                               nombres, _sin_ocupacion, _huecos_tandas, umbral_prep_s,
-                               mide_colocacion=MIDE_COLOCACION)
+                               nombres, **_opciones_score(umbral_prep_s))
 
 
 def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                 max_sesiones=None, nombres=None, umbral_prep_s=None):
     return rutina.resumen_dia(columns, rows, fecha, grupos, pesos or PESOS, max_sesiones,
-                              nombres, _sin_ocupacion, _huecos_tandas, umbral_prep_s,
-                              mide_colocacion=MIDE_COLOCACION)
+                              nombres, **_opciones_score(umbral_prep_s))
 
 
 # LOS CUATRO TRAMOS DE FLUJO DE ALPRO VIENEN ×100, y esto es una trampa cara.
@@ -536,20 +792,40 @@ def sql_rendimiento(desde: str, hasta: str) -> str:
     """
 
 
-def sql_identificacion(desde: str, hasta: str):
-    """None = el % de identificación no está disponible en esta sala.
+def sql_identificacion(desde: str, hasta: str) -> str:
+    """Ordeños que la sala no logró atribuir a una vaca, por día.
 
-    El criterio de la rotativa (visitas de `MilkingDeviceVisit` cuyo animal es
-    el placeholder `BasicAnimal.Number = 0`, ver `rutina.sql_identificacion`)
-    no se puede trasladar tal cual: acá el ordeño sale de `SessionMilkYield`,
-    que referencia el animal directo, y NO se verificó contra datos reales de
-    San José cómo queda una vaca que la sala no logró identificar. Devolver
-    None y que la pantalla lo diga es preferible a mostrar un 100% inventado —
-    justamente el bug que tenía la rotativa antes (ver el docstring de
-    `rutina.sql_identificacion`). Se implementa cuando haya un caso real para
-    medirlo, con el mismo método: contar contra los datos, no suponer.
+    YA SE PUDO MEDIR, y el criterio terminó siendo EL MISMO que el de la
+    rotativa: el comodín es `BasicAnimal.Number = 0`. Verificado en La Martina
+    del 05 al 11/08/2026: es UN solo animal (un `BasicAnimal` distinto) y se
+    lleva 2.728 de 15.665 ordeños, el 17,4%.
+
+    Las dos formas de quedar sin dueño se separan igual que en el reporte de
+    DelPro (ver `rutina.sql_identificacion`), y acá también dan distinto:
+
+        sin_lectura   2.677  nunca se leyó el collar (no hay IdTimestamp)
+        desconocido      51  se leyó algo, pero no es de ninguna vaca del rodeo
+
+    Y hay 62 ordeños con RP real y sin sello de hora: esos SÍ están
+    identificados, solo les falta el momento, así que no cuentan como perdidos.
     """
-    return None
+    desde, hasta = rutina.validar_fecha(desde), rutina.validar_fecha(hasta)
+    return f"""
+        SELECT CAST(y.BeginTime AS date) AS fecha,
+               COUNT(*) AS visitas,
+               SUM(CASE WHEN b.Number = 0 THEN 1 ELSE 0 END) AS sin_duenio,
+               SUM(CASE WHEN b.Number = 0 AND ex.IdTimestamp IS NULL
+                        THEN 1 ELSE 0 END) AS sin_lectura,
+               SUM(CASE WHEN b.Number = 0 AND ex.IdTimestamp IS NOT NULL
+                        THEN 1 ELSE 0 END) AS desconocido
+        FROM SessionMilkYield y
+        JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
+        JOIN BasicAnimal b ON b.OID = y.BasicAnimal
+        WHERE y.BeginTime >= '{desde}' AND y.BeginTime < DATEADD(day, 1, '{hasta}')
+        GROUP BY CAST(y.BeginTime AS date)
+        ORDER BY fecha
+        OPTION (MAX_GRANT_PERCENT = 20)
+    """
 
 
 def analizar_rendimiento(tambo: str, columns, rows, desde: str, hasta: str, max_sesiones=None,
@@ -561,4 +837,4 @@ def analizar_rendimiento(tambo: str, columns, rows, desde: str, hasta: str, max_
 
 def resumen_grupos_dia(tambo: str, columns, rows, fecha: str, grupos_ordene=None, nombres=None) -> dict:
     return rutina.resumen_grupos_dia(columns, rows, fecha, grupos_ordene=grupos_ordene, nombres=nombres,
-                                     ocupacion_fn=_sin_ocupacion)
+                                     ocupacion_fn=_vacio_entre_mangadas)
