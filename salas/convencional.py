@@ -39,6 +39,7 @@ esa referencia cualquier sala daría pésimo. Lo que sí cuesta plata es que un
 lado tarde de más en volver a llenarse: eso es lo que mide
 `_vacio_entre_mangadas`, contra la mediana de la propia sesión.
 """
+import bisect
 import statistics
 
 import resumen
@@ -213,6 +214,51 @@ def _tramos_ocupados(visitas: list) -> list:
     return unidos
 
 
+class _OcupacionLado:
+    """Cuántas vacas tuvo puestas un lado en cada instante, y cuál fue su pico.
+
+    Se arma una sola vez por sesión con los eventos de enganche y retiro, y
+    después se consulta por intervalos. El pico observado hace de CAPACIDAD del
+    lado: no se toma de la configuración a propósito, porque lo que importa es
+    cuántos puestos se usaron de verdad esa sesión (medido el 11/08: 33 y 31 a
+    la mañana contra 30 y 30 en las otras dos, por solapes de un segundo entre
+    el fin de una vaca y el enganche de la siguiente)."""
+
+    def __init__(self, visitas: list):
+        eventos = {}
+        for v in visitas:
+            if v.get("lado") is None or not v["hora_coloc"] or not v["hora_fin"]:
+                continue
+            eventos.setdefault(v["lado"], []).extend(
+                [(v["hora_coloc"], 1), (v["hora_fin"], -1)])
+        self._t, self._n, self.capacidad = {}, {}, {}
+        for lado, evs in eventos.items():
+            evs.sort()
+            tiempos, cuenta, actual = [], [], 0
+            for t, delta in evs:
+                actual += delta
+                tiempos.append(t)
+                cuenta.append(actual)
+            self._t[lado], self._n[lado] = tiempos, cuenta
+            self.capacidad[lado] = max(cuenta) if cuenta else 0
+
+    def rango(self, lado, desde, hasta) -> tuple:
+        """(mínimo, máximo) de vacas puestas en ese lado durante [desde, hasta).
+        (None, None) si no hay datos de ese lado."""
+        tiempos = self._t.get(lado)
+        if not tiempos:
+            return None, None
+        i = bisect.bisect_right(tiempos, desde) - 1
+        actual = self._n[lado][i] if i >= 0 else 0
+        mn = mx = actual
+        j = bisect.bisect_right(tiempos, desde)
+        while j < len(tiempos) and tiempos[j] < hasta:
+            mn = min(mn, self._n[lado][j])
+            mx = max(mx, self._n[lado][j])
+            j += 1
+        return mn, mx
+
+
 def _vacios_por_lado(visitas: list) -> dict:
     """{lado: [(desde, hasta), ...]} con los tramos en que ese lado NO tuvo
     NINGUNA vaca puesta. Es el cambio de mangada: el lado se vació y todavía no
@@ -375,12 +421,30 @@ def _huecos_por_rodeo(visitas: list, duracion_seg: float, nombres: dict | None =
     Reemplaza a `_huecos_tandas`, que cortaba por (lado, tanda) y quedó
     inservible: ver `_fragmentacion_de_tandas`."""
     bloques = _bloques_de_rodeo(visitas)
-    vacios = _vacios_por_lado(visitas)
+    ocup = _OcupacionLado(visitas)
 
-    def en_cambio_de_mangada(a, b) -> bool:
-        """¿Durante este hueco el lado de `a` se quedó sin ninguna vaca?"""
-        return any(desde < b["hora_id"] and hasta > a["hora_id"]
-                   for desde, hasta in vacios.get(a.get("lado"), ()))
+    def es_demora_real(a, b) -> bool:
+        """¿Este hueco es una demora de manejo, o la sala haciendo lo suyo?
+
+        Cuenta SOLO si durante todo el hueco el lado tuvo un puesto libre Y al
+        menos una vaca puesta. Las dos condiciones son físicas, no umbrales
+        elegidos:
+
+          lado LLENO      no hay dónde poner una vaca, nadie está demorando nada
+          lado VACÍO      la mangada se está dando vuelta; eso lo mide
+                          `_vacio_entre_mangadas`, su componente propio
+
+        Sin esto, el componente daba 0 en las tres sesiones. Los 20 huecos
+        intra-rodeo de más de 60s del 11/08 tenían el lado lleno (15 a 29 de 30
+        puestos) o vaciándose (0 a 4): NINGUNO era manejo de corral, y sumaban
+        13.911s de pérdida inventada. Con la regla quedan 4.162s y el
+        componente pasa a 35 · 64 · 91, que sí distingue una sesión de otra."""
+        lado = a.get("lado")
+        cap = ocup.capacidad.get(lado)
+        if not cap:
+            return True          # sin dato de lado no se puede descartar: cuenta
+        mn, mx = ocup.rango(lado, a["hora_id"], b["hora_id"])
+        return mn is not None and mn > 0 and mx < cap
 
     inter, intra = [], []
     gaps = []
@@ -390,7 +454,7 @@ def _huecos_por_rodeo(visitas: list, duracion_seg: float, nombres: dict | None =
         gaps.append((g, cambio, a, b))
         if cambio:
             inter.append(g)
-        elif not en_cambio_de_mangada(a, b):
+        elif es_demora_real(a, b):
             intra.append(g)
     if not inter:
         return {

@@ -504,6 +504,27 @@ las sueltas del medio son el ~11% que ya mide `mezcla_rodeos`. El cambio de
 rodeo en esa sala cuesta **3, 3, 4, 6 y 85 segundos**: no hay tiempo muerto
 entre rodeos, y eso ahora se puede afirmar en vez de dejarlo en "sin datos".
 
+**UN HUECO ENTRE VACAS SOLO ES UNA DEMORA SI HABÍA DÓNDE PONER UNA VACA.** Es la
+regla que hace que "manejo de corral" mida algo en esta sala, y las dos
+condiciones son físicas, no umbrales elegidos: cuenta solo si durante todo el
+hueco el lado tuvo un puesto libre **y** al menos una vaca puesta.
+
+    lado LLENO    no hay dónde enganchar, nadie está demorando nada
+    lado VACÍO    la mangada se está dando vuelta -> lo mide el otro componente
+
+Sin eso el componente daba **0 en las tres sesiones**. Los 20 huecos
+intra-rodeo de más de 60s del 11/08 tenían el lado lleno (15 a 29 de 30
+puestos) o vaciándose (0 a 4): **ninguno era manejo de corral**, y sumaban
+13.911s de pérdida inventada. Con la regla quedan 4.162s y el componente pasa a
+**35 · 64 · 91**, que sí distingue una sesión de otra.
+
+Ojo con el camino que NO funcionó, para no repetirlo: subir el piso
+(`UMBRAL_HUECO_MIN_S`) de 20s a 180s movía el componente de 20 a 47 y del score
+apenas 2 puntos. El problema nunca fue cuán largo era el hueco, sino QUÉ ERA.
+La capacidad del lado se toma del pico observado en esa sesión, no de la
+configuración: el 11/08 dio 33 y 31 a la mañana contra 30 y 30 en las otras dos,
+por solapes de un segundo entre el fin de una vaca y el enganche de la siguiente.
+
 **HAY UN TERCER TIPO DE HUECO QUE NO ES NI UNO NI OTRO: el cambio de mangada.**
 Los huecos dentro de un mismo rodeo son BIMODALES — mediana 5s (vaca tras vaca)
 con una cola de 78 huecos de 240 a 983s (la mangada que se vació). Con los dos
@@ -521,7 +542,8 @@ que se puntúa es el cambio de mangada que se ESTIRA, contra la mediana de la
 propia sesión. Da 100 en un día normal, y para eso está: cae cuando un lado se
 traba.
 
-Resultado, 11/08/2026 — **La Martina 77 · 80 · 80** (antes: sin calificar) y
+Resultado, 11/08/2026 con el objetivo del tambo en 300s — **La Martina 79 · 79 ·
+82** (antes: sin calificar) y
 **La Ponderosa 84 · 82 · 78, sin moverse un punto**, que es el invariante que
 hay que revisar después de tocar `rutina.py`.
 
