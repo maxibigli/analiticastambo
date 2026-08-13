@@ -51,7 +51,26 @@ NOMBRE = "Convencional"
 # el ~81 de la rotativa: un número que acusa al tambo de trabajar mal cuando el
 # dato no dice eso. Con esto el componente se excluye y su peso se reparte
 # entre los demás, igual que "ocupación" (ver `_sin_ocupacion`).
+#
+# CUIDADO: ESTO NO ES CIERTO EN TODAS LAS SALAS CONVENCIONALES. El encabezado
+# de este módulo documenta que en SAN JOSÉ se verificó lo contrario —ahí
+# `IdTime` SÍ era el tiempo de colocación, el mismo que mide la rotativa—. O
+# sea que el mismo campo significa una cosa en una instalación y otra en otra,
+# y esta constante, al ser del módulo, se las aplica a las dos por igual: si
+# vuelve a entrar San José, le apaga un componente que allá funcionaba.
+#
+# Lo correcto sería decidirlo POR INSTALACIÓN mirando el dato (si la mediana de
+# identificación→leche está en el orden de los segundos es colocación; si está
+# en minutos, es espera). Queda pendiente: con un solo tambo convencional
+# activo no se puede calibrar esa regla sin inventarla.
 MIDE_COLOCACION = False
+
+# Pesos propios de esta sala. Los 30 puntos que en la rotativa lleva
+# "colocación" acá no se pueden usar (ver MIDE_COLOCACION) y pasan a "flujo":
+# la bimodalidad es la única señal de la rutina de ESTÍMULO que esta sala sí
+# registra. El resto queda como en `rutina.PESOS` — no hay motivo para
+# moverlos, y cambiarlos haría incomparables los dos tambos.
+PESOS = {**rutina.PESOS, "prep_90s": 0, "flujo": 30}
 
 
 def sql_grupos() -> str:
@@ -106,7 +125,11 @@ def sql_rutina(fecha: str) -> str:
         SELECT ex.MPCNo AS puesto, b.Number AS rp, b.[Group] AS grupo,
                ex.IdTimestamp AS hora_id, y.BeginTime AS hora_coloc, y.EndTime AS hora_fin,
                CAST(ex.ForcedRetract AS int) AS retirada_forzada,
-               ex.SideNo AS lado, ex.BatchNo AS bloque
+               ex.SideNo AS lado, ex.BatchNo AS bloque,
+               -- Curva de flujo para el componente de estimulo, ya en kg/min
+               -- (ver ESCALA_FLUJO: en Alpro estos tramos vienen x100).
+               ex.FlowZerotoFifteen   * 0.01 AS f0_15,
+               ex.FlowFifteentoThirty * 0.01 AS f15_30
         FROM SessionMilkYield y
         JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
         JOIN BasicAnimal b ON b.OID = y.BasicAnimal
@@ -244,15 +267,15 @@ def analizar_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
     # `tambo` no hace falta acá (a diferencia de antes: la ocupación ya no
     # depende de `puestos_por_lado`, ver `_sin_ocupacion`) — queda en la firma
     # solo para cumplir la interfaz común (ver salas/rotativa.py).
-    return rutina.analizar_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
-                               _sin_ocupacion, _huecos_tandas, umbral_prep_s,
+    return rutina.analizar_dia(columns, rows, fecha, grupos, pesos or PESOS, max_sesiones,
+                               nombres, _sin_ocupacion, _huecos_tandas, umbral_prep_s,
                                mide_colocacion=MIDE_COLOCACION)
 
 
 def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                 max_sesiones=None, nombres=None, umbral_prep_s=None):
-    return rutina.resumen_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
-                              _sin_ocupacion, _huecos_tandas, umbral_prep_s,
+    return rutina.resumen_dia(columns, rows, fecha, grupos, pesos or PESOS, max_sesiones,
+                              nombres, _sin_ocupacion, _huecos_tandas, umbral_prep_s,
                               mide_colocacion=MIDE_COLOCACION)
 
 

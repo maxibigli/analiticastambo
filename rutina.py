@@ -51,7 +51,28 @@ PESOS = {
     "manejo_corral": 15,   # mal manejo de traída de animales dentro del mismo grupo
     "mezcla_rodeos": 10,   # vacas de un grupo que se mezclaron en el turno de otro
     "ocupacion": 15,       # puestos de la rotativa que giraron vacíos
+    # Bimodalidad de la curva de flujo. PESA 0 POR DEFECTO a propósito: en la
+    # rotativa la rutina ya se mide con "prep_90s" (el tiempo real hasta
+    # colocar la pezonera), que es una señal más directa. Este componente es
+    # para las salas que NO registran ese instante y quedarían sin nada con qué
+    # calificar la preparación — ver `salas.convencional.PESOS`, donde toma los
+    # 30 puntos que allá no puede usar "prep_90s".
+    "flujo": 0,
 }
+
+# Bimodalidad: la vaca arranca a dar leche, la bajada se corta y vuelve. Es el
+# síntoma clásico de estímulo pobre — pezonera colocada antes de que la oxitocina
+# haga efecto. Se detecta con los cuatro tramos que guarda la base: arranque con
+# flujo real y caída en el tramo siguiente. Los umbrales son los mismos que usa
+# la pantalla de Flujos (ver `flujos.BIMODAL_INICIO_MIN`), en kg/min: las salas
+# entregan la curva ya normalizada a esa unidad (ver `sql_flujo_ordenios`).
+BIMODAL_INICIO_MIN = 0.2
+# A partir de qué porcentaje de ordeños bimodales se considera que la rutina de
+# estímulo está mal. Punto de partida medido, no de manual: La Ponderosa —que
+# con "prep_90s" puntúa 89-94— tiene 3,4%, y La Martina 13,3%. Con 5% "sano" y
+# 25% "malo", la primera queda cerca de 100 y la segunda alrededor de 60.
+BIMODAL_PCT_SANO = 5.0
+BIMODAL_PCT_MALO = 25.0
 
 PALETA = ["#b3382c", "#d9a066", "#4f9a94", "#d97f2b", "#7ec850", "#c2478a",
           "#5b7fd9", "#9b59b6", "#e0c341", "#3fa7a3"]
@@ -1068,6 +1089,12 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
             # opt-in vía `ocupacion_fn`.
             "lado": r[idx["lado"]] if "lado" in idx else None,
             "bloque": r[idx["bloque"]] if "bloque" in idx else None,
+            # Los dos primeros tramos de la curva de flujo, YA en kg/min: solo
+            # los trae la consulta de la sala que puntúa el estímulo por
+            # bimodalidad (ver `componente_flujo`). Sin ellos el componente
+            # queda en None y se excluye, que es lo que pasa en la rotativa.
+            "f0_15": r[idx["f0_15"]] if "f0_15" in idx else None,
+            "f15_30": r[idx["f15_30"]] if "f15_30" in idx else None,
         })
     visitas.sort(key=lambda v: v["hora_id"])
 
@@ -1105,6 +1132,35 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
 
 
 DETALLE_CLAVES = ["prep_90s", "lerdas", "entre_grupos", "manejo_corral", "mezcla_rodeos", "ocupacion"]
+
+
+def componente_flujo(visitas: list) -> tuple:
+    """Puntaje 0-100 de la rutina de ESTÍMULO, leído en la curva de flujo.
+
+    Devuelve (score, bimodales, evaluadas). `score` es None si las visitas no
+    traen curva: la sala no la registra, o el día no la tiene. Nunca se asume
+    que "sin dato" es "bien".
+
+    Por qué sirve donde "colocación" no: la bimodalidad NO necesita saber
+    cuándo se colocó la pezonera, se ve en la leche misma. Si la vaca arranca,
+    se corta y vuelve, es que la pezonera entró antes de que bajara la leche.
+    Es una consecuencia de la rutina, no un cronómetro de la rutina — más
+    indirecta que `prep_90s`, pero medible donde la otra no existe."""
+    con_curva = [v for v in visitas
+                 if v.get("f0_15") is not None and v.get("f15_30") is not None]
+    if not con_curva:
+        return None, 0, 0
+    bimodales = sum(1 for v in con_curva
+                    if v["f0_15"] >= BIMODAL_INICIO_MIN and v["f15_30"] < v["f0_15"])
+    pct = 100.0 * bimodales / len(con_curva)
+    # Interpolación lineal entre "sano" y "malo", con los extremos planos.
+    if pct <= BIMODAL_PCT_SANO:
+        score = 100.0
+    elif pct >= BIMODAL_PCT_MALO:
+        score = 0.0
+    else:
+        score = 100.0 * (BIMODAL_PCT_MALO - pct) / (BIMODAL_PCT_MALO - BIMODAL_PCT_SANO)
+    return score, bimodales, len(con_curva)
 
 
 def _score_ponderado(sesiones: list):
@@ -1368,8 +1424,11 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     # Score ponderado: si un componente no se pudo evaluar (None, p.ej. sin datos
     # de colocación), se excluye y su peso se redistribuye entre el resto en vez
     # de penalizar por una falla de instrumentación ajena a la rutina.
+    s7, bimodales, con_curva = componente_flujo(visitas)
+
     componentes = {"prep_90s": s1, "lerdas": s2, "entre_grupos": s3,
-                   "manejo_corral": s4, "mezcla_rodeos": s5, "ocupacion": s6}
+                   "manejo_corral": s4, "mezcla_rodeos": s5, "ocupacion": s6,
+                   "flujo": s7}
     disponibles = {c: v for c, v in componentes.items() if v is not None}
     peso_total = sum(pesos[c] for c in disponibles)
     # SI QUEDA MUY POCO PESO VIVO, NO HAY SCORE. Excluir un componente que no
@@ -1460,6 +1519,14 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
             {"clave": "manejo_corral", "label": "Manejo de corral (entrada fluida)",
              "valor": round(s4) if s4 is not None else None,
              "peso": pesos["manejo_corral"], "info": huecos["info4"]},
+            {"clave": "flujo", "label": "Estímulo (sin bimodalidad)",
+             "valor": round(s7) if s7 is not None else None, "peso": pesos["flujo"],
+             "info": (f"{bimodales}/{con_curva} ordeños con la bajada cortada y vuelta a "
+                      f"arrancar ({round(100 * bimodales / con_curva, 1)}%), señal de pezonera "
+                      f"colocada antes de que baje la leche. Sano hasta "
+                      f"{round(BIMODAL_PCT_SANO)}%, malo desde {round(BIMODAL_PCT_MALO)}%."
+                      if s7 is not None else
+                      "Esta sala no registra la curva de flujo de cada ordeño.")},
             {"clave": "mezcla_rodeos", "label": "Sin mezcla de rodeos", "valor": round(s5),
              "peso": pesos["mezcla_rodeos"],
              "info": (f"{total_mezcladas}/{len(visitas)} vacas sueltas coladas en el turno de otro grupo."
