@@ -8157,6 +8157,14 @@ function rutinaPuestos() {
 }
 let rutinaData = null, rutinaSesionIdx = 0, rutinaZoom = 1;
 
+// El score puede venir NULO: cuando la sala no registra lo suficiente como
+// para calificarla, el backend devuelve null en vez de un número optimista
+// (ver PESO_MINIMO_SCORE en rutina.py). Sin esto la pantalla mostraba "null%".
+function textoScore(v, largo) {
+  if (v == null) return largo ? 'Sin calificar' : '—';
+  return v + '%';
+}
+
 function colorScore(v) {
   if (v == null) return 'var(--muted)';
   if (v >= 85) return 'var(--good)';
@@ -8317,7 +8325,7 @@ function pintarRutinaSesiones() {
   const hora = iso => new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
   cont.innerHTML = rutinaData.sesiones.map((s, i) => `
     <button class="rutina-sesion-btn${i === rutinaSesionIdx ? ' activa' : ''}" data-i="${i}">
-      <div class="rs-score" style="color:${colorScore(s.score)}">${s.score}%</div>
+      <div class="rs-score" style="color:${colorScore(s.score)}">${textoScore(s.score)}</div>
       <div class="rs-hora">${hora(s.inicio)}–${hora(s.fin)} · ${s.vacas} vacas</div>
     </button>`).join('');
   cont.querySelectorAll('.rutina-sesion-btn').forEach(b => b.addEventListener('click', () => {
@@ -8351,8 +8359,11 @@ function pintarRutinaSesion() {
     <div class="rutina-panel">
       <div>
         <div class="aviso">Puntaje de la sesión</div>
-        <div class="rutina-score-nota" style="color:${colorScore(s.score)}">${s.score}%</div>
+        <div class="rutina-score-nota" style="color:${colorScore(s.score)}">${textoScore(s.score, true)}</div>
         <div class="aviso">${s.duracion_min} min · ${s.vacas} vacas</div>
+        ${s.score == null ? `<div class="aviso" style="margin-top:6px">Esta sala no registra
+          lo suficiente como para calificar la rutina: mirá el detalle de abajo para ver qué
+          componente no se pudo evaluar y por qué.</div>` : ''}
       </div>
       <div class="rutina-medidor">${barras}</div>
       <div>
@@ -8555,7 +8566,7 @@ function pintarRendimiento(sesiones) {
         legend: { display: false },
         tooltip: { callbacks: { label: (ctx) => {
           const s = validas[ctx.dataIndex];
-          return `${s.fecha} ${s.inicio.slice(11, 16)} · score ${s.score}% · ${s.vacas_por_hora} vacas/h (${s.vacas} vacas)`;
+          return `${s.fecha} ${s.inicio.slice(11, 16)} · score ${textoScore(s.score)} · ${s.vacas_por_hora} vacas/h (${s.vacas} vacas)`;
         } } },
       },
       scales: {

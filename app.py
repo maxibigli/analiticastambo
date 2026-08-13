@@ -1131,7 +1131,14 @@ def _valores_tablero(tambo: str) -> dict:
                 score = (round(sum(x["score"] * x["vacas"] for x in ses) / vacas)
                          if vacas else None)
                 poner("rutina_score", score,
-                      falta=f"La rutina del {fecha} no tiene sesiones puntuables.",
+                      # El motivo real no es "no hay sesiones": las hay, lo que
+                      # falta es con qué calificarlas. En una sala que no
+                      # registra colocación ni tandas contiguas quedan afuera
+                      # tantos componentes que el score no se publica (ver
+                      # PESO_MINIMO_SCORE en rutina.py).
+                      falta=(f"Las {len(an.get('sesiones') or [])} sesión(es) del {fecha} no se "
+                             f"pueden calificar: esta sala no registra lo suficiente. Ver el "
+                             f"detalle en Rutina de ordeño."),
                       detalle=(f"rutina del {fecha} · {len(ses)} sesión(es), "
                                f"{vacas} vacas" if score is not None else None))
     except Exception as exc:  # noqa: BLE001
