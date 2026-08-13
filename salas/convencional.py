@@ -256,6 +256,45 @@ def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                               mide_colocacion=MIDE_COLOCACION)
 
 
+# LOS CUATRO TRAMOS DE FLUJO DE ALPRO VIENEN ×100, y esto es una trampa cara.
+# Medido sobre 30.949 ordeños de La Martina contra 643.474 de La Ponderosa:
+#
+#     tramo      0-15s   15-30s   30-60s   60-120s   AverageFlow   PeakFlow
+#     rotativa    0,85     2,71     2,58      3,79       2,84        4,86
+#     Alpro         65      138      141       216       2,17        4,39
+#
+# `AverageFlow` y `PeakFlow` coinciden en escala; los tramos no. Corriendo los
+# umbrales de la rotativa tal cual (bimodalidad con inicio ≥0,2 y arranque
+# lento <0,5 kg/min) daba 100% de bimodalidad y 0% de arranque lento en TODOS
+# los ordeños: el tambo entero diagnosticado como catástrofe por un factor de
+# escala. Se normaliza en la consulta para que aguas abajo todo sea kg/min y
+# los umbrales sean los mismos para las dos salas.
+ESCALA_FLUJO = 0.01
+
+
+def sql_flujo_ordenios(desde: str, hasta: str) -> str:
+    """Un renglón por ordeño con la curva en cuatro tramos, YA convertida a
+    kg/min (ver `ESCALA_FLUJO`). Mismo contrato que en la rotativa."""
+    desde, hasta = rutina.validar_fecha(desde), rutina.validar_fecha(hasta)
+    e = ESCALA_FLUJO
+    return f"""
+        SELECT b.Number AS rp,
+               ex.FlowZerotoFifteen   * {e} AS f0_15,
+               ex.FlowFifteentoThirty * {e} AS f15_30,
+               ex.FlowThirtyToSixty   * {e} AS f30_60,
+               ex.FlowSixtyTo120      * {e} AS f60_120,
+               ex.AverageFlow AS f_prom,
+               ex.PeakFlow    AS f_pico
+        FROM SessionMilkYield y
+        JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
+        JOIN BasicAnimal b ON b.OID = y.BasicAnimal
+        WHERE ex.FlowZerotoFifteen IS NOT NULL
+          AND y.BeginTime >= '{desde}'
+          AND y.BeginTime < DATEADD(day, 1, '{hasta}')
+        OPTION (MAX_GRANT_PERCENT = 25)
+    """
+
+
 def sql_rendimiento(desde: str, hasta: str) -> str:
     """Igual que `sql_rutina`, + el kg de cada visita — para "Rendimiento Sala".
 

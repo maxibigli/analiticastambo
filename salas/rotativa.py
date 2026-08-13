@@ -61,6 +61,35 @@ def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                               umbral_prep_s=umbral_prep_s)
 
 
+# La curva de flujo YA viene en kg/min en `CMSMilkYield`, así que no hay que
+# escalar nada. La constante existe igual para que las dos salas expongan la
+# misma interfaz (ver `salas/convencional.py`, donde vale 0.01).
+ESCALA_FLUJO = 1.0
+
+
+def sql_flujo_ordenios(desde: str, hasta: str) -> str:
+    """Un renglón por ordeño con la curva de flujo en sus cuatro tramos, ya en
+    kg/min. Es la base para calificar la rutina por flujo — ver
+    `rutina.componente_flujo`."""
+    desde, hasta = rutina.validar_fecha(desde), rutina.validar_fecha(hasta)
+    return f"""
+        SELECT b.Number AS rp,
+               y.Flow0To15   AS f0_15,
+               y.Flow15To30  AS f15_30,
+               y.Flow30To60  AS f30_60,
+               y.Flow60To120 AS f60_120,
+               y.AverageFlow AS f_prom,
+               y.PeakFlow    AS f_pico
+        FROM CMSMilkYield y
+        JOIN MilkingDeviceVisit m ON m.OID = y.MilkingDeviceVisit
+        JOIN BasicAnimal b ON b.OID = m.Animal
+        WHERE m.GCRecord IS NULL AND y.Flow0To15 IS NOT NULL
+          AND m.CreationTime >= '{desde}'
+          AND m.CreationTime < DATEADD(day, 1, '{hasta}')
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
+    """
+
+
 def sql_rendimiento(desde: str, hasta: str) -> str:
     return rutina.sql_rendimiento(desde, hasta)
 
