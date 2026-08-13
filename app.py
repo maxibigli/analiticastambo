@@ -2917,21 +2917,41 @@ def _refresh_flujos_async(tambo, desde, hasta):
             # configuración de la rotativa. Se leen primero porque la consulta
             # diaria los necesita, y se guardan junto a los datos para que la
             # página muestre exactamente con qué valores se calculó.
-            try:
-                cfg = db.run_query(flujos.SQL_CONFIG_RETIRADA, tambo=tambo, max_rows=5)
-            except Exception:  # noqa: BLE001
+            # El umbral de retirada sale del equipo, y NO todas las salas lo
+            # publican: una Alpro no tiene `CMSMpcSetting` ni ninguna columna
+            # equivalente en todo el esquema. Ahí la banda ±25% no se calcula y
+            # la pantalla lo dice, en vez de inventar un umbral -- que no seria
+            # un dato incompleto sino un diagnostico falso sobre el equipo.
+            sala = salas.de(tambo)
+            if getattr(sala, "PUBLICA_UMBRAL_RETIRADA", True):
+                try:
+                    cfg = db.run_query(flujos.SQL_CONFIG_RETIRADA, tambo=tambo, max_rows=5)
+                except Exception:  # noqa: BLE001
+                    cfg = None
+            else:
                 cfg = None
             umbrales = flujos.umbrales_retirada(cfg)
+            umbrales["publicado_por_el_equipo"] = getattr(
+                sala, "PUBLICA_UMBRAL_RETIRADA", True)
+            if not umbrales["publicado_por_el_equipo"]:
+                # `umbrales_retirada` cae a un valor de respaldo cuando no
+                # puede leer la configuracion, y ese numero en pantalla se lee
+                # como "el umbral del equipo". Si la sala no lo publica se
+                # anulan los tres: mejor un hueco declarado que un umbral
+                # inventado con cara de dato.
+                for k in ("retirada_delpro", "retirada_min", "retirada_max",
+                          "low_flow_limit"):
+                    umbrales[k] = None
             rmin, rmax = umbrales["retirada_min"], umbrales["retirada_max"]
             # En serie a propósito: db.py ya serializa por servidor, y lanzarlas
             # en paralelo solo agregaría presión de memoria sobre SQL Express.
             data = {
                 "umbrales": umbrales,
-                "dia": db.run_query(flujos.sql_por_dia(d, h, rmin, rmax), tambo=tambo,
+                "dia": db.run_query(sala.sql_flujos_por_dia(d, h, rmin, rmax), tambo=tambo,
                                     max_rows=flujos.RANGO_FLUJOS_MAX_DIAS + 2),
-                "grupo": db.run_query(flujos.sql_por_grupo(d, h), tambo=tambo, max_rows=100),
-                "dist": db.run_query(flujos.sql_distribucion(d, h), tambo=tambo, max_rows=200),
-                "deo": db.run_query(flujos.sql_por_deo(d, h), tambo=tambo, max_rows=50),
+                "grupo": db.run_query(sala.sql_flujos_por_grupo(d, h), tambo=tambo, max_rows=100),
+                "dist": db.run_query(sala.sql_flujos_distribucion(d, h), tambo=tambo, max_rows=200),
+                "deo": db.run_query(sala.sql_flujos_por_deo(d, h), tambo=tambo, max_rows=50),
             }
             # "Tiempo fuera" (sql_tiempo_fuera) es la consulta más pesada de
             # las cinco -- ordena TODAS las bajadas del período por vaca para
@@ -2945,7 +2965,7 @@ def _refresh_flujos_async(tambo, desde, hasta):
             desde_fuera = max(desde, hasta - datetime.timedelta(days=flujos.RANGO_FUERA_MAX_DIAS - 1))
             try:
                 data["fuera"] = db.run_query(
-                    flujos.sql_tiempo_fuera(desde_fuera.isoformat(), h), tambo=tambo,
+                    sala.sql_flujos_tiempo_fuera(desde_fuera.isoformat(), h), tambo=tambo,
                     max_rows=flujos.RANGO_FUERA_MAX_DIAS + 2)
             except Exception:  # noqa: BLE001
                 data["fuera"] = None

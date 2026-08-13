@@ -3,6 +3,7 @@
 funciones que YA EXISTEN en `rutina.py`/`resumen.py`, de antes de que hubiera
 más de un tipo de sala. Este módulo no agrega lógica, solo las expone bajo el
 nombre común — así el comportamiento de La Ponderosa no cambia ni un bit."""
+import flujos
 import resumen
 import rutina
 
@@ -65,6 +66,35 @@ def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
 # escalar nada. La constante existe igual para que las dos salas expongan la
 # misma interfaz (ver `salas/convencional.py`, donde vale 0.01).
 ESCALA_FLUJO = 1.0
+
+# Esta sala SÍ publica el umbral de retirada configurado en el equipo
+# (`CMSMpcSetting.TakeoffLimit`), así que la pantalla de Flujos puede clasificar
+# cada retirada contra la banda ±25%. Ver `salas.convencional`, donde no.
+PUBLICA_UMBRAL_RETIRADA = True
+
+
+# Las consultas de la pantalla de Flujos se delegan tal cual a `flujos.py`, que
+# está escrito contra el esquema de esta sala. Existen acá solo para que las dos
+# salas expongan la misma interfaz y `app.py` no tenga que preguntar de qué tipo
+# es cada tambo (ver `salas/convencional.py`, donde son consultas propias).
+def sql_flujos_por_dia(desde: str, hasta: str, retirada_min=None, retirada_max=None) -> str:
+    return flujos.sql_por_dia(desde, hasta, retirada_min, retirada_max)
+
+
+def sql_flujos_por_grupo(desde: str, hasta: str) -> str:
+    return flujos.sql_por_grupo(desde, hasta)
+
+
+def sql_flujos_distribucion(desde: str, hasta: str) -> str:
+    return flujos.sql_distribucion(desde, hasta)
+
+
+def sql_flujos_por_deo(desde: str, hasta: str) -> str:
+    return flujos.sql_por_deo(desde, hasta)
+
+
+def sql_flujos_tiempo_fuera(desde: str, hasta: str) -> str:
+    return flujos.sql_tiempo_fuera(desde, hasta)
 
 
 def sql_flujo_ordenios(desde: str, hasta: str) -> str:

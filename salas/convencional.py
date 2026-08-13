@@ -318,6 +318,193 @@ def sql_flujo_ordenios(desde: str, hasta: str) -> str:
     """
 
 
+# --- Pantalla de Flujos -----------------------------------------------------
+# ESTA SALA NO PUBLICA SU UMBRAL DE RETIRADA. `CMSMpcSetting` no existe y no hay
+# NINGUNA columna TakeoffLimit/LowFlowLimit en todo el esquema (se buscó en
+# sys.columns). El flujo al que se retiró cada pezonera SÍ está
+# (`TakeOffFlow`, 31.266 filas, 0 a 4,7 kg/min), pero sin el umbral configurado
+# del equipo no se puede clasificar cada retirada en temprana / en objetivo /
+# tardía, que es la banda ±25% del informe de DelPro.
+#
+# Se deja en NULL y la pantalla lo dice, en vez de inventar un umbral: un
+# número inventado ahí no es un dato incompleto, es un diagnóstico falso sobre
+# el equipo. Es la misma regla que ya está en CLAUDE.md ("NO inventarlos ni
+# hacerlos editables"), aplicada al caso que esa regla no contemplaba.
+PUBLICA_UMBRAL_RETIRADA = False
+
+# La duración del ordeño no viene como columna (no hay `IsoDuration`): se
+# calcula del intervalo, que es exactamente lo que esa columna guarda en la
+# rotativa (verificado en su momento: IsoDuration = EndTime - BeginTime).
+_DUR_SEG = "DATEDIFF(second, y.BeginTime, y.EndTime)"
+
+# `LowFlowDurationInSec` (segundos de flujo bajo al inicio) NO TIENE
+# EQUIVALENTE. Lo más parecido es `LowMilkFlowPercentage`, que es un PORCENTAJE
+# del ordeño, no segundos: son medidas distintas y convertir una en otra
+# requeriría suponer la duración. Va en NULL — el frontend ya sabe mostrar
+# "sin datos" cuando falta una serie.
+_COLOC_SEG = "NULL"
+
+_FLUJOS_PROM_CONV = f"""
+       AVG(ex.FlowZerotoFifteen   * {ESCALA_FLUJO}) AS f_0_15,
+       AVG(ex.FlowFifteentoThirty * {ESCALA_FLUJO}) AS f_15_30,
+       AVG(ex.FlowThirtyToSixty   * {ESCALA_FLUJO}) AS f_30_60,
+       AVG(ex.FlowSixtyTo120      * {ESCALA_FLUJO}) AS f_60_120,
+       AVG(ex.TakeOffFlow) AS f_retirada"""
+
+_BIMODAL_CONV = f"""
+       100.0 * SUM(CASE WHEN ex.FlowZerotoFifteen * {ESCALA_FLUJO} >= {rutina.BIMODAL_INICIO_MIN}
+                         AND ex.FlowFifteentoThirty < ex.FlowZerotoFifteen
+                        THEN 1 ELSE 0 END) / COUNT(*) AS pct_bimodal,
+       100.0 * SUM(CASE WHEN ex.FlowZerotoFifteen * {ESCALA_FLUJO} < 0.5
+                        THEN 1 ELSE 0 END) / COUNT(*) AS pct_arranque_lento"""
+
+
+def _rango_conv(desde: str, hasta: str) -> str:
+    """El rango va sobre `BeginTime` (arranque de leche), no sobre la
+    identificación: acá la ID puede caer minutos antes o incluso después
+    (ver MIDE_COLOCACION), así que como eje de tiempo no sirve."""
+    desde, hasta = rutina.validar_fecha(desde), rutina.validar_fecha(hasta)
+    return f"y.BeginTime >= '{desde}' AND y.BeginTime < DATEADD(day, 1, '{hasta}')"
+
+
+def sql_flujos_por_dia(desde: str, hasta: str, retirada_min=None, retirada_max=None) -> str:
+    """Serie diaria. `retirada_min`/`retirada_max` se aceptan para respetar la
+    interfaz común pero SE IGNORAN: ver PUBLICA_UMBRAL_RETIRADA."""
+    return f"""
+        SELECT CAST(y.BeginTime AS date) AS fecha,
+               COUNT(*) AS ordenos,
+               {_FLUJOS_PROM_CONV},
+               AVG(ex.AverageFlow) AS f_prom,
+               AVG(ex.PeakFlow)    AS f_pico,
+               AVG({_DUR_SEG} * 1.0) AS dur_seg,
+               {_COLOC_SEG} AS coloc_seg,
+               AVG(y.TotalYield) AS litros_bajada,
+               NULL AS pct_bajo_min,
+               NULL AS pct_sobre_max,
+               100.0 * SUM(CASE WHEN ex.ManualMode <> 0 THEN 1 ELSE 0 END)
+                     / COUNT(*) AS pct_manual,
+               100.0 * SUM(CASE WHEN ex.ManualDetach = 1 THEN 1 ELSE 0 END)
+                     / COUNT(*) AS pct_retiro_manual,
+               100.0 * SUM(CASE WHEN ex.ForcedRetract = 1 THEN 1 ELSE 0 END)
+                     / COUNT(*) AS pct_forzada,
+               {_BIMODAL_CONV}
+        FROM SessionMilkYield y
+        JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
+        WHERE {_rango_conv(desde, hasta)} AND ex.FlowZerotoFifteen IS NOT NULL
+        GROUP BY CAST(y.BeginTime AS date)
+        ORDER BY fecha
+        OPTION (MAX_GRANT_PERCENT = 20)
+    """
+
+
+def sql_flujos_por_grupo(desde: str, hasta: str) -> str:
+    """Curva promedio por grupo. Igual que en la rotativa, usa el grupo ACTUAL
+    del animal: la base no guarda el grupo del día del ordeño.
+
+    No se filtra por `CMSGroupMilkSetting.EnableMilking` (esa tabla no existe
+    acá): se toman los grupos que efectivamente aparecen ordeñando, que es el
+    mismo criterio que usa `sql_grupos()` de este módulo."""
+    return f"""
+        SELECT g.Number AS grupo_num, g.Name AS grupo,
+               COUNT(*) AS ordenos,
+               {_FLUJOS_PROM_CONV}
+        FROM SessionMilkYield y
+        JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
+        JOIN BasicAnimal b ON b.OID = y.BasicAnimal AND b.GCRecord IS NULL
+        JOIN AnimalGroup ag ON ag.OID = b.[Group]
+        JOIN AbstractGroup g ON g.OID = ag.OID AND g.GCRecord IS NULL
+        WHERE {_rango_conv(desde, hasta)} AND ex.FlowZerotoFifteen IS NOT NULL
+        GROUP BY g.Number, g.Name
+        ORDER BY g.Number
+        OPTION (MAX_GRANT_PERCENT = 20)
+    """
+
+
+def sql_flujos_distribucion(desde: str, hasta: str) -> str:
+    """Histograma conjunto de flujo promedio y pico, en cajones de 1 kg/min.
+    `AverageFlow`/`PeakFlow` YA están en kg/min en esta sala (no se escalan:
+    los ×100 son solo los cuatro tramos)."""
+    bp = "CASE WHEN ex.AverageFlow >= 9.5 THEN 10 ELSE CAST(ROUND(ex.AverageFlow, 0) AS int) END"
+    bk = "CASE WHEN ex.PeakFlow >= 9.5 THEN 10 ELSE CAST(ROUND(ex.PeakFlow, 0) AS int) END"
+    return f"""
+        SELECT {bp} AS bin_prom, {bk} AS bin_pico, COUNT(*) AS n
+        FROM SessionMilkYield y
+        JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
+        WHERE {_rango_conv(desde, hasta)}
+          AND ex.AverageFlow >= 0 AND ex.PeakFlow >= 0
+        GROUP BY {bp}, {bk}
+        OPTION (MAX_GRANT_PERCENT = 20)
+    """
+
+
+def sql_flujos_por_deo(desde: str, hasta: str) -> str:
+    """Bimodalidad y duración por tramo de días en ordeño. Los tramos de DEL
+    son los MISMOS que en la rotativa (se reusa `flujos._CASE_DEO`, que ya
+    escribe sobre el alias `d`): si cada sala cortara distinto, los dos tambos
+    no se podrían comparar."""
+    import flujos
+    return f"""
+        SELECT {flujos._CASE_DEO} AS deo,
+               COUNT(*) AS ordenos,
+               {_BIMODAL_CONV},
+               AVG({_DUR_SEG} * 1.0) AS dur_seg,
+               {_COLOC_SEG} AS coloc_seg
+        FROM SessionMilkYield y
+        JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
+        JOIN AnimalDaily d ON d.OID = y.AnimalDaily
+        WHERE {_rango_conv(desde, hasta)} AND d.DIM IS NOT NULL
+          AND ex.FlowZerotoFifteen IS NOT NULL
+        GROUP BY {flujos._CASE_DEO}
+        OPTION (MAX_GRANT_PERCENT = 20)
+    """
+
+
+def sql_flujos_tiempo_fuera(desde: str, hasta: str) -> str:
+    """Por día: segundos promedio POR VACA entre bajadas del mismo día.
+
+    Mismo cálculo en dos pasos que la rotativa (`flujos.sql_tiempo_fuera`), y
+    no un promedio de huecos sueltos: primero se SUMAN los huecos de cada vaca
+    en el día y recién después se promedia entre vacas. Son números distintos
+    -uno responde "cuánto dura un hueco", el otro "cuánto tiempo pasa afuera
+    una vaca en el día"- y este último es el que muestra la pantalla. Los
+    alias tienen que ser los que espera `flujos.analizar`.
+
+    Es una ESTIMACIÓN, igual que en la rotativa: la base no tiene sensores de
+    entrada/salida al corral, así que el hueco mezcla comida, descanso,
+    caminata y espera. Mismas guardas de plausibilidad y mismo criterio de
+    descartar el hueco nocturno (solo huecos dentro del mismo día)."""
+    import flujos
+    return f"""
+        WITH visitas AS (
+          SELECT y.BasicAnimal, CAST(y.BeginTime AS date) AS fecha,
+                 y.BeginTime AS inicio,
+                 LAG(y.BeginTime) OVER (
+                   PARTITION BY y.BasicAnimal ORDER BY y.BeginTime
+                 ) AS inicio_anterior
+          FROM SessionMilkYield y
+          WHERE {_rango_conv(desde, hasta)}
+        ),
+        huecos AS (
+          SELECT BasicAnimal, fecha,
+                 DATEDIFF(second, inicio_anterior, inicio) AS gap_seg
+          FROM visitas
+          WHERE inicio_anterior IS NOT NULL
+            AND CAST(inicio_anterior AS date) = fecha
+            AND DATEDIFF(second, inicio_anterior, inicio)
+                BETWEEN {flujos.GAP_MIN_SEG} AND {flujos.GAP_MAX_SEG}
+        ),
+        por_vaca_dia AS (
+          SELECT BasicAnimal, fecha, SUM(gap_seg) AS seg_fuera
+          FROM huecos GROUP BY BasicAnimal, fecha
+        )
+        SELECT fecha, AVG(seg_fuera * 1.0) AS seg_fuera_prom, COUNT(*) AS vacas_con_dato
+        FROM por_vaca_dia
+        GROUP BY fecha
+        HAVING COUNT(*) >= {flujos.VACAS_FUERA_MIN}
+        ORDER BY fecha
+        OPTION (MAX_GRANT_PERCENT = 20)
+    """
+
 def sql_rendimiento(desde: str, hasta: str) -> str:
     """Igual que `sql_rutina`, + el kg de cada visita — para "Rendimiento Sala".
 
