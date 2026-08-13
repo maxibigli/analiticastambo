@@ -2047,8 +2047,10 @@
         todavía bajando: queda leche en la ubre y cae la producción.
         <br><b>Cómo se calcula.</b> De cada ordeño individual se lee <code>TakeOffFlow</code>, el
         flujo en kg/min en el instante exacto en que se retiró. Se cuentan los que quedaron fuera
-        de la banda de tolerancia del límite configurado en la rotativa, sobre los ordeños del día
-        que tienen esa lectura. <b>Retirada forzada</b>, <b>modo manual</b> y <b>retiro manual</b>
+        de la banda de tolerancia del límite configurado en el equipo, sobre los ordeños del día
+        que tienen esa lectura. <b>Tardía y prematura solo aparecen si la sala publica ese
+        límite</b>: sin él, el flujo de retirada se mide igual pero no hay contra qué compararlo.
+        <b>Retirada forzada</b>, <b>modo manual</b> y <b>retiro manual</b>
         son banderas que graba la propia máquina (<code>ForcedRetract</code>,
         <code>ManualMode</code>, <code>ManualDetach</code>) y van sobre el total del día: las dos
         últimas son intervenciones del operario.
@@ -4400,7 +4402,15 @@ function conectarSelectorTipo(contId, alCambiar) {
 const graficoFlujos = (canvasId, ref, labels, datasets, options) =>
   graficoTipado(canvasId, ref, labels, datasets, options, fluTipo);
 
-const kgFlu = v => Number(v).toFixed(2).replace('.', ',');   // 0.6 -> "0,60"
+// 0.6 -> "0,60". El guardado contra null NO es decorativo: sin él,
+// `Number(null).toFixed(2)` da "0,00", que en pantalla se lee como un umbral
+// de retirada real de cero. Las salas que no publican su umbral mandan null.
+const kgFlu = v => v == null ? '—' : Number(v).toFixed(2).replace('.', ',');
+
+// Una serie sin un solo dato no se dibuja. Si no, la leyenda anuncia una medida
+// que esta sala no registra: le pasa al tiempo de colocación en la convencional,
+// que no tiene `LowFlowDurationInSec`.
+const conDatos = (...ds) => ds.filter(d => d && (d.data || []).some(v => v != null));
 
 // 21600 -> "6h 00min" (para el tiempo entre ordeños, en segundos).
 function fmtHoras(seg) {
@@ -4420,9 +4430,17 @@ function pintarFlujos(d) {
   const r = d.resumen || {}, u = d.umbrales || {};
   const pct = v => v != null ? fmt(v) + '%' : '—';
 
-  document.getElementById('flu-umbrales').textContent =
-    `Retirada según DelPro: ${kgFlu(u.retirada_delpro)} kg/min ` +
-    `(banda ${kgFlu(u.retirada_min)}–${kgFlu(u.retirada_max)}, ±${u.tolerancia_pct}%)`;
+  // El umbral de retirada lo configura el equipo, y no todas las salas lo
+  // guardan en la base (la convencional no tiene `CMSMpcSetting`). Cuando no
+  // está, se dice que falta en vez de mostrar la banda de respaldo: un umbral
+  // inventado ahí no es un dato incompleto, es un diagnóstico falso sobre la
+  // máquina. Ver `PUBLICA_UMBRAL_RETIRADA` en salas/.
+  const hayUmbral = !!u.publicado_por_el_equipo;
+  document.getElementById('flu-umbrales').textContent = hayUmbral
+    ? `Retirada según DelPro: ${kgFlu(u.retirada_delpro)} kg/min ` +
+      `(banda ${kgFlu(u.retirada_min)}–${kgFlu(u.retirada_max)}, ±${u.tolerancia_pct}%)`
+    : 'Este equipo no publica su umbral de retirada: no se puede clasificar cada ' +
+      'retirada en prematura o tardía.';
 
   document.getElementById('flu-kpis').innerHTML = [
     ['Ordeños analizados', fmt(r.ordenos)],
@@ -4432,7 +4450,7 @@ function pintarFlujos(d) {
     ['Tiempo de colocación', r.coloc_seg != null ? fmt(r.coloc_seg) + ' s' : '—'],
     ['Litros por bajada', r.litros_bajada != null ? fmt(r.litros_bajada) + ' L' : '—'],
     ['Tiempo entre ordeños (estimado)', fmtHoras(r.seg_fuera_prom)],
-    [`Retirada < ${kgFlu(u.retirada_min)} kg/min`, pct(r.pct_bajo_min)],
+    ...(hayUmbral ? [[`Retirada < ${kgFlu(u.retirada_min)} kg/min`, pct(r.pct_bajo_min)]] : []),
     ['Retirada forzada', pct(r.pct_forzada)],
     ['Arranque lento', pct(r.pct_arranque_lento)],
   ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
@@ -4442,29 +4460,29 @@ function pintarFlujos(d) {
   const oRet = baseOpts(true);
   oRet.interaction = { mode: 'index', intersect: false };
   oRet.scales.y.title = { display: true, text: '% de ordeños' };
-  chartFluRetirada = graficoFlujos('chart-flu-retirada', chartFluRetirada, labels, [
-    linea(`< ${kgFlu(u.retirada_min)} kg/min (tardía)`, dias.map(x => x.pct_bajo_min), SERIES[0]),
-    linea(`> ${kgFlu(u.retirada_max)} kg/min (prematura)`, dias.map(x => x.pct_sobre_max), SERIES[2]),
+  chartFluRetirada = graficoFlujos('chart-flu-retirada', chartFluRetirada, labels, conDatos(
+    hayUmbral && linea(`< ${kgFlu(u.retirada_min)} kg/min (tardía)`, dias.map(x => x.pct_bajo_min), SERIES[0]),
+    hayUmbral && linea(`> ${kgFlu(u.retirada_max)} kg/min (prematura)`, dias.map(x => x.pct_sobre_max), SERIES[2]),
     linea('Retirada forzada', dias.map(x => x.pct_forzada), SERIES[7]),
     linea('Modo manual', dias.map(x => x.pct_manual), SERIES[1]),
     linea('Retiro manual', dias.map(x => x.pct_retiro_manual), SERIES[6]),
-  ], oRet);
+  ), oRet);
 
   const pnt = { yAxisID: 'y1', borderDash: [5, 4], pointRadius: 0 };
-  chartFluRutina = graficoFlujos('chart-flu-rutina', chartFluRutina, labels, [
+  chartFluRutina = graficoFlujos('chart-flu-rutina', chartFluRutina, labels, conDatos(
     linea('0-15 s', dias.map(x => x.f_0_15), SERIES[1]),
     linea('15-30 s', dias.map(x => x.f_15_30), SERIES[2]),
     linea('30-60 s', dias.map(x => x.f_30_60), SERIES[3]),
     linea('60-120 s', dias.map(x => x.f_60_120), SERIES[6]),
     linea('Duración de ordeño (s)', dias.map(x => x.dur_seg), SERIES[7], pnt),
     linea('Tiempo de colocación (s)', dias.map(x => x.coloc_seg), SERIES[4], pnt),
-  ], optsDobleEje('kg/min', 'segundos'));
+  ), optsDobleEje('kg/min', 'segundos'));
 
-  chartFluLitros = graficoFlujos('chart-flu-litros', chartFluLitros, labels, [
+  chartFluLitros = graficoFlujos('chart-flu-litros', chartFluLitros, labels, conDatos(
     linea('Litros por bajada', dias.map(x => x.litros_bajada), SERIES[0]),
     linea('Duración de ordeño (s)', dias.map(x => x.dur_seg), SERIES[7], pnt),
     linea('Tiempo de colocación (s)', dias.map(x => x.coloc_seg), SERIES[4], pnt),
-  ], optsDobleEje('litros', 'segundos'));
+  ), optsDobleEje('litros', 'segundos'));
 
   const oFue = baseOpts(true);
   oFue.scales.y.title = { display: true, text: 'horas por vaca por día' };
@@ -4493,13 +4511,13 @@ function pintarFlujos(d) {
   ], oDis);
 
   const deo = d.deo || [];
-  chartFluBimodal = graficoFlujos('chart-flu-bimodal', chartFluBimodal, deo.map(x => x.deo), [
+  chartFluBimodal = graficoFlujos('chart-flu-bimodal', chartFluBimodal, deo.map(x => x.deo), conDatos(
     linea('% bimodalidad (caída de flujo)', deo.map(x => x.pct_bimodal), SERIES[0]),
     linea(`% arranque lento (< ${kgFlu(u.arranque_lento)} kg/min en 0-15 s)`,
           deo.map(x => x.pct_arranque_lento), SERIES[3]),
     linea('Duración de ordeño (s)', deo.map(x => x.dur_seg), SERIES[7], pnt),
     linea('Tiempo de colocación (s)', deo.map(x => x.coloc_seg), SERIES[4], pnt),
-  ], optsDobleEje('% de ordeños', 'segundos'));
+  ), optsDobleEje('% de ordeños', 'segundos'));
 
   info.textContent = `${fmt(r.ordenos)} ordeños entre ${d.desde} y ${d.hasta} (${dias.length} día(s)).`;
 }

@@ -460,6 +460,46 @@ corral. Sin comederos individuales solo se puede repartir el costo del grupo,
 ponderado por consumo estimado. Tiene que decirlo la pantalla, para que nadie
 descarte una vaca creyendo que es un dato medido.
 
+## Flujos en sala convencional: lo que NO se puede medir (13/08/2026)
+
+La pantalla de Flujos ya anda en La Martina (Alpro). Se portaron las cinco
+consultas menos una cosa, y la excepción es el punto importante:
+
+**LA MARTINA NO PUBLICA SU UMBRAL DE RETIRADA, así que no hay retirada
+prematura ni tardía.** No existe `CMSMpcSetting`, y no hay NINGUNA columna
+`TakeoffLimit`/`LowFlowLimit` en todo el esquema (buscado en `sys.columns`).
+El flujo al que se soltó cada pezonera SÍ está (`TakeOffFlow`, 31.266 filas,
+0 a 4,7 kg/min), pero sin el límite configurado no hay contra qué compararlo.
+`salas.convencional.PUBLICA_UMBRAL_RETIRADA = False` deja esas dos métricas en
+NULL, `app.py` anula además los tres valores del payload y el frontend saca las
+tarjetas y las series en vez de dibujarlas en cero. **El respaldo de 0,80 →
+banda 0,60-1,00 es de La Ponderosa: mostrarlo acá sería inventar el umbral de
+otra máquina.** Es la regla de "no inventar umbrales" aplicada al caso que esa
+regla no contemplaba, que la base no lo tenga.
+
+**`ForcedRetract` da 0 en las 32.051 filas de toda la base** (28/07 al 11/08).
+En la MISMA tabla `ManualMode` (12,7%) y `ManualDetach` (1,6%) sí varían, así
+que el campo se escribe: o el equipo no usa el concepto, o no lo registra. Con
+15 días de un solo tambo no se puede distinguir. **OJO CON LEER ese 0% como un
+logro** —en La Ponderosa la retirada forzada es 9,99%— hasta tener más historia.
+
+**"Tiempo entre ordeños" NO es comparable entre tambos, y la etiqueta promete
+más de lo que mide.** La consulta suma solo los huecos *dentro del mismo día
+calendario* (`CAST(inicio_anterior AS date) = CAST(inicio AS date)`). Una vaca
+con sus tres ordeños del lado de acá de medianoche aporta dos huecos (~16 h);
+si el primero le cayó antes de las 00:00, aporta uno (~8 h). Por eso dos tambos
+de 3 ordeños/día dan La Ponderosa 15h29 y La Martina 12h07: no es que una pase
+más tiempo afuera, es dónde le cae el corte del día. Sirve para seguir a UN
+tambo en el tiempo, no para comparar dos.
+
+Dos equivalencias que NO se forzaron al portar: `IsoDuration` no existe y se
+calcula `EndTime - BeginTime` (que es lo que esa columna guarda en la rotativa,
+ya verificado); y `LowFlowDurationInSec` (segundos) contra
+`LowMilkFlowPercentage` (porcentaje) **no son la misma medida**, así que el
+tiempo de colocación va NULL en vez de convertir una en otra suponiendo cuál es
+la duración. El frontend ahora borra del gráfico toda serie que venga entera en
+NULL: si no, la leyenda anuncia una medida que la sala no registra.
+
 ## Trampas del esquema DDM (ya corregidas, no reintroducir)
 
 - `CMSGroupMilkSetting.EnableMilking = 1` es la única forma correcta de saber
