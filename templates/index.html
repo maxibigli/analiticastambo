@@ -8489,9 +8489,17 @@ document.addEventListener('mousemove', (e) => {
   const prep = v.prep_seg == null ? '—' : `${v.prep_seg}s ${v.cumple_90 ? '✓' : `⚠ objetivo ≤${umbralPrep}s`}`;
   const nomGrupo = (s.grupos.find(g => g.grupo === v.grupo) || {}).nombre
                    || 'Grupo ' + (v.grupo ?? '—');
-  tip.innerHTML = `<b>Puesto ${v.puesto}</b> · RP ${v.rp || '?'} · ${nomGrupo}<br>
-    ID ${hora(v.hora_id)} · Coloc. ${hora(v.hora_coloc)} · Fin ${hora(v.hora_fin)}<br>
-    Prep: ${prep}${v.lerda ? ' · <span style="color:var(--critical)">lerda</span>' : ''}`;
+  // Una vaca sin dueño no es "RP ?": es un ordeño real cuya leche no se le
+  // acredita a nadie. Se dice con todas las letras, y se aclara si además la
+  // hora de identificación es un respaldo — ahí el tramo hasta la leche no se
+  // puede medir, y antes se mostraba como "0s ✓", o sea como una colocación
+  // perfecta.
+  const quien = v.sin_duenio
+    ? `<span style="color:var(--critical)">SIN IDENTIFICAR</span>` + (v.sin_id ? ' (no se leyó el collar)' : ' (collar desconocido)')
+    : `RP ${v.rp}`;
+  tip.innerHTML = `<b>Puesto ${v.puesto}</b> · ${quien} · ${nomGrupo}<br>
+    ID ${v.sin_id ? '—' : hora(v.hora_id)} · Coloc. ${hora(v.hora_coloc)} · Fin ${hora(v.hora_fin)}<br>
+    Prep: ${v.sin_id ? 'no se puede medir sin la hora de identificación' : prep}${v.lerda ? ' · <span style="color:var(--critical)">lerda</span>' : ''}`;
   tip.style.display = 'block';
   tip.style.left = (e.clientX + 14) + 'px';
   tip.style.top = (e.clientY + 14) + 'px';

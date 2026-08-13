@@ -1101,6 +1101,12 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
             "hora_id": hora_id, "hora_coloc": _parse(r[idx["hora_coloc"]]),
             "hora_fin": _parse(r[idx["hora_fin"]]),
             "retirada_forzada": bool(r[idx["retirada_forzada"]]) if "retirada_forzada" in idx else False,
+            # `sin_id`: la sala NO leyó el collar y `hora_id` es un respaldo
+            # (`BeginTime`), no la identificación. Solo lo trae la consulta de
+            # la convencional. SIN ESTO el tramo hasta la leche se calcula
+            # contra la propia hora de la leche y da 0s "en hora ✓" — o sea que
+            # las vacas sin identificar mejoraban el puntaje de colocación.
+            "sin_id": bool(r[idx["sin_id"]]) if "sin_id" in idx else False,
             # "lado"/"bloque" (SideNo/BatchNo): solo los trae la consulta de una
             # sala convencional (ver `salas/convencional.py`). En la rotativa
             # quedan en None y nadie los usa — la ocupación por tanda es
@@ -1612,5 +1618,9 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
             "prep_seg": round(v["prep_seg"]) if v["prep_seg"] is not None else None,
             "ordeño_seg": round(v["ordeño_seg"]) if v["ordeño_seg"] is not None else None,
             "cumple_90": v["cumple_90"], "lerda": v["lerda"], "mezclada": v["mezclada"],
+            # Para que el gráfico pueda DECIR por qué esa visita no tiene tramo,
+            # en vez de mostrar un "—" mudo. `sin_id` = no se leyó el collar;
+            # `sin_duenio` = se leyó pero el animal es el comodín.
+            "sin_id": v["sin_id"], "sin_duenio": v["rp"] == 0,
         } for v in visitas],
     }
