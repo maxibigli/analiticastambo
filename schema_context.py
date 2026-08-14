@@ -6,6 +6,18 @@ SCHEMA_DOC = """
 Base de datos: DDM (DelPro de DeLaval, gestión de tambo/lechería). SQL Server (T-SQL).
 Los datos van desde 2011 hasta la fecha actual. Unidades de leche: kilogramos.
 
+¡ATENCIÓN! LA BASE PUEDE ESTAR COMPARTIDA CON OTROS TAMBOS. `AnimalGroup.Herd`
+puede tener MÁS DE UN VALOR distinto en la misma base — animales, grupos y
+rodeos de varios tambos conviviendo en las mismas tablas (`BasicAnimal`,
+`AnimalGroup`, etc.). Medido en un caso real: sin filtrar por rebaño, "vacas
+lactantes" daba 3.253 (sumando los 3 tambos de esa base); filtrando al tambo
+correcto, 1.621. Cuál `Herd` es el de ESTE tambo depende de la instalación
+(rotativa/convencional) y no se puede adivinar de forma genérica en una
+consulta suelta. Por eso: si la pregunta necesita contar, sumar o listar TODO
+el rodeo (no un animal puntual por su número), es más seguro declinar esta
+herramienta y usar una de la lista de herramientas fijas en su lugar — esas ya
+filtran al tambo correcto. No inventes ni asumas un valor de Herd.
+
 REGLAS GENERALES DEL ESQUEMA:
 - En casi todas las tablas, `GCRecord IS NULL` significa registro ACTIVO (no borrado).
   Filtrar siempre con `GCRecord IS NULL` salvo que se pidan registros eliminados.

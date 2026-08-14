@@ -460,6 +460,89 @@ corral. Sin comederos individuales solo se puede repartir el costo del grupo,
 ponderado por consumo estimado. Tiene que decirlo la pantalla, para que nadie
 descarte una vaca creyendo que es un dato medido.
 
+## Agente de IA: preguntas del tambo en lenguaje natural (14/08/2026)
+
+`agente.py` + `POST /api/agente/preguntar` (gateado admin). Responde
+encadenando herramientas hasta `MAX_TURNOS` veces, no escribiendo SQL suelto
+contra DDM como hacía `/api/preguntar`.
+
+**LA DECISIÓN QUE IMPORTA: las herramientas son los mismos endpoints `/api/...`
+que ya usa cada pantalla**, llamadas en proceso con el `test_client` de Flask
+(sesión admin sintética, solo para poder llegar a rutas con
+`@auth.requiere_rol` — no filtra hacia afuera: `/api/agente/preguntar` tiene el
+mismo gate). Motivo medido, no supuesto: la lista de trampas de este mismo
+documento —filtrar por rebaño, `MilkTest` por `AnimalHistoricalData`, los
+tramos de flujo de Alpro ×100, `SCC` en miles— es EXACTAMENTE lo que un modelo
+escribiendo SQL desde cero pisaría, con un número que sale mal y no avisa.
+Reusar los endpoints ya verificados evita duplicar esa lógica una segunda vez
+y GARANTIZA que el agente diga lo mismo que la pantalla.
+
+El SQL libre (`ai.py`, ya existía para `/api/preguntar`) queda de ÚLTIMO
+RECURSO, con dos candados: el mismo bloqueo de `tambos.es_produccion()` que ya
+tenía `/api/preguntar` (nunca corre SQL de IA contra una base de producción en
+vivo), y la respuesta tiene que avisar que ese número no pasó por ninguna
+pantalla verificada — está en el `system` prompt y en el propio resultado de
+la herramienta (`"AVISO": "..."`).
+
+**SOLO LECTURA en tres capas independientes**, ninguna depende de que el
+agente "se porte bien": el mapa de herramientas solo tiene rutas GET (ninguna
+ruta que escribe existe ahí, no es una regla que se pueda saltear); el SQL
+libre pasa por `db.validate_sql` igual que cualquier otra consulta; y la
+conexión a DDM es del usuario `delpro_lectura` con `ApplicationIntent=ReadOnly`
+— aunque las dos capas de arriba fallaran, SQL Server rechaza la escritura.
+
+**Bug encontrado construyendo esto, no relacionado con el agente en sí**: al
+implementar `sql_identificacion` para la convencional (ver más abajo, tarea
+del 13/08) nunca se probó `/api/rutina/rendimiento` con esos datos reales.
+`api_rutina_rendimiento` llamaba a `rutina.armar_identificacion` fijo, que
+espera las columnas de la ROTATIVA (`ordenos`/`desconocidos`); la consulta de
+la convencional trae otras (`visitas`/`sin_duenio`/`sin_lectura`/`desconocido`)
+y tiraba `KeyError: 'ordenos'` — la pantalla de Rendimiento Sala de La Martina
+estaba rota en producción sin que nadie lo hubiera notado. Se agregó
+`armar_identificacion` propio a cada sala (rotativa delega a `rutina.py`,
+convencional arma su propio shape con el mismo contrato de salida más el
+detalle de las dos causas separadas) y `api_rutina_rendimiento` ahora
+despacha por `salas.de(tambo)` en vez de llamar fijo. Lo encontró el
+`test_client` del agente ejercitando el endpoint de verdad — un valor
+concreto de construir herramientas contra la app real y no contra mocks.
+
+**Los payloads de dos herramientas hay que podarlos, y por el mismo motivo.**
+`rutina_dia` (`/api/rutina`) y `rendimiento_sala` (`/api/rutina/rendimiento`)
+traen campos que son para el GRÁFICO de la pantalla: `visitas` (un renglón
+por ordeño, 300 a 2.400 según la sesión) y `grupos`/`retiradas_grupo_actual`
+(un renglón por CADA bloque contiguo de rodeo — en la convencional un rodeo
+puede entrar en 100-200 bloques por vacas sueltas, medido en CLAUDE.md más
+abajo). Sin podarlos, una sola sesión de La Martina mide 20.000+ caracteres,
+más que el resto de la respuesta junta. `_recortar()` en `agente.py` los saca
+y deja el agregado entero (`detalle`, `hallazgos`, las métricas de
+throughput) — es lo mismo que necesitaría un humano leyendo la pantalla para
+explicar el día, sin la lista renglón por renglón.
+
+**SQL Express, primer toque de un tambo en un proceso nuevo, dispara una
+avalancha de warmup en serie** (`_tambo_del_request` → `_warmup`, ya
+documentado en el propio `app.py`): dashboard, salud, reproducción,
+rendimiento, alimentación, todo en UNA cola porque `db.py` serializa las
+consultas por servidor con un `Semaphore(1)`. Medido probando el agente con
+procesos Python nuevos (cada uno arranca con el caché de `app.py` vacío):
+una herramienta fría puede tardar 90s, y si se piden VARIAS herramientas
+distintas en ráfaga para un tambo recién tocado, se encolan entre sí y algunas
+superan los 160s de reintento. **Esto es un costo de una sola vez por proceso,
+no por pregunta** — la app real queda corriendo y sirve rápido después del
+primer warmup; el costo alto aparece solo al testear con procesos nuevos
+repetidos, o si el servidor se acaba de reiniciar. `CALENTANDO_REINTENTOS`
+(20) × `CALENTANDO_ESPERA_S` (8s) = 160s por herramienta es generoso a
+propósito: el agente no es una pantalla en vivo, una respuesta que tarda un
+par de minutos por Telegram es aceptable.
+
+**Pendiente, y es una decisión, no un descuido**: conectar esto a Telegram
+requiere un webhook de ENTRADA, y `telegram_bot.py` hoy solo envía (no hay
+ruta pública que reciba mensajes). Abrir una ruta pública nueva en el túnel
+de SERVER-DELPRO tiene implicancias de seguridad (quién puede escribirle al
+bot, cómo se mapea un chat de Telegram a un tambo) que conviene decidir con
+el tambo antes de exponerlo, no resolverlas en el camino. Mientras tanto el
+agente se prueba por `POST /api/agente/preguntar` (mismo gate admin que el
+resto de la gestión).
+
 ## El score de rutina de una sala convencional (13/08/2026)
 
 La espina de pescado tenía 4 de 7 componentes en "sin datos" y no llegaba a

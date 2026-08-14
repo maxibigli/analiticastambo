@@ -128,6 +128,10 @@ def sql_identificacion(desde: str, hasta: str) -> str:
     return rutina.sql_identificacion(desde, hasta)
 
 
+def armar_identificacion(columns, rows) -> list:
+    return rutina.armar_identificacion(columns, rows)
+
+
 def analizar_rendimiento(tambo: str, columns, rows, desde: str, hasta: str, max_sesiones=None,
                          nombres=None, grupos_ordene=None) -> list:
     return rutina.analizar_rendimiento(columns, rows, desde, hasta, max_sesiones, nombres=nombres,

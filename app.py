@@ -14,6 +14,7 @@ import datetime
 
 import os
 
+import agente
 import ai
 import alimentacion
 import auth
@@ -2802,7 +2803,7 @@ def _refresh_rendimiento_async(tambo, desde, hasta):
             # secundario: si falla, el resto de Rendimiento Sala igual sirve.
             ident = None
             sql_ident = salas.de(tambo).sql_identificacion(desde.isoformat(), hasta.isoformat())
-            if sql_ident:   # None = esta sala no lo soporta (ver salas/convencional.py)
+            if sql_ident:   # None = esta sala todavía no calcula identificación
                 try:
                     ident = db.run_query(sql_ident, tambo=tambo,
                                          max_rows=rutina.RANGO_RENDIMIENTO_MAX_DIAS + 2)
@@ -2855,7 +2856,12 @@ def api_rutina_rendimiento():
                                                     grupos_ordene=_grupos_ordene(tambo))
     # None = esta sala no calcula identificación, o la consulta falló: el
     # frontend muestra "no disponible" en vez de un 100% que no midió nada.
-    identificacion = rutina.armar_identificacion(ident["columns"], ident["rows"]) if ident else None
+    # Dispatch por sala: la consulta y las columnas que arma cada una son
+    # distintas (`salas.convencional.sql_identificacion` separa sin_lectura de
+    # desconocido; `rutina.sql_identificacion` no) — un `armar_identificacion`
+    # fijo rompía con KeyError en cuanto la convencional dejó de mandar `None`.
+    identificacion = (salas.de(tambo).armar_identificacion(ident["columns"], ident["rows"])
+                      if ident else None)
     return jsonify({"desde": desde.isoformat(), "hasta": hasta.isoformat(), "sesiones": sesiones,
                     "identificacion": identificacion,
                     "truncated": visitas.get("truncated", False)})
@@ -4099,6 +4105,34 @@ def preguntar():
         "analisis": analisis,
         **data,
     })
+
+
+@app.post("/api/agente/preguntar")
+@auth.requiere_rol("admin")
+def api_agente_preguntar():
+    """Agente que responde preguntas del tambo encadenando herramientas (los
+    mismos endpoints que usa cada pantalla) en vez de escribir SQL a ciegas —
+    ver el docstring de `agente.py` para el porqué. A diferencia de
+    `/api/preguntar`, SÍ corre en tambos de producción: las herramientas son
+    consultas fijas y auditadas, no SQL generado en el momento (ese camino
+    sigue existiendo solo como último recurso dentro del propio agente, y ahí
+    sí respeta el mismo candado que `/api/preguntar`)."""
+    if not agente.api_disponible():
+        return jsonify({
+            "error": "La API de Claude no está configurada. Define la variable de "
+                     "entorno ANTHROPIC_API_KEY y reiniciá la aplicación."
+        }), 503
+    body = request.json or {}
+    pregunta = (body.get("pregunta") or "").strip()
+    if not pregunta:
+        return jsonify({"error": "Escribí una pregunta."}), 400
+    historial = body.get("mensajes") if isinstance(body.get("mensajes"), list) else None
+    tambo = _tambo_del_request()
+    try:
+        resultado = agente.responder(pregunta, tambo, historial=historial)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"No se pudo responder: {exc}"}), 502
+    return jsonify(resultado)
 
 
 # ---------------------------------------------------------------------------

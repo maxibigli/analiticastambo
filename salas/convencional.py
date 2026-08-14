@@ -878,6 +878,7 @@ def sql_identificacion(desde: str, hasta: str) -> str:
         SELECT CAST(y.BeginTime AS date) AS fecha,
                COUNT(*) AS visitas,
                SUM(CASE WHEN b.Number = 0 THEN 1 ELSE 0 END) AS sin_duenio,
+               SUM(CASE WHEN b.Number = 0 THEN y.TotalYield ELSE 0 END) AS kg_sin_duenio,
                SUM(CASE WHEN b.Number = 0 AND ex.IdTimestamp IS NULL
                         THEN 1 ELSE 0 END) AS sin_lectura,
                SUM(CASE WHEN b.Number = 0 AND ex.IdTimestamp IS NOT NULL
@@ -890,6 +891,30 @@ def sql_identificacion(desde: str, hasta: str) -> str:
         ORDER BY fecha
         OPTION (MAX_GRANT_PERCENT = 20)
     """
+
+
+def armar_identificacion(columns, rows) -> list:
+    """Filas de `sql_identificacion` (de ESTA sala) -> mismo shape que
+    `rutina.armar_identificacion` (`ordenos`/`desconocidos`/`kg_desconocidos`/
+    `pct_identificacion`), para que `/api/rutina/rendimiento` no tenga que
+    saber qué sala está mirando — MÁS los dos motivos separados
+    (`sin_lectura`/`desconocido_transponder`) que la consulta de esta sala sí
+    puede distinguir y la de la rotativa no."""
+    idx = {c: i for i, c in enumerate(columns)}
+    salida = []
+    for r in rows:
+        ordenos = int(r[idx["visitas"]] or 0)
+        desc = int(r[idx["sin_duenio"]] or 0)
+        salida.append({
+            "fecha": str(r[idx["fecha"]])[:10],
+            "ordenos": ordenos,
+            "desconocidos": desc,
+            "kg_desconocidos": round(float(r[idx["kg_sin_duenio"]] or 0), 1),
+            "pct_identificacion": round(100.0 * (ordenos - desc) / ordenos, 2) if ordenos else None,
+            "sin_lectura": int(r[idx["sin_lectura"]] or 0),
+            "desconocido_transponder": int(r[idx["desconocido"]] or 0),
+        })
+    return salida
 
 
 def analizar_rendimiento(tambo: str, columns, rows, desde: str, hasta: str, max_sesiones=None,
