@@ -62,12 +62,14 @@ MAX_TURNOS = 6                  # tope de ida-y-vuelta con herramientas por preg
 # aceptable—, así que el presupuesto es generoso: hasta 160s por herramienta.
 CALENTANDO_REINTENTOS = 20
 CALENTANDO_ESPERA_S = 8
-# Caracteres; ver `_recortar`. El tablero completo (17 indicadores con su texto
-# de ayuda, igual al que ve el operario en pantalla) mide ~11.500 — se
-# conserva ENTERO a propósito: ese texto es la explicación de cada indicador,
-# no algo que convenga resumir. El límite protege contra lo genuinamente
-# desmedido (un rango de fechas larguísimo, un sql_libre sin filtrar).
-_LIMITE_TOOL_RESULT = 18000
+# Caracteres; ver `_recortar`. Contenido legítimo y curado puede ser grande:
+# el tablero completo mide ~11.500 (17 indicadores con su texto de ayuda) y el
+# ranking de "vacas a revisar" o de partos/secados proyectados —ya acotados a
+# un top-N por la propia herramienta, no una lista sin filtrar— rondan los
+# 20.000. Se conservan ENTEROS a propósito: ES la respuesta, no adorno. El
+# límite protege contra lo genuinamente desmedido (un sql_libre sin filtrar,
+# un rango de fechas larguísimo).
+_LIMITE_TOOL_RESULT = 30000
 
 
 def api_disponible() -> bool:
@@ -425,12 +427,39 @@ def _recortar(nombre: str, data) -> dict:
             }
             for s in data["sesiones"]
         ]
-    texto = json.dumps(data, ensure_ascii=False, default=str)
-    if len(texto) <= _LIMITE_TOOL_RESULT:
+    if len(json.dumps(data, ensure_ascii=False, default=str)) <= _LIMITE_TOOL_RESULT:
         return data
-    return {"aviso": f"El resultado completo es muy grande ({len(texto)} caracteres) y se recortó; "
-                     "pedí un rango más chico si falta algo importante.",
-            "parcial": texto[:_LIMITE_TOOL_RESULT]}
+    return _recorte_generico(data)
+
+
+def _recorte_generico(data: dict) -> dict:
+    """Respaldo para lo que no tiene una poda específica (arriba) y de todos
+    modos superó el límite: acorta la lista MÁS PESADA del payload a sus
+    primeros elementos, en vez de cortar el texto JSON a la mitad.
+
+    Cortar el texto crudo es tentador —es una línea— pero larga bien la mitad
+    de un objeto: el modelo recibiría JSON inválido y podría leer cualquier
+    cosa del fragmento roto. Acortar una lista entera deja SIEMPRE JSON válido,
+    y al ser la lista más pesada la que se acorta, es también la que más
+    probablemente sea una tabla de filas repetidas (donde las primeras N ya
+    dan la idea) y no un resumen agregado (que por chico ya entraba solo)."""
+    if not isinstance(data, dict):
+        return {"aviso": "El resultado es muy grande y no se pudo acortar automáticamente."}
+    listas = {k: v for k, v in data.items() if isinstance(v, list) and v}
+    if not listas:
+        return {"aviso": "El resultado es muy grande incluso sin listas para acortar; "
+                         "pedí algo más puntual."}
+    clave = max(listas, key=lambda k: len(json.dumps(listas[k], ensure_ascii=False, default=str)))
+    recortado = dict(data)
+    original = len(listas[clave])
+    n = original
+    while n > 1:
+        n = max(1, n // 2)
+        recortado[clave] = listas[clave][:n]
+        if len(json.dumps(recortado, ensure_ascii=False, default=str)) <= _LIMITE_TOOL_RESULT:
+            break
+    recortado[f"{clave}_aviso"] = f"se muestran {n} de {original} — pedí un rango más chico para ver el resto"
+    return recortado
 
 
 def _ejecutar_herramienta(nombre: str, args: dict, tambo: str, client) -> dict:
