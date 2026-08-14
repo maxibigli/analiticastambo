@@ -87,6 +87,16 @@ TAMBOS = {
         "server": "localhost\\DELPRO",
         "database": "DDM_LAMARTINA",
         "auth": "windows",
+        # Base propia, restaurada aparte JUSTAMENTE para no compartirla con
+        # otro tambo (ver CLAUDE.md, "Base local: sigue al..."): un solo
+        # rebaño (`Herd` = 1), verificado. Declararlo evita que `rebano.py`
+        # caiga a deducirlo vía `CMSGroupMilkSetting` — una tabla que no
+        # existe en este esquema (Alpro/convencional, no rotativa) y que hacía
+        # morir con "Invalid object name" cualquier consulta que necesitara
+        # filtrar por rebaño (días abiertos, mortandad de terneros, el cruce
+        # con SenseHub). Con esto sale sobrando el chequeo ad-hoc que ya tenía
+        # `api_sensehub_cruce` para el mismo problema.
+        "rebanos": [1],
     },
 
     # --- Plantilla para agregar otro tambo (descomentar y completar) ---
