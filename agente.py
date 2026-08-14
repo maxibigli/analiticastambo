@@ -516,6 +516,14 @@ def responder(pregunta: str, tambo: str, historial: list | None = None) -> dict:
     mensajes = list(historial or []) + [{"role": "user", "content": pregunta}]
     pasos = []
     system = _mensaje_sistema(tambo)
+    # La MISMA herramienta con los MISMOS argumentos, dos veces en una sola
+    # respuesta, no es una segunda medición — es la misma pregunta otra vez.
+    # Medido: el modelo llamó `reproduccion_resultados({})` dos veces seguidas
+    # sin necesidad. Contra un SQL Express lento y compartido (ver CLAUDE.md)
+    # eso puede ser cien segundos tirados. Se memoiza por (nombre, argumentos)
+    # durante ESTA pregunta — no entre preguntas, donde sí puede haber cambiado
+    # algo real — así que la segunda vez ni siquiera toca la base.
+    cache: dict[str, dict] = {}
 
     for _ in range(MAX_TURNOS):
         resp = _client().messages.create(
@@ -532,8 +540,15 @@ def responder(pregunta: str, tambo: str, historial: list | None = None) -> dict:
 
         resultados = []
         for bloque in usos:
-            resultado = _ejecutar_herramienta(bloque.name, bloque.input or {}, tambo, client)
-            pasos.append({"herramienta": bloque.name, "args": bloque.input})
+            args = bloque.input or {}
+            clave = f"{bloque.name}:{json.dumps(args, sort_keys=True, default=str)}"
+            repetida = clave in cache
+            if repetida:
+                resultado = cache[clave]
+            else:
+                resultado = _ejecutar_herramienta(bloque.name, args, tambo, client)
+                cache[clave] = resultado
+            pasos.append({"herramienta": bloque.name, "args": bloque.input, "repetida": repetida})
             resultados.append({
                 "type": "tool_result", "tool_use_id": bloque.id,
                 "content": json.dumps(resultado, ensure_ascii=False, default=str),
