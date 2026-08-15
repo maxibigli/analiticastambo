@@ -68,6 +68,41 @@
     color: var(--text-secondary); background: color-mix(in srgb, var(--accent) 6%, transparent);
     border-radius: 0 8px 8px 0;
   }
+  /* Chat del agente: cada burbuja a su lado, como cualquier chat. La primera
+     pregunta puede tardar minutos (SQL Express calentando, ver CLAUDE.md), así
+     que hay una burbuja de "pensando…" que se reemplaza cuando llega la
+     respuesta — sin eso, un silencio largo se lee como que la app se colgó. */
+  #agente-log {
+    display: flex; flex-direction: column; gap: 10px; max-height: 420px;
+    overflow-y: auto; padding: 4px 2px;
+  }
+  #agente-log:empty::before {
+    content: "Preguntale algo del tambo — \"¿cómo anda la rutina esta semana?\", \"¿qué vacas hay que revisar?\"";
+    color: var(--muted); font-size: 13px; font-style: italic;
+  }
+  .agente-msg { max-width: 88%; padding: 9px 13px; border-radius: 12px; line-height: 1.45; font-size: 14px; }
+  .agente-msg.usuario {
+    align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 3px;
+  }
+  .agente-msg.bot {
+    align-self: flex-start; background: color-mix(in srgb, var(--accent) 7%, var(--surface-1));
+    border: 1px solid var(--border); border-bottom-left-radius: 3px; color: var(--text-primary);
+  }
+  .agente-msg.bot.pensando { color: var(--muted); font-style: italic; }
+  .agente-msg.bot.error { border-color: var(--critical); color: var(--critical); }
+  .agente-msg p { margin: 0 0 8px; }
+  .agente-msg p:last-child { margin-bottom: 0; }
+  .agente-msg ul { margin: 4px 0 8px; padding-left: 20px; }
+  .agente-msg h3 { margin: 10px 0 4px; font-size: 14px; color: var(--accent); }
+  .agente-msg h3:first-child { margin-top: 0; }
+  .agente-fila { display: flex; gap: 8px; margin-top: 12px; align-items: center; }
+  .agente-fila input[type=text] { flex: 1; }
+  #agente-mic {
+    background: transparent; border: 1px solid var(--baseline); color: var(--text-primary);
+    padding: 9px 12px; font-size: 16px; line-height: 1;
+  }
+  #agente-mic.escuchando { background: var(--critical); border-color: var(--critical); color: #fff; animation: agente-pulso 1.1s ease-in-out infinite; }
+  @keyframes agente-pulso { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
   table { border-collapse: collapse; width: 100%; margin-top: 12px; font-size: 13px; }
   th, td { padding: 6px 10px; border-bottom: 1px solid var(--grid); text-align: left; }
   th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface-1); }
@@ -607,6 +642,19 @@
     <main>
   <div class="page" id="page-dashboard" hidden>
   <div class="aviso" id="dashboard-estado"></div>
+
+  <section class="card" id="agente-card">
+    <h2 style="margin:0">💬 Preguntale a LactIA</h2>
+    <span class="aviso" id="agente-aviso"></span>
+    <div id="agente-log" style="margin-top:10px"></div>
+    <div class="agente-fila">
+      <input type="text" id="agente-input" placeholder="Escribí o tocá el micrófono para preguntar…"
+             autocomplete="off">
+      <button type="button" id="agente-mic" title="Preguntar por voz" hidden>🎤</button>
+      <button type="button" id="agente-enviar">Enviar</button>
+    </div>
+  </section>
+
   <section class="kpis" id="kpis"></section>
 
   <section class="grid2">
@@ -3081,6 +3129,7 @@ let procesoSeq = 0;
 
 // Nombre legible a partir de la URL, para no tener que etiquetar cada llamada.
 const NOMBRE_PROCESO = [
+  [/\/api\/agente\//, 'Agente IA'],
   [/\/api\/flujos\//, 'Análisis de flujos'],
   [/\/api\/proyeccion\//, 'Proyección de rebaños'],
   [/\/api\/reproduccion\/resultados/, 'Indicadores reproductivos'],
@@ -3160,6 +3209,125 @@ function refrescoSinSolape(fn, ms, setId, inmediato) {
   };
   if (inmediato) fn();
   setId(setTimeout(vuelta, ms));
+}
+
+// --- Agente de IA (chat en el Dashboard) --------------------------------
+// `agenteMensajes` es el historial que ida y vuelta manda/recibe
+// /api/agente/preguntar (ver agente.py: cada respuesta devuelve "mensajes",
+// que hay que reenviar tal cual en la próxima pregunta para que el agente
+// tenga contexto de la conversación). Vive solo en memoria: se pierde al
+// recargar la página, a propósito — no hay backend para guardar chats.
+let agenteMensajes = [];
+let agentePreguntando = false;
+
+// Recorte MÍNIMO de markdown a HTML, no una librería entera: el agente
+// contesta con negritas/títulos/listas (se lo pide el prompt de agente.py) y
+// mostrarlo crudo ("**score 83**") se lee peor que no tener markdown. Escapa
+// TODO primero — inyectar HTML desde una respuesta del modelo no es un riesgo
+// real hoy (el usuario ya está autenticado como admin y agente.py no deja que
+// el modelo devuelva nada más que texto), pero es gratis blindarlo igual.
+function mdSimple(texto) {
+  const esc = (texto || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const lineas = esc.split('\n');
+  let html = '', enLista = false;
+  const cerrarLista = () => { if (enLista) { html += '</ul>'; enLista = false; } };
+  for (const linea of lineas) {
+    const m = linea.match(/^#{1,4}\s+(.*)/);
+    const li = linea.match(/^[-*]\s+(.*)/);
+    if (m) { cerrarLista(); html += `<h3>${m[1]}</h3>`; }
+    else if (li) { if (!enLista) { html += '<ul>'; enLista = true; } html += `<li>${li[1]}</li>`; }
+    else if (linea.trim()) { cerrarLista(); html += `<p>${linea}</p>`; }
+    else cerrarLista();
+  }
+  cerrarLista();
+  return html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+}
+
+function agenteAgregarMensaje(rol, texto, extraClase) {
+  const log = document.getElementById('agente-log');
+  const div = document.createElement('div');
+  div.className = `agente-msg ${rol}${extraClase ? ' ' + extraClase : ''}`;
+  div.innerHTML = rol === 'usuario'
+    ? (texto || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    : mdSimple(texto);
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+async function agentePreguntar() {
+  if (agentePreguntando) return;
+  const input = document.getElementById('agente-input');
+  const pregunta = input.value.trim();
+  if (!pregunta) return;
+  input.value = '';
+  agentePreguntando = true;
+  document.getElementById('agente-enviar').disabled = true;
+
+  agenteAgregarMensaje('usuario', pregunta);
+  const pensando = agenteAgregarMensaje('bot', 'Pensando… puede tardar hasta un par de minutos.', 'pensando');
+
+  try {
+    const r = await pedirJSON('/api/agente/preguntar?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pregunta, mensajes: agenteMensajes }),
+    });
+    pensando.remove();
+    agenteAgregarMensaje('bot', r.respuesta || '(sin respuesta)');
+    agenteMensajes = r.mensajes || agenteMensajes;
+  } catch (e) {
+    pensando.remove();
+    agenteAgregarMensaje('bot', 'Error: ' + e.message, 'error');
+  } finally {
+    agentePreguntando = false;
+    document.getElementById('agente-enviar').disabled = false;
+    input.focus();
+  }
+}
+
+document.getElementById('agente-enviar').addEventListener('click', agentePreguntar);
+document.getElementById('agente-input').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); agentePreguntar(); }
+});
+
+if (!ia_disp) {
+  document.getElementById('agente-input').disabled = true;
+  document.getElementById('agente-enviar').disabled = true;
+  document.getElementById('agente-aviso').textContent =
+    'Configurá ANTHROPIC_API_KEY para habilitar el agente.';
+}
+
+// Micrófono: dictado por voz con el reconocimiento del propio navegador
+// (Chrome/Edge de escritorio y Android; no hay soporte en Firefox ni Safari
+// de iPhone, por eso el botón arranca oculto y solo se muestra si el
+// navegador lo soporta — mejor no ofrecer un botón que no va a andar). Sin
+// servidor de por medio: el audio nunca sale del teléfono, lo transcribe el
+// navegador y acá solo llega texto.
+const AgenteReconocedor = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (AgenteReconocedor) {
+  const micBtn = document.getElementById('agente-mic');
+  micBtn.hidden = false;
+  const reco = new AgenteReconocedor();
+  reco.lang = 'es-AR';
+  reco.interimResults = false;
+  reco.maxAlternatives = 1;
+  let escuchando = false;
+
+  reco.onresult = (ev) => {
+    const texto = ev.results[0][0].transcript;
+    document.getElementById('agente-input').value = texto;
+    agentePreguntar();
+  };
+  reco.onerror = () => { escuchando = false; micBtn.classList.remove('escuchando'); };
+  reco.onend = () => { escuchando = false; micBtn.classList.remove('escuchando'); };
+
+  micBtn.addEventListener('click', () => {
+    if (escuchando) { reco.stop(); return; }
+    if (agentePreguntando) return;   // no escuchar mientras espera una respuesta
+    escuchando = true;
+    micBtn.classList.add('escuchando');
+    try { reco.start(); } catch (e) { escuchando = false; micBtn.classList.remove('escuchando'); }
+  });
 }
 
 async function cargarDashboard(intento = 0) {
