@@ -605,6 +605,7 @@
   <nav class="sidebar" id="sidebar">
     <div class="sidebar-brand"><img src="/static/img/logo.svg" alt="">LactIA</div>
     {% if 'dashboard' in paginas_visibles %}<button class="nav-item" data-pagina="dashboard">📊 <span>Dashboard</span></button>{% endif %}
+    {% if 'consultas' in paginas_visibles %}<button class="nav-item" data-pagina="consultas">🔍 <span>Consultas e IA</span></button>{% endif %}
     {% if 'tablero' in paginas_visibles %}<button class="nav-item" data-pagina="tablero">🚦 <span>Tablero de Diagnóstico</span></button>{% endif %}
     {% if 'ordeno' in paginas_visibles %}<button class="nav-item" data-pagina="ordeno">🔄 <span>Ordeño en vivo</span></button>{% endif %}
     {% if 'sala_cms' in paginas_visibles %}<button class="nav-item" data-pagina="sala_cms">🐟 <span>Ordeño en Vivo Sala CMS</span></button>{% endif %}
@@ -622,7 +623,6 @@
     {% if 'tareas' in paginas_visibles %}<button class="nav-item" data-pagina="tareas">✅ <span>Tareas pendientes</span></button>{% endif %}
     {% if 'checklist' in paginas_visibles %}<button class="nav-item" data-pagina="checklist">📋 <span>Check-list de control</span></button>{% endif %}
     {% if 'sensehub' in paginas_visibles %}<button class="nav-item" data-pagina="sensehub">📶 <span>Collares SenseHub</span></button>{% endif %}
-    {% if 'consultas' in paginas_visibles %}<button class="nav-item" data-pagina="consultas">🔍 <span>Consultas e IA</span></button>{% endif %}
     {% if 'configuracion' in paginas_visibles %}<button class="nav-item" data-pagina="configuracion">⚙ <span>Configuración</span></button>{% endif %}
   </nav>
   <div class="sidebar-fondo" id="sidebar-fondo"></div>
@@ -642,18 +642,6 @@
     <main>
   <div class="page" id="page-dashboard" hidden>
   <div class="aviso" id="dashboard-estado"></div>
-
-  <section class="card" id="agente-card">
-    <h2 style="margin:0">💬 Preguntale a LactIA</h2>
-    <span class="aviso" id="agente-aviso"></span>
-    <div id="agente-log" style="margin-top:10px"></div>
-    <div class="agente-fila">
-      <input type="text" id="agente-input" placeholder="Escribí o tocá el micrófono para preguntar…"
-             autocomplete="off">
-      <button type="button" id="agente-mic" title="Preguntar por voz" hidden>🎤</button>
-      <button type="button" id="agente-enviar">Enviar</button>
-    </div>
-  </section>
 
   <section class="kpis" id="kpis"></section>
 
@@ -2780,6 +2768,18 @@
   </div>
 
   <div class="page" id="page-consultas" hidden>
+  <section class="card" id="agente-card">
+    <h2 style="margin:0">💬 Preguntale a LactIA</h2>
+    <span class="aviso" id="agente-aviso"></span>
+    <div id="agente-log" style="margin-top:10px"></div>
+    <div class="agente-fila">
+      <input type="text" id="agente-input" placeholder="Escribí o tocá el micrófono para preguntar…"
+             autocomplete="off">
+      <button type="button" id="agente-mic" title="Preguntar por voz" hidden>🎤</button>
+      <button type="button" id="agente-enviar">Enviar</button>
+    </div>
+  </section>
+
   <section class="card">
     <h2>Consultas y reportes</h2>
     <div class="controls controles-consulta">
@@ -3209,125 +3209,6 @@ function refrescoSinSolape(fn, ms, setId, inmediato) {
   };
   if (inmediato) fn();
   setId(setTimeout(vuelta, ms));
-}
-
-// --- Agente de IA (chat en el Dashboard) --------------------------------
-// `agenteMensajes` es el historial que ida y vuelta manda/recibe
-// /api/agente/preguntar (ver agente.py: cada respuesta devuelve "mensajes",
-// que hay que reenviar tal cual en la próxima pregunta para que el agente
-// tenga contexto de la conversación). Vive solo en memoria: se pierde al
-// recargar la página, a propósito — no hay backend para guardar chats.
-let agenteMensajes = [];
-let agentePreguntando = false;
-
-// Recorte MÍNIMO de markdown a HTML, no una librería entera: el agente
-// contesta con negritas/títulos/listas (se lo pide el prompt de agente.py) y
-// mostrarlo crudo ("**score 83**") se lee peor que no tener markdown. Escapa
-// TODO primero — inyectar HTML desde una respuesta del modelo no es un riesgo
-// real hoy (el usuario ya está autenticado como admin y agente.py no deja que
-// el modelo devuelva nada más que texto), pero es gratis blindarlo igual.
-function mdSimple(texto) {
-  const esc = (texto || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const lineas = esc.split('\n');
-  let html = '', enLista = false;
-  const cerrarLista = () => { if (enLista) { html += '</ul>'; enLista = false; } };
-  for (const linea of lineas) {
-    const m = linea.match(/^#{1,4}\s+(.*)/);
-    const li = linea.match(/^[-*]\s+(.*)/);
-    if (m) { cerrarLista(); html += `<h3>${m[1]}</h3>`; }
-    else if (li) { if (!enLista) { html += '<ul>'; enLista = true; } html += `<li>${li[1]}</li>`; }
-    else if (linea.trim()) { cerrarLista(); html += `<p>${linea}</p>`; }
-    else cerrarLista();
-  }
-  cerrarLista();
-  return html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
-}
-
-function agenteAgregarMensaje(rol, texto, extraClase) {
-  const log = document.getElementById('agente-log');
-  const div = document.createElement('div');
-  div.className = `agente-msg ${rol}${extraClase ? ' ' + extraClase : ''}`;
-  div.innerHTML = rol === 'usuario'
-    ? (texto || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    : mdSimple(texto);
-  log.appendChild(div);
-  log.scrollTop = log.scrollHeight;
-  return div;
-}
-
-async function agentePreguntar() {
-  if (agentePreguntando) return;
-  const input = document.getElementById('agente-input');
-  const pregunta = input.value.trim();
-  if (!pregunta) return;
-  input.value = '';
-  agentePreguntando = true;
-  document.getElementById('agente-enviar').disabled = true;
-
-  agenteAgregarMensaje('usuario', pregunta);
-  const pensando = agenteAgregarMensaje('bot', 'Pensando… puede tardar hasta un par de minutos.', 'pensando');
-
-  try {
-    const r = await pedirJSON('/api/agente/preguntar?tambo=' + encodeURIComponent(tamboActual), {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pregunta, mensajes: agenteMensajes }),
-    });
-    pensando.remove();
-    agenteAgregarMensaje('bot', r.respuesta || '(sin respuesta)');
-    agenteMensajes = r.mensajes || agenteMensajes;
-  } catch (e) {
-    pensando.remove();
-    agenteAgregarMensaje('bot', 'Error: ' + e.message, 'error');
-  } finally {
-    agentePreguntando = false;
-    document.getElementById('agente-enviar').disabled = false;
-    input.focus();
-  }
-}
-
-document.getElementById('agente-enviar').addEventListener('click', agentePreguntar);
-document.getElementById('agente-input').addEventListener('keydown', (ev) => {
-  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); agentePreguntar(); }
-});
-
-if (!ia_disp) {
-  document.getElementById('agente-input').disabled = true;
-  document.getElementById('agente-enviar').disabled = true;
-  document.getElementById('agente-aviso').textContent =
-    'Configurá ANTHROPIC_API_KEY para habilitar el agente.';
-}
-
-// Micrófono: dictado por voz con el reconocimiento del propio navegador
-// (Chrome/Edge de escritorio y Android; no hay soporte en Firefox ni Safari
-// de iPhone, por eso el botón arranca oculto y solo se muestra si el
-// navegador lo soporta — mejor no ofrecer un botón que no va a andar). Sin
-// servidor de por medio: el audio nunca sale del teléfono, lo transcribe el
-// navegador y acá solo llega texto.
-const AgenteReconocedor = window.SpeechRecognition || window.webkitSpeechRecognition;
-if (AgenteReconocedor) {
-  const micBtn = document.getElementById('agente-mic');
-  micBtn.hidden = false;
-  const reco = new AgenteReconocedor();
-  reco.lang = 'es-AR';
-  reco.interimResults = false;
-  reco.maxAlternatives = 1;
-  let escuchando = false;
-
-  reco.onresult = (ev) => {
-    const texto = ev.results[0][0].transcript;
-    document.getElementById('agente-input').value = texto;
-    agentePreguntar();
-  };
-  reco.onerror = () => { escuchando = false; micBtn.classList.remove('escuchando'); };
-  reco.onend = () => { escuchando = false; micBtn.classList.remove('escuchando'); };
-
-  micBtn.addEventListener('click', () => {
-    if (escuchando) { reco.stop(); return; }
-    if (agentePreguntando) return;   // no escuchar mientras espera una respuesta
-    escuchando = true;
-    micBtn.classList.add('escuchando');
-    try { reco.start(); } catch (e) { escuchando = false; micBtn.classList.remove('escuchando'); }
-  });
 }
 
 async function cargarDashboard(intento = 0) {
@@ -6076,6 +5957,125 @@ async function cargarLaser() {
   } catch (e) {
     document.getElementById('laser-kpis').innerHTML = `<div class="aviso">Error: ${e.message}</div>`;
   }
+}
+
+// --- Agente de IA (chat en "Consultas e IA") ----------------------------
+// `agenteMensajes` es el historial que ida y vuelta manda/recibe
+// /api/agente/preguntar (ver agente.py: cada respuesta devuelve "mensajes",
+// que hay que reenviar tal cual en la próxima pregunta para que el agente
+// tenga contexto de la conversación). Vive solo en memoria: se pierde al
+// recargar la página, a propósito — no hay backend para guardar chats.
+let agenteMensajes = [];
+let agentePreguntando = false;
+
+// Recorte MÍNIMO de markdown a HTML, no una librería entera: el agente
+// contesta con negritas/títulos/listas (se lo pide el prompt de agente.py) y
+// mostrarlo crudo ("**score 83**") se lee peor que no tener markdown. Escapa
+// TODO primero — inyectar HTML desde una respuesta del modelo no es un riesgo
+// real hoy (el usuario ya está autenticado como admin y agente.py no deja que
+// el modelo devuelva nada más que texto), pero es gratis blindarlo igual.
+function mdSimple(texto) {
+  const esc = (texto || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const lineas = esc.split('\n');
+  let html = '', enLista = false;
+  const cerrarLista = () => { if (enLista) { html += '</ul>'; enLista = false; } };
+  for (const linea of lineas) {
+    const m = linea.match(/^#{1,4}\s+(.*)/);
+    const li = linea.match(/^[-*]\s+(.*)/);
+    if (m) { cerrarLista(); html += `<h3>${m[1]}</h3>`; }
+    else if (li) { if (!enLista) { html += '<ul>'; enLista = true; } html += `<li>${li[1]}</li>`; }
+    else if (linea.trim()) { cerrarLista(); html += `<p>${linea}</p>`; }
+    else cerrarLista();
+  }
+  cerrarLista();
+  return html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+}
+
+function agenteAgregarMensaje(rol, texto, extraClase) {
+  const log = document.getElementById('agente-log');
+  const div = document.createElement('div');
+  div.className = `agente-msg ${rol}${extraClase ? ' ' + extraClase : ''}`;
+  div.innerHTML = rol === 'usuario'
+    ? (texto || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    : mdSimple(texto);
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+  return div;
+}
+
+async function agentePreguntar() {
+  if (agentePreguntando) return;
+  const input = document.getElementById('agente-input');
+  const pregunta = input.value.trim();
+  if (!pregunta) return;
+  input.value = '';
+  agentePreguntando = true;
+  document.getElementById('agente-enviar').disabled = true;
+
+  agenteAgregarMensaje('usuario', pregunta);
+  const pensando = agenteAgregarMensaje('bot', 'Pensando… puede tardar hasta un par de minutos.', 'pensando');
+
+  try {
+    const r = await pedirJSON('/api/agente/preguntar?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pregunta, mensajes: agenteMensajes }),
+    });
+    pensando.remove();
+    agenteAgregarMensaje('bot', r.respuesta || '(sin respuesta)');
+    agenteMensajes = r.mensajes || agenteMensajes;
+  } catch (e) {
+    pensando.remove();
+    agenteAgregarMensaje('bot', 'Error: ' + e.message, 'error');
+  } finally {
+    agentePreguntando = false;
+    document.getElementById('agente-enviar').disabled = false;
+    input.focus();
+  }
+}
+
+document.getElementById('agente-enviar').addEventListener('click', agentePreguntar);
+document.getElementById('agente-input').addEventListener('keydown', (ev) => {
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); agentePreguntar(); }
+});
+
+if (!ia_disp) {
+  document.getElementById('agente-input').disabled = true;
+  document.getElementById('agente-enviar').disabled = true;
+  document.getElementById('agente-aviso').textContent =
+    'Configurá ANTHROPIC_API_KEY para habilitar el agente.';
+}
+
+// Micrófono: dictado por voz con el reconocimiento del propio navegador
+// (Chrome/Edge de escritorio y Android; no hay soporte en Firefox ni Safari
+// de iPhone, por eso el botón arranca oculto y solo se muestra si el
+// navegador lo soporta — mejor no ofrecer un botón que no va a andar). Sin
+// servidor de por medio: el audio nunca sale del teléfono, lo transcribe el
+// navegador y acá solo llega texto.
+const AgenteReconocedor = window.SpeechRecognition || window.webkitSpeechRecognition;
+if (AgenteReconocedor) {
+  const micBtn = document.getElementById('agente-mic');
+  micBtn.hidden = false;
+  const reco = new AgenteReconocedor();
+  reco.lang = 'es-AR';
+  reco.interimResults = false;
+  reco.maxAlternatives = 1;
+  let escuchando = false;
+
+  reco.onresult = (ev) => {
+    const texto = ev.results[0][0].transcript;
+    document.getElementById('agente-input').value = texto;
+    agentePreguntar();
+  };
+  reco.onerror = () => { escuchando = false; micBtn.classList.remove('escuchando'); };
+  reco.onend = () => { escuchando = false; micBtn.classList.remove('escuchando'); };
+
+  micBtn.addEventListener('click', () => {
+    if (escuchando) { reco.stop(); return; }
+    if (agentePreguntando) return;   // no escuchar mientras espera una respuesta
+    escuchando = true;
+    micBtn.classList.add('escuchando');
+    try { reco.start(); } catch (e) { escuchando = false; micBtn.classList.remove('escuchando'); }
+  });
 }
 
 async function cargarPredefinidas() {
@@ -9918,7 +9918,7 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'consultas', 'configuracion']
+const PAGINAS = ['dashboard', 'consultas', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
