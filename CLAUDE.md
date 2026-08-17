@@ -460,6 +460,50 @@ corral. Sin comederos individuales solo se puede repartir el costo del grupo,
 ponderado por consumo estimado. Tiene que decirlo la pantalla, para que nadie
 descarte una vaca creyendo que es un dato medido.
 
+## Salud del rodeo: número viejo pegado en pantalla, y tope configurable (17/08/2026)
+
+Reportado como "el análisis da igual en cada tambo" — investigado a fondo antes
+de tocar nada, porque hay una diferencia enorme entre "está mal calculado" y
+"la pantalla no se actualizó". Fue lo segundo, más un hallazgo real de datos:
+
+**"Atención (clásico)" y "Atención (experimental)" mostrando 15 en los dos
+tambos NO es sospechoso por sí solo.** `TOP_ATENCION = 15` es un TECHO de
+pantalla — las dos listas siempre muestran como máximo 15, sea cual sea el
+tambo, mientras haya 15 candidatas o más. Verificado con datos reales: son 15
+vacas DISTINTAS en cada tambo (RP 752, 474, 824... en La Martina, ningún
+número en común con La Ponderosa).
+
+**RCS > 300.000 y Casos nuevos RCS SÍ daban un dato real, y era 0 en La
+Martina — no "el mismo que Ponderosa".** `MilkTest` tiene CERO filas en
+`DDM_LAMARTINA`: no hay ningún control lechero cargado para ese tambo en la
+base restaurada. No es un bug de código, es que falta cargar esa planilla en
+DelPro para este tambo.
+
+**"Fuera de score (BCS)" y el índice experimental correctamente dicen "no
+disponible"** en vez de inventar un número: `BcsDailyData` no existe en el
+esquema de La Martina (no tiene cámara BCS instalada). El mecanismo de
+`TablaNoDisponibleError` → `_errores_tabla` → `{"no_disponible": true}` ya
+existe y funciona bien acá (se armó para otro caso, `sql_bcs_vacas`, y el
+índice experimental lo reusa igual sin cambios).
+
+**LO QUE SÍ ERA UN BUG DE VERDAD**: `cargarSalud()` no limpiaba las tarjetas
+grandes (RCS, BCS, Atención) al cambiar de tambo — se quedaban con el último
+número pintado hasta que la consulta nueva terminaba. Con una base lenta
+(SQL Express, ver más abajo) eso puede tardar minutos, y en el medio la
+pantalla se lee como "da lo mismo en los dos tambos" cuando en realidad son
+los números viejos del tambo anterior, todavía sin refrescar. Se arregló
+limpiando el grid de tarjetas y cada sección al entrar a la pantalla, cambiar
+de tambo o tocar "Actualizar" — pero NO en el reintento automático de cada 8s,
+para no hacer parpadear las secciones que ya cargaron bien mientras una sola
+sección lenta todavía no terminó.
+
+**Tope de "Atención" configurable por tambo** (⚙ Configuración → Salud del
+rodeo → "Vacas a mostrar en Atención", 5-300, vacío = 15). `calcular_atencion`/
+`calcular_atencion_v2` ya aceptaban un parámetro `top` desde que se escribieron
+— no hizo falta tocar el cálculo ni el caché, que sigue guardando TODAS las
+filas evaluadas: el recorte a "las peores N" pasa después de leer el caché, así
+que cambiar el tope no dispara ningún recálculo de la base.
+
 ## Agente de IA: preguntas del tambo en lenguaje natural (14/08/2026)
 
 `agente.py` + `POST /api/agente/preguntar` (gateado admin). Responde

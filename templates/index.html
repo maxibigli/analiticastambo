@@ -2913,6 +2913,17 @@
       </div>
     </div>
 
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Salud del rodeo</div>
+    <div class="controls" style="flex-wrap:wrap;gap:14px">
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Vacas a mostrar en "Atención"
+        <input type="number" id="cfg-top-atencion" min="5" max="300" placeholder="15" style="width:100px;padding:7px 8px">
+      </label>
+    </div>
+    <span class="aviso">Techo de las tarjetas "Atención (clásico)" y "Atención (experimental)" — las
+      dos ya vienen ordenadas de peor a mejor, esto solo dice hasta dónde mostrar. Vacío = 15. No
+      cambia el índice ni lo hace más preciso: un rodeo grande con muchos casos reales se queda corto
+      con 15 fijas, así que se puede subir (por ejemplo a 50).</span>
+
     <div class="aviso" style="margin:16px 0 6px;font-weight:600">Planillas del tambo (Excel)</div>
     <span class="aviso">Estos dos datos <b>no están en ningún sistema conectado</b> y los mantiene el
       tambo a mano. Dejá el campo vacío para usar los archivos que están junto a la aplicación.
@@ -7948,41 +7959,58 @@ function detenerPodalVivo() {
   clearInterval(podalTimer);
 }
 
-async function cargarSalud() {
+// `limpiar`: false SOLO en el reintento automático de abajo. Al cambiar de
+// tambo (o entrar a la pantalla, o tocar "Actualizar") tiene que ser true:
+// SIN esto, las tarjetas grandes (RCS, BCS, Atención) se quedaban con el
+// último número pintado —el del tambo anterior— hasta que la consulta nueva
+// terminaba, y en una base lenta eso puede tardar minutos. Con dos tambos que
+// dan números bien distintos (uno con controles de RCS cargados y el otro
+// sin ninguno) el resultado se leía como "da lo mismo en los dos", cuando en
+// realidad eran los mismos números viejos todavía pegados en pantalla.
+// El reintento SÍ pasa `false`: ahí no hay que borrar lo que ya cargó bien
+// solo porque una sección lenta todavía no terminó.
+async function cargarSalud(limpiar = true) {
   clearTimeout(saludReintento);
   const estado = document.getElementById('salud-estado');
   estado.textContent = 'Cargando…';
   let atencionD = null, atencion2D = null, rcsGrupoD = null, bcsD = null,
       podalEstadoD = null, podalVacasD = null;
-  const listos = await Promise.all([
-    seccionSalud('/api/salud/atencion', 'salud-atencion-cuerpo', d => {
+  const SECCIONES = [
+    { url: '/api/salud/atencion', destino: 'salud-atencion-cuerpo', pintar: d => {
       atencionD = d; pintarSaludAtencion(d);
-    }),
-    seccionSalud('/api/salud/atencion_v2', 'salud-atencion2-cuerpo', d => {
+    } },
+    { url: '/api/salud/atencion_v2', destino: 'salud-atencion2-cuerpo', pintar: d => {
       atencion2D = d; pintarSaludAtencionV2(d);
-    }),
-    seccionSalud('/api/salud/rcs_grupo', 'salud-rcs-grupo-cuerpo', d => {
+    } },
+    { url: '/api/salud/rcs_grupo', destino: 'salud-rcs-grupo-cuerpo', pintar: d => {
       rcsGrupoD = d; pintarSaludRcsGrupo(d);
-    }),
-    seccionSalud('/api/salud/rcs_vacas', 'salud-rcs-vacas-cuerpo', pintarSaludRcsVacas),
-    seccionSalud('/api/salud/bcs_vacas', 'bcs-fuera-cuerpo', d => {
+    } },
+    { url: '/api/salud/rcs_vacas', destino: 'salud-rcs-vacas-cuerpo', pintar: pintarSaludRcsVacas },
+    { url: '/api/salud/bcs_vacas', destino: 'bcs-fuera-cuerpo', pintar: d => {
       bcsD = d; pintarSaludBcs(d);
-    }),
-    seccionSalud('/api/salud/conductividad', null, pintarSaludConductividad),
-    seccionSalud('/api/salud/produccion_rodeo', 'salud-prod-cuerpo', pintarSaludProduccion),
-    seccionSalud('/api/podal/estado', 'podal-camaras', d => {
+    } },
+    { url: '/api/salud/conductividad', destino: null, pintar: pintarSaludConductividad },
+    { url: '/api/salud/produccion_rodeo', destino: 'salud-prod-cuerpo', pintar: pintarSaludProduccion },
+    { url: '/api/podal/estado', destino: 'podal-camaras', pintar: d => {
       podalEstadoD = d; pintarPodalCamaras(d);
-    }),
-    seccionSalud('/api/podal/vacas', 'podal-cuerpo', d => {
+    } },
+    { url: '/api/podal/vacas', destino: 'podal-cuerpo', pintar: d => {
       podalVacasD = d.vacas || []; pintarPodal(d);
-    }),
-  ]);
+    } },
+  ];
+  if (limpiar) {
+    document.getElementById('salud-kpis').innerHTML = '';
+    for (const s of SECCIONES) {
+      if (s.destino) document.getElementById(s.destino).innerHTML = '<div class="aviso">Cargando…</div>';
+    }
+  }
+  const listos = await Promise.all(SECCIONES.map(s => seccionSalud(s.url, s.destino, s.pintar)));
   pintarSaludGauges(atencionD, atencion2D, rcsGrupoD, bcsD, podalEstadoD, podalVacasD);
   const faltan = listos.filter(x => !x).length;
   estado.textContent = faltan
     ? `Calculando ${faltan} sección(es)… (la base de esta PC es lenta, se reintenta sola)`
     : '';
-  if (faltan) saludReintento = setTimeout(cargarSalud, 8000);
+  if (faltan) saludReintento = setTimeout(() => cargarSalud(false), 8000);
 }
 
 document.getElementById('salud-refrescar').addEventListener('click', cargarSalud);
@@ -10290,6 +10318,7 @@ async function cargarConfiguracion() {
     document.getElementById('cfg-personas').value = cfg.personas || '';
     document.getElementById('cfg-arreo').value = cfg.arreo_min ?? '';
     document.getElementById('cfg-umbral-prep').value = cfg.umbral_prep_s ?? '';
+    document.getElementById('cfg-top-atencion').value = cfg.top_atencion ?? '';
     document.getElementById('cfg-ruta-toros').value = cfg.ruta_toros || '';
     document.getElementById('cfg-ruta-precios').value = cfg.ruta_precios || '';
     pintarEstadoArchivos(d);
@@ -10505,6 +10534,7 @@ document.getElementById('config-guardar').addEventListener('click', async () => 
     personas: numOrNull(document.getElementById('cfg-personas').value),
     arreo_min: numOrNull(document.getElementById('cfg-arreo').value),
     umbral_prep_s: numOrNull(document.getElementById('cfg-umbral-prep').value),
+    top_atencion: numOrNull(document.getElementById('cfg-top-atencion').value),
     ruta_toros: document.getElementById('cfg-ruta-toros').value.trim() || null,
     ruta_precios: document.getElementById('cfg-ruta-precios').value.trim() || null,
   };

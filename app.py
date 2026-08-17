@@ -1967,6 +1967,22 @@ def api_salud_produccion_rodeo():
     return jsonify({"rodeos": salud.resumen_por_rodeo(data["columns"], data["rows"])})
 
 
+TOP_ATENCION_MIN, TOP_ATENCION_MAX = 5, 300  # sanidad: rango razonable para el techo de pantalla
+
+
+def _top_atencion_de(tambo: str) -> int:
+    """Cuántas vacas listar en "Atención" (clásico y experimental). Configurable
+    por tambo en ⚙ Configuración — NO cambia el índice, solo cuánto de la lista
+    ya ordenada se muestra. Vacío/inválido = el valor de siempre (15)."""
+    valor = configuracion_tambo.config_de(tambo).get("top_atencion")
+    if not valor:
+        return salud.TOP_ATENCION
+    try:
+        return max(TOP_ATENCION_MIN, min(TOP_ATENCION_MAX, int(valor)))
+    except (TypeError, ValueError):
+        return salud.TOP_ATENCION
+
+
 @app.get("/api/salud/atencion")
 @auth.requiere_rol("admin")
 def api_salud_atencion():
@@ -1979,7 +1995,7 @@ def api_salud_atencion():
     data, espera = _servir_cacheado(tambo, "salud_atencion", "Calculando índice de atención…", sql)
     if espera:
         return espera
-    fichas = salud.calcular_atencion(data["columns"], data["rows"])
+    fichas = salud.calcular_atencion(data["columns"], data["rows"], top=_top_atencion_de(tambo))
     return jsonify({"vacas": fichas, "estimacion_propia": True})
 
 
@@ -2012,7 +2028,7 @@ def api_salud_atencion_v2():
     rutas_gen = configuracion_tambo.rutas_toros(tambo)
     buscar_toro = genetica.buscador(rutas_gen)
     fichas = salud.calcular_atencion_v2(
-        data["columns"], data["rows"],
+        data["columns"], data["rows"], top=_top_atencion_de(tambo),
         genetica_fn=lambda p, m: herencia.de(buscar_toro, madres, p, m))
     gen = genetica.resumen(rutas_gen)
     return jsonify({"vacas": fichas, "experimental": True,

@@ -96,7 +96,13 @@ _CAMPOS_ENUM = {
 #              en La Martina). Por eso lo pone el tambo y no el codigo: elegirlo
 #              nosotros seria calificar a la sala contra si misma. Vacio = el
 #              componente no se puntua. Ver `salas.convencional.UMBRAL_PREP_S`.
-_CAMPOS_INT = ("puerto", "personas", "arreo_min", "umbral_prep_s")
+#   top_atencion  cuantas vacas listar en las tarjetas "Atencion" (clasico y
+#              experimental) de Salud del rodeo. Vacio = 15 (salud.TOP_ATENCION).
+#              Es un techo de PANTALLA, no cambia el calculo: subirlo no hace
+#              el indice mas preciso, solo muestra mas candidatas de la misma
+#              lista ya ordenada. Se puso configurable porque un rodeo grande
+#              con muchos casos reales se queda corto con 15 fijas.
+_CAMPOS_INT = ("puerto", "personas", "arreo_min", "umbral_prep_s", "top_atencion")
 
 DEFAULT = {
     "nombre": None, "ip": None, "puerto": None, "usuario": None, "contrasena": None,
@@ -109,6 +115,7 @@ DEFAULT = {
     "personas": None,
     "arreo_min": None,
     "umbral_prep_s": None,
+    "top_atencion": None,
     "ruta_toros": None,
     "ruta_precios": None,
     # IP del controlador SenseHub/Allflex en la red del tambo (ver
