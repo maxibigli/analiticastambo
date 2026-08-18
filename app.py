@@ -2132,17 +2132,36 @@ def api_podal_snapshot(camara: str):
 def api_salud_bcs_vacas():
     """Última lectura de condición corporal (BCS, cámara DeLaval) de cada
     vaca, con su DEL y estado reproductivo — para el gráfico DEL-vs-score y
-    la lista de vacas fuera de rango. El filtrado por score mín/máx y estado
-    reproductivo lo hace el frontend sobre este mismo listado."""
+    la lista de vacas fuera de rango. Cada vaca se anota acá con SU objetivo
+    (según su propio DEL, ver `salud.objetivo_bcs`) y la banda aceptable
+    alrededor — el frontend ya no decide el rango, solo lo pinta. El filtrado
+    por estado reproductivo lo sigue haciendo el frontend sobre este listado."""
     tambo = _tambo_del_request()
     sql = salud.sql_bcs_vacas(salas.de(tambo).sql_grupos())
     data, espera = _servir_cacheado(tambo, "salud_bcs_vacas", "Calculando condición corporal…", sql)
     if espera:
         return espera
-    vacas = [dict(zip(data["columns"], r)) for r in data["rows"]]
-    return jsonify({
-        "vacas": vacas, "bcs_bajo": salud.BCS_BAJO, "bcs_alto": salud.BCS_ALTO,
-    })
+    vacas = []
+    for r in data["rows"]:
+        v = dict(zip(data["columns"], r))
+        objetivo = salud.objetivo_bcs(v.get("del"))
+        v["objetivo"] = objetivo
+        if objetivo is not None:
+            v["banda_inf"] = round(objetivo - salud.TOLERANCIA_BCS, 3)
+            v["banda_sup"] = round(objetivo + salud.TOLERANCIA_BCS, 3)
+            v["fuera_de_rango"] = (v["score"] is not None
+                                   and not (v["banda_inf"] <= v["score"] <= v["banda_sup"]))
+        else:
+            v["banda_inf"] = v["banda_sup"] = v["fuera_de_rango"] = None
+        vacas.append(v)
+    # La curva de referencia entera (no solo los puntos con quiebre), para que
+    # el gráfico la dibuje como una línea continua igual que la de origen —
+    # sin esto el frontend tendría que reimplementar la interpolación.
+    curva = [{"del": d, "objetivo": salud.objetivo_bcs(d),
+             "banda_inf": round(salud.objetivo_bcs(d) - salud.TOLERANCIA_BCS, 3),
+             "banda_sup": round(salud.objetivo_bcs(d) + salud.TOLERANCIA_BCS, 3)}
+            for d in range(-30, 451, 10)]
+    return jsonify({"vacas": vacas, "curva": curva, "tolerancia": salud.TOLERANCIA_BCS})
 
 
 @app.get("/api/animal/ficha")

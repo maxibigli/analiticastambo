@@ -148,11 +148,52 @@ def sql_rcs_vacas(grupos_sql: str) -> str:
 # Réplica del gráfico de DelPro "Score corporal" (cámara BCS): un punto por
 # vaca (su ÚLTIMA lectura), DEL en el eje X y score 1-5 en el eje Y. Escala
 # real verificada en esta base: 1,6 a 4,6 (promedio ~3,1).
-# BCS_BAJO/BCS_ALTO son umbrales GENERALES de manejo lechero (no un dato propio
-# de DelPro: no tenemos su curva "objetivo" interna) — el usuario los puede
-# mover libremente en la pantalla.
-BCS_BAJO = 2.5   # por debajo: vaca flaca, riesgo de cetosis/fertilidad
-BCS_ALTO = 4.25  # por encima: vaca engrasada, riesgo de parto/metabólico
+#
+# CURVA OBJETIVO POR DEL, no un umbral parejo para toda la lactancia. Hasta
+# el 17/08/2026 esta sección usaba un mínimo/máximo fijo (2,5 a 4,25) para
+# CUALQUIER vaca sea cual sea su estado de lactancia — con eso, una vaca recién
+# parida en la caída fisiológica normal de condición corporal (que llega a
+# ~2,75 al pico de producción, ~DEL 100) podía marcar "fuera de rango" sin
+# estar mal, y una vaca a punto de secarse con 3,4 —sana para su DEL— podía no
+# saltar si el máximo fijo estaba puesto más alto. La condición corporal SIEMPRE
+# se lee contra dónde debería estar la vaca en SU lactancia, no contra un
+# número parejo para el rodeo entero.
+#
+# Curva de referencia del tambo (confirmada con el usuario el 17/08/2026,
+# leída de su gráfico de referencia): objetivo por tramo de DEL, tolerancia
+# fija de ±0,25 puntos a cada lado — no independiente por punto, así que no se
+# guardan tres curvas sino una sola (el objetivo) más un margen constante.
+_OBJETIVO_BCS_PUNTOS = [
+    (0, 3.50),      # preparto/seca: objetivo estable, no depende del DEL
+    (30, 3.00),     # caída post-parto en marcha
+    (100, 2.75),    # mínimo fisiológico, pico de producción
+    (200, 3.00),    # recuperación
+    (300, 3.30),
+    (350, 3.50),    # de vuelta al objetivo de seca, y se mantiene
+]
+TOLERANCIA_BCS = 0.25  # banda aceptable: objetivo ± esto
+
+
+def objetivo_bcs(dim) -> float | None:
+    """Score corporal objetivo para un DEL dado, interpolando linealmente
+    entre los puntos de `_OBJETIVO_BCS_PUNTOS`. Antes del primer punto (DEL<0,
+    preparto) y después del último (DEL>350) el objetivo queda CONSTANTE en el
+    valor del extremo — no tiene sentido extrapolar una curva de lactancia
+    más allá de sus puntos medidos. None si no hay DEL (no hay con qué
+    comparar; ver `sql_bcs_vacas`, `d.DIM` puede venir NULL si el animal no
+    tiene un `AnimalDaily` reciente)."""
+    if dim is None:
+        return None
+    puntos = _OBJETIVO_BCS_PUNTOS
+    if dim <= puntos[0][0]:
+        return puntos[0][1]
+    if dim >= puntos[-1][0]:
+        return puntos[-1][1]
+    for (d0, v0), (d1, v1) in zip(puntos, puntos[1:]):
+        if d0 <= dim <= d1:
+            frac = (dim - d0) / (d1 - d0)
+            return round(v0 + frac * (v1 - v0), 3)
+    return None  # inalcanzable: los puntos cubren todo el rango por construcción
 
 # Además del grupo (ver nota de sql_rcs_por_grupo), esta consulta depende de
 # BcsDailyData: existe solo si el tambo tiene la cámara BCS instalada (es un

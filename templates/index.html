@@ -2411,15 +2411,11 @@
     <section class="card" id="salud-bcs-card">
       <h2 style="margin:0">Condición corporal (BCS)</h2>
       <span class="aviso">Última lectura de la cámara de score corporal por vaca · DEL (días desde el
-        último parto) en el eje X, score 1-5 en el eje Y. Los umbrales de "fuera de rango" son de manejo
-        general (no es la curva objetivo propia de DelPro) — ajustalos como quieras.</span>
+        último parto) en el eje X, score 1-5 en el eje Y. La banda gris es la curva OBJETIVO del tambo
+        según el DEL de cada vaca (± 0,25) — no un umbral parejo para todo el rodeo: la caída de
+        condición corporal después del parto es fisiológica y normal, "fuera de rango" acá quiere decir
+        fuera de lo esperable para SU momento de lactancia, no un número fijo.</span>
       <div class="controls" style="margin-top:10px;flex-wrap:wrap">
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Score mínimo
-          <input type="number" id="bcs-min" step="0.05" style="width:70px;padding:6px 8px">
-        </label>
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Score máximo
-          <input type="number" id="bcs-max" step="0.05" style="width:70px;padding:6px 8px">
-        </label>
         <span id="bcs-repro-check" style="display:flex;gap:10px;flex-wrap:wrap"></span>
         <button class="secundario" id="bcs-aplicar">Aplicar</button>
       </div>
@@ -6859,8 +6855,6 @@ const BCS_REPRO_ORDEN = ['Vacía', 'Inseminada', 'Preñada', 'En secado', '-'];
 
 function pintarSaludBcs(d) {
   saludBcs = d;
-  if (!document.getElementById('bcs-min').value) document.getElementById('bcs-min').value = d.bcs_bajo;
-  if (!document.getElementById('bcs-max').value) document.getElementById('bcs-max').value = d.bcs_alto;
   const presentes = [...new Set((d.vacas || []).map(v => v.reproductivo))];
   const cont = document.getElementById('bcs-repro-check');
   if (!cont.dataset.armado) {
@@ -6882,8 +6876,6 @@ function renderSaludBcs() {
   const cont = document.getElementById('bcs-fuera-cuerpo');
   const info = document.getElementById('bcs-info');
   if (!saludBcs) return;
-  const min = parseFloat(document.getElementById('bcs-min').value);
-  const max = parseFloat(document.getElementById('bcs-max').value);
   const reproActivos = [...document.querySelectorAll('#bcs-repro-check input:checked')].map(c => c.dataset.repro);
   const vacas = (saludBcs.vacas || []).filter(v => reproActivos.includes(v.reproductivo));
   if (!vacas.length) {
@@ -6891,20 +6883,36 @@ function renderSaludBcs() {
     cont.innerHTML = ''; chartBcs = dibujar('chart-bcs', chartBcs, { type: 'scatter', data: { datasets: [] } });
     return;
   }
-  const enRango = vacas.filter(v => v.score >= min && v.score <= max);
-  const fuera = vacas.filter(v => v.score < min || v.score > max);
+  // `objetivo` viene null cuando la vaca no tiene DEL (sin AnimalDaily
+  // reciente): no hay con qué comparar, así que ni entra ni sale de rango —
+  // se pinta aparte para que no desaparezca en silencio del gráfico.
+  const sinDel = vacas.filter(v => v.objetivo == null);
+  const conDel = vacas.filter(v => v.objetivo != null);
+  const enRango = conDel.filter(v => !v.fuera_de_rango);
+  const fuera = conDel.filter(v => v.fuera_de_rango);
   actualizarGaugeBcs(fuera.length);
+  const curva = (saludBcs.curva || []).slice().sort((a, b) => a.del - b.del);
   chartBcs = dibujar('chart-bcs', chartBcs, {
     type: 'scatter',
     data: { datasets: [
+      { type: 'line', label: `Objetivo (± ${saludBcs.tolerancia})`, data: curva.map(p => ({ x: p.del, y: p.objetivo })),
+        borderColor: css('--accent'), backgroundColor: 'transparent', borderWidth: 2,
+        pointRadius: 0, tension: .25, order: 3 },
+      { type: 'line', label: 'Banda superior', data: curva.map(p => ({ x: p.del, y: p.banda_sup })),
+        borderColor: css('--border'), backgroundColor: css('--accent') + '18', borderWidth: 1,
+        borderDash: [4, 3], pointRadius: 0, tension: .25, fill: '+1', order: 4 },
+      { type: 'line', label: 'Banda inferior', data: curva.map(p => ({ x: p.del, y: p.banda_inf })),
+        borderColor: css('--border'), backgroundColor: 'transparent', borderWidth: 1,
+        borderDash: [4, 3], pointRadius: 0, tension: .25, order: 5 },
       { label: 'En rango', data: enRango.map(v => ({ x: v.del, y: v.score })),
-        backgroundColor: css('--muted'), pointRadius: 3.5 },
+        backgroundColor: css('--muted'), pointRadius: 3.5, order: 1 },
       { label: 'Fuera de rango', data: fuera.map(v => ({ x: v.del, y: v.score })),
-        backgroundColor: css('--critical'), pointRadius: 4.5 },
+        backgroundColor: css('--critical'), pointRadius: 4.5, order: 0 },
     ] },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: true, labels: { boxWidth: 12, boxHeight: 12 } } },
+      plugins: { legend: { display: true, labels: { boxWidth: 12, boxHeight: 12,
+        filter: item => item.text !== 'Banda inferior' } } },   // superior+inferior arman UN solo relleno visual
       scales: {
         x: { title: { display: true, text: 'Días desde el último parto (DEL)' },
              grid: { color: css('--grid') }, border: { color: css('--baseline') } },
@@ -6913,17 +6921,20 @@ function renderSaludBcs() {
       },
     },
   });
-  info.textContent = `${vacas.length} vaca(s) con lectura de BCS · ${fuera.length} fuera del rango ${min}-${max}.`;
+  const nota = sinDel.length ? ` · ${sinDel.length} sin DEL (no se pudieron evaluar)` : '';
+  info.textContent = `${conDel.length} vaca(s) evaluadas · ${fuera.length} fuera de lo esperable para su DEL${nota}.`;
   if (!fuera.length) {
-    cont.innerHTML = `<div class="aviso">Ninguna vaca fuera del rango elegido. ✔</div>`;
+    cont.innerHTML = `<div class="aviso">Ninguna vaca fuera de la banda esperada para su DEL. ✔</div>`;
     return;
   }
-  fuera.sort((a, b) => Math.min(a.score - min, max - a.score) - Math.min(b.score - min, max - b.score));
+  fuera.sort((a, b) => Math.min(a.score - a.banda_inf, a.banda_sup - a.score) -
+                       Math.min(b.score - b.banda_inf, b.banda_sup - b.score));
   cont.innerHTML = `<div class="tabla-scroll" style="max-height:360px"><table>
-    <thead><tr><th>Vaca</th><th>Rodeo</th><th>DEL</th><th>L</th><th>Score</th><th>Estado</th><th>Fecha lectura</th></tr></thead>
+    <thead><tr><th>Vaca</th><th>Rodeo</th><th>DEL</th><th>L</th><th>Score</th><th>Objetivo</th><th>Estado</th><th>Fecha lectura</th></tr></thead>
     <tbody>` + fuera.map(v => `<tr>
       <td>${fmt(v.rp)}</td><td>${v.grupo || '—'}</td><td>${fmt(v.del)}</td><td>${fmt(v.lactancia)}</td>
       <td style="color:var(--critical);font-weight:700">${v.score.toFixed(2)}</td>
+      <td>${v.banda_inf.toFixed(2)}–${v.banda_sup.toFixed(2)}</td>
       <td>${v.reproductivo === '-' ? '—' : v.reproductivo}</td>
       <td>${v.fecha_score || '—'}</td>
     </tr>`).join('') + `</tbody></table></div>`;
@@ -7810,11 +7821,11 @@ function pintarSaludGauges(atencion, atencion2, rcsGrupo, bcs, podalEstado, poda
       label: 'Casos nuevos RCS', sub: 'vs. control anterior', target: 'salud-rcs-grupo-card' });
   }
   if (bcs && bcs.vacas) {
-    const min = parseFloat(document.getElementById('bcs-min').value) || bcs.bcs_bajo;
-    const max = parseFloat(document.getElementById('bcs-max').value) || bcs.bcs_alto;
-    const n = bcs.vacas.filter(v => v.score < min || v.score > max).length;
+    // `fuera_de_rango` ya viene calculado del backend contra la curva objetivo
+    // por DEL de cada vaca (ver salud.objetivo_bcs) — acá no se recalcula nada.
+    const n = bcs.vacas.filter(v => v.fuera_de_rango).length;
     specs.push({ key: 'bcs', valor: n, min: 0, max: 30,
-      label: 'Fuera de score (BCS)', sub: 'vacas', target: 'salud-bcs-card' });
+      label: 'Fuera de score (BCS)', sub: 'para su DEL', target: 'salud-bcs-card' });
   }
   // Placeholders: sensores todavía no instalados/conectados en este tambo.
   specs.push({ key: 'rumia', disabled: true, label: 'Rumia', sub: 'collar DeLaval (a conectar)' });

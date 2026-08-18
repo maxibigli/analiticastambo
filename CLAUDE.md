@@ -460,6 +460,48 @@ corral. Sin comederos individuales solo se puede repartir el costo del grupo,
 ponderado por consumo estimado. Tiene que decirlo la pantalla, para que nadie
 descarte una vaca creyendo que es un dato medido.
 
+## BCS: curva objetivo por DEL en vez de un umbral parejo (17/08/2026)
+
+`salud.BCS_BAJO`/`BCS_ALTO` (2,5 a 4,25 fijos, cualquier DEL) quedan
+reemplazados por una curva objetivo por días desde el parto —lo que el propio
+código ya avisaba como limitación conocida: *"no tenemos la curva objetivo
+interna de DelPro"*. El usuario aportó una curva de referencia (imagen con
+tres líneas: banda superior/objetivo/inferior contra DEL) y CONFIRMÓ los
+valores leídos antes de tocar el código — no se inventó ni se leyó la imagen
+a ojo sin chequear, por la misma razón que rige los umbrales de retirada: un
+número equivocado acá no es un dato incompleto, es marcar como enferma a una
+vaca sana o al revés.
+
+**La curva confirmada** (`salud._OBJETIVO_BCS_PUNTOS`, interpolación lineal
+entre puntos, constante antes del primero y después del último):
+
+    DEL     objetivo
+    ≤0      3,50   (preparto/seca)
+    30      3,00
+    100     2,75   (mínimo fisiológico, pico de producción)
+    200     3,00
+    300     3,30
+    ≥350    3,50   (de vuelta al objetivo de seca)
+
+**Tolerancia ±0,25 fija** (confirmada, no independiente por punto — por eso es
+UNA curva objetivo más un margen constante, no tres curvas digitalizadas por
+separado). `salud.objetivo_bcs(dim)` calcula el objetivo de cualquier DEL;
+`/api/salud/bcs_vacas` anota cada vaca con su `objetivo`/`banda_inf`/
+`banda_sup`/`fuera_de_rango` (None si no tiene DEL — sin eso no hay con qué
+comparar) y devuelve además la curva completa (49 puntos, cada 10 DEL) para
+que el gráfico la dibuje como referencia.
+
+**Consecuencia medida, no un bug**: con la banda vieja (1,75 puntos de ancho)
+casi ninguna vaca caía fuera; con la nueva (±0,25, mucho más angosta) La
+Ponderosa da **761 de 1.668 vacas fuera de rango (46%)**. Es lo esperable de
+pasar a un criterio mucho más estricto — vale saberlo antes de mirarlo en
+producción para no leerlo como que "de golpe la mitad del rodeo se enfermó".
+
+Los controles manuales "Score mínimo/máximo" de la pantalla se sacaron (ya no
+tienen sentido: el rango ahora es por vaca, no un número que se pueda escribir
+una vez para todo el rodeo). El filtro por estado reproductivo se mantiene
+igual que antes.
+
 ## Salud del rodeo: número viejo pegado en pantalla, y tope configurable (17/08/2026)
 
 Reportado como "el análisis da igual en cada tambo" — investigado a fondo antes
