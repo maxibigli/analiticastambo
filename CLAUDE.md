@@ -502,6 +502,19 @@ tienen sentido: el rango ahora es por vaca, no un número que se pueda escribir
 una vez para todo el rodeo). El filtro por estado reproductivo se mantiene
 igual que antes.
 
+**Tolerancia de vista, exploratoria (18/08/2026)**: el ±0,25 sigue siendo la
+referencia oficial y fija (`salud.TOLERANCIA_BCS`, confirmada por el usuario)
+— la tarjeta resumen (`vu-bcs-val`, KPI arriba de la pantalla) SIEMPRE la usa
+sin importar nada más. Pero dentro de la tarjeta de detalle se agregó un
+input "Tolerancia (± puntos)" que recalcula todo del lado del cliente
+(clasificación por vaca, bandas del gráfico, orden de la tabla) sin pegarle
+de nuevo al backend — ya viaja el `objetivo` de cada vaca en la respuesta, así
+que ensanchar o achicar el margen es una resta, no una consulta nueva. Sirve
+para explorar ("¿quiénes están MUY lejos del objetivo?" achicando el número)
+sin tocar el criterio oficial que usa el resto de la app. Si el valor elegido
+difiere de 0,25 se lo aclara en el texto de la tarjeta para que no se confunda
+con el número de arriba.
+
 ## Salud del rodeo: número viejo pegado en pantalla, y tope configurable (17/08/2026)
 
 Reportado como "el análisis da igual en cada tambo" — investigado a fondo antes

@@ -2416,9 +2416,15 @@
         condición corporal después del parto es fisiológica y normal, "fuera de rango" acá quiere decir
         fuera de lo esperable para SU momento de lactancia, no un número fijo.</span>
       <div class="controls" style="margin-top:10px;flex-wrap:wrap">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Tolerancia (± puntos)
+          <input type="number" id="bcs-tolerancia" step="0.05" min="0.05" max="1" style="width:70px;padding:6px 8px">
+        </label>
         <span id="bcs-repro-check" style="display:flex;gap:10px;flex-wrap:wrap"></span>
         <button class="secundario" id="bcs-aplicar">Aplicar</button>
       </div>
+      <span class="aviso">La referencia del tambo es ± 0,25 — ensanchar la tolerancia acá es solo para
+        EXPLORAR (ver primero a las vacas más lejos del objetivo, achicando el número); no cambia el
+        ± 0,25 que usa la tarjeta resumen de arriba ni ningún otro lugar de la app.</span>
       <div class="aviso" id="bcs-info" style="margin-top:8px"></div>
       <div class="chart-box" style="height:340px;margin-top:10px"><canvas id="chart-bcs"></canvas></div>
       <div id="bcs-fuera-cuerpo" style="margin-top:12px"></div>
@@ -6855,6 +6861,7 @@ const BCS_REPRO_ORDEN = ['Vacía', 'Inseminada', 'Preñada', 'En secado', '-'];
 
 function pintarSaludBcs(d) {
   saludBcs = d;
+  if (!document.getElementById('bcs-tolerancia').value) document.getElementById('bcs-tolerancia').value = d.tolerancia;
   const presentes = [...new Set((d.vacas || []).map(v => v.reproductivo))];
   const cont = document.getElementById('bcs-repro-check');
   if (!cont.dataset.armado) {
@@ -6878,30 +6885,40 @@ function renderSaludBcs() {
   if (!saludBcs) return;
   const reproActivos = [...document.querySelectorAll('#bcs-repro-check input:checked')].map(c => c.dataset.repro);
   const vacas = (saludBcs.vacas || []).filter(v => reproActivos.includes(v.reproductivo));
+  // La tarjeta resumen de arriba SIEMPRE usa la referencia fija del tambo
+  // (v.fuera_de_rango, calculado en el backend con ± 0,25) — no se toca acá,
+  // pase lo que pase con el input de tolerancia. Ese numero tiene que ser el
+  // mismo lo mires desde donde lo mires; lo que se explora acá es aparte.
+  actualizarGaugeBcs(vacas.filter(v => v.fuera_de_rango).length);
   if (!vacas.length) {
     info.textContent = 'Sin vacas con lectura de BCS para este filtro.';
     cont.innerHTML = ''; chartBcs = dibujar('chart-bcs', chartBcs, { type: 'scatter', data: { datasets: [] } });
     return;
   }
+  // Tolerancia de VISTA: arranca en la referencia del tambo (0,25) pero se
+  // puede ensanchar acá para explorar sin volver a pedirle nada al servidor
+  // -- ya tenemos el objetivo de cada vaca, así que recalcular "¿está fuera?"
+  // con otro margen es una resta, no una consulta nueva.
+  let tol = parseFloat(document.getElementById('bcs-tolerancia').value);
+  if (!(tol > 0)) tol = saludBcs.tolerancia;
   // `objetivo` viene null cuando la vaca no tiene DEL (sin AnimalDaily
   // reciente): no hay con qué comparar, así que ni entra ni sale de rango —
   // se pinta aparte para que no desaparezca en silencio del gráfico.
   const sinDel = vacas.filter(v => v.objetivo == null);
   const conDel = vacas.filter(v => v.objetivo != null);
-  const enRango = conDel.filter(v => !v.fuera_de_rango);
-  const fuera = conDel.filter(v => v.fuera_de_rango);
-  actualizarGaugeBcs(fuera.length);
+  const fuera = conDel.filter(v => Math.abs(v.score - v.objetivo) > tol);
+  const enRango = conDel.filter(v => Math.abs(v.score - v.objetivo) <= tol);
   const curva = (saludBcs.curva || []).slice().sort((a, b) => a.del - b.del);
   chartBcs = dibujar('chart-bcs', chartBcs, {
     type: 'scatter',
     data: { datasets: [
-      { type: 'line', label: `Objetivo (± ${saludBcs.tolerancia})`, data: curva.map(p => ({ x: p.del, y: p.objetivo })),
+      { type: 'line', label: 'Objetivo', data: curva.map(p => ({ x: p.del, y: p.objetivo })),
         borderColor: css('--accent'), backgroundColor: 'transparent', borderWidth: 2,
         pointRadius: 0, tension: .25, order: 3 },
-      { type: 'line', label: 'Banda superior', data: curva.map(p => ({ x: p.del, y: p.banda_sup })),
+      { type: 'line', label: `Banda (± ${tol.toFixed(2)})`, data: curva.map(p => ({ x: p.del, y: p.objetivo + tol })),
         borderColor: css('--border'), backgroundColor: css('--accent') + '18', borderWidth: 1,
         borderDash: [4, 3], pointRadius: 0, tension: .25, fill: '+1', order: 4 },
-      { type: 'line', label: 'Banda inferior', data: curva.map(p => ({ x: p.del, y: p.banda_inf })),
+      { type: 'line', label: 'Banda inferior', data: curva.map(p => ({ x: p.del, y: p.objetivo - tol })),
         borderColor: css('--border'), backgroundColor: 'transparent', borderWidth: 1,
         borderDash: [4, 3], pointRadius: 0, tension: .25, order: 5 },
       { label: 'En rango', data: enRango.map(v => ({ x: v.del, y: v.score })),
@@ -6922,19 +6939,20 @@ function renderSaludBcs() {
     },
   });
   const nota = sinDel.length ? ` · ${sinDel.length} sin DEL (no se pudieron evaluar)` : '';
-  info.textContent = `${conDel.length} vaca(s) evaluadas · ${fuera.length} fuera de lo esperable para su DEL${nota}.`;
+  const avisoTol = tol !== saludBcs.tolerancia
+    ? ` (vista con ± ${tol.toFixed(2)} — la tarjeta resumen sigue usando ± ${saludBcs.tolerancia.toFixed(2)})` : '';
+  info.textContent = `${conDel.length} vaca(s) evaluadas · ${fuera.length} fuera de lo esperable para su DEL${avisoTol}${nota}.`;
   if (!fuera.length) {
     cont.innerHTML = `<div class="aviso">Ninguna vaca fuera de la banda esperada para su DEL. ✔</div>`;
     return;
   }
-  fuera.sort((a, b) => Math.min(a.score - a.banda_inf, a.banda_sup - a.score) -
-                       Math.min(b.score - b.banda_inf, b.banda_sup - b.score));
+  fuera.sort((a, b) => Math.abs(b.score - b.objetivo) - Math.abs(a.score - a.objetivo));
   cont.innerHTML = `<div class="tabla-scroll" style="max-height:360px"><table>
     <thead><tr><th>Vaca</th><th>Rodeo</th><th>DEL</th><th>L</th><th>Score</th><th>Objetivo</th><th>Estado</th><th>Fecha lectura</th></tr></thead>
     <tbody>` + fuera.map(v => `<tr>
       <td>${fmt(v.rp)}</td><td>${v.grupo || '—'}</td><td>${fmt(v.del)}</td><td>${fmt(v.lactancia)}</td>
       <td style="color:var(--critical);font-weight:700">${v.score.toFixed(2)}</td>
-      <td>${v.banda_inf.toFixed(2)}–${v.banda_sup.toFixed(2)}</td>
+      <td>${(v.objetivo - tol).toFixed(2)}–${(v.objetivo + tol).toFixed(2)}</td>
       <td>${v.reproductivo === '-' ? '—' : v.reproductivo}</td>
       <td>${v.fecha_score || '—'}</td>
     </tr>`).join('') + `</tbody></table></div>`;
