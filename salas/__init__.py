@@ -35,7 +35,7 @@ un módulo que cumple esta interfaz:
                                            para "Rutina de Ordeño"
     analizar_dia(tambo, columns, rows, fecha,
                  grupos, pesos, max_sesiones, nombres,
-                 umbral_prep_s) -> dict
+                 umbral_prep_s, identificacion_pct) -> dict
                                            separa en sesiones y puntúa cada una.
                                            `tambo` va primero por si la sala lo
                                            necesita para su config (la rotativa
@@ -43,10 +43,15 @@ un módulo que cumple esta interfaz:
                                            de colocación en segundos (None = el
                                            de DelPro, 90s) — configurable porque
                                            no todas las salas tienen el mismo
-                                           ritmo de colocación.
+                                           ritmo de colocación. `identificacion_pct`:
+                                           % real de identificación del día (0-100)
+                                           a usar en vez de recalcularlo por sesión
+                                           — solo lo pide `app.py` para convencional
+                                           (ver rutina._analizar_sesion); la rotativa
+                                           lo acepta por interfaz y lo ignora.
     resumen_dia(tambo, columns, rows, fecha,
                 grupos, pesos, max_sesiones, nombres,
-                umbral_prep_s) -> dict | None
+                umbral_prep_s, identificacion_pct) -> dict | None
                                            igual que analizar_dia pero reducido
                                            a UN punto (promedio ponderado por
                                            vacas), para graficar la evolución.

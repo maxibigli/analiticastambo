@@ -515,6 +515,57 @@ sin tocar el criterio oficial que usa el resto de la app. Si el valor elegido
 difiere de 0,25 se lo aclara en el texto de la tarjeta para que no se confunda
 con el número de arriba.
 
+## Rutina de ordeño: "Vacas identificadas" siempre 100%, y curva de score (20/08/2026)
+
+Reportado por el usuario con capturas reales: en "Rutina de ordeño" (sala
+convencional, La Martina) el componente "Vacas identificadas" daba SIEMPRE
+100% — con peso (0%) en el detalle, señal de que el usuario ya lo había
+apagado a mano en algún momento por desconfiar del número. Mientras tanto,
+otras pantallas con el MISMO criterio (`BasicAnimal.Number = 0`) daban un
+número real y variable (96,91% con 150 sin identificar el 14/08).
+
+**Investigación, no se tocó nada hasta entender la causa.** Se armó un script
+de diagnóstico de solo lectura (`diagnostico_identificacion.py`, ya borrado)
+para comparar `sql_rutina` contra `sql_identificacion` fila por fila. Contra
+la copia local (`lamartina_local`, 11/08) el resultado fue: `sql_rutina` SÍ
+trae los comodines correctamente (368 de 3141 filas, dentro del margen de
+±6h que usa para cortar sesiones) — el JOIN/WHERE no tiene el bug. La causa
+de fondo en la base de PRODUCCIÓN nunca se identificó (no se pudo correr el
+diagnóstico ahí antes de resolver el síntoma por otra vía) — queda pendiente
+si en algún momento vuelve a fallar.
+
+**Solución adoptada: la sesión ya no calcula su propio % de identificación.**
+En vez de seguir dependiendo del conteo por sesión de `sql_rutina` (el que
+venía fallando en producción por una causa no confirmada), "Rutina de
+ordeño"/"Evolución" ahora usan el % REAL DEL DÍA COMPLETO que da
+`sql_identificacion` — la misma fuente que ya se sabía confiable — y lo
+aplican a las tres sesiones del día por igual. `app.py::_identificacion_pct_de`
+cachea esto por rango de fechas (mismo patrón `allow_stale` + refresco async
+que el resto de la app: no bloquea la pantalla, la primera carga puede seguir
+mostrando el número por sesión hasta que el caché de identificación
+calienta). Solo aplica a sala convencional — la rotativa no reportó este
+problema y tiene su propio criterio ya verificado; acepta el parámetro por
+interfaz común y lo ignora (`salas/rotativa.py`).
+
+El texto de "info" de la tarjeta ahora aclara las dos cosas: el % del día
+completo (el que decide el score) y el % de esa sesión puntual (para saber
+qué franja horaria mirar si hay que revisar antenas/collares).
+
+**Curva de score, pedida explícitamente por el usuario**: el score YA NO es
+1 a 1 con el % real. Interpolación lineal entre estos puntos
+(`rutina._CREDITO_IDENTIFICACION_PUNTOS`):
+
+    % identificado    score
+    100               100
+    90                85
+    80                30
+    0                 0
+
+Entre 100-90% baja suave (una falla aislada no es grave); por debajo del 90%
+se desploma a propósito — cruzar ese piso tiene que gritarlo el número, no
+acompañar la caída despacio. Mismo estilo que `_credito_prep` (colocación
+≤90s), no es un criterio nuevo en el código.
+
 ## Salud del rodeo: número viejo pegado en pantalla, y tope configurable (17/08/2026)
 
 Reportado como "el análisis da igual en cada tambo" — investigado a fondo antes

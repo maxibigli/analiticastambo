@@ -586,17 +586,21 @@ def _opciones_score(umbral_prep_s):
 
 
 def analizar_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
-                 max_sesiones=None, nombres=None, umbral_prep_s=None) -> dict:
+                 max_sesiones=None, nombres=None, umbral_prep_s=None,
+                 identificacion_pct=None) -> dict:
     # `tambo` no hace falta acá — queda en la firma solo para cumplir la
     # interfaz común (ver salas/rotativa.py).
     return rutina.analizar_dia(columns, rows, fecha, grupos, pesos or PESOS, max_sesiones,
-                               nombres, **_opciones_score(umbral_prep_s))
+                               nombres, identificacion_pct=identificacion_pct,
+                               **_opciones_score(umbral_prep_s))
 
 
 def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
-                max_sesiones=None, nombres=None, umbral_prep_s=None):
+                max_sesiones=None, nombres=None, umbral_prep_s=None,
+                identificacion_pct=None):
     return rutina.resumen_dia(columns, rows, fecha, grupos, pesos or PESOS, max_sesiones,
-                              nombres, **_opciones_score(umbral_prep_s))
+                              nombres, identificacion_pct=identificacion_pct,
+                              **_opciones_score(umbral_prep_s))
 
 
 # LOS CUATRO TRAMOS DE FLUJO DE ALPRO VIENEN ×100, y esto es una trampa cara.

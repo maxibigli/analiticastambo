@@ -1061,7 +1061,8 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
                  mide_colocacion: bool = True,
                  prep_max_s: int | None = None, prep_label: str = "Colocación",
                  sin_prep_info: str | None = None,
-                 incluir_sin_grupo: bool = False) -> dict:
+                 incluir_sin_grupo: bool = False,
+                 identificacion_pct: float | None = None) -> dict:
     """Separa las visitas del día (+ margen) en sesiones y puntúa cada una.
     Solo se devuelven las sesiones que se solapan con el día pedido.
 
@@ -1074,6 +1075,8 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
     (ver _fusionar_hasta). None = sin tope.
     `nombres`: {oid_grupo: "Rodeo N"} para mostrar los nombres reales de
     DelPro en vez del OID interno (ver SQL_GRUPOS_NOMBRES).
+    `identificacion_pct`: ver `_analizar_sesion` — se aplica IGUAL a todas las
+    sesiones del día (es un número del día completo, no por sesión).
     `umbral_prep_s`: objetivo de colocación en segundos (ver `_analizar_sesion`);
     None = UMBRAL_PREP_S."""
     grupos = normalizar_grupos(grupos)
@@ -1149,7 +1152,7 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
         del_dia = _fusionar_hasta(del_dia, max_sesiones)
     sesiones = [_analizar_sesion(vs, pesos, nombres, ocupacion_fn, huecos_fn, umbral_prep_s,
                                  mide_colocacion, prep_max_s, prep_label,
-                                 sin_prep_info) for vs in del_dia]
+                                 sin_prep_info, identificacion_pct) for vs in del_dia]
     sesiones.sort(key=lambda s: s["inicio"])
     for i, s in enumerate(sesiones):
         s["indice"] = i
@@ -1209,15 +1212,17 @@ def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = Non
                 mide_colocacion: bool = True,
                 prep_max_s: int | None = None, prep_label: str = "Colocación",
                 sin_prep_info: str | None = None,
-                incluir_sin_grupo: bool = False):
+                incluir_sin_grupo: bool = False,
+                identificacion_pct: float | None = None):
     """Reduce las sesiones de un día a UN punto (promedio ponderado por vacas)
     para graficar la evolución de la rutina a lo largo del tiempo. None si el
     día no tiene ordeños (fin de semana sin datos, feriado, hueco de la copia).
     `grupos`/`pesos`/`max_sesiones`/`ocupacion_fn`/`huecos_fn`/`umbral_prep_s`/
-    `mide_colocacion`: igual que en analizar_dia."""
+    `mide_colocacion`/`identificacion_pct`: igual que en analizar_dia."""
     dia = analizar_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
                        ocupacion_fn, huecos_fn, umbral_prep_s, mide_colocacion,
-                       prep_max_s, prep_label, sin_prep_info, incluir_sin_grupo)
+                       prep_max_s, prep_label, sin_prep_info, incluir_sin_grupo,
+                       identificacion_pct)
     sesiones = dia["sesiones"]
     total_vacas = sum(s["vacas"] for s in sesiones)
     if not sesiones or total_vacas == 0:
@@ -1245,6 +1250,32 @@ def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = Non
         "retiradas_forzadas": s["retiradas_forzadas"],
     } for s in sesiones]
     return punto
+
+
+# Curva de crédito para "vacas identificadas": no es 1 a 1 con el % real
+# de identificación. Con identificación perfecta (o casi) el score es 100;
+# entre 100% y 90% baja suave (zona aceptable, algún comodín aislado no es
+# grave); por debajo del 90% el declive se vuelve empinado A PROPÓSITO —
+# cruzar ese piso ya no es "un poco peor", es una falla de lectura que hay
+# que mirar, y el score tiene que gritarlo en vez de acompañar la caída
+# despacio. Puntos confirmados con el tambo (interpolación lineal entre
+# ellos, constante fuera de rango):
+#     100% real -> 100     90% real -> 85     80% real -> 30     0% real -> 0
+_CREDITO_IDENTIFICACION_PUNTOS = [(0.0, 0.0), (80.0, 30.0), (90.0, 85.0), (100.0, 100.0)]
+
+
+def _credito_identificacion(pct_identificado: float) -> float:
+    """Score 0-100 para un % real de identificación, según la curva de
+    arriba. Ver `_analizar_sesion`."""
+    puntos = _CREDITO_IDENTIFICACION_PUNTOS
+    if pct_identificado <= puntos[0][0]:
+        return puntos[0][1]
+    if pct_identificado >= puntos[-1][0]:
+        return puntos[-1][1]
+    for (x0, y0), (x1, y1) in zip(puntos, puntos[1:]):
+        if x0 <= pct_identificado <= x1:
+            return y0 + (y1 - y0) * (pct_identificado - x0) / (x1 - x0)
+    return puntos[-1][1]  # inalcanzable, por completitud
 
 
 def _credito_prep(prep_seg, umbral_s=UMBRAL_PREP_S):
@@ -1357,7 +1388,8 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                      ocupacion_fn=None, huecos_fn=None, umbral_prep_s=None,
                      mide_colocacion: bool = True,
                      prep_max_s: int | None = None, prep_label: str = "Colocación",
-                     sin_prep_info: str | None = None) -> dict:
+                     sin_prep_info: str | None = None,
+                     identificacion_pct: float | None = None) -> dict:
     """`mide_colocacion`: si esta sala tiene un instante real de COLOCACIÓN de
     la pezonera. En la rotativa sí (`VerifiedTime`). En una sala de tandas tipo
     Alpro NO: el único sello previo a la leche es la identificación, y la vaca
@@ -1385,7 +1417,14 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
 
     `umbral_prep_s`: objetivo de colocación en segundos (None = UMBRAL_PREP_S,
     el de DelPro/rotativa). Configurable por sala: una sala de tandas puede
-    tener un ritmo de colocación distinto al de una plataforma mecánica."""
+    tener un ritmo de colocación distinto al de una plataforma mecánica.
+
+    `identificacion_pct`: si viene, se usa este % REAL (0-100) para el
+    componente "identificacion" en vez de contar `rp == 0` sobre las propias
+    `visitas` de la sesión. Lo pasa el llamador (ver `app.py`) cuando ya tiene
+    el número de una fuente aparte más confiable — hoy `sql_identificacion`
+    (ver `salas.convencional`), porque el conteo por sesión viene dando 0
+    comodines en producción por una causa todavía no identificada."""
     ocupacion_fn = ocupacion_fn or _ocupacion_rotativa
     huecos_fn = huecos_fn or _huecos_rotativa
     umbral_prep_s = umbral_prep_s or UMBRAL_PREP_S
@@ -1438,7 +1477,14 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     # queda registrada como suya (se le pierde la producción, la conductividad
     # y el control). Ver `salas.convencional.sql_identificacion`.
     sin_identificar = sum(1 for v in visitas if v.get("rp") == 0)
-    s8 = 100.0 * (1 - sin_identificar / len(visitas))
+    pct_sesion = 100.0 * (1 - sin_identificar / len(visitas))
+    # `identificacion_pct` (si vino) es del DÍA COMPLETO, no de esta sesión —
+    # ver el docstring de arriba. Se usa para el score y para decidir el
+    # texto, pero `sin_identificar`/`len(visitas)` de ESTA sesión se siguen
+    # mostrando en el info porque son un dato real y útil (a qué franja
+    # horaria mirar), aunque no sean los que deciden el score.
+    pct_identificado = identificacion_pct if identificacion_pct is not None else pct_sesion
+    s8 = _credito_identificacion(pct_identificado)
 
     # --- Vacas lerdas: ordeño bastante más largo que la mediana de la sesión ---
     ordenios = [v["ordeño_seg"] for v in visitas if v["ordeño_seg"] is not None]
@@ -1571,10 +1617,19 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                      if s1 is not None else info_sin_prep},
             {"clave": "identificacion", "label": "Vacas identificadas", "valor": round(s8),
              "peso": pesos["identificacion"],
-             "info": (f"{sin_identificar}/{len(visitas)} ordeños quedaron a nombre del comodín: la sala "
-                      "no leyó el collar, así que esa leche no se le acredita a ninguna vaca y ese "
-                      "animal queda sin control ese día."
-                      if sin_identificar else "Todos los ordeños quedaron a nombre de su vaca.")},
+             "info": (
+                 (f"{round(pct_identificado, 1)}% identificado en todo el día "
+                  f"(esta sesión sola: {sin_identificar}/{len(visitas)} ordeños a nombre del comodín, "
+                  f"{round(pct_sesion, 1)}%). La sala no leyó el collar en esos ordeños, así que esa "
+                  "leche no se le acredita a ninguna vaca. Por debajo del 90% de identificación el "
+                  "score cae fuerte a propósito — no es un error de cálculo."
+                  if identificacion_pct is not None else
+                  f"{sin_identificar}/{len(visitas)} ordeños ({round(pct_sesion, 1)}% identificado) "
+                  "quedaron a nombre del comodín: la sala no leyó el collar, así que esa leche no se le "
+                  "acredita a ninguna vaca y ese animal queda sin control ese día. Por debajo del 90% de "
+                  "identificación el score cae fuerte a propósito — no es un error de cálculo.")
+                 if (sin_identificar or (identificacion_pct is not None and identificacion_pct < 100))
+                 else "Todos los ordeños quedaron a nombre de su vaca.")},
             {"clave": "lerdas", "label": "Sin vacas lerdas", "valor": round(s2),
              "peso": pesos["lerdas"],
              "info": (f"{lerdas} vaca(s) con ordeño 50%+ más largo que la mediana "

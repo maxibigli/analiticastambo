@@ -49,15 +49,21 @@ def sql_rutina(fecha: str) -> str:
 
 
 def analizar_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
-                 max_sesiones=None, nombres=None, umbral_prep_s=None) -> dict:
+                 max_sesiones=None, nombres=None, umbral_prep_s=None,
+                 identificacion_pct=None) -> dict:
     # `tambo` no hace falta acá — está en la firma solo para que coincida con
-    # la interfaz común (ver salas/convencional.py).
+    # la interfaz común (ver salas/convencional.py). `identificacion_pct`
+    # tampoco: la rotativa no reportó el problema que motivó ese parámetro
+    # (ver `app.py::_identificacion_pct_de`, que para esta sala siempre
+    # devuelve None) — se acepta y se ignora solo para que la interfaz común
+    # no le rompa la llamada al resto de la app.
     return rutina.analizar_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
                                umbral_prep_s=umbral_prep_s)
 
 
 def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
-                max_sesiones=None, nombres=None, umbral_prep_s=None):
+                max_sesiones=None, nombres=None, umbral_prep_s=None,
+                identificacion_pct=None):
     return rutina.resumen_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
                               umbral_prep_s=umbral_prep_s)
 

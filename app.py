@@ -418,6 +418,53 @@ def _refresh_rutina_async(tambo: str, fecha: str):
     threading.Thread(target=worker, daemon=True).start()
 
 
+def _refresh_identificacion_async(tambo: str, desde: str, hasta: str):
+    """% real de identificación por día (`sql_identificacion`), en segundo
+    plano. Solo hace falta en sala convencional — ahí es donde "Rutina de
+    ordeño" viene mostrando 100% de forma sospechosa (el conteo por sesión de
+    `sql_rutina` da 0 comodines en producción por una causa todavía sin
+    identificar) mientras esta consulta, con el mismo criterio Number=0, sí
+    da el número real. Ver `rutina._analizar_sesion` (`identificacion_pct`)."""
+    key = _clave(tambo, f"identificacion:{desde}:{hasta}")
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            sala = salas.de(tambo)
+            data = db.run_query(sala.sql_identificacion(desde, hasta), tambo=tambo)
+            por_dia = {d["fecha"]: d["pct_identificacion"] for d in sala.armar_identificacion(
+                data["columns"], data["rows"])}
+            _cache_set(key, por_dia)
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _identificacion_pct_de(tambo: str, desde: str, hasta: str, fecha: str) -> float | None:
+    """`por_dia.get(fecha)` del caché de arriba, disparando el refresco si
+    hace falta. None si todavía no está lista (o si esta sala es rotativa:
+    ahí NO se pide — no tiene el mismo problema reportado y cambiar su
+    comportamiento sin necesidad es más riesgo que beneficio) — en ese caso
+    el llamador sigue usando el conteo por sesión de siempre."""
+    if tambos.tipo_sala(tambo) != "convencional":
+        return None
+    key = _clave(tambo, f"identificacion:{desde}:{hasta}")
+    data, fresh = _cache_get(key, allow_stale=True)
+    if data is None:
+        _refresh_identificacion_async(tambo, desde, hasta)
+        return None
+    if not fresh:
+        _refresh_identificacion_async(tambo, desde, hasta)
+    return data.get(fecha)
+
+
 def _warmup(tambo: str):
     """Precalienta el caché de un tambo en segundo plano. Como SQL Express corre
     con muy poca memoria, se ejecuta TODO en serie (Semaphore por servidor en
@@ -1120,7 +1167,8 @@ def _valores_tablero(tambo: str) -> dict:
                 # Mismo caso que rendimiento: el caché tiene la consulta cruda.
                 an = salas.de(tambo).analizar_dia(
                     tambo, data["columns"], data["rows"], fecha,
-                    nombres=_nombres_grupos(tambo)) or {}
+                    nombres=_nombres_grupos(tambo),
+                    identificacion_pct=_identificacion_pct_de(tambo, fecha, fecha, fecha)) or {}
                 # `analizar_dia` NO devuelve un resumen: devuelve una sesión por
                 # ordeño, cada una con su score y sus vacas. La nota del día es
                 # el promedio PONDERADO POR VACAS —igual que en `rutina.py`—, no
@@ -2632,11 +2680,13 @@ def api_rutina():
     if not fresh:
         _refresh_rutina_async(tambo, fecha)
 
+    identificacion_pct = _identificacion_pct_de(tambo, fecha, fecha, fecha)
     try:
         resultado = salas.de(tambo).analizar_dia(tambo, data["columns"], data["rows"], fecha,
                                                  grupos, pesos, max_sesiones=_max_sesiones(tambo),
                                                  nombres=_nombres_grupos(tambo),
-                                                 umbral_prep_s=umbral_prep_s)
+                                                 umbral_prep_s=umbral_prep_s,
+                                                 identificacion_pct=identificacion_pct)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
     resultado["incompleto"] = data.get("truncated", False)
@@ -2697,6 +2747,10 @@ def api_rutina_evolucion():
 
     tope = _max_sesiones(tambo)
     nombres_grupos = _nombres_grupos(tambo)
+    # Un solo caché de identificación para TODO el rango (no uno por fecha):
+    # `sql_identificacion` ya trae un renglón por día, así que alcanza con
+    # pedirla una vez — ver `_identificacion_pct_de`.
+    rango_desde, rango_hasta = (fechas[0], fechas[-1]) if fechas else (None, None)
     puntos, sesiones_todas, lanzadas, dias_incompletos = [], [], 0, []
     for fecha in fechas:
         data, _ = _cache_get(_clave(tambo, f"rutina:{fecha}"), allow_stale=True, ttl=EVOLUCION_TTL_S)
@@ -2707,10 +2761,12 @@ def api_rutina_evolucion():
             continue
         if data.get("truncated"):
             dias_incompletos.append(fecha)
+        identificacion_pct = _identificacion_pct_de(tambo, rango_desde, rango_hasta, fecha)
         try:
             punto = salas.de(tambo).resumen_dia(tambo, data["columns"], data["rows"], fecha, grupos, pesos,
                                                 max_sesiones=tope, nombres=nombres_grupos,
-                                                umbral_prep_s=umbral_prep_s)
+                                                umbral_prep_s=umbral_prep_s,
+                                                identificacion_pct=identificacion_pct)
         except Exception:  # noqa: BLE001
             punto = None
         if punto:
@@ -4263,7 +4319,8 @@ def _revisar_rutina_whatsapp(tambo: str):
     grupos = _grupos_ordene(tambo)
     resultado = salas.de(tambo).analizar_dia(tambo, data["columns"], data["rows"], hoy, grupos,
                                              max_sesiones=_max_sesiones(tambo),
-                                             nombres=_nombres_grupos(tambo))
+                                             nombres=_nombres_grupos(tambo),
+                                             identificacion_pct=_identificacion_pct_de(tambo, hoy, hoy, hoy))
     for s in resultado["sesiones"]:
         if s["score"] < ALERTA_RUTINA_SCORE_MIN:
             clave = f"rutina_score:{hoy}:{s['indice']}"
