@@ -442,11 +442,13 @@ def _refresh_rutina_async(tambo: str, fecha: str):
 
 def _refresh_identificacion_async(tambo: str, desde: str, hasta: str):
     """% real de identificación por día (`sql_identificacion`), en segundo
-    plano. Solo hace falta en sala convencional — ahí es donde "Rutina de
-    ordeño" viene mostrando 100% de forma sospechosa (el conteo por sesión de
-    `sql_rutina` da 0 comodines en producción por una causa todavía sin
-    identificar) mientras esta consulta, con el mismo criterio Number=0, sí
-    da el número real. Ver `rutina._analizar_sesion` (`identificacion_pct`)."""
+    plano. Hace falta en las dos salas: "Rutina de ordeño" calcula "Vacas
+    identificadas" contando `rp == 0` sobre las visitas de `sql_rutina`, y esa
+    consulta descarta en silencio los ordeños sin identificar en las dos
+    (la convencional por una causa nunca confirmada en producción; la
+    rotativa porque `sql_rutina` todavía filtra `IDTime IS NOT NULL`) — acá,
+    con el mismo criterio Number=0 pero sin ese descarte, sale el número
+    real. Ver `rutina._analizar_sesion` (`identificacion_pct`)."""
     key = _clave(tambo, f"identificacion:{desde}:{hasta}")
     with _cache_lock:
         if key in _refreshing:
@@ -471,12 +473,16 @@ def _refresh_identificacion_async(tambo: str, desde: str, hasta: str):
 
 def _identificacion_pct_de(tambo: str, desde: str, hasta: str, fecha: str) -> float | None:
     """`por_dia.get(fecha)` del caché de arriba, disparando el refresco si
-    hace falta. None si todavía no está lista (o si esta sala es rotativa:
-    ahí NO se pide — no tiene el mismo problema reportado y cambiar su
-    comportamiento sin necesidad es más riesgo que beneficio) — en ese caso
-    el llamador sigue usando el conteo por sesión de siempre."""
-    if tambos.tipo_sala(tambo) != "convencional":
-        return None
+    hace falta. None si todavía no está lista — en ese caso el llamador sigue
+    usando el conteo por sesión de siempre.
+
+    Aplica a las DOS salas: la rotativa tiene el MISMO problema que la
+    convencional, solo que en otra consulta — `rutina.sql_rutina` todavía
+    filtra `IDTime IS NOT NULL` (ver su docstring, y el de `sql_rendimiento`
+    que sí se corrigió), así que el conteo por sesión de "Vacas identificadas"
+    daba siempre 100% ahí también. Medido en La Ponderosa: la tarjeta
+    "Identificación de ordeños" (`sql_identificacion`, sin ese filtro) daba
+    97,65% el mismo día que "Rutina de ordeño" mostraba 100%."""
     key = _clave(tambo, f"identificacion:{desde}:{hasta}")
     data, fresh = _cache_get(key, allow_stale=True)
     if data is None:

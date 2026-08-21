@@ -578,9 +578,21 @@ aplican a las tres sesiones del día por igual. `app.py::_identificacion_pct_de`
 cachea esto por rango de fechas (mismo patrón `allow_stale` + refresco async
 que el resto de la app: no bloquea la pantalla, la primera carga puede seguir
 mostrando el número por sesión hasta que el caché de identificación
-calienta). Solo aplica a sala convencional — la rotativa no reportó este
-problema y tiene su propio criterio ya verificado; acepta el parámetro por
-interfaz común y lo ignora (`salas/rotativa.py`).
+calienta).
+
+**Actualización (20/08/2026): el mismo bug estaba en la rotativa, en OTRA
+consulta.** En un principio esto se dejó limitado a sala convencional (la
+rotativa "no reportó el problema"), pero el usuario lo encontró también en
+La Ponderosa: `rutina.sql_rutina` (rotativa) TODAVÍA filtra
+`m.IDTime IS NOT NULL` — el mismo filtro que ya se había sacado de
+`sql_rendimiento` por descartar en silencio los ordeños sin identificar (ver
+el docstring de esa función). Nunca se tocó en `sql_rutina` porque el
+síntoma pasó desapercibido hasta que se lo comparó a propósito contra
+"Identificación de ordeños" (97,65% real contra el 100% fijo de "Rutina de
+ordeño", mismo día). `_identificacion_pct_de`/`_refresh_identificacion_async`
+ahora aplican a las DOS salas — `salas/rotativa.py` pasa `identificacion_pct`
+en vez de ignorarlo. Verificado en `ponderosa_local` (30/07): 100% → 97,7%
+real → score 97.
 
 El texto de "info" de la tarjeta ahora aclara las dos cosas: el % del día
 completo (el que decide el score) y el % de esa sesión puntual (para saber
