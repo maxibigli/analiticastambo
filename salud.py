@@ -377,7 +377,16 @@ def calcular_atencion(columns, rows, top: int = TOP_ATENCION) -> list:
 # módulo (antes hardcodeaba `CMSGroupMilkSetting`, que tampoco existe en
 # convencional) — ver api_salud_atencion_v2 en app.py para quién decide
 # `con_alarmas_rotativa` (tambos.tipo_sala(tambo) == "rotativa").
-def sql_atencion_v2(grupos_sql: str, con_alarmas_rotativa: bool) -> str:
+#
+# `con_bcs` es el MISMO caso, para OTRA tabla: `BcsDailyData` existe solo si
+# el tambo tiene la cámara BCS instalada, y eso NO depende del tipo de sala
+# (ver la nota de `sql_bcs_vacas`) — San José (convencional, sin cámara) lo
+# dejó en evidencia: sin este `if`, faltar esa UNA tabla tiraba
+# `TablaNoDisponibleError` para el índice ENTERO, aunque caída de leche y
+# conductividad —lo que sí tiene esa base— estuvieran perfectas. `app.py`
+# decide `con_bcs` chequeando `OBJECT_ID('BcsDailyData')` una vez por proceso
+# (ver `_tiene_bcs_de`), no por tipo de sala.
+def sql_atencion_v2(grupos_sql: str, con_alarmas_rotativa: bool, con_bcs: bool = True) -> str:
     if con_alarmas_rotativa:
         columnas_alarma = "c.LowYieldAlarm, c.ConductivityAlarm"
         join_alarma = "JOIN CMSMilkYield c ON c.OID = s.OID"
@@ -385,6 +394,21 @@ def sql_atencion_v2(grupos_sql: str, con_alarmas_rotativa: bool) -> str:
         columnas_alarma = ("CAST(NULL AS bit) AS LowYieldAlarm, "
                             "CAST(NULL AS bit) AS ConductivityAlarm")
         join_alarma = ""
+    if con_bcs:
+        cte_bcs = """,
+        bcs AS (
+          SELECT Animal, TrendValueFourWeeks, TrendValueTwoWeeks,
+                 ROW_NUMBER() OVER (PARTITION BY Animal ORDER BY DateAndTime DESC) AS rn
+          FROM BcsDailyData
+          WHERE DateAndTime >= DATEADD(day, -10, GETDATE())
+        )"""
+        columnas_bcs = "bc.TrendValueFourWeeks, bc.TrendValueTwoWeeks"
+        join_bcs = "LEFT JOIN bcs bc ON bc.Animal = a.BasicAnimal AND bc.rn = 1"
+    else:
+        cte_bcs = ""
+        columnas_bcs = ("CAST(NULL AS float) AS TrendValueFourWeeks, "
+                        "CAST(NULL AS float) AS TrendValueTwoWeeks")
+        join_bcs = ""
     return f"""
         WITH ancla AS ({_ANCLA}),
         ses AS (
@@ -419,13 +443,7 @@ def sql_atencion_v2(grupos_sql: str, con_alarmas_rotativa: bool) -> str:
           FROM ses
           WHERE ventana IS NOT NULL
           GROUP BY BasicAnimal
-        ),
-        bcs AS (
-          SELECT Animal, TrendValueFourWeeks, TrendValueTwoWeeks,
-                 ROW_NUMBER() OVER (PARTITION BY Animal ORDER BY DateAndTime DESC) AS rn
-          FROM BcsDailyData
-          WHERE DateAndTime >= DATEADD(day, -10, GETDATE())
-        ),
+        ){cte_bcs},
         dia AS (
           SELECT ad.BasicAnimal, ad.DIM, ad.LactationNumber,
                  ROW_NUMBER() OVER (PARTITION BY ad.BasicAnimal ORDER BY ad.Date DESC) AS rn
@@ -436,13 +454,13 @@ def sql_atencion_v2(grupos_sql: str, con_alarmas_rotativa: bool) -> str:
         SELECT b.Number AS rp, g.Name AS grupo, d.DIM AS del, d.LactationNumber AS lactancia,
                a.n_ses_r, a.kg_r, a.n_ses_b, a.kg_b, a.tasa_lya_r, a.tasa_lya_b,
                a.ratio_r, a.ratio_b, a.cond_max_r, a.cond_max_b, a.blood_max_r, a.blood_avg_b,
-               a.n_alarmas_r, bc.TrendValueFourWeeks, bc.TrendValueTwoWeeks,
+               a.n_alarmas_r, {columnas_bcs},
                pd.FatherId AS padre, pd.MotherId AS madre
         FROM agg a
         JOIN BasicAnimal b ON b.OID = a.BasicAnimal
         JOIN AbstractGroup g ON g.OID = b.[Group] AND g.GCRecord IS NULL
         LEFT JOIN dia d ON d.BasicAnimal = a.BasicAnimal AND d.rn = 1
-        LEFT JOIN bcs bc ON bc.Animal = a.BasicAnimal AND bc.rn = 1
+        {join_bcs}
         -- Padre de la vaca, para el riesgo genético (ver genetica.py). LEFT
         -- JOIN: 76 de 7.314 vacas activas no tienen padre cargado y NO deben
         -- desaparecer del índice por eso -- salen sin dato genético, nada más.

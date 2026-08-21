@@ -236,6 +236,28 @@ _refreshing: set = set()
 # del proceso vuelve a intentar todo de cero.
 _errores_tabla: dict[str, str] = {}
 
+# Si esta base tiene `BcsDailyData` (cámara BCS, add-on de hardware — ver
+# salud.sql_bcs_vacas/sql_atencion_v2). Mismo criterio que `_errores_tabla`:
+# es un hecho estructural de la instalación, no cambia mientras el proceso
+# está corriendo, así que se consulta una sola vez (OBJECT_ID es metadata,
+# instantáneo) y se cachea para siempre.
+_tiene_bcs: dict[str, bool] = {}
+_tiene_bcs_lock = threading.Lock()
+
+
+def _tiene_bcs_de(tambo: str) -> bool:
+    with _tiene_bcs_lock:
+        if tambo in _tiene_bcs:
+            return _tiene_bcs[tambo]
+    try:
+        data = db.run_query("SELECT OBJECT_ID('BcsDailyData') AS oid", tambo=tambo)
+        existe = data["rows"][0][0] is not None
+    except Exception:  # noqa: BLE001
+        existe = False  # ante la duda, se arma la consulta sin BCS: degrada, no rompe
+    with _tiene_bcs_lock:
+        _tiene_bcs[tambo] = existe
+    return existe
+
 
 def _clave(tambo: str, consulta_id: str) -> str:
     return f"{tambo}:{consulta_id}"
@@ -944,7 +966,7 @@ def _valores_tablero(tambo: str) -> dict:
             # análisis: lo arma el endpoint al servir. Así que acá hay que
             # analizarlas igual que él, o el tablero lee campos que no existen.
             ident = (data or {}).get("ident")
-            id_an = (rutina.armar_identificacion(ident["columns"], ident["rows"])
+            id_an = (salas.de(tambo).armar_identificacion(ident["columns"], ident["rows"])
                      if ident else None)
             # `armar_identificacion` devuelve una fila por día: el indicador es
             # el del último día con datos, no un promedio de la semana.
@@ -2061,10 +2083,12 @@ def api_salud_atencion_v2():
     del controlador de la rotativa (alarma de bajo rendimiento y de
     conductividad del equipo, ambas de CMSMilkYield) — el resto (caída de
     leche, conductividad de sesión, BCS) sale de tablas comunes a cualquier
-    sala, ver salud.sql_atencion_v2."""
+    sala, ver salud.sql_atencion_v2. Lo mismo si esta base no tiene la cámara
+    BCS instalada (`_tiene_bcs_de`): sigue andando con lo que sí tiene."""
     tambo = _tambo_del_request()
     con_alarmas = tambos.tipo_sala(tambo) == "rotativa"
-    sql = salud.sql_atencion_v2(salas.de(tambo).sql_grupos(), con_alarmas)
+    con_bcs = _tiene_bcs_de(tambo)
+    sql = salud.sql_atencion_v2(salas.de(tambo).sql_grupos(), con_alarmas, con_bcs)
     data, espera = _servir_cacheado(tambo, "salud_atencion_v2", "Calculando índice experimental…", sql)
     if espera:
         return espera

@@ -460,6 +460,41 @@ corral. Sin comederos individuales solo se puede repartir el costo del grupo,
 ponderado por consumo estimado. Tiene que decirlo la pantalla, para que nadie
 descarte una vaca creyendo que es un dato medido.
 
+## San José (nuevo backup): dos bugs de "solo funciona con datos completos" (20/08/2026)
+
+Al restaurar el backup nuevo de San José (convencional, sin cámara BCS) se
+encontraron dos pantallas que se rompían enteras por faltar UNA tabla/forma
+de columna — mismo patrón de fondo, dos causas distintas:
+
+**Tablero de Diagnóstico → ORDEÑO daba "Error al leer Rendimiento Sala:
+'ordenos'" en las 7 tarjetas de esa fila.** `/api/rutina/rendimiento` ya
+tenía este bug arreglado (dispatch de `armar_identificacion` por sala, no
+`rutina.armar_identificacion` fijo — las columnas de convencional son
+`visitas`/`sin_duenio`, no `ordenos`/`desconocidos`), pero el Tablero de
+Diagnóstico duplica esa lógica para su propio caché (lee las mismas consultas
+crudas y las vuelve a analizar) y esa copia se quedó con la llamada vieja.
+Arreglado en `app.py` (línea con `id_an = salas.de(tambo).armar_identificacion(...)`,
+antes `rutina.armar_identificacion(...)` a secas). Como el error tumbaba TODO
+el bloque `try`, hasta tarjetas sin relación con identificación (vacas por
+puesto, litros/hora) quedaban en error — no eran 7 bugs, era 1.
+
+**"Atención vacas EXPERIMENTAL" daba "esta sala no tiene los datos
+necesarios".** `salud.sql_atencion_v2` pedía `BcsDailyData` (cámara BCS, add-on
+de hardware — NO depende del tipo de sala, ver nota de `sql_bcs_vacas`) sin
+condición, así que faltar esa UNA tabla tiraba `TablaNoDisponibleError` para
+el índice ENTERO, aunque caída de leche y conductividad —lo que San José sí
+tiene— estuvieran perfectas. Mismo critero que ya existía para las alarmas
+propias de la rotativa (`con_alarmas_rotativa`): ahora `con_bcs` arma la
+consulta con `CAST(NULL AS float)` en vez de la tabla cuando no está, y
+`app.py::_tiene_bcs_de` decide eso chequeando `OBJECT_ID('BcsDailyData')` una
+sola vez por proceso (se cachea para siempre, el esquema no cambia en
+caliente). El motor de evidencia (`calcular_atencion_v2`) YA manejaba BCS
+nulo por vaca sin cambios — con la tabla entera ausente, cada vaca simplemente
+no aporta evidencia de ese sistema.
+
+Verificado sin regresión: La Ponderosa (con BCS y con alarmas de rotativa)
+sigue devolviendo la consulta completa igual que antes.
+
 ## BCS: curva objetivo por DEL en vez de un umbral parejo (17/08/2026)
 
 `salud.BCS_BAJO`/`BCS_ALTO` (2,5 a 4,25 fijos, cualquier DEL) quedan
