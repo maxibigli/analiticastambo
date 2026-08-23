@@ -17,6 +17,23 @@ corriendo código anterior aunque los archivos ya se hayan actualizado. Los
 síntomas típicos de esto: el diseño/HTML se ve actualizado (Flask relee las
 plantillas en cada request) pero faltan funciones nuevas del backend.
 
+**"Reinicié y sigue igual" en SERVER-DELPRO: NO asumir que el reinicio
+funcionó, verificarlo.** Pasó repetidas veces esta sesión (código nuevo,
+variables de entorno de Twilio) que cerrar la ventana y volver a abrir
+`iniciar.bat` no mata el proceso anterior — queda un `servidor.py` viejo
+sirviendo el puerto 5310 en paralelo o en su lugar, con el código/las
+variables de ANTES. Antes de seguir investigando "por qué no cambió nada",
+chequear:
+
+    Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+      Where-Object { $_.CommandLine -like '*servidor.py*' } |
+      Select-Object ProcessId, CreationDate, CommandLine
+
+Si `CreationDate` es de ANTES del cambio que se esperaba ver, o si aparece
+más de un PID, ese es el problema — no un bug en el código. Se soluciona con
+`Stop-Process -Id <PID> -Force` explícito sobre CADA proceso encontrado
+(cerrar la ventana sola no siempre alcanza) y recién ahí levantar uno nuevo.
+
 Archivos que NO están en git (estado propio de cada instalación, no se
 comparten): `usuarios.json`, `secret_key.txt`, `alertas_canales.json`.
 Cambios en `.py` requieren reiniciar el proceso; cambios en `templates/*.html`
@@ -596,6 +613,39 @@ de fuente localmente (WOFF2 en `static/`), no un `<link>` a Google Fonts.
 Si en algún momento se quiere un TOGGLE (que cada usuario elija en vez de
 quedar fijo), la base ya está: solo faltaría un botón que cambie
 `data-theme` entre `"light"`/`"dark"` y lo guarde en localStorage.
+
+## Resumen del Tablero por WhatsApp/Telegram/Email (23/08/2026)
+
+Pedido del usuario: además de las alertas puntuales que ya existían (temp.
+caudalímetro, U.F.C., score de rutina, incidencias — cada una avisa UNA VEZ
+por condición nueva), quería un resumen PERIÓDICO con indicadores elegibles
+del Tablero de Diagnóstico.
+
+**Diseño**: se reusa el registro de `tablero.py` (`INDICADORES`/`config_de`/
+`guardar`) en vez de crear un sistema de configuración aparte — cada
+indicador ya tenía `activo` (se ve en el tablero); se le sumó
+`incluir_resumen` (va en el resumen), con el MISMO patrón de guardado/merge.
+Ninguno viene tildado por defecto: el tambo elige qué mandar.
+
+`tablero.texto_resumen(armado, nombre_tambo)` arma el mensaje a partir del
+`armar()` que YA se calculaba para /api/tablero — no dispara una consulta
+nueva. Agrupa por `grupo` (Economía/Alimentación/Ordeño/Reproducción/
+Sanidad/Instalación), con el mismo emoji de semáforo que el color CSS
+(`bien`→🟢, `atencion`→🟠, `mal`→🔴, sin dato→⚪), y aclara "(dato viejo)"
+cuando corresponde. Devuelve `None` si no hay nada tildado, para que el
+llamador no mande un mensaje vacío.
+
+`app.py::_revisar_resumen_tablero` se sumó a la MISMA lista de chequeos que
+ya corre a las 8:00/20:00 (`_revisar_alertas_whatsapp`) — mismo horario, sin
+agregar un segundo scheduler. A diferencia de `_avisar_si_nuevo` (una vez por
+condición hasta que se resuelve), el resumen se manda SIEMPRE que el horario
+toca y hay algo tildado, tenga o no algo fuera de rango — es un resumen, no
+una alerta de umbral.
+
+Botón "Probar resumen ahora" en ⚙ Configuración › Tablero
+(`/api/tablero/config/probar_resumen`): guarda lo tildado en la tabla antes
+de mandar (si no, probaría la config vieja) y lo manda ya mismo, mismo
+criterio que "Probar envío" de Alertas.
 
 ## Rutina de ordeño: "Vacas identificadas" siempre 100%, y curva de score (20/08/2026)
 

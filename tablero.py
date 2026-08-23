@@ -385,6 +385,7 @@ def armar(valores: dict, config: dict = None, lecturas: dict = None,
             "detalle": detalle,
             "leido": leido, "hace": hace, "viejo": viejo,
             "orden": cfg.get("orden", 999),
+            "incluir_resumen": bool(cfg.get("incluir_resumen")),
         })
     tarjetas.sort(key=lambda t: (t["orden"], t["grupo"], t["nombre"]))
     con_dato = [t for t in tarjetas if t["valor"] is not None]
@@ -402,6 +403,40 @@ def armar(valores: dict, config: dict = None, lecturas: dict = None,
             "en_verde": sum(1 for t in con_dato if t["nivel"] == "bien"),
         },
     }
+
+
+_EMOJI_NIVEL = {"bien": "🟢", "atencion": "🟠", "mal": "🔴", "sin_dato": "⚪"}
+
+
+def _num_ar(valor: float, decimales: int) -> str:
+    return f"{valor:,.{decimales}f}".replace(",", "§").replace(".", ",").replace("§", ".")
+
+
+def texto_resumen(armado: dict, nombre_tambo: str = None) -> str | None:
+    """Mensaje de texto con los indicadores tildados para el resumen periódico
+    (ver `app.py::_revisar_resumen_tablero`) — agrupados igual que la pantalla,
+    con el mismo semáforo en emoji. None si el tambo no tildó ninguno: así el
+    llamador sabe que no hay nada que mandar, en vez de mandar un mensaje vacío.
+    """
+    tarjetas = [t for t in armado["tarjetas"] if t.get("incluir_resumen")]
+    if not tarjetas:
+        return None
+    grupos: dict = {}
+    for t in tarjetas:
+        grupos.setdefault(t["grupo"], []).append(t)
+    encabezado = f"📊 Tablero de Diagnóstico" + (f" — {nombre_tambo}" if nombre_tambo else "")
+    partes = [encabezado]
+    for grupo, items in grupos.items():
+        partes.append(f"\n*{grupo}*")
+        for t in items:
+            if t["valor"] is None:
+                partes.append(f"⚪ {t['nombre']}: {t.get('falta') or 'sin dato'}")
+                continue
+            emoji = _EMOJI_NIVEL.get(t["nivel"], "⚪")
+            valor_txt = _num_ar(t["valor"], t["decimales"])
+            vieja = " (dato viejo)" if t.get("viejo") else ""
+            partes.append(f"{emoji} {t['nombre']}: {valor_txt} {t['unidad']}{vieja}")
+    return "\n".join(partes)
 
 
 def catalogo() -> list:
@@ -505,6 +540,11 @@ def config_de(tambo_id: str) -> dict:
             "rojo": g.get("rojo", ind["rojo"]),
             "activo": g.get("activo", True),
             "orden": g.get("orden", i),
+            # Aparte de "activo" (se ve en el tablero): si este indicador va en
+            # el resumen periódico por WhatsApp/Telegram/Email (ver
+            # `texto_resumen`). Apagado por defecto — el tambo elige qué
+            # mandar, no se le llena el celular de indicadores sin pedirlo.
+            "incluir_resumen": g.get("incluir_resumen", False),
             # Para que la pantalla pueda marcar qué se cambió y ofrecer volver
             # al valor original sin tener que recordarlo.
             "verde_defecto": ind["verde"], "rojo_defecto": ind["rojo"],
@@ -553,6 +593,8 @@ def guardar(tambo_id: str, datos: dict) -> dict:
         actual["verde"], actual["rojo"] = verde, rojo
         if "activo" in v:
             actual["activo"] = bool(v["activo"])
+        if "incluir_resumen" in v:
+            actual["incluir_resumen"] = bool(v["incluir_resumen"])
         if "orden" in v and v["orden"] is not None:
             try:
                 actual["orden"] = int(v["orden"])

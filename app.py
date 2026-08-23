@@ -1388,6 +1388,25 @@ def api_tablero_guardar():
     return jsonify({"config": cfg, "catalogo": tablero.catalogo()})
 
 
+@app.post("/api/tablero/config/probar_resumen")
+@auth.requiere_rol("admin")
+def api_tablero_probar_resumen():
+    """Manda el resumen del Tablero (los indicadores tildados en "📲 Resumen")
+    ya mismo, por los canales activos — sin esperar al horario de las 8:00/20:00.
+    Mismo criterio que /api/alertas/probar."""
+    tambo = _tambo_del_request()
+    valores = _valores_tablero(tambo)
+    armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
+    texto = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
+    if not texto:
+        return jsonify({"error": "No tildaste ningún indicador en la columna \"📲 Resumen\"."}), 400
+    try:
+        _enviar_a_canales_activos(texto)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+    return jsonify({"ok": True})
+
+
 def _estado_archivos(tambo: str) -> dict:
     """Qué archivos Excel se están usando de verdad, y en qué estado.
 
@@ -4381,12 +4400,29 @@ def _revisar_incidencias_whatsapp(tambo: str):
                                     "Posible unidad fallada.")
 
 
+def _revisar_resumen_tablero(tambo: str):
+    """Manda el resumen del Tablero de Diagnóstico con los indicadores que el
+    tambo tildó en ⚙ Configuración › Tablero (ver `tablero.texto_resumen`).
+
+    A diferencia de `_avisar_si_nuevo`, esto NO se manda "una sola vez hasta
+    que se resuelva" — es un resumen periódico, se manda en CADA horario
+    (8:00 y 20:00) si hay algo tildado, tenga o no algo fuera de rango. Lee
+    solo de caché (`_valores_tablero`, igual que /api/tablero): nunca dispara
+    una consulta pesada nueva desde este ciclo de fondo."""
+    valores = _valores_tablero(tambo)
+    armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
+    texto = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
+    if texto:
+        _enviar_a_canales_activos(texto)
+
+
 def _revisar_alertas_whatsapp():
     if not _canales_disponibles():
         return
     tambo = tambos.DEFAULT_TAMBO
     for fn, args in ((_revisar_cicla_whatsapp, (tambo,)), (_revisar_laser_whatsapp, ()),
-                     (_revisar_rutina_whatsapp, (tambo,)), (_revisar_incidencias_whatsapp, (tambo,))):
+                     (_revisar_rutina_whatsapp, (tambo,)), (_revisar_incidencias_whatsapp, (tambo,)),
+                     (_revisar_resumen_tablero, (tambo,))):
         try:
             fn(*args)
         except Exception:  # noqa: BLE001

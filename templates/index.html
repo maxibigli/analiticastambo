@@ -2987,12 +2987,17 @@
       <br><b>Los valores que vienen cargados son un punto de partida</b>, no una recomendación
       técnica: poné los de tu tambo.
       <br><b>Desactivar</b> un indicador lo saca del tablero sin perder sus límites.
+      <br><b>📲 Resumen</b>: tildá los indicadores que querés recibir por WhatsApp/Telegram/Email
+      en el resumen de las 8:00 y 20:00 (junto con las alertas de temperatura/U.F.C./rutina que
+      ya existían). Ninguno viene tildado por defecto — vos elegís qué mandar.
     </p>
     <div class="aviso" id="config-tablero-estado" style="margin:8px 0"></div>
     <div style="overflow-x:auto"><table class="tabla" id="config-tablero-tabla"></table></div>
-    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
       <button id="config-tablero-guardar">Guardar límites</button>
       <button class="secundario" id="config-tablero-reset">Volver a los valores por defecto</button>
+      <button class="secundario" id="config-tablero-probar-resumen">Probar resumen ahora</button>
+      <span class="aviso" id="config-tablero-resumen-estado"></span>
     </div>
   </section>
 
@@ -7107,12 +7112,17 @@ function pintarConfigTablero() {
       <td class="aviso" style="white-space:nowrap">${i.verde} / ${i.rojo}
           ${c.modificado ? '<br><span class="chip rojo">cambiado</span>' : ''}</td>
       <td><div class="tb-escala" style="width:110px"></div></td>
+      <td style="text-align:center">
+        <input type="checkbox" class="tb-cfg-resumen" ${c.incluir_resumen ? 'checked' : ''}
+            title="Incluir en el resumen periódico por WhatsApp/Telegram/Email (8:00 y 20:00)"></td>
     </tr>`;
   }).join('');
   document.getElementById('config-tablero-tabla').innerHTML =
     `<thead><tr><th title="Mostrar en el tablero">Ver</th><th>Indicador</th>
        <th style="color:var(--good)">Verde</th><th style="color:var(--critical)">Rojo</th>
-       <th>Por defecto</th><th>Escala</th></tr></thead><tbody>${filas}</tbody>`;
+       <th>Por defecto</th><th>Escala</th>
+       <th title="Incluir en el resumen periódico por WhatsApp/Telegram/Email">📲 Resumen</th>
+       </tr></thead><tbody>${filas}</tbody>`;
 }
 
 async function guardarConfigTablero() {
@@ -7123,6 +7133,7 @@ async function guardarConfigTablero() {
       verde: Number(tr.querySelector('.tb-cfg-verde').value),
       rojo: Number(tr.querySelector('.tb-cfg-rojo').value),
       activo: tr.querySelector('.tb-cfg-activo').checked,
+      incluir_resumen: tr.querySelector('.tb-cfg-resumen').checked,
     };
   });
   est.textContent = 'Guardando…';
@@ -7142,6 +7153,22 @@ async function guardarConfigTablero() {
 }
 
 document.getElementById('config-tablero-guardar').addEventListener('click', guardarConfigTablero);
+document.getElementById('config-tablero-probar-resumen').addEventListener('click', async () => {
+  const est = document.getElementById('config-tablero-resumen-estado');
+  est.textContent = 'Enviando…';
+  try {
+    // Manda con lo tildado AHORA en la tabla, aunque todavía no se haya
+    // guardado — si no, "probar" antes de "guardar" mandaría el resumen
+    // viejo y confundiría más que ayudar.
+    await guardarConfigTablero();
+    await pedirJSON('/api/tablero/config/probar_resumen?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+    });
+    est.innerHTML = '<b style="color:var(--good)">✔ Resumen enviado.</b>';
+  } catch (e) {
+    est.innerHTML = `<b style="color:var(--critical)">✗ ${escHtml(e.message)}</b>`;
+  }
+});
 document.getElementById('config-tablero-reset').addEventListener('click', async () => {
   const est = document.getElementById('config-tablero-estado');
   try {
