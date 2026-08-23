@@ -422,11 +422,13 @@
   .tb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
     gap: 12px; }
   .tb-card { position: relative; text-align: left; width: 100%; cursor: pointer;
-    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: var(--lac-radius-card, 10px);
     padding: 13px 15px 14px; font: inherit; color: inherit;
     /* La franja de color va a la izquierda y no arriba: al lado del número se
        lee como parte del dato, y arriba competía con el borde de la tarjeta. */
     border-left: 4px solid var(--muted);
+    box-shadow: 0 1px 2px rgba(14,23,32,.04), 0 8px 24px -12px rgba(14,23,32,.10);
     transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
   .tb-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.22);
     border-color: var(--accent); }
@@ -437,7 +439,8 @@
      alimento" se metía por debajo y se leía "...alimentoCALCULANDO". */
   .tb-nom { font-size: 11.5px; color: var(--text-secondary); line-height: 1.3;
     min-height: 30px; padding-right: 76px; }
-  .tb-val { font-size: 27px; font-weight: 650; line-height: 1.1; margin-top: 4px;
+  .tb-val { font-family: var(--lac-font-display); font-size: 27px; font-weight: 700;
+    letter-spacing: -.01em; line-height: 1.1; margin-top: 4px;
     font-variant-numeric: tabular-nums; }
   .tb-val small { font-size: 12px; font-weight: 500; opacity: .65; margin-left: 3px; }
   .tb-sub { font-size: 10.5px; color: var(--muted); margin-top: 3px; min-height: 13px; }
@@ -3041,7 +3044,31 @@ const SERIES = oscuro
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 Chart.defaults.color = css('--muted');
 Chart.defaults.borderColor = css('--grid');
-Chart.defaults.font.family = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+Chart.defaults.font.family = css('--lac-font-body') || 'system-ui, -apple-system, "Segoe UI", sans-serif';
+
+// Plugin de Chart.js: número grande en el centro de una dona, con la
+// primera categoría como titular (la "34% preñadas" de Estado reproductivo).
+// Se registra una sola vez y se activa por gráfico con `plugins.centro`.
+Chart.register({
+  id: 'centro',
+  afterDraw(chart) {
+    const opts = chart.config.options.plugins?.centro;
+    if (!opts) return;
+    const { ctx, chartArea: { left, right, top, bottom } } = chart;
+    const cx = (left + right) / 2, cy = (top + bottom) / 2;
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = css('--text-primary');
+    ctx.font = `800 26px ${css('--lac-font-display') || 'system-ui, sans-serif'}`;
+    ctx.fillText(opts.valor, cx, cy - (opts.etiqueta ? 11 : 0));
+    if (opts.etiqueta) {
+      ctx.fillStyle = css('--muted');
+      ctx.font = `500 12px ${css('--lac-font-body') || 'system-ui, sans-serif'}`;
+      ctx.fillText(opts.etiqueta, cx, cy + 12);
+    }
+    ctx.restore();
+  }
+});
 
 let chartProd, chartRepro, chartRes, ultimoResultado = null;
 let tamboActual = '';
@@ -3084,22 +3111,49 @@ function construirGrafica(data, spec) {
   const labels = data.rows.map(r => idxX >= 0 ? r[idxX] : '');
   if (spec.tipo === 'pie') {
     const i = data.columns.indexOf(series[0]);
+    const valores = data.rows.map(r => r[i]);
+    const total = valores.reduce((a, b) => a + (b || 0), 0);
+    // Titular al centro: la primera categoría (p.ej. "Preñadas"), como
+    // porcentaje del total — la misma lectura rápida que ya da la leyenda,
+    // pero sin tener que sumar de a una.
+    const pct = total ? Math.round(100 * (valores[0] || 0) / total) : null;
     return {
       type: 'doughnut',
-      data: { labels, datasets: [{ data: data.rows.map(r => r[i]),
+      data: { labels, datasets: [{ data: valores,
         backgroundColor: SERIES.slice(0, data.rows.length), borderColor: css('--surface-1'), borderWidth: 2 }] },
-      options: { responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'right', labels: { boxWidth: 12, boxHeight: 12 } } } }
+      options: { responsive: true, maintainAspectRatio: false, cutout: '68%',
+        plugins: {
+          legend: { position: 'right', labels: { boxWidth: 12, boxHeight: 12 } },
+          centro: pct == null ? null : { valor: pct + '%', etiqueta: String(labels[0] ?? '').toLowerCase() },
+        } }
     };
   }
+  const soloUnaSerie = spec.tipo === 'line' && series.length === 1;
   const datasets = series.map((col, k) => {
     const i = data.columns.indexOf(col);
     const vals = data.rows.map(r => r[i]);
-    return spec.tipo === 'line'
-      ? { label: col, data: vals, borderColor: SERIES[k % 8], backgroundColor: SERIES[k % 8],
-          borderWidth: 2, pointRadius: labels.length > 60 ? 0 : 2.5, tension: .25 }
-      : { label: col, data: vals, backgroundColor: SERIES[k % 8],
-          maxBarThickness: 28, borderRadius: 4, borderSkipped: 'bottom' };
+    if (spec.tipo !== 'line') {
+      return { label: col, data: vals, backgroundColor: SERIES[k % 8],
+               maxBarThickness: 28, borderRadius: 4, borderSkipped: 'bottom' };
+    }
+    const color = SERIES[k % 8];
+    const base = { label: col, data: vals, borderColor: color, backgroundColor: color,
+      borderWidth: 2, pointRadius: labels.length > 60 ? 0 : 2.5, tension: .25 };
+    if (!soloUnaSerie) return base;
+    // Curva única (el caso "KPI en el tiempo", ej. Producción de leche): se
+    // sombrea el área bajo la curva y se destaca el último punto — es el
+    // dato de HOY, el que importa más que el resto de la serie.
+    const ultimo = vals.length - 1;
+    return {
+      ...base,
+      fill: true,
+      backgroundColor: `color-mix(in srgb, ${color} 14%, transparent)`,
+      pointRadius: vals.map((_, idx) => idx === ultimo ? 5 : (labels.length > 60 ? 0 : 2.5)),
+      pointBackgroundColor: vals.map((_, idx) => idx === ultimo ? css('--surface-1') : color),
+      pointBorderColor: color,
+      pointBorderWidth: vals.map((_, idx) => idx === ultimo ? 2.5 : 0),
+      pointHoverRadius: 6,
+    };
   });
   return { type: spec.tipo === 'line' ? 'line' : 'bar',
            data: { labels, datasets }, options: baseOpts(series.length > 1) };
