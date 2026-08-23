@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="es" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -11,10 +11,13 @@
 <style>
   /* Paleta de la app: apunta a los tokens de static/css/lactia-tokens.css.
      Un solo lugar para cambiar identidad visual — revertible con git si
-     hace falta volver atrás. El modo oscuro lo resuelve lactia-tokens.css
-     solo (sus --lac-* ya cambian de valor con prefers-color-scheme). */
+     hace falta volver atrás. `data-theme="dark"` en <html> fuerza el modo
+     oscuro siempre, sin importar el modo del sistema operativo — decisión
+     del usuario del 23/08/2026 (vio la muestra rediseñada en oscuro y la
+     prefirió a la clara). Para volver a claro fijo: cambiar el atributo a
+     "light" (mismo mecanismo, ver lactia-tokens.css). */
   :root {
-    color-scheme: light;
+    color-scheme: dark;
     --surface-1: var(--lac-surface); --page: var(--lac-bg);
     --text-primary: var(--lac-fg); --text-secondary: var(--lac-fg-muted); --muted: var(--lac-fg-subtle);
     --grid: var(--lac-border); --baseline: var(--lac-border-strong); --border: var(--lac-border);
@@ -23,13 +26,10 @@
     /* Paleta de marca: navy para la barra lateral/tarjetas de marca (siempre oscuro, como los paneles de instrumento). */
     --brand-navy: var(--lac-inst-bg); --brand-navy-2: var(--lac-blue-700); --brand-ink: #ffffff;
   }
-  @media (prefers-color-scheme: dark) {
-    :root { color-scheme: dark; }
-  }
   * { box-sizing: border-box; }
   body {
     margin: 0; background: var(--page); color: var(--text-primary);
-    font-family: system-ui, -apple-system, "Segoe UI", sans-serif; font-size: 15px;
+    font-family: var(--lac-font-body); font-size: 15px;
   }
   header {
     padding: 18px 24px; border-bottom: 1px solid var(--border);
@@ -40,15 +40,26 @@
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
   .tile {
     background: var(--surface-1); border: 1px solid var(--border); border-top: 3px solid var(--accent);
-    border-radius: 10px; padding: 14px 16px;
+    border-radius: var(--lac-radius-card, 10px); padding: 14px 16px;
+    box-shadow: 0 1px 2px rgba(14,23,32,.04), 0 8px 24px -12px rgba(14,23,32,.10);
   }
-  .tile .label { color: var(--text-secondary); font-size: 12px; font-weight: 600; }
-  .tile .value { font-size: 27px; font-weight: 750; margin-top: 4px; }
+  .tile .label {
+    color: var(--text-secondary); font-size: 11.5px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: .06em;
+  }
+  .tile .value {
+    font-family: var(--lac-font-display); font-size: 27px; font-weight: 700;
+    letter-spacing: -.01em; font-variant-numeric: tabular-nums; margin-top: 6px;
+  }
   .card {
     background: var(--surface-1); border: 1px solid var(--border);
-    border-radius: 10px; padding: 16px 18px; margin-top: 16px;
+    border-radius: var(--lac-radius-card, 10px); padding: 18px 20px; margin-top: 16px;
+    box-shadow: 0 1px 2px rgba(14,23,32,.04), 0 8px 24px -12px rgba(14,23,32,.10);
   }
-  .card h2 { margin: 0 0 10px; font-size: 16px; font-weight: 750; color: var(--accent); letter-spacing: -.1px; }
+  .card h2 {
+    margin: 0 0 10px; font-size: 16px; font-weight: 700; color: var(--accent);
+    font-family: var(--lac-font-display); letter-spacing: -.005em;
+  }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
   @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
   .chart-box { position: relative; height: 280px; }

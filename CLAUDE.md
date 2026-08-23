@@ -550,6 +550,53 @@ sin tocar el criterio oficial que usa el resto de la app. Si el valor elegido
 difiere de 0,25 se lo aclara en el texto de la tarjeta para que no se confunda
 con el número de arriba.
 
+## Rediseño visual: modo oscuro fijo + pulido de tarjetas/tipografía (23/08/2026)
+
+El usuario pidió "fuentes más modernas, fondos claros, letras azules y tonos
+DeLaval" y armamos una muestra (Artifact) para probar la dirección. Al ir a
+aplicarla encontramos que la PALETA **ya estaba hecha**:
+`static/css/lactia-tokens.css` tiene una escala clara Y una oscura completas
+(azul DeLaval real, `--lac-blue-500: #0072CE`), con `index.html` ya cableado
+a esos tokens (`--accent: var(--lac-accent)`, etc.) — nunca se veía distinto
+porque la app sigue `prefers-color-scheme` del sistema operativo. Lo que
+NO estaba aplicado a la pantalla real era el PULIDO de `lactia-components.css`
+(`.lac-card`, `.lac-metric`, tipografía con `--lac-font-display`): esa hoja
+existe con un sistema de componentes más prolijo, pero `index.html` tiene su
+propio CSS ad-hoc en paralelo (`.card`, `.tile`) que solo toma los *colores*
+de los tokens, no la sombra/espaciado/tipografía de `.lac-*`.
+
+**Primero se probó forzar modo claro** (`<html data-theme="light">`,
+aprovechando el guard `:not([data-theme="light"])` que ya tiene
+`lactia-tokens.css` en su `@media (prefers-color-scheme: dark)` — pensado
+exactamente para esto). Verificado funcionando: con el navegador forzado a
+`dark`, la app se quedaba en claro igual.
+
+**El usuario vio la muestra en oscuro (así la renderizó su navegador) y
+prefirió ESE look — pidió oscuro fijo, no claro.** Se revirtió a
+`data-theme="dark"` (mismo mecanismo, en el otro sentido) y en cambio se
+llevó el PULIDO de la muestra a las clases reales de `index.html`:
+  - `.tile .label` / `.card h2`: mayúsculas con tracking, `--lac-font-display`.
+  - `.tile .value`: `--lac-font-display`, `font-variant-numeric: tabular-nums`.
+  - `.tile`/`.card`: `box-shadow` de elevación, radio de `--lac-radius-card`.
+  - `body`: `font-family` pasa a `var(--lac-font-body)` en vez de un stack
+    hardcodeado — mismo resultado visual hoy (no hay webfonts cargadas, ver
+    abajo), pero ahora sale de un solo lugar.
+  - `.card h2` se mantuvo en `var(--accent)` (azul) a propósito — el pedido
+    original decía explícitamente "letras azules", no se debe perder en
+    futuros ajustes de esta sección.
+
+**Deliberado: NO se agregó `<link>` a Google Fonts para Archivo/Inter.**
+`lactia-tokens.css` ya lo explica en su comentario: en un tambo con internet
+intermitente, depender de una red para tipografía es un riesgo que no vale
+la pena — los `--lac-font-*` ya declaran system-ui/Helvetica Neue/Arial como
+fallback, que es lo que efectivamente se usa hoy. Si en algún momento se
+quiere Archivo/Inter de verdad, la forma correcta es empaquetar los archivos
+de fuente localmente (WOFF2 en `static/`), no un `<link>` a Google Fonts.
+
+Si en algún momento se quiere un TOGGLE (que cada usuario elija en vez de
+quedar fijo), la base ya está: solo faltaría un botón que cambie
+`data-theme` entre `"light"`/`"dark"` y lo guarde en localStorage.
+
 ## Rutina de ordeño: "Vacas identificadas" siempre 100%, y curva de score (20/08/2026)
 
 Reportado por el usuario con capturas reales: en "Rutina de ordeño" (sala
