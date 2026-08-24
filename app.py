@@ -1757,6 +1757,41 @@ def api_checklist_estadisticas():
     return jsonify(datos)
 
 
+@app.get("/api/checklist/config/resumen")
+@auth.requiere_rol("admin")
+def api_checklist_config_resumen():
+    """Si las novedades del check-list (fallas abiertas/resueltas) van en el
+    resumen periódico por WhatsApp/Telegram/Email."""
+    return jsonify({"activo": config_alertas.checklist_resumen_activo()})
+
+
+@app.post("/api/checklist/config/resumen")
+@auth.requiere_rol("admin")
+def api_checklist_config_resumen_set():
+    body = request.json or {}
+    config_alertas.set_checklist_resumen(bool(body.get("activo")))
+    return jsonify({"ok": True})
+
+
+@app.post("/api/checklist/config/probar_resumen")
+@auth.requiere_rol("admin")
+def api_checklist_probar_resumen():
+    """Manda las novedades del check-list (fallas abiertas y resueltas) ya
+    mismo, por los canales activos — sin esperar al horario configurado.
+    Mismo criterio que /api/tablero/config/probar_resumen."""
+    tambo = _tambo_del_request()
+    datos = checklist.novedades(tambo)
+    texto = checklist.texto_novedades(datos, nombre_tambo=tambos.nombre_de(tambo))
+    if not texto:
+        return jsonify({"error": "No hay fallas abiertas ni resueltas para mandar."}), 400
+    html = checklist.html_novedades(datos, nombre_tambo=tambos.nombre_de(tambo))
+    try:
+        _enviar_resumen_a_canales_activos(texto, html)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+    return jsonify({"ok": True})
+
+
 @app.get("/checklist/foto/<int:foto_id>")
 def checklist_foto(foto_id: int):
     """Sirve una foto del check-list. La ruta se arma SIEMPRE desde lo que hay
@@ -4442,13 +4477,29 @@ def _revisar_resumen_tablero(tambo: str):
         _enviar_resumen_a_canales_activos(texto, html)
 
 
+def _revisar_novedades_checklist(tambo: str):
+    """Manda las fallas abiertas y resueltas del check-list de control (ver
+    `checklist.novedades`), si el tambo lo tildó en ⚙ Configuración ›
+    Check-list. Mismo criterio que `_revisar_resumen_tablero`: se manda en
+    CADA horario configurado si hay algo que contar, no una sola vez por
+    condición nueva. `checklist.novedades` lee de `checklist.db` (SQLite
+    propio, no DDM), así que no hay caché pesada que cuidar acá."""
+    if not config_alertas.checklist_resumen_activo():
+        return
+    datos = checklist.novedades(tambo)
+    texto = checklist.texto_novedades(datos, nombre_tambo=tambos.nombre_de(tambo))
+    if texto:
+        html = checklist.html_novedades(datos, nombre_tambo=tambos.nombre_de(tambo))
+        _enviar_resumen_a_canales_activos(texto, html)
+
+
 def _revisar_alertas_whatsapp():
     if not _canales_disponibles():
         return
     tambo = tambos.DEFAULT_TAMBO
     for fn, args in ((_revisar_cicla_whatsapp, (tambo,)), (_revisar_laser_whatsapp, ()),
                      (_revisar_rutina_whatsapp, (tambo,)), (_revisar_incidencias_whatsapp, (tambo,)),
-                     (_revisar_resumen_tablero, (tambo,))):
+                     (_revisar_resumen_tablero, (tambo,)), (_revisar_novedades_checklist, (tambo,))):
         try:
             fn(*args)
         except Exception:  # noqa: BLE001

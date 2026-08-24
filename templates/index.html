@@ -3012,6 +3012,17 @@
       <div class="aviso" style="margin-bottom:6px">Versiones</div>
       <div style="overflow-x:auto" id="cfg-cl-versiones"></div>
     </div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Resumen periódico</div>
+    <label class="aviso" style="display:flex;align-items:center;gap:6px">
+      <input type="checkbox" id="cfg-cl-resumen">
+      Incluir las novedades del check-list (fallas abiertas y resueltas) en el resumen de
+      WhatsApp/Telegram/Email, en el horario configurado en 🚦 Tablero de Diagnóstico.
+    </label>
+    <div style="display:flex;gap:10px;margin-top:10px;align-items:center">
+      <button class="secundario" id="cfg-cl-probar-resumen">Probar novedades ahora</button>
+      <span class="aviso" id="cfg-cl-resumen-estado"></span>
+    </div>
   </section>
 
   <section class="card" id="config-parametros-card" hidden>
@@ -7247,6 +7258,46 @@ document.getElementById('config-tablero-probar-resumen').addEventListener('click
     est.innerHTML = `<b style="color:var(--critical)">✗ ${escHtml(e.message)}</b>`;
   }
 });
+
+async function cargarConfigChecklistResumen() {
+  try {
+    const d = await pedirJSON('/api/checklist/config/resumen');
+    document.getElementById('cfg-cl-resumen').checked = !!d.activo;
+  } catch (e) {
+    document.getElementById('cfg-cl-resumen-estado').textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('cfg-cl-resumen').addEventListener('change', async ev => {
+  const chk = ev.target;
+  const est = document.getElementById('cfg-cl-resumen-estado');
+  chk.disabled = true;
+  try {
+    await pedirJSON('/api/checklist/config/resumen', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ activo: chk.checked }),
+    });
+    est.textContent = '';
+  } catch (e) {
+    chk.checked = !chk.checked;
+    est.innerHTML = `<b style="color:var(--critical)">✗ ${escHtml(e.message)}</b>`;
+  } finally {
+    chk.disabled = false;
+  }
+});
+
+document.getElementById('cfg-cl-probar-resumen').addEventListener('click', async () => {
+  const est = document.getElementById('cfg-cl-resumen-estado');
+  est.textContent = 'Enviando…';
+  try {
+    await pedirJSON('/api/checklist/config/probar_resumen?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+    });
+    est.innerHTML = '<b style="color:var(--good)">✔ Novedades enviadas.</b>';
+  } catch (e) {
+    est.innerHTML = `<b style="color:var(--critical)">✗ ${escHtml(e.message)}</b>`;
+  }
+});
 document.getElementById('config-tablero-reset').addEventListener('click', async () => {
   const est = document.getElementById('config-tablero-estado');
   try {
@@ -10527,6 +10578,7 @@ async function cargarConfiguracion() {
     await _actualizarPuestosConfig(cfg.sala_efectiva === 'convencional');
     cargarConfigTablero();
     cargarConfigChecklist();
+    cargarConfigChecklistResumen();
     cargarParametros();
     cargarMetas();
     cargarCanalesAlertas();

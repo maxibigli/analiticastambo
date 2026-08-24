@@ -80,3 +80,18 @@ def set_horario(dias: list, horas: list) -> None:
         actual["horario"] = {"dias": dias, "horas": horas}
         with open(_RUTA, "w", encoding="utf-8") as f:
             json.dump(actual, f)
+
+
+def checklist_resumen_activo() -> bool:
+    """Si las novedades del check-list (fallas abiertas/resueltas) van en el
+    resumen periódico. No tildado por defecto, mismo criterio que los
+    indicadores del Tablero (`incluir_resumen`): el tambo elige qué mandar."""
+    return bool(_leer().get("checklist_resumen", False))
+
+
+def set_checklist_resumen(valor: bool) -> None:
+    with _lock:
+        actual = _leer()
+        actual["checklist_resumen"] = bool(valor)
+        with open(_RUTA, "w", encoding="utf-8") as f:
+            json.dump(actual, f)

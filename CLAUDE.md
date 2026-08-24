@@ -1372,6 +1372,53 @@ diseño en vez de parcheado después.
 hoy/mañana): con un solo día de la semana habilitado, el próximo horario
 válido puede caer casi una semana después.
 
+## Novedades del check-list de control en el resumen de WhatsApp/Telegram/Email (24/08/2026)
+
+Pedido del usuario: poder mandar por el resumen periódico qué fallas y
+novedades hubo en el check-list de control (⚙ Configuración › 📋 Check-list
+de control tenía cumplimiento/adherencia/ranking en pantalla, pero nada
+salía por los canales de alerta).
+
+**No se inventó un criterio nuevo de "qué es una falla"**: `checklist.novedades()`
+reusa `checklist._fallas()` (el mismo motor que ya usa el panel en pantalla,
+con la regla ya documentada ahí — se mide por DÍA no por sesión, una racha de
+días malos SEGUIDOS es UN problema, se cierra con el primer día posterior CON
+CARGA sin ningún NO). Separa el resultado en dos listas:
+
+  - **`abiertas`**: fallas sin resolver TODAVÍA. Mira 90 días para atrás (no
+    la ventana corta del resumen) para no recortar mal una falla vieja que
+    sigue abierta — si se cortara a pocos días, una falla de hace 40 días se
+    mostraría como si tuviera 5.
+  - **`resueltas`**: se resolvieron en los últimos 2 días (`dias_resueltas`).
+    Una falla resuelta hace un mes ya no es noticia — sin este filtro, CADA
+    resumen volvería a listar TODO lo que alguna vez se arregló.
+
+`checklist.texto_novedades(datos, nombre_tambo)` / `html_novedades(...)`
+son el mismo patrón de par texto+HTML que `tablero.texto_resumen`/
+`html_resumen` (badges de color reales en el HTML, texto con emoji para
+WhatsApp/Telegram, `None` si no hay nada que contar).
+
+**Un solo tilde, no uno por tarea.** A diferencia del Tablero (donde cada
+indicador tiene su propio "📲 Resumen"), acá no tendría sentido: no son
+indicadores independientes, es UN informe de fallas. El tilde vive en
+`config_alertas.py` (`checklist_resumen_activo()`/`set_checklist_resumen()`,
+mismo archivo `alertas_canales.json` que ya guarda canales y horario) y el
+control está en ⚙ Configuración › 📋 Check-list de control, con su propio
+"Probar novedades ahora" (`/api/checklist/config/probar_resumen`, mismo
+criterio que el de Tablero).
+
+`app.py::_revisar_novedades_checklist` se sumó a la MISMA lista de chequeos
+del ciclo de alertas (junto con `_revisar_resumen_tablero`) — mismo horario
+configurable, sin un tercer scheduler. `checklist.novedades()` lee de
+`checklist.db` (SQLite propio), no de DDM, así que no hay caché pesada que
+cuidar acá como sí la hay para rutina/incidencias.
+
+Probado con datos sintéticos (sin tocar `checklist.db` ni mandar nada real):
+una falla abierta hace 6 días aparece con su comentario; una resuelta hace 2
+días aparece con "2 días abierta"; una resuelta hace 4 días queda afuera
+(más vieja que la ventana de 2 días); el caso sin nada que contar da `None`
+en vez de mandar un mensaje vacío.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

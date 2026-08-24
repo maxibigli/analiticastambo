@@ -39,6 +39,7 @@ import os
 import sqlite3
 import threading
 import uuid
+from html import escape as _esc
 
 _DIR = os.path.dirname(__file__)
 _DB_PATH = os.path.join(_DIR, "checklist.db")
@@ -582,3 +583,99 @@ def hechas_hoy(tambo: str, fecha: str) -> list:
         fs = con.execute("SELECT momento, sesion FROM corrida WHERE tambo = ? AND fecha = ?",
                          (tambo, fecha)).fetchall()
     return [{"momento": f["momento"], "sesion": f["sesion"]} for f in fs]
+
+
+# --- Novedades del check-list, para el resumen periódico por WhatsApp/------
+# Telegram/Email (ver app.py::_revisar_novedades_checklist). Reusa `_fallas`,
+# no duplica el criterio de "qué es una falla abierta".
+# ---------------------------------------------------------------------------
+def novedades(tambo: str, dias_atras: int = 90, dias_resueltas: int = 2) -> dict:
+    """{"abiertas": [...], "resueltas": [...]} -- fallas abiertas AHORA MISMO
+    y las que se resolvieron en los últimos `dias_resueltas` días.
+
+    `dias_atras` mira bastante para atrás (90 días, no la ventana corta del
+    resumen) al calcular las fallas: una que sigue abierta desde hace mucho
+    tiene que mostrar cuánto hace de verdad, no recortado a los últimos días.
+    `dias_resueltas` sí es corto, es la ventana de "novedad": una falla
+    resuelta hace un mes ya no es noticia."""
+    hoy = datetime.date.today()
+    desde = (hoy - datetime.timedelta(days=dias_atras)).isoformat()
+    fallas = estadisticas(tambo, desde, hoy.isoformat())["fallas"]
+    limite = (hoy - datetime.timedelta(days=dias_resueltas)).isoformat()
+    return {
+        "abiertas": [f for f in fallas if f["abierta"]],
+        "resueltas": [f for f in fallas if not f["abierta"] and f["resuelta_el"] and f["resuelta_el"] >= limite],
+    }
+
+
+def _dias_desde(fecha: str) -> int:
+    return (datetime.date.today() - datetime.date.fromisoformat(fecha)).days + 1
+
+
+def texto_novedades(datos: dict, nombre_tambo: str = None) -> str | None:
+    """Mensaje de texto con las fallas abiertas y resueltas (ver `novedades`).
+    None si no hay nada que contar, para que el llamador no mande un mensaje
+    vacío -- mismo criterio que `tablero.texto_resumen`."""
+    if not datos["abiertas"] and not datos["resueltas"]:
+        return None
+    encabezado = "📋 Check-list de control" + (f" — {nombre_tambo}" if nombre_tambo else "")
+    partes = [encabezado]
+    if datos["abiertas"]:
+        partes.append("\n*Fallas abiertas*")
+        for f in datos["abiertas"]:
+            dias = _dias_desde(f["fecha"])
+            coment = f" — {f['comentario']}" if f.get("comentario") else ""
+            partes.append(f"🔴 {f['tarea']} ({f['sector']}): hace {dias} día{'s' if dias != 1 else ''}{coment}")
+    if datos["resueltas"]:
+        partes.append("\n*Resueltas*")
+        for f in datos["resueltas"]:
+            dias = f["dias_abierta"]
+            partes.append(f"✅ {f['tarea']} ({f['sector']}): resuelta el {f['resuelta_el']} "
+                          f"({dias} día{'s' if dias != 1 else ''} abierta)")
+    return "\n".join(partes)
+
+
+def html_novedades(datos: dict, nombre_tambo: str = None) -> str | None:
+    """Como texto_novedades, pero en HTML para el mail (ver correo.enviar_html)
+    -- mismo criterio visual que tablero.html_resumen: badges de color reales,
+    fondo claro. None si no hay nada que contar."""
+    if not datos["abiertas"] and not datos["resueltas"]:
+        return None
+    filas = []
+    for f in datos["abiertas"]:
+        dias = _dias_desde(f["fecha"])
+        coment = (f' <span style="color:#94a3b8;font-size:12px;">— {_esc(f["comentario"])}</span>'
+                  if f.get("comentario") else "")
+        filas.append(f"""<tr>
+  <td style="padding:7px 0;border-bottom:1px solid #eef1f4;">
+    <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#E4002B;margin-right:8px;"></span>
+    <span style="color:#334155;font-size:13px;">{_esc(f['tarea'])} <span style="color:#94a3b8;font-size:12px;">({_esc(f['sector'])})</span></span>{coment}
+  </td>
+  <td style="padding:7px 0;border-bottom:1px solid #eef1f4;text-align:right;white-space:nowrap;">
+    <span style="color:#0f172a;font-size:13px;font-weight:700;">hace {dias} día{'s' if dias != 1 else ''}</span>
+  </td>
+</tr>""")
+    for f in datos["resueltas"]:
+        dias = f["dias_abierta"]
+        filas.append(f"""<tr>
+  <td style="padding:7px 0;border-bottom:1px solid #eef1f4;">
+    <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#00875A;margin-right:8px;"></span>
+    <span style="color:#334155;font-size:13px;">{_esc(f['tarea'])} <span style="color:#94a3b8;font-size:12px;">({_esc(f['sector'])})</span></span>
+  </td>
+  <td style="padding:7px 0;border-bottom:1px solid #eef1f4;text-align:right;white-space:nowrap;">
+    <span style="color:#0f172a;font-size:13px;font-weight:700;">resuelta ({dias} día{'s' if dias != 1 else ''})</span>
+  </td>
+</tr>""")
+    titulo = "Check-list de control" + (f" — {nombre_tambo}" if nombre_tambo else "")
+    return f"""<div style="background:#f1f5f9;padding:24px 12px;font-family:-apple-system,'Segoe UI',Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:10px;border:1px solid #e2e8f0;overflow:hidden;">
+<tr><td style="background:#0072CE;padding:16px 20px;">
+<span style="color:#ffffff;font-size:17px;font-weight:700;">📋 {_esc(titulo)}</span>
+</td></tr>
+<tr><td style="padding:4px 20px 20px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+{''.join(filas)}
+</table>
+</td></tr>
+</table>
+</div>"""
