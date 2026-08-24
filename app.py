@@ -4350,7 +4350,7 @@ def _responder_whatsapp_ia(origen: str, pregunta: str, tambo: str):
         _log_webhook("ABORTADO -- agente.api_disponible() es False (¿falta ANTHROPIC_API_KEY?)")
         return
     try:
-        resultado = agente.responder(pregunta, tambo)
+        resultado = agente.responder(pregunta, tambo, estilo="whatsapp")
         respuesta = resultado.get("respuesta") or "No pude generar una respuesta."
     except Exception as exc:  # noqa: BLE001
         respuesta = f"Hubo un error respondiendo: {exc}"

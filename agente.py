@@ -502,20 +502,40 @@ de la pregunta.
 este tambo, decilo y no respondas.
 """
 
+# Addendum de tono para el chat de WhatsApp (ver app.py::webhook_whatsapp):
+# la pantalla web tolera una respuesta con forma de informe, pero por chat
+# suena a mensaje de error de un sistema, no a alguien contestando. Se separa
+# del _SYSTEM base para no tocarle el tono a "Preguntale a IA" del dashboard.
+_ESTILO_WHATSAPP = """
 
-def _mensaje_sistema(tambo: str) -> str:
-    return _SYSTEM.format(tambo=tambos.nombre_de(tambo), hoy=datetime.date.today().isoformat())
+Estás respondiendo por WhatsApp, no en una pantalla con texto largo: escribí \
+como le responderías a alguien por chat. Frases cortas, tono natural y \
+cercano — nunca nombres herramientas ni campos internos ("calculando: true", \
+"0 puntos calculados", "la herramienta X no devolvió"): contá lo que pasa \
+con tus propias palabras. Si falta un dato, decilo simple ("ese número \
+todavía no está calculado, probá de nuevo en un rato") en vez de describir \
+el estado interno del sistema. Esto es de FORMA, no de fondo: seguís sin \
+inventar números ni redondear para que cierre.
+"""
 
 
-def responder(pregunta: str, tambo: str, historial: list | None = None) -> dict:
+def _mensaje_sistema(tambo: str, estilo: str | None = None) -> str:
+    base = _SYSTEM.format(tambo=tambos.nombre_de(tambo), hoy=datetime.date.today().isoformat())
+    if estilo == "whatsapp":
+        base += _ESTILO_WHATSAPP
+    return base
+
+
+def responder(pregunta: str, tambo: str, historial: list | None = None, estilo: str | None = None) -> dict:
     """Responde una pregunta encadenando herramientas hasta `MAX_TURNOS`
     veces. Devuelve {"respuesta": str, "pasos": [{"herramienta", "args"}, ...],
     "mensajes": [...]} — `mensajes` sirve para seguir la conversación (pasarlo
-    de vuelta como `historial` en la próxima pregunta)."""
+    de vuelta como `historial` en la próxima pregunta). `estilo="whatsapp"`
+    ajusta el tono de la respuesta final, no las herramientas ni la precisión."""
     client = _cliente_interno()
     mensajes = list(historial or []) + [{"role": "user", "content": pregunta}]
     pasos = []
-    system = _mensaje_sistema(tambo)
+    system = _mensaje_sistema(tambo, estilo)
     # La MISMA herramienta con los MISMOS argumentos, dos veces en una sola
     # respuesta, no es una segunda medición — es la misma pregunta otra vez.
     # Medido: el modelo llamó `reproduccion_resultados({})` dos veces seguidas
