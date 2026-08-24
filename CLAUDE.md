@@ -1300,6 +1300,33 @@ al mismo tiempo) sigue sin identificarse — esto es una mitigación a nivel de
 aplicación, no un diagnóstico. Si vuelve a pasar, revisar si el lock evitó
 el doble envío (buscar en el log si hubo un intento rechazado).
 
+## Parámetros Reproductivos y Calibración de Objetivos: movidos a Configuración (24/08/2026)
+
+Pedido del usuario: esas dos pestañas, dentro de "🧬 Análisis Reproductivo",
+eran configuración del tambo (parámetros que se pisan una vez y quedan; metas
+que se cargan una vez y quedan), no un análisis que se mire seguido — no
+tenían por qué competir por lugar con las siete pestañas de análisis de
+verdad (Resultados, Indicadores de Preñez, Performance, etc.).
+
+Se movieron sin tocar el backend ni las funciones que las llenan
+(`cargarParametros`/`cargarMetas`, `pm-*`/`repro-metas-*` por id): solo
+cambiaron de padre en el HTML, de `#page-repro` a `#page-configuracion`, y
+pasaron a ser dos pestañas más de `#config-tabs` (⚙ Configuración / 🚦
+Tablero / 📋 Check-list / 🧬 Parámetros Reproductivos / 🎯 Calibración de
+Objetivos) en vez de paneles de `#repro-tabs`. Como las otras tres tarjetas
+de Configuración, cargan sus datos de una sola vez al entrar a la página
+(`cargarConfiguracion()`), no al tocar la pestaña — mismo patrón ya usado
+ahí, distinto del de Análisis Reproductivo (que carga cada pestaña recién al
+seleccionarla, por ser consultas pesadas).
+
+**Análisis Reproductivo ahora arranca en "Resultados"** (antes arrancaba en
+Parámetros porque era la única consulta liviana —20 filas— y abría la
+página al instante; las demás son pesadas y quedan detrás del botón "▶
+Calcular..." de `activarAPedido`). Resultados usa el mismo mecanismo de
+carga diferida que ya tenían las otras pestañas pesadas, así que la página
+sigue abriendo al instante — ya no por tener una pestaña liviana adelante,
+sino porque ninguna pestaña que queda carga sola al entrar.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

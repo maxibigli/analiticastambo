@@ -725,9 +725,7 @@
       <span class="aviso">El rodeo contra los objetivos del tambo, comparando dos períodos.</span>
       <div class="lac-segment" id="repro-tabs" role="group" aria-label="Vista"
            style="margin-left:auto">
-        <button class="lac-segment__item" data-tab="parametros" aria-pressed="true">Parámetros Reproductivos</button>
-        <button class="lac-segment__item" data-tab="metas" aria-pressed="false">Calibración de Objetivos</button>
-        <button class="lac-segment__item" data-tab="resultados" aria-pressed="false">Resultados</button>
+        <button class="lac-segment__item" data-tab="resultados" aria-pressed="true">Resultados</button>
         <button class="lac-segment__item" data-tab="preneces" aria-pressed="false">Indicadores de Preñez</button>
         <button class="lac-segment__item" data-tab="performance" aria-pressed="false">Performance</button>
         <button class="lac-segment__item" data-tab="partos" aria-pressed="false">Partos y Secados</button>
@@ -798,39 +796,6 @@
           Negativo significa que parieron antes.
         </p>
         <div style="overflow-x:auto" id="gs-tabla"></div>
-      </div>
-    </div>
-
-    <div id="repro-panel-parametros">
-      <p class="explica" style="margin-top:12px">
-        <b>Qué es.</b> Los valores que gobiernan <b>todos</b> los cálculos reproductivos de esta
-        aplicación: cuántos días dura la gestación, a los cuántos días se seca una vaca, cuánto
-        espera antes del primer servicio, cuánto dura un ciclo de celo.
-        <br><b>De dónde salen.</b> Se leen en vivo de DelPro (<code>ReproductionSetting</code>), pero
-        <b>se pueden pisar acá</b>. Cada tambo guarda los suyos y quedan para las próximas sesiones.
-        <br><b>Las tres columnas de valor.</b> <b>Por defecto</b> es lo que trae DelPro de fábrica.
-        <b>En DelPro</b> es lo que configuró este tambo en la rotativa. <b>En LactIA</b> es el
-        editable: si le ponés un número, los cálculos usan ese; si lo dejás vacío, usan el de DelPro.
-        <br><b>Para qué sirve pisarlo.</b> El caso concreto que apareció: las gestaciones reales de
-        este tambo promedian <b>276,8 días</b> y DelPro tiene <b>280</b>. Podés poner 277 acá y
-        proyectar con el número real, sin tocar la configuración de la rotativa. La última columna
-        dice qué pantallas dependen de cada parámetro.
-      </p>
-      <div class="aviso" id="pm-info" style="margin-top:8px"></div>
-      <div class="aviso" id="pm-alerta" style="margin-top:6px"></div>
-      <div style="display:flex;gap:10px;margin-top:10px">
-        <button class="secundario" id="pm-guardar">Guardar parámetros</button>
-        <button class="secundario" id="pm-revertir">Descartar cambios</button>
-      </div>
-      <div style="overflow-x:auto;margin-top:12px" id="pm-tabla"></div>
-
-      <div style="margin-top:20px">
-        <h3 class="g-titulo">Parámetros de MilkMetric</h3>
-        <p class="explica">
-          Estos <b>no están en la base de DelPro</b>: son configuración del módulo MilkMetric y hay
-          que mirarlos ahí. Se listan como referencia porque afectan a lo que muestra LactIA.
-        </p>
-        <div style="overflow-x:auto" id="pm-milkmetric"></div>
       </div>
     </div>
 
@@ -1168,7 +1133,7 @@
       <div style="overflow-x:auto;margin-top:14px" id="pren-tabla"></div>
     </div>
 
-    <div id="repro-panel-resultados" hidden>
+    <div id="repro-panel-resultados">
       <div class="controls" style="margin-top:12px;gap:16px;flex-wrap:wrap">
         <div class="controls" style="gap:5px">
           <span class="aviso" style="font-weight:600">Rango 1</span>
@@ -1216,23 +1181,6 @@
       <div style="overflow-x:auto;margin-top:14px" id="repro-tabla"></div>
     </div>
 
-    <div id="repro-panel-metas" hidden>
-      <p class="explica" style="margin-top:12px">
-        <b>Qué es.</b> Los objetivos del tambo para cada indicador reproductivo. Es la misma pantalla
-        de Metas de DelPro: un valor y una condición que define si se cumple.
-        <br><b>Cómo se usa.</b> La <b>condición</b> dice para qué lado hay que estar:
-        <code>&gt;=</code> significa que cumplir es llegar o pasar la meta (por ejemplo, % de preñez);
-        <code>&lt;=</code> que cumplir es no pasarla (por ejemplo, días en leche o % de abortos).
-        Una meta vacía deja al indicador sin evaluar: se muestra el valor pero sin semáforo.
-        <br>Los cambios se guardan en el servidor y quedan para todos.
-      </p>
-      <div class="aviso" id="repro-metas-info" style="margin-top:8px"></div>
-      <div style="display:flex;gap:10px;margin-top:10px">
-        <button class="secundario" id="repro-metas-guardar">Guardar objetivos</button>
-        <button class="secundario" id="repro-metas-revertir">Descartar cambios</button>
-      </div>
-      <div style="overflow-x:auto;margin-top:14px" id="repro-metas-tabla"></div>
-    </div>
   </section>
   </div>
 
@@ -2831,6 +2779,8 @@
     <button class="lac-segment__item" data-tab="general" aria-pressed="true">⚙ Configuración</button>
     <button class="lac-segment__item" data-tab="tablero" aria-pressed="false">🚦 Tablero de Diagnóstico</button>
     <button class="lac-segment__item" data-tab="checklist" aria-pressed="false">📋 Check-list de control</button>
+    <button class="lac-segment__item" data-tab="parametros" aria-pressed="false">🧬 Parámetros Reproductivos</button>
+    <button class="lac-segment__item" data-tab="metas" aria-pressed="false">🎯 Calibración de Objetivos</button>
   </div>
 
   <section class="card" id="config-general-card">
@@ -3038,6 +2988,59 @@
       <div class="aviso" style="margin-bottom:6px">Versiones</div>
       <div style="overflow-x:auto" id="cfg-cl-versiones"></div>
     </div>
+  </section>
+
+  <section class="card" id="config-parametros-card" hidden>
+    <h2 style="margin:0">🧬 Parámetros Reproductivos</h2>
+    <p class="explica" style="margin-top:12px">
+      <b>Qué es.</b> Los valores que gobiernan <b>todos</b> los cálculos reproductivos de esta
+      aplicación: cuántos días dura la gestación, a los cuántos días se seca una vaca, cuánto
+      espera antes del primer servicio, cuánto dura un ciclo de celo.
+      <br><b>De dónde salen.</b> Se leen en vivo de DelPro (<code>ReproductionSetting</code>), pero
+      <b>se pueden pisar acá</b>. Cada tambo guarda los suyos y quedan para las próximas sesiones.
+      <br><b>Las tres columnas de valor.</b> <b>Por defecto</b> es lo que trae DelPro de fábrica.
+      <b>En DelPro</b> es lo que configuró este tambo en la rotativa. <b>En LactIA</b> es el
+      editable: si le ponés un número, los cálculos usan ese; si lo dejás vacío, usan el de DelPro.
+      <br><b>Para qué sirve pisarlo.</b> El caso concreto que apareció: las gestaciones reales de
+      este tambo promedian <b>276,8 días</b> y DelPro tiene <b>280</b>. Podés poner 277 acá y
+      proyectar con el número real, sin tocar la configuración de la rotativa. La última columna
+      dice qué pantallas dependen de cada parámetro.
+    </p>
+    <div class="aviso" id="pm-info" style="margin-top:8px"></div>
+    <div class="aviso" id="pm-alerta" style="margin-top:6px"></div>
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <button class="secundario" id="pm-guardar">Guardar parámetros</button>
+      <button class="secundario" id="pm-revertir">Descartar cambios</button>
+    </div>
+    <div style="overflow-x:auto;margin-top:12px" id="pm-tabla"></div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Parámetros de MilkMetric</h3>
+      <p class="explica">
+        Estos <b>no están en la base de DelPro</b>: son configuración del módulo MilkMetric y hay
+        que mirarlos ahí. Se listan como referencia porque afectan a lo que muestra LactIA.
+      </p>
+      <div style="overflow-x:auto" id="pm-milkmetric"></div>
+    </div>
+  </section>
+
+  <section class="card" id="config-metas-card" hidden>
+    <h2 style="margin:0">🎯 Calibración de Objetivos</h2>
+    <p class="explica" style="margin-top:12px">
+      <b>Qué es.</b> Los objetivos del tambo para cada indicador reproductivo. Es la misma pantalla
+      de Metas de DelPro: un valor y una condición que define si se cumple.
+      <br><b>Cómo se usa.</b> La <b>condición</b> dice para qué lado hay que estar:
+      <code>&gt;=</code> significa que cumplir es llegar o pasar la meta (por ejemplo, % de preñez);
+      <code>&lt;=</code> que cumplir es no pasarla (por ejemplo, días en leche o % de abortos).
+      Una meta vacía deja al indicador sin evaluar: se muestra el valor pero sin semáforo.
+      <br>Los cambios se guardan en el servidor y quedan para todos.
+    </p>
+    <div class="aviso" id="repro-metas-info" style="margin-top:8px"></div>
+    <div style="display:flex;gap:10px;margin-top:10px">
+      <button class="secundario" id="repro-metas-guardar">Guardar objetivos</button>
+      <button class="secundario" id="repro-metas-revertir">Descartar cambios</button>
+    </div>
+    <div style="overflow-x:auto;margin-top:14px" id="repro-metas-tabla"></div>
   </section>
   </div>
     </main>
@@ -5916,9 +5919,6 @@ document.getElementById('repro-tabs').addEventListener('click', ev => {
   document.getElementById('repro-panel-terneros').hidden = tab !== 'terneros';
   document.getElementById('repro-panel-tasa').hidden = tab !== 'tasa';
   document.getElementById('repro-panel-gestacion').hidden = tab !== 'gestacion';
-  document.getElementById('repro-panel-parametros').hidden = tab !== 'parametros';
-  document.getElementById('repro-panel-metas').hidden = tab !== 'metas';
-  if (tab === 'parametros' && !pmDatos) cargarParametros();
   if (tab === 'gestacion' && !gsDatos)
     activarAPedido('gs-info', cargarGestacion, 'el análisis de gestación', DEMORA);
   if (tab !== 'gestacion') clearTimeout(gsReintento);
@@ -5931,7 +5931,6 @@ document.getElementById('repro-tabs').addEventListener('click', ev => {
   if (tab !== 'partos') clearTimeout(psReintento);
   if (tab !== 'terneros') clearTimeout(bjReintento);
   if (tab !== 'tasa') clearTimeout(tpReintento);
-  if (tab === 'metas' && !reproMetas) cargarMetas();
   if (tab === 'preneces' && !prenDatos)
     activarAPedido('pren-info', cargarPreneces, 'los indicadores de preñez', DEMORA);
   if (tab === 'performance' && !perfDatos)
@@ -10352,10 +10351,12 @@ function cargarDatosDePagina(id) {
   }
   else if (id === 'flujos') activarAPedido('flu-info', cargarFlujos, 'flujos de ordeño', DEMORA);
   else if (id === 'proyeccion') activarAPedido('proy-info', cargarProyeccion, 'la proyección', DEMORA);
-  // Arranca en Parámetros Reproductivos: es la primera pestaña y la consulta
-  // es de 20 filas, así que la página abre al instante en vez de esperar las
-  // consultas pesadas. Las demás cargan al entrar en ellas.
-  else if (id === 'repro') cargarParametros();
+  // Parámetros Reproductivos y Calibración de Objetivos se movieron a
+  // ⚙ Configuración (24/08/2026: son configuración del tambo, no un análisis
+  // que se compare entre períodos). Arranca en Resultados, la primera
+  // pestaña que queda acá; el resto carga al entrar en cada una.
+  else if (id === 'repro')
+    activarAPedido('repro-info', cargarRepro, 'los indicadores reproductivos', DEMORA);
   else if (id === 'alimentacion') cargarConciliacion(false);
   else if (id === 'entregas') {
     activarAPedido('cicla-info', cargarCicla, 'las cargas de CICLA', DEMORA);
@@ -10453,13 +10454,15 @@ async function cargarConfiguracion() {
     await _actualizarPuestosConfig(cfg.sala_efectiva === 'convencional');
     cargarConfigTablero();
     cargarConfigChecklist();
+    cargarParametros();
+    cargarMetas();
     estado.textContent = '';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
   }
 }
 
-// Las tres tarjetas de Configuración se cargan todas de una (arriba, en
+// Las cinco tarjetas de Configuración se cargan todas de una (arriba, en
 // cargarConfiguracion) — las solapas son solo de visibilidad, no disparan
 // carga nueva al cambiar.
 document.getElementById('config-tabs').addEventListener('click', ev => {
@@ -10471,6 +10474,8 @@ document.getElementById('config-tabs').addEventListener('click', ev => {
   document.getElementById('config-general-card').hidden = tab !== 'general';
   document.getElementById('config-tablero-card').hidden = tab !== 'tablero';
   document.getElementById('config-checklist-card').hidden = tab !== 'checklist';
+  document.getElementById('config-parametros-card').hidden = tab !== 'parametros';
+  document.getElementById('config-metas-card').hidden = tab !== 'metas';
 });
 
 // --- Editor de la plantilla del check-list ---------------------------------
