@@ -60,6 +60,7 @@ import tablero
 import tambos
 import telegram_bot
 import whatsapp
+import whatsapp_ia
 from consultas import CONSULTAS
 from ordeno import (ORDENO_SQL, ORDENO_VIVO_SQL, ORDENO_INC_SQL,
                     ORDENO_ALARMAS_SQL, VIVO_LIMITE_MIN,
@@ -87,7 +88,7 @@ else:
 app.permanent_session_lifetime = datetime.timedelta(days=30)
 
 # Rutas que no requieren haber iniciado sesión.
-_RUTAS_PUBLICAS = {"/login"}
+_RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp"}
 
 
 @app.before_request
@@ -4309,6 +4310,75 @@ def api_agente_preguntar():
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"No se pudo responder: {exc}"}), 502
     return jsonify(resultado)
+
+
+# ---------------------------------------------------------------------------
+# "Preguntale a IA" por WhatsApp: números autorizados (⚙ Configuración,
+# whatsapp_ia.py) le preguntan directo al mismo agente de /api/agente/preguntar
+# -- por eso funciona en tambos de producción, a diferencia del SQL-a-ciegas
+# de /api/preguntar. Sin sesión/login (Twilio llama esta URL directo, nadie
+# inició sesión), así que la seguridad es: (1) se valida que el pedido venga
+# realmente de Twilio (firma X-Twilio-Signature -- si no, cualquiera que se
+# entere de la URL podría fingir ser un número autorizado) y (2) el número de
+# origen tiene que estar en la lista de autorizados, cada uno atado a UN
+# tambo fijo.
+#
+# La firma se valida con la URL PÚBLICA fija, no con request.url: la app
+# corre detrás de Cloudflare Tunnel sin ProxyFix, así que request.url ve la
+# URL interna (http://127.0.0.1:5310/...), no la que Twilio realmente llamó
+# -- si se usara esa, la firma nunca daría válida.
+# ---------------------------------------------------------------------------
+_WEBHOOK_WHATSAPP_URL = os.environ.get("LACTIA_URL_PUBLICA", "https://www.analiticastambo.com").rstrip("/") \
+    + "/webhook/whatsapp"
+
+
+def _responder_whatsapp_ia(origen: str, pregunta: str, tambo: str):
+    if not agente.api_disponible():
+        return
+    try:
+        resultado = agente.responder(pregunta, tambo)
+        respuesta = resultado.get("respuesta") or "No pude generar una respuesta."
+    except Exception as exc:  # noqa: BLE001
+        respuesta = f"Hubo un error respondiendo: {exc}"
+    try:
+        whatsapp.enviar(respuesta, destino=origen)
+    except Exception:  # noqa: BLE001
+        pass  # no hay a quién avisar si falla el propio canal de WhatsApp
+
+
+@app.post("/webhook/whatsapp")
+def webhook_whatsapp():
+    from twilio.request_validator import RequestValidator
+    token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    firma = request.headers.get("X-Twilio-Signature", "")
+    if not token or not RequestValidator(token).validate(_WEBHOOK_WHATSAPP_URL, request.form, firma):
+        return "", 403
+    origen = (request.form.get("From") or "").replace("whatsapp:", "").strip()
+    pregunta = (request.form.get("Body") or "").strip()
+    tambo = whatsapp_ia.tambo_autorizado(origen)
+    if not tambo or not pregunta:
+        return "", 204  # número no autorizado, o mensaje vacío: se ignora en silencio
+    threading.Thread(target=_responder_whatsapp_ia, args=(origen, pregunta, tambo), daemon=True).start()
+    return "", 204
+
+
+@app.get("/api/whatsapp_ia/autorizados")
+@auth.requiere_rol("admin")
+def api_whatsapp_ia_listar():
+    return jsonify({"autorizados": whatsapp_ia.listar()})
+
+
+@app.post("/api/whatsapp_ia/autorizados")
+@auth.requiere_rol("admin")
+def api_whatsapp_ia_guardar():
+    items = (request.json or {}).get("autorizados")
+    if not isinstance(items, list):
+        return jsonify({"error": "Formato inválido."}), 400
+    try:
+        whatsapp_ia.guardar(items)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,11 @@ referencia_chi_delpro.json
 # no tiene contenido que importe y es propio de cada proceso corriendo.
 .servidor.lock
 
+# Números de WhatsApp autorizados a preguntarle a la IA (ver whatsapp_ia.py).
+# Estado propio de cada instalación, como alertas_canales.json: quién puede
+# preguntar en un tambo no tiene por qué ser lo mismo en otro.
+whatsapp_ia_autorizados.json
+
 # Python
 __pycache__/
 *.pyc

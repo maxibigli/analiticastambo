@@ -3,6 +3,7 @@ pyodbc>=5.0
 waitress>=3.0
 anthropic>=0.117.0
 requests>=2.31
+twilio>=9.0  # solo para RequestValidator (valida la firma del webhook entrante de WhatsApp) -- el envío sigue por requests directo, sin el SDK
 beautifulsoup4>=4.12
 opencv-python-headless>=4.9
 numpy>=1.26

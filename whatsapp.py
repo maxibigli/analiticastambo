@@ -28,11 +28,15 @@ def configurado() -> bool:
     )
 
 
-def enviar(mensaje: str) -> None:
+def enviar(mensaje: str, destino: str | None = None) -> None:
+    """`destino` opcional: si no se pasa, usa WHATSAPP_TELEFONO (el número fijo
+    de las alertas). Se puede pasar otro para responderle a quien escribió
+    -- ver app.py::webhook_whatsapp, que le contesta a quien preguntó, no
+    siempre al número fijo de alertas."""
     sid = os.environ.get("TWILIO_ACCOUNT_SID")
     token = os.environ.get("TWILIO_AUTH_TOKEN")
     origen = os.environ.get("TWILIO_WHATSAPP_FROM")
-    destino = os.environ.get("WHATSAPP_TELEFONO")
+    destino = destino or os.environ.get("WHATSAPP_TELEFONO")
     if not (sid and token and origen and destino):
         raise WhatsappError("Faltan TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_WHATSAPP_FROM / "
                              "WHATSAPP_TELEFONO (ver INSTALL.md).")

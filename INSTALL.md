@@ -471,3 +471,35 @@ hasta que se resuelva) cuando:
 Nota: como en todas las variables de entorno de esta app, `setx` las guarda en
 el registro de Windows — hace falta reiniciar la app (o abrir una terminal
 nueva) para que tome el valor.
+
+### "Preguntale a IA" por WhatsApp
+
+Además de recibir alertas, un número autorizado puede preguntarle algo a la
+IA de LactIA directo por WhatsApp (usa el mismo agente que "Preguntale a IA"
+del dashboard, funciona incluso en tambos de producción).
+
+1. Necesita todo lo de la sección anterior (WhatsApp configurado) más la
+   dependencia nueva instalada:
+   ```powershell
+   python -m pip install -r requirements.txt
+   ```
+2. En la consola de Twilio: **Messaging → Try it out → Send a WhatsApp
+   message** → configuración del sandbox → **"WHEN A MESSAGE COMES IN"**
+   tiene que apuntar a:
+   ```
+   https://www.analiticastambo.com/webhook/whatsapp
+   ```
+   con método **POST**. Si tu dominio público es otro, se puede fijar con
+   `setx LACTIA_URL_PUBLICA "https://tu-dominio"`.
+3. En la app, andá a **⚙ Configuración → 🤖 IA por WhatsApp** y agregá el
+   número que va a preguntar (con código de país, sin espacios ni "+" de
+   más, ej. `+5491122334455`), con el tambo al que queda atado — todas las
+   preguntas de ese número van a ser sobre ese tambo, no hace falta
+   aclararlo en el mensaje.
+4. Escribile por WhatsApp al número de Twilio (el sandbox, el mismo que ya
+   usás para las alertas) cualquier pregunta. La respuesta puede tardar
+   varios segundos (el agente puede encadenar varias consultas).
+
+Un número que no está en la lista de autorizados se ignora en silencio (no
+recibe ningún error ni respuesta) — es la protección contra que cualquiera
+que le escriba al número le pueda sacar datos del tambo.

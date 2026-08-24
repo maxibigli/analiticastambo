@@ -1419,6 +1419,67 @@ días aparece con "2 días abierta"; una resuelta hace 4 días queda afuera
 (más vieja que la ventana de 2 días); el caso sin nada que contar da `None`
 en vez de mandar un mensaje vacío.
 
+## "Preguntale a IA" por WhatsApp (24/08/2026)
+
+Pedido del usuario: además de mandar alertas, poder PREGUNTARLE algo a la IA
+de LactIA por WhatsApp — "solo yo por ahora", pero con una lista de números
+autorizados armable desde la interfaz para el día que sean más.
+
+**Reusa el agente, no el SQL-a-ciegas.** `/api/preguntar` (SQL generado por
+IA) está bloqueado a propósito para tambos de producción (`tambos.es_produccion`).
+`/api/agente/preguntar` (`agente.py`, que encadena las mismas herramientas
+que ya usa cada pantalla) SÍ corre en producción — es el que se reusa acá
+(`agente.responder(pregunta, tambo)`), así que preguntar por WhatsApp
+funciona también en La Ponderosa en vivo.
+
+**Cada número autorizado queda atado a UN tambo fijo** (`whatsapp_ia.py`,
+JSON gitignored como `alertas_canales.json`/`tablero_umbrales.json`): quien
+pregunta no tiene que aclarar de qué tambo habla, y no hay forma de que la
+pregunta se cuele para el tambo equivocado. Se eligió esto en vez de "elegís
+el tambo en el mensaje" por simplicidad — ver conversación si se quiere
+cambiar. Pantalla de alta: ⚙ Configuración › 🤖 IA por WhatsApp (mismo
+patrón de tabla editable que 📋 Check-list, pero sin versionado — es una
+lista simple que se guarda entera).
+
+**El webhook (`app.py::webhook_whatsapp`, POST `/webhook/whatsapp`) es
+público a propósito** (agregado a `_RUTAS_PUBLICAS`, si no el
+`before_request` de login lo redirige a `/login` y Twilio nunca recibe una
+respuesta útil) — Twilio no tiene sesión. Su seguridad son dos cosas: (1) la
+firma `X-Twilio-Signature` (valida con el paquete oficial
+`twilio.request_validator.RequestValidator` — la propia documentación de
+Twilio dice explícitamente "no implementes tu propia validación de firma", y
+con razón: un HMAC mal armado a mano puede fallar en silencio y abrir un
+agujero) y (2) que el número de origen esté en la lista de autorizados.
+
+**La firma se valida contra la URL pública fija
+(`https://www.analiticastambo.com/webhook/whatsapp`, override por
+`LACTIA_URL_PUBLICA`), NO contra `request.url`.** La app corre detrás de
+Cloudflare Tunnel sin `ProxyFix` ni manejo de `X-Forwarded-*`, así que
+`request.url` ve la URL interna que arma waitress, no la que Twilio
+realmente llamó — usarla habría hecho fallar la validación siempre.
+
+**La respuesta le llega a quien preguntó, no al número fijo de alertas.**
+`whatsapp.enviar()` ganó un segundo parámetro opcional `destino` (si no se
+pasa, sigue usando `WHATSAPP_TELEFONO` como hasta ahora, para no romper las
+alertas existentes). El webhook responde en un hilo de fondo
+(`threading.Thread`, no en el propio request) porque el agente puede tardar
+varios segundos —Twilio no necesita esperar la respuesta real, solo un 204
+rápido confirmando que se recibió el mensaje.
+
+**Nueva dependencia: `twilio>=9.0`** (solo por `RequestValidator` — el envío
+sigue siendo `requests` directo, sin el SDK, como todo el resto del código).
+Hace falta `pip install -r requirements.txt` en cada instalación después de
+este cambio, si no el proceso no arranca (`ModuleNotFoundError`).
+
+**Probado end-to-end con mocks** (Flask `test_client`, `agente.responder`/
+`whatsapp.enviar`/`agente.api_disponible` reemplazados, sin gastar tokens de
+IA reales ni mandar WhatsApp real): firma inválida → 403; firma válida con
+número no autorizado → 204 sin llamar al agente; firma válida con número
+autorizado → 204, agente llamado con el tambo y la pregunta correctos, y la
+respuesta se manda al número que preguntó (no al fijo de alertas). Falta
+probar en producción con un mensaje real, una vez cargado el webhook en la
+consola de Twilio (ver INSTALL.md).
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

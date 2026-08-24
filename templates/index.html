@@ -2771,6 +2771,7 @@
     <button class="lac-segment__item" data-tab="checklist" aria-pressed="false">📋 Check-list de control</button>
     <button class="lac-segment__item" data-tab="parametros" aria-pressed="false">🧬 Parámetros Reproductivos</button>
     <button class="lac-segment__item" data-tab="metas" aria-pressed="false">🎯 Calibración de Objetivos</button>
+    <button class="lac-segment__item" data-tab="ia_whatsapp" aria-pressed="false">🤖 IA por WhatsApp</button>
   </div>
 
   <section class="card" id="config-general-card">
@@ -3076,6 +3077,28 @@
       <button class="secundario" id="repro-metas-revertir">Descartar cambios</button>
     </div>
     <div style="overflow-x:auto;margin-top:14px" id="repro-metas-tabla"></div>
+  </section>
+
+  <section class="card" id="config-ia-whatsapp-card" hidden>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🤖 IA por WhatsApp</h2>
+      <span class="aviso">Quién puede preguntarle a la IA de LactIA por WhatsApp.</span>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      Cada número queda atado a UN tambo fijo: lo que pregunte ese número siempre es sobre
+      ese tambo, sin tener que aclararlo en el mensaje. Usa el mismo agente que
+      "Preguntale a IA" del dashboard — por eso funciona incluso en tambos de producción, a
+      diferencia de las preguntas por SQL directo.
+      <br>Además de agregar el número acá, hace falta tener WhatsApp configurado y activado
+      (🚦 Tablero de Diagnóstico → 🔔 Alertas) y el webhook de Twilio apuntando a esta app —
+      ver INSTALL.md.
+    </p>
+    <div class="aviso" id="config-ia-whatsapp-estado" style="margin:8px 0"></div>
+    <div style="overflow-x:auto"><table class="tabla" id="config-ia-whatsapp-tabla"></table></div>
+    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+      <button class="secundario" id="config-ia-whatsapp-agregar">+ Agregar número</button>
+      <button id="config-ia-whatsapp-guardar" disabled>Guardar</button>
+    </div>
   </section>
   </div>
     </main>
@@ -10583,6 +10606,7 @@ async function cargarConfiguracion() {
     cargarMetas();
     cargarCanalesAlertas();
     cargarHorarioAlertas();
+    cargarWhatsappIa();
     estado.textContent = '';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
@@ -10604,6 +10628,7 @@ document.getElementById('config-tabs').addEventListener('click', ev => {
   document.getElementById('config-checklist-card').hidden = tab !== 'checklist';
   document.getElementById('config-parametros-card').hidden = tab !== 'parametros';
   document.getElementById('config-metas-card').hidden = tab !== 'metas';
+  document.getElementById('config-ia-whatsapp-card').hidden = tab !== 'ia_whatsapp';
 });
 
 // --- Editor de la plantilla del check-list ---------------------------------
@@ -10728,6 +10753,92 @@ document.getElementById('cfg-cl-guardar').addEventListener('click', async () => 
     _clAplicar(d);
     estado.textContent = `Guardado como versión ${d.version}. `
       + 'Los celulares la toman en la próxima carga; lo ya cargado no cambia.';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+});
+
+// --- Números de WhatsApp autorizados a preguntarle a la IA -----------------
+// Lista simple (sin versionado, a diferencia del check-list): se edita una
+// copia en memoria y se guarda entera, mismo patrón de edición que la tabla
+// de arriba, pero cada número queda atado a un tambo fijo (ver whatsapp_ia.py).
+let iaWaItems = [];
+let iaWaOriginal = '';
+
+async function cargarWhatsappIa() {
+  const estado = document.getElementById('config-ia-whatsapp-estado');
+  estado.textContent = 'Cargando…';
+  try {
+    const d = await pedirJSON('/api/whatsapp_ia/autorizados');
+    iaWaItems = (d.autorizados || []).map(i => ({ numero: i.numero, nombre: i.nombre, tambo: i.tambo }));
+    iaWaOriginal = JSON.stringify(iaWaItems);
+    pintarWhatsappIa();
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+function pintarWhatsappIa() {
+  const t = document.getElementById('config-ia-whatsapp-tabla');
+  const opcionesTambo = Object.values(tambosInfo);
+  t.innerHTML = `
+    <thead><tr><th style="width:190px">Número (con código de país, sin espacios)</th>
+      <th>Nombre</th><th style="width:200px">Tambo</th><th style="width:50px"></th></tr></thead>
+    <tbody>${iaWaItems.map((it, k) => `<tr>
+      <td><input data-campo="numero" data-k="${k}" value="${escHtml(it.numero)}"
+          placeholder="+5491122334455" style="width:100%;padding:6px"></td>
+      <td><input data-campo="nombre" data-k="${k}" value="${escHtml(it.nombre)}"
+          placeholder="(opcional)" style="width:100%;padding:6px"></td>
+      <td><select data-campo="tambo" data-k="${k}" style="width:100%;padding:6px">
+        ${opcionesTambo.map(op => `<option value="${op.id}"${it.tambo === op.id ? ' selected' : ''}>
+          ${escHtml(op.nombre)}</option>`).join('')}
+      </select></td>
+      <td><button class="secundario" data-quitar="${k}" title="Sacar">✕</button></td></tr>`).join('')}
+    </tbody>` + (iaWaItems.length ? '' : '<tfoot><tr><td colspan="4" class="aviso">Nadie autorizado todavía.</td></tr></tfoot>');
+  const cambiado = JSON.stringify(iaWaItems) !== iaWaOriginal;
+  document.getElementById('config-ia-whatsapp-guardar').disabled = !cambiado;
+}
+
+document.getElementById('config-ia-whatsapp-tabla').addEventListener('input', ev => {
+  const campo = ev.target.dataset.campo;
+  if (!campo) return;
+  iaWaItems[Number(ev.target.dataset.k)][campo] = ev.target.value;
+  const cambiado = JSON.stringify(iaWaItems) !== iaWaOriginal;
+  document.getElementById('config-ia-whatsapp-guardar').disabled = !cambiado;
+});
+
+document.getElementById('config-ia-whatsapp-tabla').addEventListener('click', ev => {
+  const quitar = ev.target.closest('[data-quitar]');
+  if (quitar) {
+    iaWaItems.splice(Number(quitar.dataset.quitar), 1);
+    pintarWhatsappIa();
+  }
+});
+
+document.getElementById('config-ia-whatsapp-agregar').addEventListener('click', () => {
+  iaWaItems.push({ numero: '', nombre: '', tambo: tamboActual });
+  pintarWhatsappIa();
+  const inputs = document.querySelectorAll('#config-ia-whatsapp-tabla input[data-campo="numero"]');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+});
+
+document.getElementById('config-ia-whatsapp-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('config-ia-whatsapp-estado');
+  const vacios = iaWaItems.filter(i => !(i.numero || '').trim());
+  if (vacios.length) {
+    estado.textContent = 'Hay ' + vacios.length + ' número(s) sin completar: completalos o sacalos.';
+    return;
+  }
+  estado.textContent = 'Guardando…';
+  try {
+    await pedirJSON('/api/whatsapp_ia/autorizados', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ autorizados: iaWaItems }),
+    });
+    iaWaOriginal = JSON.stringify(iaWaItems);
+    pintarWhatsappIa();
+    estado.textContent = '✔ Guardado.';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
   }
