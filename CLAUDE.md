@@ -1185,30 +1185,37 @@ dos días que no cierran:
   investigar un día que "da raro", mirar si sus `ParlorSession` son
   correlativas con las del día anterior.
 
-## WhatsApp: de Twilio a la Cloud API oficial de Meta (23/08/2026)
+## WhatsApp: se probó migrar de Twilio a la Cloud API de Meta, y se volvió atrás (23-24/08/2026)
 
-Se reemplazó `whatsapp.py` (Twilio, de pago) por la API oficial de Meta
-(WhatsApp Cloud API, nivel gratuito) — mismo canal "whatsapp" en
-`_CANALES_MOD`, misma interfaz (`configurado()`/`enviar()`/`WhatsappError`),
-así que `app.py` no tuvo que cambiar nada de la lógica de canales, solo la
-etiqueta en `api_alertas_canales`.
+Se había reemplazado `whatsapp.py` (Twilio, de pago) por la API oficial de
+Meta (WhatsApp Cloud API, nivel gratuito) — mismo canal "whatsapp" en
+`_CANALES_MOD`, misma interfaz (`configurado()`/`enviar()`/`WhatsappError`).
+El plan era mandar por PLANTILLA (no texto libre) porque Cloud API solo deja
+texto libre dentro de las 24hs de que el destinatario escribe primero, y
+estas alertas se disparan solas — sin plantilla fallarían casi siempre.
 
-**Por qué manda por PLANTILLA y no texto libre**: WhatsApp Cloud API solo
-deja mandar texto libre dentro de las 24hs de que el destinatario le
-escribió primero al número de WhatsApp Business. Estas alertas se disparan
-solas (8:00/20:00, sin que nadie escriba antes), así que sin plantilla
-fallarían la mayoría de las veces. Con una plantilla aprobada por Meta (una
-sola vez, categoría Utility) se puede mandar en cualquier momento sin
-depender de una conversación abierta. Ver INSTALL.md para el paso a paso de
-Meta for Developers (crear app → producto WhatsApp → Usuario del sistema
-para el token permanente → plantilla `alerta_lactia`).
+**Se volvió a Twilio.** El bloqueo fue ANTES de llegar a probar nada del
+código: en la consola de Meta for Developers (WhatsApp → Paso 1. Probar), el
+botón **"Solicitar número de prueba"** no hacía nada — sin error, sin
+spinner, sin número asignado, incluso esperando el minuto que la propia
+página dice que tarda y refrescando después. Se investigó bastante: la
+consola tira errores de CSP por conexiones bloqueadas a dominios ajenos a
+Facebook (`*.a.run.app`, `*.on.aws`, típico de una extensión del navegador
+inyectando scripts) — pero el mismo problema persistió en una ventana de
+incógnito sin extensiones, así que NO era eso. La causa real nunca se
+identificó (¿la cuenta empresarial "Lactia" recién creada necesita algún
+paso de verificación antes de poder pedir un número de prueba? ¿un problema
+puntual del lado de Meta? no se llegó a confirmar). Se decidió no seguir
+perdiendo tiempo ahí y volver a Twilio, que ya se sabe que funciona.
 
-**Restricción de la plantilla**: el valor de una variable de
-plantilla de Meta no admite saltos de línea (ni el `*negrita*` pensado para
-mensaje libre) — `whatsapp._texto_para_plantilla()` aplana el mensaje a una
-sola línea separando renglones con "·", mismo espíritu que
-`correo._texto_plano()` para el mail (cada canal adapta el mismo texto
-compartido a las reglas de su propio medio).
+**Si se retoma en el futuro**: el código de la integración con Cloud API
+(plantilla, `whatsapp._texto_para_plantilla()`, endpoint de Graph API) está
+en el commit `a47c4ab` — se puede recuperar de ahí en vez de rehacerlo. Vale
+la pena probar el camino de **"Paso 2. Configuración de producción"**
+directamente (cargar un número propio, sin pasar por el número de prueba
+gratuito), que es un flujo distinto en la consola y podría no toparse con el
+mismo bloqueo. `whatsapp.py`, `app.py` y INSTALL.md ya están revertidos a
+Twilio (commit siguiente a este).
 
 ## Resumen del Tablero en HTML por correo (23/08/2026)
 

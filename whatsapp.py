@@ -1,82 +1,61 @@
 # -*- coding: utf-8 -*-
-"""Envío de alertas por WhatsApp vía la API oficial de Meta (WhatsApp Cloud
-API, nivel gratuito) -- reemplaza la integración anterior con Twilio.
+"""Envío de alertas por WhatsApp vía Twilio (sandbox o número propio de WhatsApp).
 
 Credenciales SOLO por variable de entorno (nunca en el código):
-  WHATSAPP_CLOUD_TOKEN       -- token de acceso (permanente, de un Usuario
-                                 del sistema de Meta Business -- ver INSTALL.md)
-  WHATSAPP_PHONE_NUMBER_ID   -- ID del número de WhatsApp Business (NO es el
-                                 número de teléfono, es un ID interno de Meta)
-  WHATSAPP_TELEFONO          -- número destino, con código de país, sin "+"
-                                 ni espacios (ej. "5493411234567")
-  WHATSAPP_TEMPLATE_NOMBRE   -- nombre de la plantilla aprobada por Meta
-                                 (default: "alerta_lactia")
-  WHATSAPP_TEMPLATE_IDIOMA   -- código de idioma de la plantilla
-                                 (default: "es")
-
-POR QUÉ PLANTILLA Y NO TEXTO LIBRE: WhatsApp Cloud API solo deja mandar
-texto libre dentro de las 24hs de que el destinatario le escribió primero al
-número de WhatsApp Business. Estas alertas se disparan solas (a las 8:00/
-20:00, sin que nadie escriba antes), así que necesitan una PLANTILLA
-aprobada por Meta -- esa sí se puede mandar en cualquier momento, sin
-depender de una conversación abierta. Ver INSTALL.md para cómo crearla.
+  TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN  -- de la consola de Twilio
+  TWILIO_WHATSAPP_FROM                   -- ej. "whatsapp:+14155238886" (sandbox)
+  WHATSAPP_TELEFONO                      -- tu número destino, con código de país
+                                             (ej. "+549341XXXXXXX"), el mismo que
+                                             activó el sandbox por WhatsApp.
 """
 import os
-import re
+import time
 
 import requests
 
-API_URL = "https://graph.facebook.com/v21.0/{phone_id}/messages"
-
-_NEGRITA_RE = re.compile(r"\*([^*\n]+)\*")
+TWILIO_MSG_URL = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+TWILIO_MSG_ESTADO_URL = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages/{msg_sid}.json"
 
 
 class WhatsappError(Exception):
     pass
 
 
-def _texto_para_plantilla(mensaje: str) -> str:
-    """El valor de una variable de plantilla de Meta no admite saltos de
-    línea (ni el *negrita* pensado para un mensaje de texto libre) -- se
-    aplana a una sola línea legible, separando lo que era cada renglón con
-    "·"."""
-    texto = _NEGRITA_RE.sub(r"\1", mensaje)
-    return " · ".join(linea.strip() for linea in texto.splitlines() if linea.strip())
-
-
 def configurado() -> bool:
     return bool(
-        os.environ.get("WHATSAPP_CLOUD_TOKEN") and os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
-        and os.environ.get("WHATSAPP_TELEFONO")
+        os.environ.get("TWILIO_ACCOUNT_SID") and os.environ.get("TWILIO_AUTH_TOKEN")
+        and os.environ.get("TWILIO_WHATSAPP_FROM") and os.environ.get("WHATSAPP_TELEFONO")
     )
 
 
 def enviar(mensaje: str) -> None:
-    token = os.environ.get("WHATSAPP_CLOUD_TOKEN")
-    phone_id = os.environ.get("WHATSAPP_PHONE_NUMBER_ID")
+    sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    token = os.environ.get("TWILIO_AUTH_TOKEN")
+    origen = os.environ.get("TWILIO_WHATSAPP_FROM")
     destino = os.environ.get("WHATSAPP_TELEFONO")
-    plantilla = os.environ.get("WHATSAPP_TEMPLATE_NOMBRE", "alerta_lactia")
-    idioma = os.environ.get("WHATSAPP_TEMPLATE_IDIOMA", "es")
-    if not (token and phone_id and destino):
-        raise WhatsappError("Faltan WHATSAPP_CLOUD_TOKEN / WHATSAPP_PHONE_NUMBER_ID / "
+    if not (sid and token and origen and destino):
+        raise WhatsappError("Faltan TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_WHATSAPP_FROM / "
                              "WHATSAPP_TELEFONO (ver INSTALL.md).")
-    body = {
-        "messaging_product": "whatsapp",
-        "to": destino,
-        "type": "template",
-        "template": {
-            "name": plantilla,
-            "language": {"code": idioma},
-            "components": [{
-                "type": "body",
-                "parameters": [{"type": "text", "text": _texto_para_plantilla(mensaje)}],
-            }],
-        },
-    }
-    r = requests.post(
-        API_URL.format(phone_id=phone_id),
-        headers={"Authorization": f"Bearer {token}"},
-        json=body, timeout=15,
-    )
+    destino_wa = destino if destino.startswith("whatsapp:") else f"whatsapp:{destino}"
+    r = requests.post(TWILIO_MSG_URL.format(sid=sid), auth=(sid, token),
+                       data={"From": origen, "To": destino_wa, "Body": mensaje}, timeout=15)
     if r.status_code not in (200, 201):
-        raise WhatsappError(f"WhatsApp Cloud API respondió {r.status_code}: {r.text[:300]}")
+        raise WhatsappError(f"Twilio respondió {r.status_code}: {r.text[:300]}")
+
+    # Que Twilio haya aceptado el pedido (200/201) solo significa "encolado":
+    # no confirma que WhatsApp lo haya entregado. Se consulta el estado real
+    # un instante después para poder avisar el motivo si falló.
+    msg_sid = r.json().get("sid")
+    if not msg_sid:
+        return
+    time.sleep(2.5)
+    r2 = requests.get(TWILIO_MSG_ESTADO_URL.format(sid=sid, msg_sid=msg_sid), auth=(sid, token), timeout=15)
+    if r2.status_code != 200:
+        return  # no se pudo confirmar el estado; no es razón para reportar error
+    info = r2.json()
+    estado = info.get("status")
+    if estado in ("failed", "undelivered"):
+        raise WhatsappError(
+            f"Twilio encoló el mensaje pero no se entregó (estado: {estado}). "
+            f"Código {info.get('error_code')}: {info.get('error_message')}"
+        )

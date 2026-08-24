@@ -4277,10 +4277,10 @@ def api_agente_preguntar():
 
 
 # ---------------------------------------------------------------------------
-# Alertas por WhatsApp (Meta Cloud API, gratis): revisa dos veces al día (8:00
-# y 20:00) las condiciones fuera de rango y avisa UNA vez por condición nueva
-# (no reenvía mientras siga activa). No dispara consultas SQL pesadas nuevas:
-# para rutina/incidencias lee la misma caché que ya usa el dashboard (si no está
+# Alertas por WhatsApp (Twilio): revisa dos veces al día (8:00 y 20:00) las
+# condiciones fuera de rango y avisa UNA vez por condición nueva (no reenvía
+# mientras siga activa). No dispara consultas SQL pesadas nuevas: para
+# rutina/incidencias lee la misma caché que ya usa el dashboard (si no está
 # lista, la dispara para el próximo ciclo en vez de forzarla ahora).
 # ---------------------------------------------------------------------------
 ALERTA_HORARIOS = (8, 20)         # horas del día (24h) en que se revisa y avisa
@@ -4291,9 +4291,9 @@ ALERTA_RUTINA_SCORE_MIN = 60      # score de una sesión de rutina de ordeño
 _alertas_avisadas: set = set()
 _alertas_lock = threading.Lock()
 
-# Canales de alerta disponibles: WhatsApp (Meta Cloud API), Telegram y Email
-# (los tres gratis). Cada uno se manda solo si está CONFIGURADO (credenciales
-# puestas por variable de entorno) y ACTIVADO (tildado en la interfaz).
+# Canales de alerta disponibles: WhatsApp (Twilio, de pago) y Telegram/Email
+# (gratis). Cada uno se manda solo si está CONFIGURADO (credenciales puestas
+# por variable de entorno) y ACTIVADO (tildado en la interfaz).
 _CANALES_MOD = {"whatsapp": whatsapp, "telegram": telegram_bot, "correo": correo}
 
 
@@ -4485,7 +4485,7 @@ def api_alertas_canales():
     """Estado de cada canal de alerta: si tiene credenciales cargadas
     (configurado) y si está tildado por el usuario (activo)."""
     estado = config_alertas.estado()
-    nombres = {"whatsapp": "WhatsApp (gratis)", "telegram": "Telegram (gratis)",
+    nombres = {"whatsapp": "WhatsApp (Twilio, de pago)", "telegram": "Telegram (gratis)",
                "correo": "Email (gratis)"}
     return jsonify({"canales": [
         {"id": cid, "nombre": nombres[cid], "configurado": mod.configurado(), "activo": estado[cid]}
