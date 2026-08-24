@@ -4558,43 +4558,47 @@ def _html_alertas_puntuales(lineas: list) -> str:
 </div>"""
 
 
+def _construir_mensaje_alertas(tambo: str):
+    """Arma UN solo mensaje con todo lo que haya para avisar, en vez de un
+    envío por cada condición (ver comentario de más arriba). Orden pedido
+    por el usuario: Tablero de Diagnóstico, alertas puntuales (CICLA/La
+    Serenísima/rutina/incidencias), Check-list. No dispara consultas
+    pesadas nuevas -- todo sale de caché. Devuelve (texto, html), o
+    (None, None) si no hay nada que contar."""
+    partes_texto = []
+    secciones_html = []
+
+    valores = _valores_tablero(tambo)
+    armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
+    texto_tablero = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
+    if texto_tablero:
+        partes_texto.append(texto_tablero)
+        secciones_html.append(tablero.html_resumen(armado, nombre_tambo=tambos.nombre_de(tambo)))
+
+    lineas = _lineas_alertas_puntuales(tambo)
+    if lineas:
+        partes_texto.append("\n".join(lineas))
+        secciones_html.append(_html_alertas_puntuales(lineas))
+
+    if config_alertas.checklist_resumen_activo():
+        datos_cl = checklist.novedades(tambo)
+        texto_cl = checklist.texto_novedades(datos_cl, nombre_tambo=tambos.nombre_de(tambo))
+        if texto_cl:
+            partes_texto.append(texto_cl)
+            secciones_html.append(checklist.html_novedades(datos_cl, nombre_tambo=tambos.nombre_de(tambo)))
+
+    if not partes_texto:
+        return None, None
+    return "\n\n".join(partes_texto), "".join(secciones_html) or None
+
+
 def _revisar_alertas_whatsapp():
-    """Arma UN solo mensaje por ciclo con todo lo que haya para avisar, en
-    vez de un envío por cada condición (ver comentario de más arriba). Orden
-    pedido por el usuario: Tablero de Diagnóstico, alertas puntuales
-    (CICLA/La Serenísima/rutina/incidencias), Check-list. No dispara
-    consultas pesadas nuevas -- todo sale de caché, igual que antes."""
     if not _canales_disponibles():
         return
-    tambo = tambos.DEFAULT_TAMBO
     try:
-        partes_texto = []
-        secciones_html = []
-
-        valores = _valores_tablero(tambo)
-        armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
-        texto_tablero = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
-        if texto_tablero:
-            partes_texto.append(texto_tablero)
-            secciones_html.append(tablero.html_resumen(armado, nombre_tambo=tambos.nombre_de(tambo)))
-
-        lineas = _lineas_alertas_puntuales(tambo)
-        if lineas:
-            partes_texto.append("\n".join(lineas))
-            secciones_html.append(_html_alertas_puntuales(lineas))
-
-        if config_alertas.checklist_resumen_activo():
-            datos_cl = checklist.novedades(tambo)
-            texto_cl = checklist.texto_novedades(datos_cl, nombre_tambo=tambos.nombre_de(tambo))
-            if texto_cl:
-                partes_texto.append(texto_cl)
-                secciones_html.append(checklist.html_novedades(datos_cl, nombre_tambo=tambos.nombre_de(tambo)))
-
-        if not partes_texto:
-            return
-        texto = "\n\n".join(partes_texto)
-        html = "".join(secciones_html) or None
-        _enviar_resumen_a_canales_activos(texto, html)
+        texto, html = _construir_mensaje_alertas(tambos.DEFAULT_TAMBO)
+        if texto:
+            _enviar_resumen_a_canales_activos(texto, html)
     except Exception:  # noqa: BLE001
         pass
 
@@ -4697,6 +4701,28 @@ def api_alertas_probar():
     try:
         _enviar_a_canales_activos("✅ Prueba de LactIA: si ves este mensaje, las alertas "
                                     "están funcionando.")
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": str(exc)}), 502
+    return jsonify({"ok": True})
+
+
+@app.post("/api/alertas/probar_ciclo")
+@auth.requiere_rol("admin")
+def api_alertas_probar_ciclo():
+    """Arma y manda el mensaje consolidado REAL (Tablero + alertas puntuales
+    + Check-list, ver _construir_mensaje_alertas) ya mismo, sin esperar al
+    próximo horario -- para poder ver cómo queda el mensaje del día antes de
+    que se dispare solo."""
+    tambo = _tambo_del_request()
+    try:
+        texto, html = _construir_mensaje_alertas(tambo)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"No se pudo armar el mensaje: {exc}"}), 500
+    if not texto:
+        return jsonify({"error": "Hoy no hay nada para avisar (ni Tablero tildado, ni alertas "
+                                  "puntuales, ni novedades del check-list)."}), 400
+    try:
+        _enviar_resumen_a_canales_activos(texto, html)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 502
     return jsonify({"ok": True})

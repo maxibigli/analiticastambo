@@ -2953,9 +2953,11 @@
       <h2 style="margin:0">🔔 Alertas</h2>
       <span class="aviso" id="alertas-horario-texto">Revisa a las 8:00 y 20:00: temp. caudalímetro &gt;5°C, U.F.C. &gt;40, score de rutina &lt;60%, incidencias de la rotativa.</span>
       <button class="secundario" id="whatsapp-probar" style="margin-left:auto">Probar envío</button>
+      <button class="secundario" id="alertas-probar-ciclo">Probar ciclo completo ahora</button>
     </div>
     <div id="alertas-canales" style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px"></div>
     <div class="aviso" id="whatsapp-info" style="margin-top:8px"></div>
+    <div class="aviso" id="alertas-ciclo-info" style="margin-top:4px"></div>
 
     <div class="aviso" style="margin:16px 0 6px;font-weight:600">Cuándo revisar y avisar</div>
     <div class="aviso">Días de la semana y hasta 5 horarios por día. Se aplica a las alertas de arriba y
@@ -6087,6 +6089,20 @@ document.getElementById('whatsapp-probar').addEventListener('click', async () =>
   try {
     await pedirJSON('/api/alertas/probar', { method: 'POST' });
     info.textContent = '✅ Mensaje enviado — revisá tu WhatsApp.';
+  } catch (e) {
+    info.textContent = '❌ ' + e.message;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('alertas-probar-ciclo').addEventListener('click', async () => {
+  const info = document.getElementById('alertas-ciclo-info');
+  const btn = document.getElementById('alertas-probar-ciclo');
+  btn.disabled = true; info.textContent = 'Armando y mandando el mensaje del ciclo…';
+  try {
+    await pedirJSON('/api/alertas/probar_ciclo?tambo=' + encodeURIComponent(tamboActual), { method: 'POST' });
+    info.textContent = '✅ Mensaje del ciclo enviado (Tablero + alertas puntuales + check-list).';
   } catch (e) {
     info.textContent = '❌ ' + e.message;
   } finally {
