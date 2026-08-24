@@ -4330,20 +4330,36 @@ def api_agente_preguntar():
 # ---------------------------------------------------------------------------
 _WEBHOOK_WHATSAPP_URL = os.environ.get("LACTIA_URL_PUBLICA", "https://www.analiticastambo.com").rstrip("/") \
     + "/webhook/whatsapp"
+_WEBHOOK_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webhook_whatsapp.log")
+
+
+def _log_webhook(mensaje: str):
+    """Log mínimo del webhook a un archivo propio (no a stdout): el proceso
+    puede correr sin consola visible (Programador de tareas), donde un
+    print() se pierde. Solo para diagnosticar -- si falla, no debe romper el
+    webhook por eso."""
+    try:
+        with open(_WEBHOOK_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{datetime.datetime.now().isoformat(timespec='seconds')} {mensaje}\n")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _responder_whatsapp_ia(origen: str, pregunta: str, tambo: str):
     if not agente.api_disponible():
+        _log_webhook("ABORTADO -- agente.api_disponible() es False (¿falta ANTHROPIC_API_KEY?)")
         return
     try:
         resultado = agente.responder(pregunta, tambo)
         respuesta = resultado.get("respuesta") or "No pude generar una respuesta."
     except Exception as exc:  # noqa: BLE001
         respuesta = f"Hubo un error respondiendo: {exc}"
+        _log_webhook(f"ERROR en agente.responder: {exc}")
     try:
         whatsapp.enviar(respuesta, destino=origen)
-    except Exception:  # noqa: BLE001
-        pass  # no hay a quién avisar si falla el propio canal de WhatsApp
+        _log_webhook(f"RESPONDIDO a {origen}: {respuesta[:120]!r}")
+    except Exception as exc:  # noqa: BLE001
+        _log_webhook(f"ERROR mandando la respuesta por WhatsApp: {exc}")
 
 
 @app.post("/webhook/whatsapp")
@@ -4351,13 +4367,18 @@ def webhook_whatsapp():
     from twilio.request_validator import RequestValidator
     token = os.environ.get("TWILIO_AUTH_TOKEN", "")
     firma = request.headers.get("X-Twilio-Signature", "")
+    origen_crudo = request.form.get("From") or "(sin From)"
     if not token or not RequestValidator(token).validate(_WEBHOOK_WHATSAPP_URL, request.form, firma):
+        _log_webhook(f"RECHAZADO por firma inválida -- From={origen_crudo}")
         return "", 403
     origen = (request.form.get("From") or "").replace("whatsapp:", "").strip()
     pregunta = (request.form.get("Body") or "").strip()
     tambo = whatsapp_ia.tambo_autorizado(origen)
     if not tambo or not pregunta:
+        _log_webhook(f"IGNORADO -- From={origen!r} autorizado={tambo is not None} "
+                     f"pregunta_vacía={not pregunta}")
         return "", 204  # número no autorizado, o mensaje vacío: se ignora en silencio
+    _log_webhook(f"OK -- From={origen} tambo={tambo} pregunta={pregunta!r}")
     threading.Thread(target=_responder_whatsapp_ia, args=(origen, pregunta, tambo), daemon=True).start()
     return "", 204
 
