@@ -1185,6 +1185,37 @@ dos días que no cierran:
   investigar un día que "da raro", mirar si sus `ParlorSession` son
   correlativas con las del día anterior.
 
+## Resumen del Tablero en HTML por correo (23/08/2026)
+
+El resumen periódico (`tablero.texto_resumen`) usa `*negrita*` y emoji de
+semáforo (🟢🟠🔴⚪) — funciona bien en WhatsApp/Telegram (ahí sí se
+interpreta el asterisco como negrita) pero en un mail de texto plano se veía
+mal: el asterisco queda literal, y los círculos de color son un emoji más
+nuevo que no todos los clientes de correo renderizan con color (se ven
+huecos/grises aunque el dato no sea "sin dato").
+
+**Dos arreglos separados:**
+- `correo._texto_plano()` le saca los asteriscos y cambia los círculos por
+  `[OK]`/`[ATENCION]`/`[MAL]`/`[SIN DATO]` — se aplica a CUALQUIER mensaje
+  que se manda por correo (texto plano), no solo al resumen.
+- `tablero.html_resumen(armado, nombre_tambo)` arma una versión HTML del
+  MISMO resumen (mismo `armado`, no dispara consultas nuevas) con badges de
+  color reales (`<span>` con `background-color`, no emoji) — el color se ve
+  siempre, sin depender de la fuente del cliente. `correo.enviar_html(texto,
+  html)` manda un mail `multipart/alternative` con las dos versiones; el
+  cliente que no puede mostrar HTML cae al texto plano de respaldo.
+  `app.py::_enviar_resumen_a_canales_activos` es la única función que llama
+  a `enviar_html` — a WhatsApp/Telegram les sigue llegando el texto de
+  siempre. Esto es SOLO para el resumen periódico, no para las alertas
+  puntuales (temp./UFC/score/incidencias).
+
+**Deliberado: el HTML es de fondo CLARO, no oscuro como el dashboard.** Un
+mail HTML oscuro corre el riesgo de que el cliente le aplique su propio modo
+oscuro encima y quede con mal contraste — el fondo claro es la opción segura
+entre clientes de correo. Sigue usando el azul de marca (`#0072CE`) y los
+mismos colores de semáforo que el dashboard (`--lac-ok`/`--lac-warn`/
+`--lac-danger` de `lactia-tokens.css`) para mantener la identidad.
+
 ## Instancia única de servidor.py (23/08/2026)
 
 En SERVER-DELPRO se detectó un pico de ~85 mensajes de Twilio en un rato

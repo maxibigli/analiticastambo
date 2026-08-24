@@ -1400,8 +1400,9 @@ def api_tablero_probar_resumen():
     texto = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
     if not texto:
         return jsonify({"error": "No tildaste ningún indicador en la columna \"📲 Resumen\"."}), 400
+    html = tablero.html_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
     try:
-        _enviar_a_canales_activos(texto)
+        _enviar_resumen_a_canales_activos(texto, html)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 502
     return jsonify({"ok": True})
@@ -4320,6 +4321,28 @@ def _enviar_a_canales_activos(mensaje: str):
         raise ultimo_error
 
 
+def _enviar_resumen_a_canales_activos(texto: str, html: str):
+    """Como _enviar_a_canales_activos, pero al canal de correo le manda la
+    versión HTML (con badges de color reales — ver `tablero.html_resumen`)
+    en vez de solo el texto plano que reciben WhatsApp/Telegram."""
+    canales = _canales_disponibles()
+    if not canales:
+        raise RuntimeError("No hay ningún canal de alerta configurado y activado.")
+    ultimo_error = None
+    enviado = False
+    for mod in canales:
+        try:
+            if mod is correo and html:
+                correo.enviar_html(texto, html)
+            else:
+                mod.enviar(texto)
+            enviado = True
+        except Exception as exc:  # noqa: BLE001
+            ultimo_error = exc
+    if not enviado:
+        raise ultimo_error
+
+
 def _avisar_si_nuevo(clave: str, mensaje: str):
     """Manda la alerta solo la primera vez que aparece esta condición. Si el
     envío falla, se olvida la marca para reintentar en el próximo ciclo."""
@@ -4413,7 +4436,8 @@ def _revisar_resumen_tablero(tambo: str):
     armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
     texto = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
     if texto:
-        _enviar_a_canales_activos(texto)
+        html = tablero.html_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
+        _enviar_resumen_a_canales_activos(texto, html)
 
 
 def _revisar_alertas_whatsapp():

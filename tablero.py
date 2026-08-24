@@ -42,6 +42,7 @@ import datetime
 import json
 import os
 import threading
+from html import escape as _esc
 
 # Umbrales por tambo. Fuera de git como el resto del estado propio de cada
 # instalación (`metas_reproductivas.json`, `conciliacion_grupos.json`): los
@@ -437,6 +438,70 @@ def texto_resumen(armado: dict, nombre_tambo: str = None) -> str | None:
             vieja = " (dato viejo)" if t.get("viejo") else ""
             partes.append(f"{emoji} {t['nombre']}: {valor_txt} {t['unidad']}{vieja}")
     return "\n".join(partes)
+
+
+_COLOR_NIVEL = {"bien": "#00875A", "atencion": "#F2A900", "mal": "#E4002B", "sin_dato": "#94A3B8"}
+
+
+def html_resumen(armado: dict, nombre_tambo: str = None) -> str | None:
+    """Como texto_resumen, pero en HTML para el mail (ver `correo.enviar_html`):
+    mismos datos y mismo agrupamiento, con badges de color REALES (`<span>`
+    con background-color) en vez de emoji semáforo — así el color se ve
+    siempre, sin depender de que la fuente del cliente de correo tenga esos
+    glifos. Fondo claro a propósito: un mail HTML oscuro puede quedar
+    ilegible si el cliente le aplica su propio modo oscuro encima. None si no
+    hay nada tildado, igual que texto_resumen."""
+    tarjetas = [t for t in armado["tarjetas"] if t.get("incluir_resumen")]
+    if not tarjetas:
+        return None
+    grupos: dict = {}
+    for t in tarjetas:
+        grupos.setdefault(t["grupo"], []).append(t)
+
+    bloques = []
+    for grupo, items in grupos.items():
+        filas = []
+        for t in items:
+            if t["valor"] is None:
+                filas.append(f"""<tr>
+  <td style="padding:7px 0;border-bottom:1px solid #eef1f4;">
+    <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{_COLOR_NIVEL['sin_dato']};margin-right:8px;"></span>
+    <span style="color:#334155;font-size:13px;">{_esc(t['nombre'])}</span>
+  </td>
+  <td style="padding:7px 0;border-bottom:1px solid #eef1f4;text-align:right;">
+    <span style="color:#94a3b8;font-size:13px;">{_esc(t.get('falta') or 'sin dato')}</span>
+  </td>
+</tr>""")
+                continue
+            color = _COLOR_NIVEL.get(t["nivel"], _COLOR_NIVEL["sin_dato"])
+            valor_txt = _num_ar(t["valor"], t["decimales"])
+            vieja = ' <span style="color:#94a3b8;font-size:12px;">(dato viejo)</span>' if t.get("viejo") else ""
+            filas.append(f"""<tr>
+  <td style="padding:7px 0;border-bottom:1px solid #eef1f4;">
+    <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{color};margin-right:8px;"></span>
+    <span style="color:#334155;font-size:13px;">{_esc(t['nombre'])}</span>
+  </td>
+  <td style="padding:7px 0;border-bottom:1px solid #eef1f4;text-align:right;white-space:nowrap;">
+    <span style="color:#0f172a;font-size:13px;font-weight:700;">{_esc(valor_txt)} {_esc(t['unidad'])}</span>{vieja}
+  </td>
+</tr>""")
+        bloques.append(f"""<tr><td colspan="2" style="padding:16px 0 4px;font-size:11px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.05em;color:#64748b;">{_esc(grupo)}</td></tr>
+{''.join(filas)}""")
+
+    titulo = "Tablero de Diagnóstico" + (f" — {nombre_tambo}" if nombre_tambo else "")
+    return f"""<div style="background:#f1f5f9;padding:24px 12px;font-family:-apple-system,'Segoe UI',Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:10px;border:1px solid #e2e8f0;overflow:hidden;">
+<tr><td style="background:#0072CE;padding:16px 20px;">
+<span style="color:#ffffff;font-size:17px;font-weight:700;">📊 {_esc(titulo)}</span>
+</td></tr>
+<tr><td style="padding:4px 20px 20px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+{''.join(bloques)}
+</table>
+</td></tr>
+</table>
+</div>"""
 
 
 def catalogo() -> list:
