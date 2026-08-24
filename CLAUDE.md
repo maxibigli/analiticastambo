@@ -1348,11 +1348,16 @@ del Tablero): es el mismo horario para ambas, a propósito, para no armar un
 segundo scheduler — mismo criterio que ya se había usado al sumar el resumen
 del Tablero al ciclo existente en vez de uno aparte.
 
-**El control vive en la tarjeta "🔔 Alertas" del Dashboard** (no en
-⚙ Configuración): ahí ya estaban los tildes de canal (WhatsApp/Telegram/
-Email) y "Probar envío", así que el horario quedó al lado en vez de en una
-pantalla aparte. El texto de arriba de la tarjeta ("Revisa todos los días a
-las...") ahora es dinámico, se arma con lo guardado.
+**La tarjeta "🔔 Alertas" entera se movió del Dashboard a ⚙ Configuración ›
+🚦 Tablero de Diagnóstico** (24/08/2026, pedido explícito del usuario después
+de ver el control por primera vez): canales (WhatsApp/Telegram/Email),
+"Probar envío" y el horario, todo junto, como una segunda tarjeta debajo de
+los límites del Tablero — no una pestaña nueva, las dos tarjetas comparten
+la pestaña "tablero" de `#config-tabs`. El Dashboard ya no muestra el estado
+de alertas. Se carga igual que las demás tarjetas de Configuración, de una
+sola vez en `cargarConfiguracion()` (antes se cargaba al entrar al
+Dashboard). El texto de arriba de la tarjeta ("Revisa todos los días a
+las...") sigue siendo dinámico, armado con lo guardado.
 
 **El ciclo de fondo se despierta solo cuando cambia el horario**
 (`_horario_alertas_cambiado`, un `threading.Event`), en vez de esperar a que

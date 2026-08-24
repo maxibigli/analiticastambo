@@ -706,40 +706,6 @@
     <div class="chart-box" style="height:280px;margin-top:10px"><canvas id="chart-resumen-grupo"></canvas></div>
   </section>
 
-  <section class="card" id="alertas-whatsapp-card">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">🔔 Alertas</h2>
-      <span class="aviso" id="alertas-horario-texto">Revisa a las 8:00 y 20:00: temp. caudalímetro &gt;5°C, U.F.C. &gt;40, score de rutina &lt;60%, incidencias de la rotativa.</span>
-      <button class="secundario" id="whatsapp-probar" style="margin-left:auto">Probar envío</button>
-    </div>
-    <div id="alertas-canales" style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px"></div>
-    <div class="aviso" id="whatsapp-info" style="margin-top:8px"></div>
-
-    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Cuándo revisar y avisar</div>
-    <div class="aviso">Días de la semana y hasta 5 horarios por día. Se aplica a las alertas de arriba y
-      al resumen del Tablero de Diagnóstico (⚙ Configuración › Tablero).</div>
-    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px" id="alertas-dias">
-      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="0">Lun</label>
-      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="1">Mar</label>
-      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="2">Mié</label>
-      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="3">Jue</label>
-      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="4">Vie</label>
-      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="5">Sáb</label>
-      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="6">Dom</label>
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px" id="alertas-horas">
-      <input type="time" style="padding:6px 8px">
-      <input type="time" style="padding:6px 8px">
-      <input type="time" style="padding:6px 8px">
-      <input type="time" style="padding:6px 8px">
-      <input type="time" style="padding:6px 8px">
-    </div>
-    <div style="display:flex;gap:10px;margin-top:10px;align-items:center">
-      <button class="secundario" id="alertas-horario-guardar">Guardar horario</button>
-      <span class="aviso" id="alertas-horario-estado"></span>
-    </div>
-  </section>
-
   </div>
 
   <div class="page" id="page-repro" hidden>
@@ -2968,8 +2934,8 @@
       técnica: poné los de tu tambo.
       <br><b>Desactivar</b> un indicador lo saca del tablero sin perder sus límites.
       <br><b>📲 Resumen</b>: tildá los indicadores que querés recibir por WhatsApp/Telegram/Email
-      en el resumen de las 8:00 y 20:00 (junto con las alertas de temperatura/U.F.C./rutina que
-      ya existían). Ninguno viene tildado por defecto — vos elegís qué mandar.
+      en el resumen del horario configurado más abajo (junto con las alertas de temperatura/U.F.C./
+      rutina que ya existían). Ninguno viene tildado por defecto — vos elegís qué mandar.
     </p>
     <div class="aviso" id="config-tablero-estado" style="margin:8px 0"></div>
     <div style="overflow-x:auto"><table class="tabla" id="config-tablero-tabla"></table></div>
@@ -2978,6 +2944,40 @@
       <button class="secundario" id="config-tablero-reset">Volver a los valores por defecto</button>
       <button class="secundario" id="config-tablero-probar-resumen">Probar resumen ahora</button>
       <span class="aviso" id="config-tablero-resumen-estado"></span>
+    </div>
+  </section>
+
+  <section class="card" id="alertas-whatsapp-card" hidden>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🔔 Alertas</h2>
+      <span class="aviso" id="alertas-horario-texto">Revisa a las 8:00 y 20:00: temp. caudalímetro &gt;5°C, U.F.C. &gt;40, score de rutina &lt;60%, incidencias de la rotativa.</span>
+      <button class="secundario" id="whatsapp-probar" style="margin-left:auto">Probar envío</button>
+    </div>
+    <div id="alertas-canales" style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px"></div>
+    <div class="aviso" id="whatsapp-info" style="margin-top:8px"></div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Cuándo revisar y avisar</div>
+    <div class="aviso">Días de la semana y hasta 5 horarios por día. Se aplica a las alertas de arriba y
+      al resumen del Tablero de Diagnóstico (arriba).</div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px" id="alertas-dias">
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="0">Lun</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="1">Mar</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="2">Mié</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="3">Jue</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="4">Vie</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="5">Sáb</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="6">Dom</label>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px" id="alertas-horas">
+      <input type="time" style="padding:6px 8px">
+      <input type="time" style="padding:6px 8px">
+      <input type="time" style="padding:6px 8px">
+      <input type="time" style="padding:6px 8px">
+      <input type="time" style="padding:6px 8px">
+    </div>
+    <div style="display:flex;gap:10px;margin-top:10px;align-items:center">
+      <button class="secundario" id="alertas-horario-guardar">Guardar horario</button>
+      <span class="aviso" id="alertas-horario-estado"></span>
     </div>
   </section>
 
@@ -10412,7 +10412,7 @@ function cargarDatosDePagina(id) {
   if (paginasCargadas.has(id)) return;
   paginasCargadas.add(id);
   if (id === 'dashboard') {
-    cargarDashboard(); cargarCanalesAlertas(); cargarHorarioAlertas();
+    cargarDashboard();
     cargarResumenProduccion(); cargarResumenAnimales(); cargarResumenDuraciones(); cargarResumenGrupo();
   }
   else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
@@ -10529,13 +10529,15 @@ async function cargarConfiguracion() {
     cargarConfigChecklist();
     cargarParametros();
     cargarMetas();
+    cargarCanalesAlertas();
+    cargarHorarioAlertas();
     estado.textContent = '';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
   }
 }
 
-// Las cinco tarjetas de Configuración se cargan todas de una (arriba, en
+// Las tarjetas de Configuración se cargan todas de una (arriba, en
 // cargarConfiguracion) — las solapas son solo de visibilidad, no disparan
 // carga nueva al cambiar.
 document.getElementById('config-tabs').addEventListener('click', ev => {
@@ -10546,6 +10548,7 @@ document.getElementById('config-tabs').addEventListener('click', ev => {
   const tab = btn.dataset.tab;
   document.getElementById('config-general-card').hidden = tab !== 'general';
   document.getElementById('config-tablero-card').hidden = tab !== 'tablero';
+  document.getElementById('alertas-whatsapp-card').hidden = tab !== 'tablero';
   document.getElementById('config-checklist-card').hidden = tab !== 'checklist';
   document.getElementById('config-parametros-card').hidden = tab !== 'parametros';
   document.getElementById('config-metas-card').hidden = tab !== 'metas';
