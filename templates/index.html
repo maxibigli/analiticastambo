@@ -2827,7 +2827,13 @@
   </div>
 
   <div class="page" id="page-configuracion" hidden>
-  <section class="card">
+  <div class="lac-segment" id="config-tabs" role="group" aria-label="Sección" style="margin-bottom:14px">
+    <button class="lac-segment__item" data-tab="general" aria-pressed="true">⚙ Configuración</button>
+    <button class="lac-segment__item" data-tab="tablero" aria-pressed="false">🚦 Tablero de Diagnóstico</button>
+    <button class="lac-segment__item" data-tab="checklist" aria-pressed="false">📋 Check-list de control</button>
+  </div>
+
+  <section class="card" id="config-general-card">
     <h2 style="margin:0">⚙ Configuración</h2>
     <span class="aviso">Conexión, hardware y proveedores del tambo seleccionado arriba.</span>
     <div class="aviso" id="config-estado" style="margin-top:8px"></div>
@@ -2971,7 +2977,7 @@
     </div>
   </section>
 
-  <section class="card" id="config-tablero-card">
+  <section class="card" id="config-tablero-card" hidden>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">🚦 Tablero de Diagnóstico</h2>
       <span class="aviso">Los límites de cada indicador.</span>
@@ -3001,7 +3007,7 @@
     </div>
   </section>
 
-  <section class="card" id="config-checklist-card">
+  <section class="card" id="config-checklist-card" hidden>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">📋 Check-list de control</h2>
       <span class="aviso">Las tareas que carga el operario en el celular.</span>
@@ -10452,6 +10458,20 @@ async function cargarConfiguracion() {
     estado.textContent = 'Error: ' + e.message;
   }
 }
+
+// Las tres tarjetas de Configuración se cargan todas de una (arriba, en
+// cargarConfiguracion) — las solapas son solo de visibilidad, no disparan
+// carga nueva al cambiar.
+document.getElementById('config-tabs').addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-tab]');
+  if (!btn) return;
+  document.querySelectorAll('#config-tabs [data-tab]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b === btn)));
+  const tab = btn.dataset.tab;
+  document.getElementById('config-general-card').hidden = tab !== 'general';
+  document.getElementById('config-tablero-card').hidden = tab !== 'tablero';
+  document.getElementById('config-checklist-card').hidden = tab !== 'checklist';
+});
 
 // --- Editor de la plantilla del check-list ---------------------------------
 // Se edita una COPIA en memoria y recién al guardar se manda entera: el
