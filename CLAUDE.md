@@ -1185,6 +1185,31 @@ dos días que no cierran:
   investigar un día que "da raro", mirar si sus `ParlorSession` son
   correlativas con las del día anterior.
 
+## WhatsApp: de Twilio a la Cloud API oficial de Meta (23/08/2026)
+
+Se reemplazó `whatsapp.py` (Twilio, de pago) por la API oficial de Meta
+(WhatsApp Cloud API, nivel gratuito) — mismo canal "whatsapp" en
+`_CANALES_MOD`, misma interfaz (`configurado()`/`enviar()`/`WhatsappError`),
+así que `app.py` no tuvo que cambiar nada de la lógica de canales, solo la
+etiqueta en `api_alertas_canales`.
+
+**Por qué manda por PLANTILLA y no texto libre**: WhatsApp Cloud API solo
+deja mandar texto libre dentro de las 24hs de que el destinatario le
+escribió primero al número de WhatsApp Business. Estas alertas se disparan
+solas (8:00/20:00, sin que nadie escriba antes), así que sin plantilla
+fallarían la mayoría de las veces. Con una plantilla aprobada por Meta (una
+sola vez, categoría Utility) se puede mandar en cualquier momento sin
+depender de una conversación abierta. Ver INSTALL.md para el paso a paso de
+Meta for Developers (crear app → producto WhatsApp → Usuario del sistema
+para el token permanente → plantilla `alerta_lactia`).
+
+**Restricción de la plantilla**: el valor de una variable de
+plantilla de Meta no admite saltos de línea (ni el `*negrita*` pensado para
+mensaje libre) — `whatsapp._texto_para_plantilla()` aplana el mensaje a una
+sola línea separando renglones con "·", mismo espíritu que
+`correo._texto_plano()` para el mail (cada canal adapta el mismo texto
+compartido a las reglas de su propio medio).
+
 ## Resumen del Tablero en HTML por correo (23/08/2026)
 
 El resumen periódico (`tablero.texto_resumen`) usa `*negrita*` y emoji de

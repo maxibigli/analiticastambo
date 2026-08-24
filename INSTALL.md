@@ -402,8 +402,8 @@ la pantalla va a seguir diciendo que faltan las variables aunque ya estén.
 ### Alertas — tres canales, cada uno se tilda/destilda desde la tarjeta "🔔 Alertas"
 
 Se puede tener más de uno activo a la vez (manda por todos los que estén
-tildados y configurados). **Telegram y Email son gratis** — Twilio/WhatsApp
-tiene costo (o el sandbox gratuito, con las limitaciones ya conocidas).
+tildados y configurados). **Los tres canales son gratis** — WhatsApp usa la
+API oficial de Meta (nivel gratuito), no Twilio.
 
 ### Telegram (gratis, recomendado)
 
@@ -438,28 +438,49 @@ tiene costo (o el sandbox gratuito, con las limitaciones ya conocidas).
 3. Reiniciá la app, tildá "Email" en la tarjeta "🔔 Alertas" y probá con
    "Probar envío".
 
-### Alertas por WhatsApp (Twilio)
+### WhatsApp (gratis, vía WhatsApp Cloud API de Meta)
 
-1. Creá una cuenta gratis en [twilio.com](https://www.twilio.com) (el trial
-   incluye crédito para probar).
-2. En la consola de Twilio: **Messaging → Try it out → Send a WhatsApp
-   message**. Ahí te muestra el número sandbox (suele ser
-   `+1 415 523 8886`) y un código para unirte, tipo `join palabra-palabra`.
-3. Desde **tu propio celular** (el que va a recibir las alertas), mandale por
-   WhatsApp ese código (`join palabra-palabra`) al número sandbox. Sin este
-   paso, Twilio no te puede escribir.
-4. En la página principal de la consola de Twilio vas a ver tu **Account SID**
-   y tu **Auth Token**. Configurá todo (vos mismo, en tu terminal):
+Usa la API oficial de Meta, no Twilio. Como estas alertas se disparan solas
+(a las 8:00/20:00, sin que nadie le escriba antes al número), hace falta una
+**plantilla de mensaje aprobada por Meta** — sin plantilla, WhatsApp Cloud
+API solo deja mandar texto libre dentro de las 24hs de que el destinatario
+escribió primero, lo cual no sirve para un aviso automático.
+
+1. Entrá a [developers.facebook.com](https://developers.facebook.com/) con
+   una cuenta de Facebook/Meta → **Mis apps → Crear app** → tipo **Empresa**.
+2. Dentro de la app, agregá el producto **WhatsApp**.
+3. En **WhatsApp → Introducción** vas a ver, ya activo:
+   - Un **número de prueba gratuito** de Meta (sirve para arrancar sin
+     verificar tu propio número — pero solo manda a números de destino que
+     agregues y verifiques ahí mismo, hasta 5).
+   - El **Phone Number ID** (un ID interno, NO es el número de teléfono).
+   - Un token temporal de 24hs (para probar rápido; para producción hace
+     falta uno permanente, ver el paso 5).
+4. Agregá tu propio celular (el que va a recibir las alertas) como número de
+   destino verificado, con el código que te manda por WhatsApp.
+5. Para que el token no se venza cada 24hs: **Configuración de la empresa →
+   Usuarios del sistema** → crear uno, asignarle esta app con el permiso
+   `whatsapp_business_messaging`, y generar un token **permanente** desde ahí
+   (expiración "Nunca").
+6. Creá la plantilla: **WhatsApp Manager → Administrar plantillas de
+   mensajes → Crear plantilla**:
+   - Nombre: `alerta_lactia` (así la busca el código por defecto)
+   - Categoría: **Utilidad** (no Marketing — es la categoría correcta para
+     un aviso operativo, y se aprueba más rápido)
+   - Idioma: Español
+   - Cuerpo: algo como `🐄 LactIA:\n{{1}}`, con UNA variable de texto
+   - Mandala a revisión — Meta suele aprobarla en minutos a horas.
+7. Configurá (vos mismo, en tu terminal):
    ```powershell
-   setx TWILIO_ACCOUNT_SID "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-   setx TWILIO_AUTH_TOKEN "tu_auth_token"
-   setx TWILIO_WHATSAPP_FROM "whatsapp:+14155238886"
-   setx WHATSAPP_TELEFONO "+549341XXXXXXX"
+   setx WHATSAPP_CLOUD_TOKEN "el_token_permanente"
+   setx WHATSAPP_PHONE_NUMBER_ID "el_phone_number_id"
+   setx WHATSAPP_TELEFONO "5493411234567"
    ```
-   (`WHATSAPP_TELEFONO` es tu número, con código de país, el mismo que mandó
-   el "join").
-5. Reiniciá la app y probá con el botón "Probar envío" en la tarjeta
-   "🔔 Alertas por WhatsApp" (no hace falta esperar al horario programado).
+   (`WHATSAPP_TELEFONO` sin `+` ni espacios, con código de país. Si tu
+   plantilla no se llama `alerta_lactia` o no está en español, agregá
+   también `WHATSAPP_TEMPLATE_NOMBRE`/`WHATSAPP_TEMPLATE_IDIOMA`.)
+8. Reiniciá la app y probá con el botón "Probar envío" en la tarjeta
+   "🔔 Alertas" (no hace falta esperar al horario programado).
 
 La app revisa a las **8:00 y 20:00** y avisa (una sola vez por condición,
 hasta que se resuelva) cuando:
