@@ -4406,17 +4406,17 @@ def api_whatsapp_ia_guardar():
 # Alertas por WhatsApp (Twilio): revisa en los días/horarios configurados
 # (⚙ Configuración, tarjeta 🔔 Alertas — antes fijo a las 8:00 y 20:00 todos
 # los días, ver config_alertas.horario()) las condiciones fuera de rango y
-# avisa UNA vez por condición nueva (no reenvía mientras siga activa). No
-# dispara consultas SQL pesadas nuevas: para rutina/incidencias lee la misma
-# caché que ya usa el dashboard (si no está lista, la dispara para el
-# próximo ciclo en vez de forzarla ahora).
+# manda TODO junto en UN solo mensaje por ciclo (pedido explícito del
+# usuario: antes cada carga de CICLA fuera de rango, cada puesto con
+# incidencias, etc. mandaba su propio WhatsApp/mail por separado, y un día
+# con varios problemas eran decenas de avisos sueltos). No dispara consultas
+# SQL pesadas nuevas: para rutina/incidencias lee la misma caché que ya usa
+# el dashboard (si no está lista, la dispara para el próximo ciclo en vez de
+# forzarla ahora).
 # ---------------------------------------------------------------------------
 ALERTA_TEMP_CICLA_C = 5.0         # temperatura del caudalímetro (más estricta que la visual de 4°C)
 ALERTA_UFC_LASER = 40.0           # U.F.C. de La Serenísima
 ALERTA_RUTINA_SCORE_MIN = 60      # score de una sesión de rutina de ordeño
-
-_alertas_avisadas: set = set()
-_alertas_lock = threading.Lock()
 
 # Canales de alerta disponibles: WhatsApp (Twilio, de pago) y Telegram/Email
 # (gratis). Cada uno se manda solo si está CONFIGURADO (credenciales puestas
@@ -4470,131 +4470,133 @@ def _enviar_resumen_a_canales_activos(texto: str, html: str):
         raise ultimo_error
 
 
-def _avisar_si_nuevo(clave: str, mensaje: str):
-    """Manda la alerta solo la primera vez que aparece esta condición. Si el
-    envío falla, se olvida la marca para reintentar en el próximo ciclo."""
-    with _alertas_lock:
-        if clave in _alertas_avisadas:
-            return
-        _alertas_avisadas.add(clave)
-    try:
-        _enviar_a_canales_activos(mensaje)
-    except Exception:  # noqa: BLE001
-        with _alertas_lock:
-            _alertas_avisadas.discard(clave)
+def _lineas_alertas_puntuales(tambo: str) -> list:
+    """Una línea de texto por tipo de alerta puntual que tenga algo que
+    contar HOY (temperatura CICLA, U.F.C. de La Serenísima, score de
+    rutina, incidencias de la rotativa) -- antes cada condición individual
+    (cada carga, cada puesto) armaba su propio mensaje aparte; ahora se
+    agrega en UNA línea por tipo, para que un día con varios problemas siga
+    siendo parte de un solo envío."""
+    lineas = []
 
+    def _rango(valores, decimales=0):
+        """"55" si es un solo valor, "48 – 62" si hay varios distintos --
+        mostrar "55 – 55" cuando hay uno solo queda raro."""
+        lo, hi = min(valores), max(valores)
+        if round(lo, decimales) == round(hi, decimales):
+            return f"{lo:.{decimales}f}"
+        return f"{lo:.{decimales}f} – {hi:.{decimales}f}"
 
-def _revisar_cicla_whatsapp(tambo: str):
     usuario, password = os.environ.get("CICLA_USUARIO"), os.environ.get("CICLA_PASSWORD")
-    if not (usuario and password):
-        return
-    hoy = datetime.date.today()
-    cargas, _incompleto = cicla.obtener_cargas(hoy - datetime.timedelta(days=1), hoy, usuario, password)
-    for c in cargas:
-        if c["temperatura"] is not None and c["temperatura"] > ALERTA_TEMP_CICLA_C:
-            clave = f"cicla_temp:{c['turno']}:{c['carga']}"
-            _avisar_si_nuevo(clave, f"🌡️ CICLA: carga {c['carga']} ({c['fecha']}) con temperatura "
-                                    f"{c['temperatura']}°C (umbral {ALERTA_TEMP_CICLA_C}°C).")
+    if usuario and password:
+        hoy = datetime.date.today()
+        cargas, _incompleto = cicla.obtener_cargas(hoy - datetime.timedelta(days=1), hoy, usuario, password)
+        altas = [c["temperatura"] for c in cargas
+                 if c["temperatura"] is not None and c["temperatura"] > ALERTA_TEMP_CICLA_C]
+        if altas:
+            lineas.append(f"🌡️ CICLA: {len(altas)} carga(s) hoy con temperatura sobre el umbral "
+                          f"({_rango(altas, 1)}°C, umbral {ALERTA_TEMP_CICLA_C}°C).")
 
-
-def _revisar_laser_whatsapp():
     usuario, password = os.environ.get("LASER_USUARIO"), os.environ.get("LASER_PASSWORD")
-    if not (usuario and password):
-        return
-    entregas = laserenisima.obtener_entregas(usuario, password)
-    for e in entregas:
-        if e["ufc"] is not None and e["ufc"] > ALERTA_UFC_LASER:
-            clave = f"laser_ufc:{e['fecha_entrega']}"
-            _avisar_si_nuevo(clave, f"🧪 La Serenísima: entrega del {e['fecha_entrega']} con U.F.C. "
-                                    f"{round(e['ufc'])} (umbral {round(ALERTA_UFC_LASER)}).")
+    if usuario and password:
+        entregas = laserenisima.obtener_entregas(usuario, password)
+        altas = [e["ufc"] for e in entregas if e["ufc"] is not None and e["ufc"] > ALERTA_UFC_LASER]
+        if altas:
+            lineas.append(f"🧪 La Serenísima: {len(altas)} entrega(s) con U.F.C. sobre el umbral "
+                          f"({_rango(altas)}, umbral {round(ALERTA_UFC_LASER)}).")
 
-
-def _revisar_rutina_whatsapp(tambo: str):
-    hoy = datetime.date.today().strftime("%Y-%m-%d")
-    data, _fresh = _cache_get(_clave(tambo, f"rutina:{hoy}"), allow_stale=True)
+    hoy_str = datetime.date.today().strftime("%Y-%m-%d")
+    data, _fresh = _cache_get(_clave(tambo, f"rutina:{hoy_str}"), allow_stale=True)
     if data is None:
-        _refresh_rutina_async(tambo, hoy)
-        return
-    grupos = _grupos_ordene(tambo)
-    resultado = salas.de(tambo).analizar_dia(tambo, data["columns"], data["rows"], hoy, grupos,
-                                             max_sesiones=_max_sesiones(tambo),
-                                             nombres=_nombres_grupos(tambo),
-                                             identificacion_pct=_identificacion_pct_de(tambo, hoy, hoy, hoy))
-    for s in resultado["sesiones"]:
-        if s["score"] < ALERTA_RUTINA_SCORE_MIN:
-            clave = f"rutina_score:{hoy}:{s['indice']}"
-            _avisar_si_nuevo(clave, f"⏱️ Rutina de ordeño: sesión de las {s['inicio'][11:16]} del {hoy} "
-                                    f"con score {s['score']}% (umbral {ALERTA_RUTINA_SCORE_MIN}%).")
+        _refresh_rutina_async(tambo, hoy_str)
+    else:
+        grupos = _grupos_ordene(tambo)
+        resultado = salas.de(tambo).analizar_dia(tambo, data["columns"], data["rows"], hoy_str, grupos,
+                                                 max_sesiones=_max_sesiones(tambo),
+                                                 nombres=_nombres_grupos(tambo),
+                                                 identificacion_pct=_identificacion_pct_de(tambo, hoy_str, hoy_str, hoy_str))
+        bajas = [s["score"] for s in resultado["sesiones"] if s["score"] < ALERTA_RUTINA_SCORE_MIN]
+        if bajas:
+            lineas.append(f"⏱️ Rutina de ordeño: {len(bajas)} sesión(es) hoy con score bajo "
+                          f"({_rango(bajas)}%, umbral {ALERTA_RUTINA_SCORE_MIN}%).")
 
-
-def _revisar_incidencias_whatsapp(tambo: str):
     data, _fresh = _cache_get(_clave(tambo, "ordeno_inc"), allow_stale=True)
-    if not data or not data.get("rows"):
-        return
-    idx = {c: i for i, c in enumerate(data["columns"])}
-    totales = [
-        (r[idx["posicion"]], (r[idx["desliz"]] or 0) + (r[idx["patadas"]] or 0)
-         + (r[idx["bloqueos"]] or 0) + (r[idx["recoloc"]] or 0))
-        for r in data["rows"]
-    ]
-    if not totales:
-        return
-    mediana = statistics.median(t for _p, t in totales)
-    umbral_rojo = max(round(mediana * 2.5), 4)
-    hoy = datetime.date.today().isoformat()
-    for puesto, total in totales:
-        if total >= umbral_rojo:
-            clave = f"incidencia:{hoy}:{puesto}"
-            _avisar_si_nuevo(clave, f"🔧 Puesto {puesto}: {total} incidencias hoy (deslizamientos/patadas/"
-                                    f"bloqueos/recolocaciones), muy por encima de la mediana ({mediana:.0f}). "
-                                    "Posible unidad fallada.")
+    if data and data.get("rows"):
+        idx = {c: i for i, c in enumerate(data["columns"])}
+        totales = [
+            (r[idx["posicion"]], (r[idx["desliz"]] or 0) + (r[idx["patadas"]] or 0)
+             + (r[idx["bloqueos"]] or 0) + (r[idx["recoloc"]] or 0))
+            for r in data["rows"]
+        ]
+        if totales:
+            mediana = statistics.median(t for _p, t in totales)
+            umbral_rojo = max(round(mediana * 2.5), 4)
+            problemas = sorted([(p, t) for p, t in totales if t >= umbral_rojo], key=lambda x: -x[1])
+            if problemas:
+                detalle = ", ".join(f"puesto {p} ({t})" for p, t in problemas)
+                lineas.append(f"🔧 Incidencias: {len(problemas)} puesto(s) muy por encima de la mediana "
+                              f"({mediana:.0f}) hoy — {detalle}. Posible unidad fallada.")
+
+    return lineas
 
 
-def _revisar_resumen_tablero(tambo: str):
-    """Manda el resumen del Tablero de Diagnóstico con los indicadores que el
-    tambo tildó en ⚙ Configuración › Tablero (ver `tablero.texto_resumen`).
-
-    A diferencia de `_avisar_si_nuevo`, esto NO se manda "una sola vez hasta
-    que se resuelva" — es un resumen periódico, se manda en CADA horario
-    configurado (⚙ Configuración › 🔔 Alertas) si hay algo tildado, tenga o
-    no algo fuera de rango. Lee solo de caché (`_valores_tablero`, igual que
-    /api/tablero): nunca dispara una consulta pesada nueva desde este ciclo
-    de fondo."""
-    valores = _valores_tablero(tambo)
-    armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
-    texto = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
-    if texto:
-        html = tablero.html_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
-        _enviar_resumen_a_canales_activos(texto, html)
-
-
-def _revisar_novedades_checklist(tambo: str):
-    """Manda las fallas abiertas y resueltas del check-list de control (ver
-    `checklist.novedades`), si el tambo lo tildó en ⚙ Configuración ›
-    Check-list. Mismo criterio que `_revisar_resumen_tablero`: se manda en
-    CADA horario configurado si hay algo que contar, no una sola vez por
-    condición nueva. `checklist.novedades` lee de `checklist.db` (SQLite
-    propio, no DDM), así que no hay caché pesada que cuidar acá."""
-    if not config_alertas.checklist_resumen_activo():
-        return
-    datos = checklist.novedades(tambo)
-    texto = checklist.texto_novedades(datos, nombre_tambo=tambos.nombre_de(tambo))
-    if texto:
-        html = checklist.html_novedades(datos, nombre_tambo=tambos.nombre_de(tambo))
-        _enviar_resumen_a_canales_activos(texto, html)
+def _html_alertas_puntuales(lineas: list) -> str:
+    from html import escape as esc
+    filas = "".join(
+        f'<tr><td style="padding:7px 0;border-bottom:1px solid #eef1f4;color:#334155;font-size:13px;">'
+        f'{esc(l)}</td></tr>' for l in lineas
+    )
+    return f"""<div style="background:#f1f5f9;padding:24px 12px;font-family:-apple-system,'Segoe UI',Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;background:#ffffff;border-radius:10px;border:1px solid #e2e8f0;overflow:hidden;">
+<tr><td style="background:#0072CE;padding:16px 20px;">
+<span style="color:#ffffff;font-size:17px;font-weight:700;">⚠️ Alertas puntuales</span>
+</td></tr>
+<tr><td style="padding:4px 20px 20px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">{filas}</table>
+</td></tr>
+</table>
+</div>"""
 
 
 def _revisar_alertas_whatsapp():
+    """Arma UN solo mensaje por ciclo con todo lo que haya para avisar, en
+    vez de un envío por cada condición (ver comentario de más arriba). Orden
+    pedido por el usuario: Tablero de Diagnóstico, alertas puntuales
+    (CICLA/La Serenísima/rutina/incidencias), Check-list. No dispara
+    consultas pesadas nuevas -- todo sale de caché, igual que antes."""
     if not _canales_disponibles():
         return
     tambo = tambos.DEFAULT_TAMBO
-    for fn, args in ((_revisar_cicla_whatsapp, (tambo,)), (_revisar_laser_whatsapp, ()),
-                     (_revisar_rutina_whatsapp, (tambo,)), (_revisar_incidencias_whatsapp, (tambo,)),
-                     (_revisar_resumen_tablero, (tambo,)), (_revisar_novedades_checklist, (tambo,))):
-        try:
-            fn(*args)
-        except Exception:  # noqa: BLE001
-            pass
+    try:
+        partes_texto = []
+        secciones_html = []
+
+        valores = _valores_tablero(tambo)
+        armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
+        texto_tablero = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
+        if texto_tablero:
+            partes_texto.append(texto_tablero)
+            secciones_html.append(tablero.html_resumen(armado, nombre_tambo=tambos.nombre_de(tambo)))
+
+        lineas = _lineas_alertas_puntuales(tambo)
+        if lineas:
+            partes_texto.append("\n".join(lineas))
+            secciones_html.append(_html_alertas_puntuales(lineas))
+
+        if config_alertas.checklist_resumen_activo():
+            datos_cl = checklist.novedades(tambo)
+            texto_cl = checklist.texto_novedades(datos_cl, nombre_tambo=tambos.nombre_de(tambo))
+            if texto_cl:
+                partes_texto.append(texto_cl)
+                secciones_html.append(checklist.html_novedades(datos_cl, nombre_tambo=tambos.nombre_de(tambo)))
+
+        if not partes_texto:
+            return
+        texto = "\n\n".join(partes_texto)
+        html = "".join(secciones_html) or None
+        _enviar_resumen_a_canales_activos(texto, html)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _proximo_horario_alertas() -> datetime.datetime:

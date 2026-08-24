@@ -1480,6 +1480,50 @@ respuesta se manda al número que preguntó (no al fijo de alertas). Falta
 probar en producción con un mensaje real, una vez cargado el webhook en la
 consola de Twilio (ver INSTALL.md).
 
+## Alertas: un solo mensaje por ciclo, no uno por condición (24/08/2026)
+
+Pedido del usuario tras ver ~20 mensajes de WhatsApp/mails en un solo ciclo
+de las 8:00: cada carga de CICLA fuera de rango, cada puesto de la rotativa
+con incidencias, etc. mandaba su PROPIO mensaje (vía `_avisar_si_nuevo`,
+dedup por condición individual — "puesto 21 con incidencias" era una clave
+distinta de "puesto 30 con incidencias"). Un día con varios problemas a la
+vez eran decenas de avisos sueltos.
+
+**Se sacó `_avisar_si_nuevo` y las cuatro funciones que lo llamaban**
+(`_revisar_cicla_whatsapp`/`_revisar_laser_whatsapp`/`_revisar_rutina_whatsapp`/
+`_revisar_incidencias_whatsapp`, junto con `_alertas_avisadas`/`_alertas_lock`,
+que quedaron sin uso) **y se reemplazaron por `_lineas_alertas_puntuales`**:
+UNA línea de texto por tipo (no por condición individual), con la cuenta y
+el rango de hoy — "🌡️ CICLA: 3 carga(s) hoy con temperatura sobre el umbral
+(7,5 – 17,2°C, umbral 5,0°C)" en vez de tres mensajes, uno por carga.
+
+**Esto cambia la semántica de fondo, a propósito**: antes era "avisame la
+PRIMERA vez que aparece cada problema, no de nuevo hasta que se resuelva".
+Ahora es un snapshot del día completo en CADA ciclo (8:00/20:00), mismo
+criterio que ya tenía el resumen del Tablero y las novedades del Check-list
+— si un problema sigue activo, vuelve a aparecer en el próximo ciclo (no se
+"pierde" entre el resumen y la alerta puntual), pero no hay forma de saber
+del mensaje solo si es nuevo o viene de antes. Fue lo que pidió el usuario
+explícitamente (ver conversación) al priorizar UN mensaje por sobre "avisame
+solo lo nuevo".
+
+**`_revisar_alertas_whatsapp` arma UN mensaje combinado**, en el orden
+pedido: Tablero de Diagnóstico → alertas puntuales (CICLA/La Serenísima/
+rutina/incidencias) → Check-list. Si una sección no tiene nada que contar,
+se omite (no dice "sin novedades" para cada una) — si NINGUNA tiene nada,
+no se manda nada. Un solo `_enviar_resumen_a_canales_activos(texto, html)`
+al final, no un envío por sección. El HTML del mail concatena los bloques
+de `tablero.html_resumen`/`_html_alertas_puntuales` (tarjeta nueva, mismo
+estilo visual: badges de color, fondo claro)/`checklist.html_novedades` —
+cada uno ya es un `<div>` autocontenido, así que apilarlos no rompe nada.
+
+Probado con mocks (sin tocar CICLA/La Serenísima/DDM reales): agrega
+correctamente varias cargas en una sola línea con el rango de temperatura;
+un solo valor no muestra un rango redundante ("55" en vez de "55 – 55");
+las tres secciones aparecen en el orden correcto en un solo envío; si no hay
+nada que avisar, no se manda nada; si el check-list está desactivado, esa
+sección se omite sin afectar al resto.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).
