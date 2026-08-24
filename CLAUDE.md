@@ -1185,6 +1185,58 @@ dos días que no cierran:
   investigar un día que "da raro", mirar si sus `ParlorSession` son
   correlativas con las del día anterior.
 
+## Instancia única de servidor.py (23/08/2026)
+
+En SERVER-DELPRO se detectó un pico de ~85 mensajes de Twilio en un rato
+corto, sin que nadie lo disparara a mano. Se investigó a fondo del lado de
+Windows (estado stale del Programador de tareas, tareas duplicadas —
+revisando tanto `Execute` como `Arguments`—, carpeta de Startup, reinicio
+por falla, trigger repetitivo, contenido de `iniciar.bat` byte a byte contra
+el repo) y en ningún punto se encontró una causa concluyente: se vieron dos
+procesos `servidor.py` vivos al mismo tiempo, arrancados casi en el mismo
+segundo. Se decidió no seguir persiguiendo la causa exacta de Windows y
+proteger la app a nivel de aplicación: si ya hay una instancia corriendo,
+la nueva se cierra sola en vez de arrancar un segundo ciclo de alertas.
+
+**Primer intento (DESCARTADO): bindear un socket propio sin `SO_REUSEADDR`
+como prueba de "puerto ocupado".** Funciona en Linux pero NO es confiable en
+Windows: se probó en vivo con dos instancias sobre un puerto descartable y la
+"segunda" instancia no solo no detectó el conflicto — **le robó el puerto a
+la primera** (quedó escuchando ella, la primera dejó de responder). Es un
+comportamiento de Windows conocido: sin `SO_EXCLUSIVEADDRUSE` en el socket
+que ya está en `LISTEN`, otro proceso puede bindear (y hasta reemplazar) ese
+mismo puerto aunque ninguno de los dos use `SO_REUSEADDR`. Un probe de socket
+normal, que es la técnica típica en Linux/mac, no sirve acá.
+
+**Solución final: lock de archivo con `msvcrt.locking`** (`servidor.py`,
+`_tomar_lock_de_instancia_unica`) — abre (o crea) `.servidor.lock` en la
+carpeta del proyecto y le pide un lock exclusivo no bloqueante
+(`LK_NBLCK`). Si otro proceso ya lo tiene abierto, tira `OSError` al toque.
+El descriptor se guarda en una variable global y NUNCA se cierra a propósito
+mientras el proceso vive — Windows libera el lock solo cuando el proceso
+termina (incluso si se lo mata con `Stop-Process -Force`), así que no hace
+falta borrar el archivo a mano entre reinicios. `.servidor.lock` está en
+`.gitignore` (es puro estado de runtime, no contenido).
+
+**Orden del chequeo, también importante**: el lock se toma ANTES de
+`from waitress import serve` / `from app import app`, no después. Ese import
+es pesado (Flask entero) y arranca hilos de fondo al cargarse — entre ellos
+el ciclo de alertas de las 8:00/20:00 (`_bucle_alertas_whatsapp`). Si el
+chequeo fuera después del import, una instancia duplicada quedaría viva ese
+rato largo con su propio hilo de alertas ya corriendo antes de detectar el
+conflicto y cerrarse — exactamente el problema que esto tiene que evitar,
+solo que retrasado en vez de prevenido.
+
+Verificado en la práctica (puerto descartable, no el 5310): segunda
+instancia se cierra en ~140ms con el mensaje correcto, sin tocar el puerto
+de la primera; al matar la primera el lock se libera y una tercera instancia
+arranca normal.
+
+La causa de fondo del lado de Windows (por qué se lanzaban dos procesos casi
+al mismo tiempo) sigue sin identificarse — esto es una mitigación a nivel de
+aplicación, no un diagnóstico. Si vuelve a pasar, revisar si el lock evitó
+el doble envío (buscar en el log si hubo un intento rechazado).
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

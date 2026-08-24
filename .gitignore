@@ -21,6 +21,11 @@ referencia_chi_delpro.json
 *.log
 *.log.err
 
+# Lock de instancia única de servidor.py (ver _tomar_lock_de_instancia_unica).
+# Un archivo vacío que existe solo para tomarle el lock exclusivo de Windows;
+# no tiene contenido que importe y es propio de cada proceso corriendo.
+.servidor.lock
+
 # Python
 __pycache__/
 *.pyc
