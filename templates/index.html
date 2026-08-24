@@ -709,11 +709,35 @@
   <section class="card" id="alertas-whatsapp-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">🔔 Alertas</h2>
-      <span class="aviso">Revisa a las 8:00 y 20:00: temp. caudalímetro &gt;5°C, U.F.C. &gt;40, score de rutina &lt;60%, incidencias de la rotativa.</span>
+      <span class="aviso" id="alertas-horario-texto">Revisa a las 8:00 y 20:00: temp. caudalímetro &gt;5°C, U.F.C. &gt;40, score de rutina &lt;60%, incidencias de la rotativa.</span>
       <button class="secundario" id="whatsapp-probar" style="margin-left:auto">Probar envío</button>
     </div>
     <div id="alertas-canales" style="display:flex;gap:18px;flex-wrap:wrap;margin-top:10px"></div>
     <div class="aviso" id="whatsapp-info" style="margin-top:8px"></div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Cuándo revisar y avisar</div>
+    <div class="aviso">Días de la semana y hasta 5 horarios por día. Se aplica a las alertas de arriba y
+      al resumen del Tablero de Diagnóstico (⚙ Configuración › Tablero).</div>
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px" id="alertas-dias">
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="0">Lun</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="1">Mar</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="2">Mié</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="3">Jue</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="4">Vie</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="5">Sáb</label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px"><input type="checkbox" data-dia="6">Dom</label>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px" id="alertas-horas">
+      <input type="time" style="padding:6px 8px">
+      <input type="time" style="padding:6px 8px">
+      <input type="time" style="padding:6px 8px">
+      <input type="time" style="padding:6px 8px">
+      <input type="time" style="padding:6px 8px">
+    </div>
+    <div style="display:flex;gap:10px;margin-top:10px;align-items:center">
+      <button class="secundario" id="alertas-horario-guardar">Guardar horario</button>
+      <span class="aviso" id="alertas-horario-estado"></span>
+    </div>
   </section>
 
   </div>
@@ -5973,6 +5997,55 @@ async function cargarCanalesAlertas() {
   }
 }
 
+const DIAS_SEMANA_LABEL = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+
+function _textoHorarioAlertas(h) {
+  const dias = h.dias.length === 7 ? 'todos los días'
+    : h.dias.slice().sort((a, b) => a - b).map(d => DIAS_SEMANA_LABEL[d]).join(', ');
+  const horas = h.horas.slice().sort().join(' y ');
+  document.getElementById('alertas-horario-texto').textContent =
+    `Revisa ${dias} a las ${horas}: temp. caudalímetro >5°C, U.F.C. >40, score de rutina <60%, ` +
+    'incidencias de la rotativa.';
+}
+
+async function cargarHorarioAlertas() {
+  const estado = document.getElementById('alertas-horario-estado');
+  try {
+    const h = await pedirJSON('/api/alertas/horario');
+    document.querySelectorAll('#alertas-dias input[data-dia]').forEach(chk => {
+      chk.checked = h.dias.includes(Number(chk.dataset.dia));
+    });
+    const inputsHora = document.querySelectorAll('#alertas-horas input[type="time"]');
+    const horasOrdenadas = h.horas.slice().sort();
+    inputsHora.forEach((inp, i) => { inp.value = horasOrdenadas[i] || ''; });
+    _textoHorarioAlertas(h);
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('alertas-horario-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('alertas-horario-estado');
+  const btn = document.getElementById('alertas-horario-guardar');
+  const dias = [...document.querySelectorAll('#alertas-dias input[data-dia]:checked')]
+    .map(c => Number(c.dataset.dia));
+  const horas = [...document.querySelectorAll('#alertas-horas input[type="time"]')]
+    .map(i => i.value).filter(Boolean);
+  btn.disabled = true; estado.textContent = 'Guardando…';
+  try {
+    await pedirJSON('/api/alertas/horario', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dias, horas }),
+    });
+    estado.innerHTML = '<b style="color:var(--good)">✔ Guardado.</b>';
+    await cargarHorarioAlertas();
+  } catch (e) {
+    estado.innerHTML = `<b style="color:var(--critical)">✗ ${escHtml(e.message)}</b>`;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 document.getElementById('whatsapp-probar').addEventListener('click', async () => {
   const info = document.getElementById('whatsapp-info');
   const btn = document.getElementById('whatsapp-probar');
@@ -10339,7 +10412,7 @@ function cargarDatosDePagina(id) {
   if (paginasCargadas.has(id)) return;
   paginasCargadas.add(id);
   if (id === 'dashboard') {
-    cargarDashboard(); cargarCanalesAlertas();
+    cargarDashboard(); cargarCanalesAlertas(); cargarHorarioAlertas();
     cargarResumenProduccion(); cargarResumenAnimales(); cargarResumenDuraciones(); cargarResumenGrupo();
   }
   else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }

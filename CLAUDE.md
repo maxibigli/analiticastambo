@@ -1327,6 +1327,46 @@ carga diferida que ya tenían las otras pestañas pesadas, así que la página
 sigue abriendo al instante — ya no por tener una pestaña liviana adelante,
 sino porque ninguna pestaña que queda carga sola al entrar.
 
+## Horario de alertas configurable: días de la semana + hasta 5 avisos por día (24/08/2026)
+
+Antes `ALERTA_HORARIOS = (8, 20)` era una constante fija en `app.py`: revisaba
+(y mandaba resumen del Tablero) todos los días a las 8:00 y 20:00, sin
+excepción. El usuario pidió poder elegir qué días de la semana y hasta 5
+horarios por día. Se agregó a `config_alertas.py` (el mismo archivo
+`alertas_canales.json`, gitignored, que ya guardaba qué canal está tildado)
+una clave `"horario"`: `{"dias": [0..6], "horas": ["08:00", "20:00", ...]}`
+— `dias` con `0=lunes` igual que `datetime.weekday()`, `horas` como strings
+`HH:MM` (no solo la hora: se probó en el navegador y truncar a la hora
+redondeaba silenciosamente "06:30" a "06:00", un bug real que se corrigió
+antes de darlo por terminado). Sin guardar nada, o con algo inválido,
+`config_alertas.horario()` cae al comportamiento de siempre (todos los días,
+8:00 y 20:00).
+
+**Se aplica a las DOS cosas que ya compartían el mismo ciclo de fondo**
+(alertas de umbral — temp./UFC/score/incidencias — y el resumen periódico
+del Tablero): es el mismo horario para ambas, a propósito, para no armar un
+segundo scheduler — mismo criterio que ya se había usado al sumar el resumen
+del Tablero al ciclo existente en vez de uno aparte.
+
+**El control vive en la tarjeta "🔔 Alertas" del Dashboard** (no en
+⚙ Configuración): ahí ya estaban los tildes de canal (WhatsApp/Telegram/
+Email) y "Probar envío", así que el horario quedó al lado en vez de en una
+pantalla aparte. El texto de arriba de la tarjeta ("Revisa todos los días a
+las...") ahora es dinámico, se arma con lo guardado.
+
+**El ciclo de fondo se despierta solo cuando cambia el horario**
+(`_horario_alertas_cambiado`, un `threading.Event`), en vez de esperar a que
+se cumpla el horario VIEJO para recién ahí notar el cambio y calcular el
+nuevo. Sin esto, guardar un horario nuevo a las 9:00 con el horario viejo
+durmiendo hasta las 20:00 no habría tenido efecto hasta el día siguiente —
+el mismo tipo de "guardé y no pasó nada" que ya avisan las notas de
+`servidor.py`/Programador de tareas más arriba, evitado acá desde el
+diseño en vez de parcheado después.
+
+`_proximo_horario_alertas()` ahora mira hasta 8 días adelante (antes solo
+hoy/mañana): con un solo día de la semana habilitado, el próximo horario
+válido puede caer casi una semana después.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

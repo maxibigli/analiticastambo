@@ -1392,8 +1392,8 @@ def api_tablero_guardar():
 @auth.requiere_rol("admin")
 def api_tablero_probar_resumen():
     """Manda el resumen del Tablero (los indicadores tildados en "📲 Resumen")
-    ya mismo, por los canales activos — sin esperar al horario de las 8:00/20:00.
-    Mismo criterio que /api/alertas/probar."""
+    ya mismo, por los canales activos — sin esperar al horario configurado
+    (⚙ Configuración › 🔔 Alertas). Mismo criterio que /api/alertas/probar."""
     tambo = _tambo_del_request()
     valores = _valores_tablero(tambo)
     armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
@@ -4277,13 +4277,14 @@ def api_agente_preguntar():
 
 
 # ---------------------------------------------------------------------------
-# Alertas por WhatsApp (Twilio): revisa dos veces al día (8:00 y 20:00) las
-# condiciones fuera de rango y avisa UNA vez por condición nueva (no reenvía
-# mientras siga activa). No dispara consultas SQL pesadas nuevas: para
-# rutina/incidencias lee la misma caché que ya usa el dashboard (si no está
-# lista, la dispara para el próximo ciclo en vez de forzarla ahora).
+# Alertas por WhatsApp (Twilio): revisa en los días/horarios configurados
+# (⚙ Configuración, tarjeta 🔔 Alertas — antes fijo a las 8:00 y 20:00 todos
+# los días, ver config_alertas.horario()) las condiciones fuera de rango y
+# avisa UNA vez por condición nueva (no reenvía mientras siga activa). No
+# dispara consultas SQL pesadas nuevas: para rutina/incidencias lee la misma
+# caché que ya usa el dashboard (si no está lista, la dispara para el
+# próximo ciclo en vez de forzarla ahora).
 # ---------------------------------------------------------------------------
-ALERTA_HORARIOS = (8, 20)         # horas del día (24h) en que se revisa y avisa
 ALERTA_TEMP_CICLA_C = 5.0         # temperatura del caudalímetro (más estricta que la visual de 4°C)
 ALERTA_UFC_LASER = 40.0           # U.F.C. de La Serenísima
 ALERTA_RUTINA_SCORE_MIN = 60      # score de una sesión de rutina de ordeño
@@ -4429,9 +4430,10 @@ def _revisar_resumen_tablero(tambo: str):
 
     A diferencia de `_avisar_si_nuevo`, esto NO se manda "una sola vez hasta
     que se resuelva" — es un resumen periódico, se manda en CADA horario
-    (8:00 y 20:00) si hay algo tildado, tenga o no algo fuera de rango. Lee
-    solo de caché (`_valores_tablero`, igual que /api/tablero): nunca dispara
-    una consulta pesada nueva desde este ciclo de fondo."""
+    configurado (⚙ Configuración › 🔔 Alertas) si hay algo tildado, tenga o
+    no algo fuera de rango. Lee solo de caché (`_valores_tablero`, igual que
+    /api/tablero): nunca dispara una consulta pesada nueva desde este ciclo
+    de fondo."""
     valores = _valores_tablero(tambo)
     armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
     texto = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
@@ -4454,22 +4456,40 @@ def _revisar_alertas_whatsapp():
 
 
 def _proximo_horario_alertas() -> datetime.datetime:
-    """Próximo datetime en que toca revisar (hoy o mañana, el horario más cercano)."""
+    """Próximo datetime en que toca revisar, según los días/horarios que
+    configuró el usuario (config_alertas.horario()). Mira hasta 8 días
+    adelante -- con un solo día de la semana habilitado, el próximo puede
+    caer casi una semana después, no mañana."""
+    horario = config_alertas.horario()
     ahora = datetime.datetime.now()
     candidatos = []
-    for dias in (0, 1):
-        base = (ahora + datetime.timedelta(days=dias)).replace(minute=0, second=0, microsecond=0)
-        for hora in ALERTA_HORARIOS:
-            candidato = base.replace(hour=hora)
+    for dias in range(8):
+        base = (ahora + datetime.timedelta(days=dias)).replace(second=0, microsecond=0)
+        if base.weekday() not in horario["dias"]:
+            continue
+        for hora in horario["horas"]:
+            hh, mm = hora.split(":")
+            candidato = base.replace(hour=int(hh), minute=int(mm))
             if candidato > ahora:
                 candidatos.append(candidato)
     return min(candidatos)
 
 
+# Se activa cuando el usuario guarda un horario nuevo, para que el ciclo de
+# abajo recalcule el próximo horario YA en vez de esperar a que se cumpla el
+# horario viejo (con el que ya se había dormido) para recién ahí notar el
+# cambio -- el mismo tipo de "guardé y no pasó nada hasta la próxima" que
+# categoriza a los reinicios de servidor.py, evitado acá desde el vamos.
+_horario_alertas_cambiado = threading.Event()
+
+
 def _bucle_alertas_whatsapp():
     while True:
         espera_s = (_proximo_horario_alertas() - datetime.datetime.now()).total_seconds()
-        time.sleep(max(espera_s, 1))
+        recalcular = _horario_alertas_cambiado.wait(timeout=max(espera_s, 1))
+        _horario_alertas_cambiado.clear()
+        if recalcular:
+            continue
         try:
             _revisar_alertas_whatsapp()
         except Exception:  # noqa: BLE001
@@ -4503,6 +4523,25 @@ def api_alertas_canales_set():
         config_alertas.set_activo(canal, bool(body.get("activo")))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.get("/api/alertas/horario")
+@auth.requiere_rol("admin")
+def api_alertas_horario():
+    """Días de la semana y horarios en que se revisa y avisa."""
+    return jsonify(config_alertas.horario())
+
+
+@app.post("/api/alertas/horario")
+@auth.requiere_rol("admin")
+def api_alertas_horario_set():
+    body = request.json or {}
+    try:
+        config_alertas.set_horario(body.get("dias", []), body.get("horas", []))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    _horario_alertas_cambiado.set()
     return jsonify({"ok": True})
 
 

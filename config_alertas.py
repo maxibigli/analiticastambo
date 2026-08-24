@@ -5,10 +5,12 @@ un archivo JSON junto al código para que sobreviva a un reinicio del servidor
 una preferencia del usuario, no un secreto)."""
 import json
 import os
+import re
 import threading
 
 _RUTA = os.path.join(os.path.dirname(__file__), "alertas_canales.json")
 CANALES = ("whatsapp", "telegram", "correo")
+MAX_HORARIOS = 5
 _lock = threading.Lock()
 
 
@@ -37,5 +39,44 @@ def set_activo(canal: str, valor: bool) -> None:
     with _lock:
         actual = _leer()
         actual[canal] = bool(valor)
+        with open(_RUTA, "w", encoding="utf-8") as f:
+            json.dump(actual, f)
+
+
+_HORA_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+
+
+def horario() -> dict:
+    """{"dias": [0..6] (lunes=0, igual que datetime.weekday()), "horas":
+    ["08:00", "20:00"]} -- todos los días a las 8:00 y 20:00 por defecto (el
+    comportamiento de antes de que esto fuera configurable), si el usuario
+    todavía no lo tocó o guardó algo inválido."""
+    guardado = _leer().get("horario") or {}
+    dias = guardado.get("dias")
+    horas = guardado.get("horas")
+    if not isinstance(dias, list) or not dias or not all(isinstance(d, int) and 0 <= d <= 6 for d in dias):
+        dias = list(range(7))
+    if not isinstance(horas, list) or not horas or not all(isinstance(h, str) and _HORA_RE.match(h) for h in horas):
+        horas = ["08:00", "20:00"]
+    return {"dias": sorted(set(dias)), "horas": sorted(set(horas))}
+
+
+def set_horario(dias: list, horas: list) -> None:
+    try:
+        dias = sorted({int(d) for d in dias})
+    except (TypeError, ValueError):
+        raise ValueError("Los días tienen que ser números.")
+    horas = sorted({str(h) for h in horas})
+    if not dias or any(d < 0 or d > 6 for d in dias):
+        raise ValueError("Elegí al menos un día de la semana.")
+    if not horas:
+        raise ValueError("Elegí al menos un horario.")
+    if not all(_HORA_RE.match(h) for h in horas):
+        raise ValueError("Los horarios tienen que tener formato HH:MM.")
+    if len(horas) > MAX_HORARIOS:
+        raise ValueError(f"Como máximo {MAX_HORARIOS} horarios por día.")
+    with _lock:
+        actual = _leer()
+        actual["horario"] = {"dias": dias, "horas": horas}
         with open(_RUTA, "w", encoding="utf-8") as f:
             json.dump(actual, f)
