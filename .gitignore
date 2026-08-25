@@ -83,3 +83,10 @@ checklist.db
 checklist.db-wal
 checklist.db-shm
 checklist_fotos/
+
+# Bitácora de incidentes y reparaciones (ver bitacora.py). Mismo criterio
+# que checklist.db/checklist_fotos: estado propio de cada instalación.
+bitacora.db
+bitacora.db-wal
+bitacora.db-shm
+bitacora_fotos/

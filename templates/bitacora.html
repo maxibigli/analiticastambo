@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1016">
+<link rel="manifest" href="/bitacora/manifest.webmanifest">
+<title>Bitácora — La Ponderosa</title>
+<style>
+  /* Mismo criterio que checklist.html: pantalla de mano, se usa parado en la
+     sala, con guantes y de apuro. Todo lo tocable es grande (mínimo 44px). */
+  :root {
+    --fondo: #0b1016; --panel: #131c26; --panel2: #1b2733; --borde: #24323f;
+    --texto: #e8eef5; --suave: #8fa3b8; --ok: #1baf7a; --no: #d03b3b;
+    --acento: #1c5cb8; --acento-claro: #4f97e8; --warn: #c98500;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; background: var(--fondo); color: var(--texto);
+    font: 16px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  header {
+    position: sticky; top: 0; z-index: 10; background: var(--panel);
+    border-bottom: 1px solid var(--borde); padding: 10px 14px;
+    padding-top: calc(10px + env(safe-area-inset-top));
+  }
+  header h1 { margin: 0; font-size: 17px; }
+  header .sub { color: var(--suave); font-size: 13px; margin-top: 2px; }
+  main { padding: 12px 14px 40px; }
+  a.salir { color: var(--suave); font-size: 13px; float: right; }
+
+  h2.seccion { font-size: 13px; letter-spacing: .04em; text-transform: uppercase;
+    color: var(--suave); margin: 18px 0 8px; }
+
+  .abierto {
+    background: var(--panel); border: 1px solid var(--borde); border-left: 4px solid var(--warn);
+    border-radius: 12px; padding: 12px; margin-bottom: 10px;
+  }
+  .abierto .cab { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+  .abierto .tipo { font-size: 12px; color: var(--suave); text-transform: uppercase; letter-spacing: .04em; }
+  .abierto .sector { font-weight: 700; margin: 2px 0 4px; }
+  .abierto .desc { font-size: 14px; color: var(--texto); }
+  .abierto .hace { font-size: 12px; color: var(--suave); white-space: nowrap; }
+  .abierto button { margin-top: 10px; min-height: 42px; padding: 8px 14px; border-radius: 10px;
+    background: var(--panel2); border: 1px solid var(--borde); color: var(--texto); font: inherit; font-weight: 600; }
+
+  .pastillas { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+  .pastilla {
+    flex: 1 1 auto; min-width: 92px; min-height: 46px; padding: 10px 12px;
+    border: 1px solid var(--borde); border-radius: 10px; background: var(--panel2);
+    color: var(--texto); font-size: 15px; font-weight: 600;
+  }
+  .pastilla[aria-pressed="true"] { background: var(--acento); border-color: var(--acento-claro); }
+
+  label.campo { display: block; margin: 12px 0; }
+  label.campo .etiqueta { display: block; font-size: 13px; color: var(--suave); margin-bottom: 6px; }
+  input[type=text], input[type=number], textarea {
+    width: 100%; min-height: 46px; padding: 10px; border-radius: 10px;
+    background: var(--panel2); border: 1px solid var(--borde); color: var(--texto);
+    font: inherit; resize: vertical;
+  }
+  textarea { min-height: 80px; }
+
+  .foto-fila { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .foto-btn {
+    min-height: 46px; padding: 10px 14px; border-radius: 10px; background: var(--panel2);
+    border: 1px solid var(--borde); color: var(--texto); font: inherit; font-weight: 600;
+  }
+  .miniaturas { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .miniaturas figure { margin: 0; position: relative; }
+  .miniaturas img { width: 76px; height: 76px; object-fit: cover; border-radius: 8px; }
+  .miniaturas button {
+    position: absolute; top: -6px; right: -6px; width: 26px; height: 26px; border-radius: 50%;
+    background: var(--no); color: #fff; border: 0; font-size: 15px; line-height: 1;
+  }
+  input[type=file] { display: none; }
+
+  #guardar {
+    width: 100%; min-height: 56px; font-size: 18px; font-weight: 700; margin-top: 16px;
+    background: var(--acento); color: #fff; border: 0; border-radius: 12px;
+  }
+  #guardar[disabled] { background: #33465a; color: #90a2b5; }
+
+  .aviso { border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; font-size: 14px; }
+  .aviso.err { background: #3a1a1a; border: 1px solid #6a2a2a; }
+  .aviso.ok { background: #14352a; border: 1px solid #1f5c47; }
+  .aviso.pend { background: #33290f; border: 1px solid #5c4a1f; }
+  .vacio { color: var(--suave); font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <a class="salir" href="/logout">Salir</a>
+  <h1>Bitácora de incidentes y reparaciones</h1>
+  <div class="sub">{{ tambo }} · <span id="hoy"></span> · {{ usuario }}</div>
+</header>
+
+<main>
+  <div id="pendientes-aviso" class="aviso pend" hidden></div>
+  <div id="mensaje"></div>
+
+  <h2 class="seccion">Abiertos</h2>
+  <div id="abiertos"><div class="vacio">Cargando…</div></div>
+
+  <h2 class="seccion">Nuevo registro</h2>
+
+  <div class="pastillas" id="tipos">
+    <button class="pastilla" data-tipo="incidente" aria-pressed="true">🔧 Incidente</button>
+    <button class="pastilla" data-tipo="reparacion" aria-pressed="false">✅ Reparación</button>
+    <button class="pastilla" data-tipo="mantenimiento" aria-pressed="false">🛠️ Mantenimiento</button>
+  </div>
+
+  <label class="campo">
+    <span class="etiqueta">Sector o equipo</span>
+    <input type="text" id="sector" list="sectores-comunes" placeholder="Ej: Rotativa, Usher, Piatinero">
+    <datalist id="sectores-comunes">
+      <option value="Rotativa"><option value="Usher"><option value="Piatinero"><option value="TSR">
+    </datalist>
+  </label>
+
+  <label class="campo">
+    <span class="etiqueta">Puesto (si corresponde — rotativa)</span>
+    <input type="number" id="puesto" min="1" placeholder="Ej: 21">
+  </label>
+
+  <label class="campo">
+    <span class="etiqueta">¿Qué pasó?</span>
+    <textarea id="descripcion" placeholder="Descripción del incidente o la reparación"></textarea>
+  </label>
+
+  <div class="foto-fila">
+    <button class="foto-btn" id="foto-btn">📷 Sacar foto</button>
+    <span class="sub" style="color:var(--suave);font-size:13px">Opcional</span>
+  </div>
+  <input type="file" accept="image/*" capture="environment" multiple id="foto-input">
+  <div class="miniaturas" id="miniaturas"></div>
+
+  <button id="guardar">Guardar registro</button>
+</main>
+
+<script>
+const TAMBO = {{ tambo | tojson }};
+const COLA_KEY = 'bitacora_cola_v1';
+const MAX_LADO = 1600;
+const CALIDAD = 0.8;
+
+let fotos = [];   // [{dataUrl}]
+const $ = s => document.querySelector(s);
+const hoyISO = () => new Date().toLocaleDateString('en-CA');
+$('#hoy').textContent = new Date().toLocaleDateString('es-AR',
+  { weekday: 'long', day: '2-digit', month: '2-digit' });
+
+function esc(s) {
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// --- Cola offline (mismo criterio que checklist.html) -----------------------
+function leerCola() {
+  try { return JSON.parse(localStorage.getItem(COLA_KEY) || '[]'); } catch (e) { return []; }
+}
+function escribirCola(c) { localStorage.setItem(COLA_KEY, JSON.stringify(c)); }
+
+async function encolar(carga) {
+  const c = leerCola();
+  c.push(carga);
+  escribirCola(c);
+  pintarPendientes();
+}
+
+async function enviarCarga(carga) {
+  const fd = new FormData();
+  fd.append('datos', JSON.stringify(carga.datos));
+  for (let i = 0; i < carga.fotos.length; i++) {
+    const blob = await (await fetch(carga.fotos[i].dataUrl)).blob();
+    fd.append('foto_' + i, blob, 'foto' + (blob.type === 'image/png' ? '.png' : '.jpg'));
+  }
+  const r = await fetch('/api/bitacora/registro?tambo=' + encodeURIComponent(TAMBO),
+                        { method: 'POST', body: fd });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const e = new Error(j.error || ('Error ' + r.status));
+    e.definitivo = r.status >= 400 && r.status < 500;
+    throw e;
+  }
+  return j;
+}
+
+async function vaciarCola() {
+  const c = leerCola();
+  if (!c.length) return;
+  const quedan = [];
+  const errores = [];
+  for (const carga of c) {
+    try { await enviarCarga(carga); }
+    catch (e) {
+      if (e.definitivo) errores.push(e.message);
+      else quedan.push(carga);
+    }
+  }
+  escribirCola(quedan);
+  pintarPendientes(errores);
+  if (quedan.length < c.length) await cargarAbiertos();
+}
+
+function pintarPendientes(errores) {
+  const c = leerCola();
+  const av = $('#pendientes-aviso');
+  const partes = [];
+  if (c.length) partes.push(`${c.length} registro(s) sin enviar — se mandan solos cuando vuelva la señal.`);
+  if (errores && errores.length) partes.push('Se descartaron: ' + errores.join(' · '));
+  av.textContent = partes.join(' ');
+  av.hidden = !partes.length;
+}
+
+window.addEventListener('online', vaciarCola);
+
+// --- Fotos (mismo criterio que checklist.html) -------------------------------
+function achicar(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const escala = Math.min(1, MAX_LADO / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * escala);
+      c.height = Math.round(img.height * escala);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL('image/jpeg', CALIDAD));
+    };
+    img.onerror = () => reject(new Error('No se pudo leer la foto'));
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function pintarMiniaturas() {
+  $('#miniaturas').innerHTML = fotos.map((f, k) =>
+    `<figure><img src="${f.dataUrl}" alt=""><button data-quitar="${k}">×</button></figure>`
+  ).join('');
+}
+
+$('#foto-btn').addEventListener('click', () => $('#foto-input').click());
+$('#foto-input').addEventListener('change', async ev => {
+  for (const file of ev.target.files) {
+    try { fotos.push({ dataUrl: await achicar(file) }); }
+    catch (e) { alert('No se pudo agregar la foto: ' + e.message); }
+  }
+  ev.target.value = '';
+  pintarMiniaturas();
+});
+$('#miniaturas').addEventListener('click', ev => {
+  const q = ev.target.closest('[data-quitar]');
+  if (!q) return;
+  fotos.splice(Number(q.dataset.quitar), 1);
+  pintarMiniaturas();
+});
+
+// --- Tipo ---------------------------------------------------------------
+let tipo = 'incidente';
+$('#tipos').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-tipo]');
+  if (!b) return;
+  tipo = b.dataset.tipo;
+  document.querySelectorAll('#tipos .pastilla').forEach(p =>
+    p.setAttribute('aria-pressed', String(p === b)));
+});
+
+// --- Abiertos -------------------------------------------------------------
+const TIPO_EMOJI = { incidente: '🔧', reparacion: '✅', mantenimiento: '🛠️' };
+
+function diasDesde(fecha) {
+  const d0 = new Date(fecha + 'T00:00:00'), d1 = new Date(hoyISO() + 'T00:00:00');
+  return Math.round((d1 - d0) / 86400000) + 1;
+}
+
+async function cargarAbiertos() {
+  const cont = $('#abiertos');
+  try {
+    const r = await fetch('/api/bitacora/abiertos?tambo=' + encodeURIComponent(TAMBO));
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Error ' + r.status);
+    const registros = await r.json();
+    if (!registros.length) {
+      cont.innerHTML = '<div class="vacio">No hay nada abierto ahora mismo.</div>';
+      return;
+    }
+    cont.innerHTML = registros.map(reg => {
+      const dias = diasDesde(reg.fecha);
+      const puesto = reg.puesto ? ` · puesto ${reg.puesto}` : '';
+      return `<div class="abierto" data-id="${reg.id}">
+        <div class="cab">
+          <div>
+            <div class="tipo">${TIPO_EMOJI[reg.tipo] || ''} ${esc(reg.tipo)}</div>
+            <div class="sector">${esc(reg.sector)}${puesto}</div>
+          </div>
+          <div class="hace">hace ${dias} día${dias !== 1 ? 's' : ''}</div>
+        </div>
+        <div class="desc">${esc(reg.descripcion)}</div>
+        <button data-resolver="${reg.id}">Marcar resuelto</button>
+      </div>`;
+    }).join('');
+  } catch (e) {
+    cont.innerHTML = `<div class="aviso err">No se pudo traer la lista (${esc(e.message)}).</div>`;
+  }
+}
+
+$('#abiertos').addEventListener('click', async ev => {
+  const b = ev.target.closest('[data-resolver]');
+  if (!b) return;
+  b.disabled = true;
+  try {
+    const r = await fetch('/api/bitacora/registro/' + b.dataset.resolver + '/resolver?tambo='
+                          + encodeURIComponent(TAMBO), { method: 'POST' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Error ' + r.status);
+    await cargarAbiertos();
+  } catch (e) {
+    alert('No se pudo marcar como resuelto: ' + e.message);
+    b.disabled = false;
+  }
+});
+
+// --- Guardar ----------------------------------------------------------------
+$('#guardar').addEventListener('click', async () => {
+  const sector = $('#sector').value.trim();
+  const descripcion = $('#descripcion').value.trim();
+  if (!sector || !descripcion) {
+    $('#mensaje').innerHTML = '<div class="aviso err">Falta el sector/equipo o la descripción.</div>';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    return;
+  }
+  const btn = $('#guardar');
+  btn.disabled = true;
+
+  const carga = {
+    datos: {
+      tipo, sector, puesto: $('#puesto').value || null, descripcion, fecha: hoyISO(),
+      offline_id: (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()),
+    },
+    fotos,
+  };
+
+  let aviso;
+  try {
+    await enviarCarga(carga);
+    aviso = '<div class="aviso ok">Guardado. ¡Gracias!</div>';
+  } catch (e) {
+    if (e.definitivo) {
+      $('#mensaje').innerHTML = `<div class="aviso err">${esc(e.message)}</div>`;
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      btn.disabled = false;
+      return;
+    }
+    await encolar(carga);
+    aviso = '<div class="aviso pend">Sin señal: queda guardado en el celular y se manda solo.</div>';
+  }
+  $('#sector').value = ''; $('#puesto').value = ''; $('#descripcion').value = '';
+  fotos = []; pintarMiniaturas();
+  tipo = 'incidente';
+  document.querySelectorAll('#tipos .pastilla').forEach(p =>
+    p.setAttribute('aria-pressed', String(p.dataset.tipo === 'incidente')));
+  btn.disabled = false;
+  $('#mensaje').innerHTML = aviso;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  await cargarAbiertos();
+});
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/bitacora/sw.js', { scope: '/bitacora/' }).catch(() => {});
+}
+pintarPendientes();
+vaciarCola();
+cargarAbiertos();
+</script>
+</body>
+</html>

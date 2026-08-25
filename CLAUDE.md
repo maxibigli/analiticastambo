@@ -1524,6 +1524,53 @@ las tres secciones aparecen en el orden correcto en un solo envío; si no hay
 nada que avisar, no se manda nada; si el check-list está desactivado, esa
 sección se omite sin afectar al resto.
 
+## Bitácora de incidentes y reparaciones (24/08/2026)
+
+Pedido del usuario, surgido de la propia conversación sobre las alertas de
+incidencias: un lugar donde CUALQUIER empleado pueda registrar un incidente
+o una reparación, a cualquier hora, fácil desde el celular — a diferencia
+del Check-list de control, que tiene agenda fija (por ordeñe/diario/
+semanal). `bitacora.py` + `templates/bitacora.html`, mismo patrón que
+`/checklist/`: página propia (no vive dentro de `index.html`), mismo login
+que el resto de la app pero sin el menú de admin, instalable como PWA
+(`/bitacora/manifest.webmanifest` + `/bitacora/sw.js`, scope propio para no
+pisar el caché de la app principal ni el del check-list), cola offline en
+`localStorage` para cuando no hay señal en la sala, fotos redimensionadas en
+el celular antes de subir. Base propia `bitacora.db` + `bitacora_fotos/`,
+gitignored, mismo criterio que `checklist.db`.
+
+**A propósito NO tiene la agenda ni el versionado del Check-list**: es una
+lista simple (tipo, sector/equipo, puesto opcional, descripción, foto) que
+cualquiera agrega en cualquier momento, con un estado abierto/resuelto
+explícito (un botón "Marcar resuelto"), no derivado de "la próxima vez que
+esa tarea dé OK" como las fallas del check-list.
+
+**Se cruza con la alerta de incidencias de la rotativa** (pedido explícito
+del usuario, no una idea mía sin confirmar):
+`bitacora.abiertos_por_puesto(tambo)` da `{puesto: fecha del reporte más
+viejo abierto}`, y `app.py::_lineas_alertas_puntuales` lo usa para agregar
+"ya reportado el DD/MM" al lado del puesto en la línea de incidencias — así
+la alerta no repite "puesto 21 roto" como si fuera nuevo cada vez que se
+dispara, si ya hay alguien atendiéndolo. Solo cruza por `puesto` (entero);
+un registro sin puesto (Usher, Piatinero, etc.) no tiene con qué cruzarse y
+no aparece en `abiertos_por_puesto`.
+
+**Sin rol de admin para usarla** (`/bitacora/` y sus `/api/bitacora/*` NO
+llevan `@auth.requiere_rol("admin")`, mismo criterio que `/checklist/` y
+`/api/checklist/plantilla`/`corrida`): cualquier usuario logueado, admin u
+operario, puede cargar y resolver — es justamente pensada para que el
+empleado no necesite una cuenta especial.
+
+Probado: validaciones (tipo/sector/descripción/puesto inválidos, todas
+rechazadas con `ValueError`/400), dedup por `offline_id` (mismo criterio que
+`checklist.guardar_corrida`), foto subida y servida byte a byte igual a la
+original, abrir → aparece en `/api/bitacora/abiertos` → resolver → ya no
+aparece, doble resolución rechazada, y el cruce con la alerta de
+incidencias (puesto con reporte abierto muestra "ya reportado el ...",
+puesto sin reporte no) — todo con rutas HTTP reales via el test client de
+Flask, no solo las funciones sueltas. Probado también a mano en el
+navegador: cargar un registro, verlo aparecer en "Abiertos", resolverlo.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

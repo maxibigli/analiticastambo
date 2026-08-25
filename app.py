@@ -18,6 +18,7 @@ import agente
 import ai
 import alimentacion
 import auth
+import bitacora
 import checklist
 import cicla
 import conciliacion
@@ -1798,6 +1799,114 @@ def checklist_foto(foto_id: int):
     """Sirve una foto del check-list. La ruta se arma SIEMPRE desde lo que hay
     en la base, nunca con algo del request (ver checklist.ruta_de_foto)."""
     ruta = checklist.ruta_de_foto(foto_id)
+    if not ruta:
+        return jsonify({"error": "No existe esa foto"}), 404
+    carpeta, nombre = os.path.dirname(ruta[0]), ruta[1]
+    return send_from_directory(carpeta, nombre)
+
+
+# ---------------------------------------------------------------------------
+# Bitácora de incidentes y reparaciones: la carga rápida de cualquier
+# empleado, a cualquier hora, sin la agenda fija del Check-list. Mismo patrón
+# de página propia + PWA + cola offline que /checklist/ (ver bitacora.py).
+# ---------------------------------------------------------------------------
+@app.get("/bitacora/")
+def bitacora_pagina():
+    return render_template("bitacora.html", usuario=auth.usuario_actual(),
+                           rol=auth.rol_actual(), tambo=_tambo_del_request())
+
+
+@app.get("/bitacora/manifest.webmanifest")
+def bitacora_manifest():
+    return jsonify({
+        "name": "Bitácora del tambo", "short_name": "Bitácora",
+        "start_url": "/bitacora/", "scope": "/bitacora/",
+        "display": "standalone", "background_color": "#0b1016", "theme_color": "#0b1016",
+        "icons": [{"src": "/static/img/logo.svg", "sizes": "any", "type": "image/svg+xml",
+                   "purpose": "any"}],
+    })
+
+
+@app.get("/bitacora/sw.js")
+def bitacora_sw():
+    """Service worker con scope /bitacora/ -- mismo motivo que checklist_sw:
+    con scope "/" interceptaría la app principal."""
+    js = """
+const CACHE = 'bitacora-v1';
+const SHELL = ['/bitacora/', '/bitacora/manifest.webmanifest'];
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
+});
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys()
+    .then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    .then(() => self.clients.claim()));
+});
+self.addEventListener('fetch', e => {
+  if (e.request.method !== 'GET') return;
+  const url = new URL(e.request.url);
+  if (!url.pathname.startsWith('/bitacora/') || url.pathname.includes('/api/')) return;
+  e.respondWith(
+    fetch(e.request).then(r => {
+      const copia = r.clone();
+      caches.open(CACHE).then(c => c.put(e.request, copia));
+      return r;
+    }).catch(() => caches.match(e.request))
+  );
+});
+"""
+    return Response(js, mimetype="application/javascript")
+
+
+@app.get("/api/bitacora/abiertos")
+def api_bitacora_abiertos():
+    tambo = _tambo_del_request()
+    return jsonify(bitacora.abiertos(tambo))
+
+
+@app.post("/api/bitacora/registro")
+def api_bitacora_guardar():
+    """Guarda un registro nuevo. Llega como multipart en UNA sola pieza --el
+    JSON en el campo `datos` y las fotos en `foto_0`, `foto_1`, ...-- mismo
+    criterio que /api/checklist/corrida: del otro lado hay una cola que
+    reintenta, y un registro a medias es peor que ninguno."""
+    tambo = _tambo_del_request()
+    try:
+        datos = json.loads(request.form.get("datos") or "{}")
+    except ValueError:
+        return jsonify({"error": "El cuerpo del registro no es JSON válido"}), 400
+
+    fotos = []
+    try:
+        for campo, archivo in request.files.items(multi=True):
+            if not campo.startswith("foto_"):
+                continue
+            contenido = archivo.read()
+            ext = bitacora.validar_foto(archivo.filename or campo, archivo.mimetype, contenido)
+            fotos.append((bitacora.nombre_de_foto(ext), contenido))
+
+        res = bitacora.crear_registro(
+            tambo=tambo, tipo=datos.get("tipo"), sector=datos.get("sector"),
+            puesto=datos.get("puesto"), descripcion=datos.get("descripcion"),
+            usuario=auth.usuario_actual(), fecha=datos.get("fecha"),
+            offline_id=datos.get("offline_id"), fotos=fotos)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify(res)
+
+
+@app.post("/api/bitacora/registro/<int:registro_id>/resolver")
+def api_bitacora_resolver(registro_id: int):
+    if not bitacora.resolver(registro_id, auth.usuario_actual()):
+        return jsonify({"error": "Ese registro no existe o ya estaba resuelto."}), 400
+    return jsonify({"ok": True})
+
+
+@app.get("/bitacora/foto/<int:foto_id>")
+def bitacora_foto(foto_id: int):
+    """Sirve una foto de la bitácora. Mismo criterio que checklist_foto: la
+    ruta se arma SIEMPRE desde lo que hay en la base."""
+    ruta = bitacora.ruta_de_foto(foto_id)
     if not ruta:
         return jsonify({"error": "No existe esa foto"}), 404
     carpeta, nombre = os.path.dirname(ruta[0]), ruta[1]
@@ -4533,9 +4642,17 @@ def _lineas_alertas_puntuales(tambo: str) -> list:
             umbral_rojo = max(round(mediana * 2.5), 4)
             problemas = sorted([(p, t) for p, t in totales if t >= umbral_rojo], key=lambda x: -x[1])
             if problemas:
-                detalle = ", ".join(f"puesto {p} ({t})" for p, t in problemas)
+                # Si ya hay un registro abierto en la Bitácora para ese puesto, se
+                # aclara en vez de repetir el mismo aviso como si fuera nuevo cada
+                # vez que se dispara la alerta (ver bitacora.abiertos_por_puesto).
+                reportados = bitacora.abiertos_por_puesto(tambo)
+                partes = []
+                for p, t in problemas:
+                    fecha_rep = reportados.get(int(p)) if p is not None else None
+                    extra = f", ya reportado el {fecha_rep}" if fecha_rep else ""
+                    partes.append(f"puesto {p} ({t}{extra})")
                 lineas.append(f"🔧 Incidencias: {len(problemas)} puesto(s) muy por encima de la mediana "
-                              f"({mediana:.0f}) hoy — {detalle}. Posible unidad fallada.")
+                              f"({mediana:.0f}) hoy — {', '.join(partes)}. Posible unidad fallada.")
 
     return lineas
 
