@@ -1571,6 +1571,28 @@ puesto sin reporte no) — todo con rutas HTTP reales via el test client de
 Flask, no solo las funciones sueltas. Probado también a mano en el
 navegador: cargar un registro, verlo aparecer en "Abiertos", resolverlo.
 
+## /api/iot/pantalla: endpoint público para una pantalla ESP32 (25/08/2026)
+
+El usuario quiere mostrar el estado del gateway IoT (lavado/barrido de la
+rotativa + sensores de temperatura/humedad) en una pantalla táctil externa
+(Waveshare ESP32-P4-WIFI6-Touch-LCD-7B) — un microcontrolador que hace un
+`GET` periódico por WiFi, no un navegador con sesión.
+
+**Público a propósito** (sumado a `_RUTAS_PUBLICAS`, mismo criterio que
+`/webhook/whatsapp`): un ESP32 no puede iniciar sesión como un usuario. Se
+expone lo MÍNIMO — el mismo estado que ya muestra el panel de Monitoreo IoT
+(`iot_monitoreo.estado_sistema`/`lecturas_actuales`), sin agregar ninguna
+consulta nueva — reempaquetado en un JSON chico y plano (`{estado, desde,
+sensores: {clave: {valor, unidad, label}}}`), pensado para parsearse fácil
+con la poca memoria de un microcontrolador (`ArduinoJson` o el `cJSON` de
+ESP-IDF). Nada de lo que devuelve es sensible (ni animales, ni plata): es
+exactamente el mismo dato que ya se ve en el dashboard sin login.
+
+Si el ESP32 termina viviendo en la red del tambo, conviene que apunte a la
+IP local de la PC en vez de salir a internet y volver por Cloudflare — más
+simple y no depende de que ande la conexión a internet del tambo para ver
+un dato que está ahí mismo, en la red local.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

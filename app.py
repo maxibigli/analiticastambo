@@ -89,7 +89,7 @@ else:
 app.permanent_session_lifetime = datetime.timedelta(days=30)
 
 # Rutas que no requieren haber iniciado sesión.
-_RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp"}
+_RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla"}
 
 
 @app.before_request
@@ -2297,6 +2297,24 @@ def api_iot_estado():
         "sistema": iot_monitoreo.estado_sistema(tambo),
         "sensores": iot_monitoreo.lecturas_actuales(),
     })
+
+
+@app.get("/api/iot/pantalla")
+def api_iot_pantalla():
+    """Estado del gateway IoT para una pantalla externa (ESP32), SIN login --
+    un microcontrolador no puede iniciar sesión como un navegador. Público a
+    propósito, mismo criterio que /webhook/whatsapp: se expone lo mínimo y
+    nada sensible (ni animales, ni plata) -- el mismo estado de la rotativa
+    y los mismos sensores que ya muestra el panel de Monitoreo IoT, en un
+    JSON chico y plano, fácil de parsear con la poca memoria de un
+    microcontrolador."""
+    tambo = _tambo_del_request()
+    sistema = iot_monitoreo.estado_sistema(tambo)
+    sensores = {
+        s["clave"]: {"valor": s["valor"], "unidad": s["unidad"], "label": s["label"]}
+        for s in iot_monitoreo.lecturas_actuales()
+    }
+    return jsonify({"estado": sistema["estado"], "desde": sistema["desde"], "sensores": sensores})
 
 
 # --- Problemas podales (renguera por cámaras) -------------------------------
