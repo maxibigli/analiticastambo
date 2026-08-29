@@ -34,6 +34,7 @@ import flujos
 import genetica
 import herencia
 import gestacion
+import iot_canales
 import iot_monitoreo
 import laserenisima
 import mantenimiento
@@ -89,7 +90,8 @@ else:
 app.permanent_session_lifetime = datetime.timedelta(days=30)
 
 # Rutas que no requieren haber iniciado sesión.
-_RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla"}
+_RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla", "/api/iot/pantalla/historico",
+                    "/api/iot/pantalla/io", "/api/iot/pantalla/actuador"}
 
 
 @app.before_request
@@ -2315,6 +2317,89 @@ def api_iot_pantalla():
         for s in iot_monitoreo.lecturas_actuales()
     }
     return jsonify({"estado": sistema["estado"], "desde": sistema["desde"], "sensores": sensores})
+
+
+_RANGOS_HISTORICO_IOT = {"7d": 7, "15d": 15, "30d": 30, "180d": 180}
+
+
+@app.get("/api/iot/pantalla/historico")
+def api_iot_pantalla_historico():
+    """Histórico de UN sensor para el gráfico de la pantalla ESP32 -- mismo
+    criterio público que /api/iot/pantalla (un microcontrolador no puede
+    iniciar sesión). Ver iot_monitoreo.historico para el agrupado en baldes
+    de tiempo (la pantalla no tiene memoria para miles de puntos)."""
+    sensor = request.args.get("sensor", "")
+    rango = request.args.get("rango", "7d")
+    dias = _RANGOS_HISTORICO_IOT.get(rango)
+    if dias is None:
+        return jsonify({"error": f"Rango inválido: {rango} (opciones: "
+                                  f"{', '.join(_RANGOS_HISTORICO_IOT)})"}), 400
+    validos = {s["clave"] for s in iot_monitoreo.SENSORES_PLANEADOS} | {"ith"}
+    if sensor not in validos:
+        return jsonify({"error": f"Sensor inválido: {sensor}"}), 400
+    hasta = datetime.datetime.now()
+    desde = hasta - datetime.timedelta(days=dias)
+    puntos = iot_monitoreo.historico(sensor, desde.isoformat(), hasta.isoformat())
+    return jsonify({"sensor": sensor, "rango": rango, "puntos": puntos})
+
+
+def _pedido_via_tunel() -> bool:
+    """True si el pedido llegó por el túnel de Cloudflare (público, internet)
+    en vez de directo por la red del tambo. Cloudflared agrega
+    CF-Connecting-IP con la IP real del visitante cuando reenvía tráfico del
+    túnel; un pedido que entra directo a esta PC por la LAN (como el de la
+    pantalla ESP32) nunca trae ese header."""
+    return bool(request.headers.get("CF-Connecting-IP"))
+
+
+@app.get("/api/iot/pantalla/io")
+def api_iot_pantalla_io():
+    """Estado de las 8 entradas + 8 salidas del M300 para la pestaña
+    Actuadores de la pantalla ESP32 -- mismo criterio público que
+    /api/iot/pantalla (de solo lectura, sin nada sensible)."""
+    return jsonify(iot_monitoreo.panel_io())
+
+
+@app.post("/api/iot/pantalla/actuador")
+def api_iot_pantalla_actuador():
+    """Pulso manual de un actuador (salida del M300) pedido desde la
+    pantalla ESP32. A DIFERENCIA de /api/iot/pantalla e /historico (solo
+    lectura, público a propósito), esto ACTIVA un equipo real -- se bloquea
+    todo pedido que llegue por el túnel de Cloudflare (internet) y solo se
+    acepta el que entra directo por la red del tambo, donde vive la
+    pantalla. Ver iot_monitoreo.solicitar_pulso: esto solo ENCOLA el pulso,
+    lo ejecuta iot_lavado.py (dueño único de la conexión Modbus al M300)."""
+    if _pedido_via_tunel():
+        return jsonify({"error": "No se puede activar un actuador desde fuera de la red del tambo"}), 403
+    datos = request.get_json(silent=True) or {}
+    canal = datos.get("canal", "")
+    if not iot_monitoreo.solicitar_pulso(canal):
+        return jsonify({"error": f"Canal inválido: {canal}"}), 400
+    return jsonify({"encolado": True, "canal": canal}), 202
+
+
+@app.get("/api/iot/canales")
+@auth.requiere_rol("admin")
+def api_iot_canales_listar():
+    """Nombres (custom o genérico) de las 8 entradas + 8 salidas del M300,
+    para el editor de ⚙ Configuración › 🔌 Entradas/Salidas."""
+    custom = iot_canales.nombres()
+    entradas = [{"clave": c, "default": l, "nombre": custom.get(c, l)} for c, l in iot_monitoreo.ENTRADAS_PANEL]
+    salidas = [{"clave": c, "default": l, "nombre": custom.get(c, l)} for c, l in iot_monitoreo.SALIDAS_PANEL]
+    return jsonify({"entradas": entradas, "salidas": salidas})
+
+
+@app.post("/api/iot/canales")
+@auth.requiere_rol("admin")
+def api_iot_canales_guardar():
+    nombres = (request.json or {}).get("nombres")
+    if not isinstance(nombres, dict):
+        return jsonify({"error": "Formato inválido."}), 400
+    try:
+        iot_canales.guardar(nombres)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
 
 
 # --- Problemas podales (renguera por cámaras) -------------------------------

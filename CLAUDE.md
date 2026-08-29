@@ -1593,6 +1593,65 @@ IP local de la PC en vez de salir a internet y volver por Cloudflare — más
 simple y no depende de que ande la conexión a internet del tambo para ver
 un dato que está ahí mismo, en la red local.
 
+## Actuadores/Entradas del gateway M300 en la pantalla ESP32 (28-29/08/2026)
+
+Pedido del usuario: mostrar en la pantalla táctil (ver
+`C:\Users\MAXI\CLAUDE\esp32-pantalla-lactia\`) un panel de las 8 entradas
+(sensores on/off) y 8 salidas (actuadores) que tiene disponibles el gateway
+PUSR M300, con botones para activar las salidas manualmente.
+
+**Las salidas son PULSADORES, no llaves.** Tocar una activa la salida un
+ratito (`iot_lavado.DURACION_PULSO_S = 0.5`) y se suelta sola — mismo
+concepto que un botón de arranque de un tablero real, más seguro que dejar
+una salida prendida indefinidamente desde una pantalla que no ve el equipo.
+La pantalla pide CONFIRMACIÓN (tocar dos veces) antes de mandar el pulso,
+justamente por controlar equipos físicos reales.
+
+**`iot_lavado.py` es el ÚNICO dueño de la conexión Modbus al M300** — antes
+solo sondeaba 2 entradas (lavado/barrido), ahora sondea las 8
+(`CANALES` en ese archivo) y además revisa una tabla `comandos_actuador`
+en cada ciclo para ejecutar pulsos pedidos desde la pantalla. `app.py` NO
+abre su propia conexión Modbus: solo ENCOLA el pedido en esa tabla
+(`iot_monitoreo.solicitar_pulso`) — abrir una segunda conexión TCP en
+paralelo se arriesgaba a pisarse con el polling continuo.
+
+**El endpoint que activa un actuador (`POST /api/iot/pantalla/actuador`) se
+bloquea si el pedido llega por el túnel de Cloudflare** (chequea el header
+`CF-Connecting-IP` que agrega cloudflared) — a diferencia de
+`/api/iot/pantalla`/`/historico`/`/io` (de solo lectura, públicos sin
+restricción), activar un equipo real desde fuera de la red del tambo es un
+riesgo que no vale la pena. Decisión explícita del usuario entre tres
+opciones (token propio / solo LAN / las dos) — eligió solo LAN.
+
+**Nombres personalizados de cada canal, desde la web** (⚙ Configuración ›
+🔌 Entradas/Salidas, 29/08/2026): `iot_canales.py` guarda
+`{clave: nombre}` en `iot_canales_nombres.json` (gitignored, mismo
+criterio que `alertas_canales.json`) — deliberadamente SIN import de
+`iot_monitoreo`/`iot_lavado` (que sí lo importan a él) para no armar un
+ciclo; la lista de claves válidas está declarada ahí mismo. Dejar el campo
+vacío en la tabla de la web vuelve al nombre genérico ("Entrada 3",
+"Actuador 1"), no hace falta borrar una fila. `iot_monitoreo.panel_io()`
+aplica estos nombres por encima de `ENTRADAS_PANEL`/`SALIDAS_PANEL` — tanto
+la pantalla ESP32 (que lee `/api/iot/pantalla/io`) como cualquier pantalla
+web futura ven el nombre que cargó el tambo, sin tocar código.
+
+**Pendiente, y es una decisión del tambo, no del código**: qué actuador
+físico va en cada una de las 8 salidas todavía no está definido — hoy son
+genéricas y no hay ningún cable conectado a la mayoría. Activar un pulso en
+una salida sin nada conectado no hace nada (ni bueno ni malo); antes de
+cablear algo de verdad ahí, confirmar qué dirección Modbus (0 a 7, ver
+`iot_lavado.ACTUADORES`) corresponde a qué salida física del M300.
+
+## Solapa 🔌 Entradas/Salidas: mismo patrón que 🤖 IA por WhatsApp
+
+Tabla editable de 16 filas FIJAS (no se agregan/sacan, a diferencia del
+Check-list o de IA por WhatsApp) — se edita `{clave: nombre}` directo en vez
+de un array de objetos. Mismo mecanismo de "Guardar deshabilitado hasta que
+cambia algo" (`JSON.stringify(actual) !== original`) y mismo endpoint
+admin-gateado (`@auth.requiere_rol("admin")`) que el resto de
+Configuración. `cargarCanalesGateway()` se agregó a la lista de loaders de
+`cargarConfiguracion()`, junto a `cargarWhatsappIa()` y el resto.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

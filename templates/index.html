@@ -2773,6 +2773,7 @@
     <button class="lac-segment__item" data-tab="parametros" aria-pressed="false">🧬 Parámetros Reproductivos</button>
     <button class="lac-segment__item" data-tab="metas" aria-pressed="false">🎯 Calibración de Objetivos</button>
     <button class="lac-segment__item" data-tab="ia_whatsapp" aria-pressed="false">🤖 IA por WhatsApp</button>
+    <button class="lac-segment__item" data-tab="iot_canales" aria-pressed="false">🔌 Entradas/Salidas</button>
   </div>
 
   <section class="card" id="config-general-card">
@@ -3101,6 +3102,24 @@
     <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
       <button class="secundario" id="config-ia-whatsapp-agregar">+ Agregar número</button>
       <button id="config-ia-whatsapp-guardar" disabled>Guardar</button>
+    </div>
+  </section>
+
+  <section class="card" id="config-iot-canales-card" hidden>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🔌 Entradas y Salidas del Gateway IoT</h2>
+      <span class="aviso">Nombres que ve la pantalla táctil del tambo, en la pestaña Actuadores.</span>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      El gateway PUSR M300 tiene 8 entradas (sensores on/off) y 8 salidas (actuadores tipo
+      pulsador, se activan un instante y se sueltan solas). Dos entradas ya tienen nombre fijo
+      (lavado y barrido de la rotativa); el resto se muestran con un nombre genérico hasta que
+      les pongas uno acá. Dejar el campo vacío vuelve al nombre genérico.
+    </p>
+    <div class="aviso" id="config-iot-canales-estado" style="margin:8px 0"></div>
+    <div style="overflow-x:auto"><table class="tabla" id="config-iot-canales-tabla"></table></div>
+    <div style="margin-top:14px">
+      <button id="config-iot-canales-guardar" disabled>Guardar</button>
     </div>
   </section>
   </div>
@@ -10624,6 +10643,7 @@ async function cargarConfiguracion() {
     cargarCanalesAlertas();
     cargarHorarioAlertas();
     cargarWhatsappIa();
+    cargarCanalesGateway();
     estado.textContent = '';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
@@ -10646,6 +10666,7 @@ document.getElementById('config-tabs').addEventListener('click', ev => {
   document.getElementById('config-parametros-card').hidden = tab !== 'parametros';
   document.getElementById('config-metas-card').hidden = tab !== 'metas';
   document.getElementById('config-ia-whatsapp-card').hidden = tab !== 'ia_whatsapp';
+  document.getElementById('config-iot-canales-card').hidden = tab !== 'iot_canales';
 });
 
 // --- Editor de la plantilla del check-list ---------------------------------
@@ -10855,6 +10876,72 @@ document.getElementById('config-ia-whatsapp-guardar').addEventListener('click', 
     });
     iaWaOriginal = JSON.stringify(iaWaItems);
     pintarWhatsappIa();
+    estado.textContent = '✔ Guardado.';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+});
+
+// --- Nombres de las entradas/salidas del gateway IoT (M300) -----------------
+// Lista de 16 canales FIJOS (no se agregan ni se sacan filas, a diferencia de
+// la tabla de arriba): se edita {clave: nombre} directo, sin array intermedio.
+let canalesGatewayTodos = [];
+let canalesGatewayActual = {};
+let canalesGatewayOriginal = '';
+
+async function cargarCanalesGateway() {
+  const estado = document.getElementById('config-iot-canales-estado');
+  estado.textContent = 'Cargando…';
+  try {
+    const d = await pedirJSON('/api/iot/canales');
+    canalesGatewayTodos = [
+      ...(d.entradas || []).map(c => ({ ...c, tipo: 'Entrada' })),
+      ...(d.salidas || []).map(c => ({ ...c, tipo: 'Salida' })),
+    ];
+    canalesGatewayActual = {};
+    canalesGatewayTodos.forEach(c => {
+      canalesGatewayActual[c.clave] = (c.nombre !== c.default) ? c.nombre : '';
+    });
+    canalesGatewayOriginal = JSON.stringify(canalesGatewayActual);
+    pintarCanalesGateway();
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+function pintarCanalesGateway() {
+  const t = document.getElementById('config-iot-canales-tabla');
+  t.innerHTML = `
+    <thead><tr><th style="width:90px">Tipo</th><th style="width:220px">Canal</th>
+      <th>Nombre personalizado</th></tr></thead>
+    <tbody>${canalesGatewayTodos.map(c => `<tr>
+      <td>${escHtml(c.tipo)}</td>
+      <td>${escHtml(c.default)}</td>
+      <td><input data-clave="${escHtml(c.clave)}" value="${escHtml(canalesGatewayActual[c.clave] || '')}"
+          placeholder="${escHtml(c.default)}" style="width:100%;padding:6px"></td>
+    </tr>`).join('')}</tbody>`;
+  const cambiado = JSON.stringify(canalesGatewayActual) !== canalesGatewayOriginal;
+  document.getElementById('config-iot-canales-guardar').disabled = !cambiado;
+}
+
+document.getElementById('config-iot-canales-tabla').addEventListener('input', ev => {
+  const clave = ev.target.dataset.clave;
+  if (!clave) return;
+  canalesGatewayActual[clave] = ev.target.value;
+  const cambiado = JSON.stringify(canalesGatewayActual) !== canalesGatewayOriginal;
+  document.getElementById('config-iot-canales-guardar').disabled = !cambiado;
+});
+
+document.getElementById('config-iot-canales-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('config-iot-canales-estado');
+  estado.textContent = 'Guardando…';
+  try {
+    await pedirJSON('/api/iot/canales', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombres: canalesGatewayActual }),
+    });
+    canalesGatewayOriginal = JSON.stringify(canalesGatewayActual);
     estado.textContent = '✔ Guardado.';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;

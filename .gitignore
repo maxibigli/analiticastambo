@@ -30,6 +30,7 @@ referencia_chi_delpro.json
 # Estado propio de cada instalación, como alertas_canales.json: quién puede
 # preguntar en un tambo no tiene por qué ser lo mismo en otro.
 whatsapp_ia_autorizados.json
+iot_canales_nombres.json
 
 # Python
 __pycache__/

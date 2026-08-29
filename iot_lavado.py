@@ -31,11 +31,33 @@ INTERVALO_POLL_S = 3      # cada cuánto se pregunta el estado
 INTERVALO_RECONEXION_S = 5
 
 # Canal lógico -> (dirección Modbus 0-based, invertido?). "10001"/"10002" en
-# la UI del gateway = direcciones 0/1 acá.
+# la UI del gateway = direcciones 0/1 acá. El M300 tiene 8 DI en total; solo
+# dos están cableadas a algo con nombre (lavado/barrido) -- las otras seis
+# quedan con nombre genérico "di_N" hasta que el tambo defina qué miden. Ver
+# iot_monitoreo.panel_io, que arma el panel de 8 tarjetas con estos canales.
 CANALES = {
     "lavado_rotativa": {"direccion": 0, "invertido": False},
     "barrido_rotativa": {"direccion": 1, "invertido": False},
+    "di_3": {"direccion": 2, "invertido": False},
+    "di_4": {"direccion": 3, "invertido": False},
+    "di_5": {"direccion": 4, "invertido": False},
+    "di_6": {"direccion": 5, "invertido": False},
+    "di_7": {"direccion": 6, "invertido": False},
+    "di_8": {"direccion": 7, "invertido": False},
 }
+
+# Salidas (DO) del M300 -- 8 disponibles, ninguna con actuador físico
+# definido todavía. Se manejan como PULSADOR (se activa un ratito y se
+# suelta sola), no como llave: es el criterio más seguro para un botón que
+# se toca desde una pantalla sin ver el equipo, y es el mismo concepto que
+# un botón de arranque de un tablero real. Dirección Modbus 0-based de la
+# bobina (coil) -- espacio de direcciones DISTINTO al de las DI de arriba,
+# aunque los números se repitan (0 a 7 en los dos casos).
+ACTUADORES = {
+    "do_1": 0, "do_2": 1, "do_3": 2, "do_4": 3,
+    "do_5": 4, "do_6": 5, "do_7": 6, "do_8": 7,
+}
+DURACION_PULSO_S = 0.5
 
 RUTA_DB = "iot_sensores.db"
 
@@ -62,6 +84,15 @@ def _conectar_db(ruta: str = RUTA_DB) -> sqlite3.Connection:
         )
     """)
     con.execute("CREATE INDEX IF NOT EXISTS idx_eventos_di_canal_fecha ON eventos_di(canal, fecha_hora)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS comandos_actuador (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            canal TEXT NOT NULL,
+            fecha_hora TEXT NOT NULL,
+            ejecutado INTEGER NOT NULL DEFAULT 0,
+            resultado TEXT
+        )
+    """)
     con.commit()
     return con
 
@@ -89,6 +120,35 @@ def registrar_si_cambio(con: sqlite3.Connection, canal: str, estado: bool, estad
     con.commit()
     print(f"{ahora}  {canal} -> {'ACTIVO' if estado else 'inactivo'}")
     return estado
+
+
+def ejecutar_comandos_pendientes(con: sqlite3.Connection, client: ModbusTcpClient):
+    """Busca pulsos de actuador pedidos desde la pantalla (tabla
+    comandos_actuador, cargada por Flask) y los ejecuta ACA -- este proceso
+    es el único dueño de la conexión Modbus al M300, para no abrir una
+    segunda conexión TCP en paralelo desde app.py y pisarse con esta."""
+    pendientes = con.execute(
+        "SELECT id, canal FROM comandos_actuador WHERE ejecutado = 0 ORDER BY id"
+    ).fetchall()
+    for cmd_id, canal in pendientes:
+        direccion = ACTUADORES.get(canal)
+        if direccion is None:
+            resultado = f"error: canal desconocido ({canal})"
+        else:
+            try:
+                if not client.connected:
+                    client.connect()
+                client.write_coil(address=direccion, value=True, device_id=1)
+                time.sleep(DURACION_PULSO_S)
+                client.write_coil(address=direccion, value=False, device_id=1)
+                resultado = "ok"
+                print(f"{datetime.datetime.now().isoformat(timespec='seconds')}  "
+                      f"pulso en {canal} (dirección {direccion})")
+            except Exception as e:  # noqa: BLE001
+                resultado = f"error: {e}"
+        con.execute("UPDATE comandos_actuador SET ejecutado = 1, resultado = ? WHERE id = ?",
+                    (resultado, cmd_id))
+        con.commit()
 
 
 def _anunciar_voz(texto: str):
@@ -125,6 +185,7 @@ def main():
                 anteriores[canal] = registrar_si_cambio(con, canal, estado, anteriores[canal])
                 if arranco and AUDIO_ACTIVADO and canal in MENSAJES_VOZ:
                     _anunciar_voz(MENSAJES_VOZ[canal])
+            ejecutar_comandos_pendientes(con, client)
             time.sleep(INTERVALO_POLL_S)
     except KeyboardInterrupt:
         print("Cortado por el usuario.")

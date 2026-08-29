@@ -21,7 +21,8 @@ import datetime
 import sqlite3
 
 import db
-from iot_lavado import RUTA_DB, _conectar_db
+import iot_canales
+from iot_lavado import RUTA_DB, _conectar_db, ACTUADORES
 
 MINUTOS_ORDENO_ACTIVO = 15  # última visita dentro de esta ventana = "ordeñando"
 CACHE_ORDENO_TTL_S = 30     # el frontend refresca cada 5s; sin esto pegaría
@@ -113,6 +114,71 @@ def estado_sistema(tambo: str) -> dict:
     }
 
 
+# Panel de entradas/salidas del M300 (pestaña Actuadores de la pantalla
+# ESP32) -- 8 DI + 8 DO, ver iot_lavado.CANALES/ACTUADORES. Los dos primeros
+# DI ya tienen semántica propia (lavado/barrido, con su badge de estado en
+# la pestaña Sensores); el resto son genéricos hasta que el tambo defina qué
+# sensor/actuador va en cada uno -- mismo criterio que SENSORES_PLANEADOS.
+ENTRADAS_PANEL = [
+    ("lavado_rotativa", "Entrada 1 (lavado)"),
+    ("barrido_rotativa", "Entrada 2 (barrido)"),
+    ("di_3", "Entrada 3"),
+    ("di_4", "Entrada 4"),
+    ("di_5", "Entrada 5"),
+    ("di_6", "Entrada 6"),
+    ("di_7", "Entrada 7"),
+    ("di_8", "Entrada 8"),
+]
+SALIDAS_PANEL = [(f"do_{i}", f"Actuador {i}") for i in range(1, 9)]
+
+
+def panel_io() -> dict:
+    """Estado de las 8 entradas (on/off) y las 8 salidas (pulsador) del M300,
+    para la pestaña Actuadores de la pantalla ESP32. Las salidas NO tienen
+    estado persistente -- son un pulso momentáneo, no una llave -- así que lo
+    único que se informa de ellas es cuándo se activaron por última vez."""
+    nombres_custom = iot_canales.nombres()
+    entradas = [
+        {"clave": clave, "label": nombres_custom.get(clave, label), "estado": estado, "desde": desde}
+        for clave, label in ENTRADAS_PANEL
+        for estado, desde in [_ultimo_estado_canal(clave)]
+    ]
+
+    con = _conectar_db()
+    try:
+        salidas = []
+        for clave, label in SALIDAS_PANEL:
+            fila = con.execute(
+                "SELECT fecha_hora FROM comandos_actuador WHERE canal = ? AND resultado = 'ok' "
+                "ORDER BY fecha_hora DESC LIMIT 1", (clave,)
+            ).fetchone()
+            salidas.append({"clave": clave, "label": nombres_custom.get(clave, label),
+                            "ultima_activacion": fila[0] if fila else None})
+    finally:
+        con.close()
+
+    return {"entradas": entradas, "salidas": salidas}
+
+
+def solicitar_pulso(canal: str) -> bool:
+    """Encola un pulso de actuador -- lo EJECUTA iot_lavado.py en su propio
+    ciclo (dueño único de la conexión Modbus al M300; si esta función abriera
+    su propia conexión se arriesgaría a pisarse con el polling continuo de
+    DI que ya corre ahí). True si el canal es válido y quedó encolado."""
+    if canal not in ACTUADORES:
+        return False
+    con = _conectar_db()
+    try:
+        con.execute(
+            "INSERT INTO comandos_actuador (canal, fecha_hora, ejecutado) VALUES (?, ?, 0)",
+            (canal, datetime.datetime.now().isoformat(timespec="seconds"))
+        )
+        con.commit()
+    finally:
+        con.close()
+    return True
+
+
 def lecturas_actuales() -> list:
     """Último valor conocido de cada sensor planeado (None = todavía sin
     instalar / sin datos). El ITH se calcula al vuelo si hay temp+hum de
@@ -149,3 +215,58 @@ def lecturas_actuales() -> list:
     salida.append({"clave": "ith", "label": "ITH (estrés calórico)", "unidad": "", "min": 50, "max": 90,
                     "valor": ith, "fecha_hora": None})
     return salida
+
+
+def historico(sensor: str, desde: str, hasta: str, max_puntos: int = 150) -> list:
+    """Serie temporal de un sensor entre desde/hasta (fechas ISO, con hora),
+    agrupada en baldes de tiempo para no mandar miles de puntos a una
+    pantalla chica -- como mucho `max_puntos` valores, cada uno el promedio
+    de su balde. [] si no hay ninguna lectura en el rango (sensor sin
+    instalar todavía, o directamente sin datos en esas fechas -- son la
+    MISMA situación hoy: ver la nota de arriba, nadie escribe en
+    `lecturas_sensor` todavía).
+
+    "ith" es un caso especial: se calcula por balde a partir de los
+    promedios de temp_ambiente y hum_ambiente de ESE MISMO balde, no de un
+    valor propio guardado (mismo criterio que `calcular_ith` en
+    `lecturas_actuales`)."""
+    if sensor == "ith":
+        temps = {p["fecha_hora"]: p["valor"] for p in historico("temp_ambiente", desde, hasta, max_puntos)}
+        hums = {p["fecha_hora"]: p["valor"] for p in historico("hum_ambiente", desde, hasta, max_puntos)}
+        return [{"fecha_hora": f, "valor": calcular_ith(temps[f], hums[f])}
+                for f in sorted(temps) if f in hums]
+
+    con = sqlite3.connect(RUTA_DB)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS lecturas_sensor (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sensor TEXT NOT NULL,
+            fecha_hora TEXT NOT NULL,
+            valor REAL NOT NULL
+        )
+    """)
+    filas = con.execute(
+        "SELECT fecha_hora, valor FROM lecturas_sensor WHERE sensor = ? AND fecha_hora BETWEEN ? AND ? "
+        "ORDER BY fecha_hora", (sensor, desde, hasta)
+    ).fetchall()
+    con.close()
+    if not filas:
+        return []
+
+    t0 = datetime.datetime.fromisoformat(filas[0][0])
+    t1 = datetime.datetime.fromisoformat(filas[-1][0])
+    # Minimo 60s por balde: con pocos datos (todo el rango cabe en un
+    # instante) evita una division que de un balde de 0 segundos.
+    balde_s = max((t1 - t0).total_seconds() / max_puntos, 60)
+
+    baldes: dict = {}
+    for fecha_hora, valor in filas:
+        t = datetime.datetime.fromisoformat(fecha_hora)
+        idx = int((t - t0).total_seconds() // balde_s)
+        baldes.setdefault(idx, []).append(valor)
+
+    return [
+        {"fecha_hora": (t0 + datetime.timedelta(seconds=idx * balde_s)).isoformat(timespec="minutes"),
+         "valor": round(sum(vals) / len(vals), 2)}
+        for idx, vals in sorted(baldes.items())
+    ]
