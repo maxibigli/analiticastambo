@@ -27,6 +27,7 @@ from pymodbus.client import ModbusTcpClient
 
 import iot_conexion
 import lavado_programa
+import voz_comandos
 
 INTERVALO_POLL_S = 3      # cada cuánto se pregunta el estado
 INTERVALO_RECONEXION_S = 5
@@ -200,6 +201,8 @@ def procesar_ciclo_lavado(con: sqlite3.Connection, client: ModbusTcpClient):
     if comando == "cancelar":
         if activo and etapa_actual is not None and etapa_actual < len(programa):
             _escribir_reles(client, programa[etapa_actual]["reles"], False)
+            for clave in programa[etapa_actual]["reles"]:
+                voz_comandos.limpiar_estado(clave)
         con.execute("UPDATE ciclo_lavado_estado SET comando = NULL, activo = 0, "
                     "etapa_actual = NULL, etapa_inicio = NULL WHERE id = 1")
         con.commit()
@@ -230,6 +233,8 @@ def procesar_ciclo_lavado(con: sqlite3.Connection, client: ModbusTcpClient):
         return
 
     _escribir_reles(client, etapa_cfg["reles"], False)
+    for clave in etapa_cfg["reles"]:
+        voz_comandos.limpiar_estado(clave)
     siguiente = etapa_actual + 1
     if siguiente < len(programa):
         _escribir_reles(client, programa[siguiente]["reles"], True)
@@ -241,6 +246,34 @@ def procesar_ciclo_lavado(con: sqlite3.Connection, client: ModbusTcpClient):
                     "etapa_inicio = NULL WHERE id = 1")
         print(f"{ahora.isoformat(timespec='seconds')}  lavado automático: ciclo completo")
     con.commit()
+
+
+def procesar_comandos_voz(con: sqlite3.Connection, client: ModbusTcpClient, anteriores_voz: dict) -> dict:
+    """Aplica por Modbus los cambios en voz_comandos.estado() (actuadores
+    sostenidos por voz) desde la última vuelta -- solo escribe cuando algo
+    CAMBIÓ, mismo criterio que registrar_si_cambio/procesar_ciclo_lavado.
+    anteriores_voz: clave -> bool aplicado la vuelta pasada; devuelve el
+    dict actualizado para pasarlo de nuevo en la próxima vuelta."""
+    deseado = voz_comandos.estado()  # clave -> encendido_desde, solo las que están ON
+    nuevo = {}
+    for clave in voz_comandos.ACTUADORES_VALIDOS:
+        on = clave in deseado
+        if on != anteriores_voz.get(clave, False):
+            _escribir_reles(client, [clave], on)
+            print(f"{datetime.datetime.now().isoformat(timespec='seconds')}  "
+                  f"voz: {clave} -> {'encendido' if on else 'apagado'}")
+        nuevo[clave] = on
+    return nuevo
+
+
+def apagar_actuadores_voz_al_arrancar(client: ModbusTcpClient) -> None:
+    """Al arrancar el proceso no sabemos qué relés quedaron físicamente
+    prendidos (el M300 mantiene su propio estado, independiente de este
+    proceso) -- por seguridad, se fuerza apagado de todos los actuadores
+    controlables por voz. Si algo se apaga así por error (por ejemplo
+    alguien lo había prendido a mano desde la web del propio M300), hay que
+    volver a prenderlo -- es una limitación aceptada, ver el spec."""
+    _escribir_reles(client, sorted(voz_comandos.ACTUADORES_VALIDOS), False)
 
 
 def _anunciar_voz(texto: str):
@@ -265,8 +298,12 @@ def main():
     cfg = iot_conexion.config()
     client = ModbusTcpClient(cfg["host"], port=cfg["port"])
     anteriores = {canal: None for canal in CANALES}
+    anteriores_voz = {clave: False for clave in voz_comandos.ACTUADORES_VALIDOS}
     print(f"Conectando a {cfg['host']}:{cfg['port']}... (Ctrl+C para salir)")
     try:
+        if not client.connected:
+            client.connect()
+        apagar_actuadores_voz_al_arrancar(client)
         while True:
             if not client.connected:
                 client.connect()
@@ -280,6 +317,7 @@ def main():
                     _anunciar_voz(MENSAJES_VOZ[canal])
             ejecutar_comandos_pendientes(con, client)
             procesar_ciclo_lavado(con, client)
+            anteriores_voz = procesar_comandos_voz(con, client, anteriores_voz)
             time.sleep(INTERVALO_POLL_S)
     except KeyboardInterrupt:
         print("Cortado por el usuario.")
