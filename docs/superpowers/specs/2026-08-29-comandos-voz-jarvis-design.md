@@ -69,7 +69,7 @@ POST /api/iot/pantalla/voz   (WAV 16kHz mono, LAN-only, mismo guard que el resto
   │
   ▼
 Flask (PC del tambo)
-  │  1) transcribe con Whisper local (español, CPU, sin nube)
+  │  1) transcribe con Vosk local (español, CPU, sin nube)
   │  2) voz_comandos.interpretar(texto) → matchea contra frases fijas +
   │     nombres de actuadores configurados (iot_canales)
   │  3) según el match: lavado_programa.solicitar_inicio()/cancelacion(),
@@ -153,7 +153,7 @@ como bug.
   nada que reproducir; se resigna y vuelve a escuchar "Jarvis" en silencio
   (mismo criterio que ya usan las otras tareas de red de este firmware:
   loguear con `ESP_LOGW` y seguir).
-- **Whisper tarda demasiado o la PC está sobrecargada**: se acepta como
+- **La transcripción tarda demasiado o la PC está sobrecargada**: se acepta como
   riesgo conocido (ver más abajo), no se resuelve en v1 con timeouts
   agresivos que corten la respuesta a mitad de camino.
 
@@ -177,10 +177,19 @@ como bug.
 ## Riesgos conocidos
 
 - **RAM/CPU de la PC** (ya se sabe que corre con poca RAM por el SQL
-  Express local): arrancar con el modelo más liviano de Whisper que
-  reconozca bien un vocabulario chico y fijo (no dictado libre); si hace
-  falta, se puede ajustar el tamaño del modelo sin cambiar el resto del
-  diseño.
+  Express local): se usa Vosk con su modelo chico de español (~38MB), que
+  alcanza de sobra para un vocabulario cerrado y fijo (no dictado libre).
+  Si hiciera falta cambiar de motor, la interfaz de `voz_stt.transcribir`
+  no cambia -- se toca solo ese archivo.
+- **Windows Smart App Control puede bloquear binarios nativos de Python.**
+  Ya pasó en la PC de desarrollo: `faster-whisper` (el motor elegido
+  originalmente) no se puede ni importar acá porque SAC bloquea el binario
+  de PyAV del que depende, y SAC no tiene excepción por archivo -- solo se
+  puede desactivar por completo, lo cual es irreversible sin reinstalar
+  Windows. Vosk no tiene esa dependencia y sí funciona (verificado). **Al
+  desplegar en la PC de producción hay que confirmar que Vosk importe ahí
+  también** antes de dar la feature por terminada; si esa máquina tuviera
+  una política parecida y más estricta, este es el punto que va a fallar.
 - **Ruido de tambo** (motores, agua corriendo) puede afectar la tasa de
   falsos positivos/negativos de WakeNet — el umbral de detección es
   ajustable sin rediseñar nada.

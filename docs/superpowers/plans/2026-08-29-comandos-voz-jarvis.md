@@ -9,13 +9,13 @@ prender/apagar actuadores individuales por su nombre configurado.
 **Architecture:** El ESP32 detecta la wake word "Jarvis" localmente y sin
 red (WakeNet9, gratis, incluido en ESP-SR). Al detectarla, graba unos
 segundos y se los manda una vez a un endpoint nuevo de Flask, que transcribe
-el audio en español con un modelo local (faster-whisper, sin nube),
+el audio en español con un modelo local (Vosk, sin nube),
 interpreta el texto contra un vocabulario cerrado y chico, dispara la
 acción reusando el motor de comandos que ya existe (`comandos_actuador`,
 `ciclo_lavado_estado`), y devuelve un WAV de confirmación que la pantalla
 reproduce por su parlante.
 
-**Tech Stack:** Python/Flask/SQLite (ya en uso), `faster-whisper` (nuevo),
+**Tech Stack:** Python/Flask/SQLite (ya en uso), `vosk` (nuevo),
 System.Speech de Windows vía PowerShell (ya en uso, para TTS), ESP-IDF 5.5.5
 + LVGL 9.5 (ya en uso), `espressif/esp-sr` (nuevo), `esp_codec_dev` (ya
 vendorizado por el BSP de Waveshare, sin usar hasta ahora).
@@ -411,41 +411,56 @@ git commit -m "Agrega voz_sintesis.py: texto a WAV para la confirmación hablada
 **Interfaces:**
 - Produces: `transcribir(audio_wav: bytes) -> str`
 
-**Nota de RAM (ver spec, "Riesgo a vigilar"):** esta PC corre con poca
-RAM. Se arranca con el modelo `"base"` de Whisper (liviano, ~150MB) en
-CPU con cuantización int8 (la que menos RAM usa). Si en el Task 8
-(prueba fin a fin) la transcripción es lenta o consume demasiada memoria,
-bajar `MODELO` a `"tiny"` es el único cambio necesario -- no afecta al
-resto del diseño.
+**POR QUÉ VOSK Y NO WHISPER (decisión ya tomada y verificada, no reabrir):**
+el primer intento de este task usó `faster-whisper` y quedó BLOQUEADO en
+esta PC: `faster_whisper` importa incondicionalmente PyAV (`av`), cuyo
+binario nativo `av\container\core.pyd` es bloqueado por **Windows Smart App
+Control** (confirmado con eventos de Code Integrity 3077/3118, reproducido
+en las dos instalaciones de Python de esta máquina). SAC no tiene excepción
+por archivo: la única forma de permitirlo sería desactivarlo por completo,
+algo **irreversible sin reinstalar Windows** -- y esta PC no es la de
+producción, así que pagar ese precio no se justificaba.
+
+**Vosk ya fue verificado funcionando en esta PC**, con el mismo WAV
+sintetizado que usa el test de abajo: transcribió exactamente
+`'iniciar lavado'`. Además es más liviano que Whisper (modelo de español
+~38MB contra ~150MB), lo que ayuda con la poca RAM de este entorno (ver
+`CLAUDE.md`, "Entorno de desarrollo"). La interfaz del módulo
+(`transcribir(bytes) -> str`) es la misma que iba a tener con Whisper, así
+que si en producción se prefiere otro motor, se cambia solo este archivo.
 
 - [ ] **Step 1: Instalar la dependencia nueva**
 
 ```bash
-pip install faster-whisper
+pip install vosk
 ```
 
 Agregar a `requirements.txt`:
 ```
-faster-whisper>=1.0
+vosk>=0.3.45
 ```
 
-- [ ] **Step 2: Grabar un WAV de prueba real, a mano**
+- [ ] **Step 2: Generar el WAV de prueba con `voz_sintesis` (Task 2)**
 
-Grabar un archivo corto (2-4s, 16kHz mono si es posible, cualquier
-grabadora de Windows sirve igual) diciendo "iniciar lavado" en español, y
-guardarlo en `<scratchpad>/prueba_iniciar_lavado.wav`. Este archivo es
-necesario para el test de este task y para el Task 5 (endpoint).
+NO grabar nada a mano ni pedirle al usuario que grabe: el audio de prueba
+se genera con el módulo del task anterior, ya mergeado en esta rama. Correr
+una vez, desde la raíz del worktree:
+
+```python
+import voz_sintesis
+with open(r"<scratchpad>\prueba_iniciar_lavado.wav", "wb") as f:
+    f.write(voz_sintesis.sintetizar_wav("iniciar lavado"))
+```
+
+Ese archivo lo usa el test de este task y también el Task 5 (endpoint).
 
 - [ ] **Step 3: Escribir el script de verificación**
 
 ```python
 # -*- coding: utf-8 -*-
-import sys
-sys.path.insert(0, r"C:\Users\MAXI\CLAUDE\delpro-analitica")
-
 import voz_stt
 
-with open(r"<scratchpad>/prueba_iniciar_lavado.wav", "rb") as f:
+with open(r"<scratchpad>\prueba_iniciar_lavado.wav", "rb") as f:
     audio = f.read()
 
 texto = voz_stt.transcribir(audio)
@@ -454,6 +469,9 @@ assert isinstance(texto, str)
 assert "lavado" in texto.lower()   # no exige match exacto, solo que reconoció la palabra clave del dominio
 print("OK")
 ```
+
+(sin `sys.path.insert`: se corre con el working directory en la raíz del
+worktree, que es donde vive `voz_stt.py`)
 
 - [ ] **Step 4: Correr y confirmar que falla (módulo no existe)**
 
@@ -466,47 +484,64 @@ Expected: `ModuleNotFoundError: No module named 'voz_stt'`
 # -*- coding: utf-8 -*-
 """Transcribe a texto en español el audio grabado por la pantalla ESP32
 DESPUÉS de la wake word "Jarvis" (el matching contra el vocabulario cerrado
-lo hace voz_comandos.interpretar). Corre 100% local en esta PC
-(faster-whisper, CPU) -- no manda audio a ningún servicio externo.
+lo hace voz_comandos.interpretar). Corre 100% local en esta PC (Vosk, CPU)
+-- no manda audio a ningún servicio externo.
+
+Vosk y no Whisper a propósito: el binario nativo de PyAV, del que depende
+faster-whisper, lo bloquea Windows Smart App Control en esta máquina (ver
+el plan de implementación de esta feature). Vosk además es más liviano
+(~38MB el modelo de español), lo que ayuda con la poca RAM de este entorno.
 
 El modelo se descarga una sola vez la primera vez que se usa (necesita
 internet esa vez) y después queda cacheado en disco, sin depender de red
 nunca más. Se carga en memoria una sola vez (lazy) y se reusa entre
 pedidos -- cargarlo de nuevo en cada pedido tardaría varios segundos."""
 import io
+import json
+import wave
 
-from faster_whisper import WhisperModel
+import vosk
 
-MODELO = "base"  # liviano; ver nota de RAM en el plan de implementación
+vosk.SetLogLevel(-1)   # sin el log de Kaldi por stderr en cada pedido
+
 _modelo = None
 
 
-def _cargar_modelo() -> WhisperModel:
+def _cargar_modelo() -> "vosk.Model":
     global _modelo
     if _modelo is None:
-        _modelo = WhisperModel(MODELO, device="cpu", compute_type="int8")
+        _modelo = vosk.Model(lang="es")
     return _modelo
 
 
 def transcribir(audio_wav: bytes) -> str:
-    """audio_wav: bytes de un archivo WAV. Devuelve el texto reconocido en
-    español ("" si no reconoció nada)."""
+    """audio_wav: bytes de un archivo WAV (PCM 16 bit mono). Devuelve el
+    texto reconocido en español ("" si no reconoció nada)."""
     modelo = _cargar_modelo()
-    segmentos, _info = modelo.transcribe(io.BytesIO(audio_wav), language="es")
-    return " ".join(seg.text.strip() for seg in segmentos).strip()
+    with wave.open(io.BytesIO(audio_wav)) as w:
+        # La frecuencia sale del propio WAV: la pantalla graba a 16 kHz, pero
+        # el audio sintetizado con el que se prueba esto viene a 22.05 kHz.
+        reconocedor = vosk.KaldiRecognizer(modelo, w.getframerate())
+        reconocedor.SetWords(False)
+        while True:
+            datos = w.readframes(4000)
+            if not datos:
+                break
+            reconocedor.AcceptWaveform(datos)
+        return json.loads(reconocedor.FinalResult()).get("text", "").strip()
 ```
 
 - [ ] **Step 6: Correr de nuevo y confirmar que pasa**
 
 Run: `python <scratchpad>/test_voz_stt.py`
-Expected: imprime `Transcripto: '...lavado...'` y termina en `OK`. La
-primera corrida tarda más porque descarga el modelo.
+Expected: imprime `Transcripto: 'iniciar lavado'` y termina en `OK`. La
+primera corrida tarda más porque descarga el modelo (~38MB).
 
 - [ ] **Step 7: Commit**
 
 ```bash
 git add voz_stt.py requirements.txt
-git commit -m "Agrega voz_stt.py: transcripción de voz a texto en español, local con faster-whisper"
+git commit -m "Agrega voz_stt.py: transcripción de voz a texto en español, local con Vosk"
 ```
 
 ---
