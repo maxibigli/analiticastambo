@@ -15,6 +15,7 @@ nunca más. Se carga en memoria una sola vez (lazy) y se reusa entre
 pedidos -- cargarlo de nuevo en cada pedido tardaría varios segundos."""
 import io
 import json
+import threading
 import wave
 
 import vosk
@@ -22,12 +23,15 @@ import vosk
 vosk.SetLogLevel(-1)   # sin el log de Kaldi por stderr en cada pedido
 
 _modelo = None
+_lock_modelo = threading.Lock()
 
 
 def _cargar_modelo() -> "vosk.Model":
     global _modelo
     if _modelo is None:
-        _modelo = vosk.Model(lang="es")
+        with _lock_modelo:
+            if _modelo is None:   # revalidar adentro del lock: otro hilo pudo haberlo cargado mientras esperábamos
+                _modelo = vosk.Model(lang="es")
     return _modelo
 
 
