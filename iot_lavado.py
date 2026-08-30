@@ -272,8 +272,38 @@ def apagar_actuadores_voz_al_arrancar(client: ModbusTcpClient) -> None:
     proceso) -- por seguridad, se fuerza apagado de todos los actuadores
     controlables por voz. Si algo se apaga así por error (por ejemplo
     alguien lo había prendido a mano desde la web del propio M300), hay que
-    volver a prenderlo -- es una limitación aceptada, ver el spec."""
-    _escribir_reles(client, sorted(voz_comandos.ACTUADORES_VALIDOS), False)
+    volver a prenderlo -- es una limitación aceptada, ver el spec.
+
+    Vacía TAMBIÉN voz_actuadores_estado (ver spec, "Fuera de alcance v1": no
+    se reanuda el estado sostenido de antes del reinicio, y "Arranque y
+    reinicio": el arranque "vacía voz_actuadores_estado, no reafirma 'on'
+    para nada"). Sin esto, un actuador que quedó sostenido por voz antes del
+    reinicio se volvería a prender SOLO en la primera vuelta de
+    procesar_comandos_voz (compara contra la base, no contra el Modbus recién
+    escrito) -- se hace ANTES de tocar Modbus, para que quede garantizado
+    pase lo que pase con la escritura física de abajo (la base sosteniendo
+    "esto debería estar prendido" es la mitad peligrosa de este arranque).
+    """
+    claves = sorted(voz_comandos.ACTUADORES_VALIDOS)
+    for clave in claves:
+        voz_comandos.limpiar_estado(clave)
+
+    # Apagado físico con reintentos: justo después de un reinicio el M300
+    # puede todavía estar arrancando y no responder al primer intento -- sin
+    # reintentos, un relé que quedó prendido de antes se quedaría así para
+    # siempre (el apagado de seguridad nunca se reintentaba).
+    intentos_max = 3
+    for intento in range(1, intentos_max + 1):
+        _escribir_reles(client, claves, False)
+        if client.connected:
+            return
+        print(f"{datetime.datetime.now().isoformat(timespec='seconds')}  "
+              f"apagar_actuadores_voz_al_arrancar: intento {intento}/{intentos_max} sin conexión al M300")
+        if intento < intentos_max:
+            time.sleep(INTERVALO_RECONEXION_S)
+            client.connect()
+    print(f"{datetime.datetime.now().isoformat(timespec='seconds')}  "
+          f"apagar_actuadores_voz_al_arrancar: no se pudo confirmar el apagado tras {intentos_max} intentos")
 
 
 def _anunciar_voz(texto: str):
