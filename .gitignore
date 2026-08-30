@@ -31,6 +31,8 @@ referencia_chi_delpro.json
 # preguntar en un tambo no tiene por qué ser lo mismo en otro.
 whatsapp_ia_autorizados.json
 iot_canales_nombres.json
+iot_conexion.json
+lavado_programa.json
 
 # Python
 __pycache__/
@@ -91,3 +93,5 @@ bitacora.db
 bitacora.db-wal
 bitacora.db-shm
 bitacora_fotos/
+
+.worktrees/
