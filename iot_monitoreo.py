@@ -22,6 +22,7 @@ import sqlite3
 
 import db
 import iot_canales
+import voz_comandos
 from iot_lavado import RUTA_DB, _conectar_db, ACTUADORES
 
 MINUTOS_ORDENO_ACTIVO = 15  # última visita dentro de esta ventana = "ordeñando"
@@ -133,11 +134,28 @@ SALIDAS_PANEL = [(f"do_{i}", f"Actuador {i}") for i in range(1, 9)]
 
 
 def panel_io() -> dict:
-    """Estado de las 8 entradas (on/off) y las 8 salidas (pulsador) del M300,
-    para la pestaña Actuadores de la pantalla ESP32. Las salidas NO tienen
-    estado persistente -- son un pulso momentáneo, no una llave -- así que lo
-    único que se informa de ellas es cuándo se activaron por última vez."""
+    """Estado de las 8 entradas (on/off) y las 8 salidas del M300, para la
+    pestaña Actuadores de la pantalla ESP32.
+
+    De cada salida se informan DOS cosas distintas:
+    - `ultima_activacion`: cuándo se le mandó el último PULSO (el botón de
+      la pantalla, 0,5s, ver iot_lavado.DURACION_PULSO_S). Un pulso no deja
+      estado: se suelta solo.
+    - `sostenido_desde`: desde cuándo está prendida de forma SOSTENIDA por
+      un comando de voz (None si no lo está). Esto sí es estado persistente
+      -- desde los comandos de voz "Jarvis" una salida puede quedar
+      encendida indefinidamente hasta que alguien pida apagarla, así que ya
+      no es cierto que las salidas sean solo pulsos momentáneos, y una
+      pantalla que no lo muestre deja un relé prendido sin ningún indicador.
+      (El tope máximo de tiempo encendida es una pregunta para el tambo, no
+      un número para inventar acá -- ver CLAUDE.md, misma regla que las
+      duraciones de etapa y los umbrales de retirada.)
+
+    El import de voz_comandos va en la dirección que ya existe: este módulo
+    importa iot_lavado, que importa voz_comandos; voz_comandos no importa a
+    ninguno de los dos."""
     nombres_custom = iot_canales.nombres()
+    sostenidos = voz_comandos.estado()   # clave -> encendido_desde (ISO)
     entradas = [
         {"clave": clave, "label": nombres_custom.get(clave, label), "estado": estado, "desde": desde}
         for clave, label in ENTRADAS_PANEL
@@ -153,7 +171,8 @@ def panel_io() -> dict:
                 "ORDER BY fecha_hora DESC LIMIT 1", (clave,)
             ).fetchone()
             salidas.append({"clave": clave, "label": nombres_custom.get(clave, label),
-                            "ultima_activacion": fila[0] if fila else None})
+                            "ultima_activacion": fila[0] if fila else None,
+                            "sostenido_desde": sostenidos.get(clave)})
     finally:
         con.close()
 
