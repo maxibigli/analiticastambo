@@ -8925,6 +8925,15 @@ function pintarRutinaSesion() {
       <div class="rm-cab"><span>${d.label} <span style="opacity:.6">(${d.peso}%)</span></span><span class="rm-val" style="color:${colorScore(d.valor)}">${d.valor == null ? 'sin datos' : d.valor + '%'}</span></div>
       <div class="rm-barra"><div style="width:${d.valor == null ? 0 : d.valor}%;background:${colorScore(d.valor)}"></div></div>
     </div>`).join('');
+  // "Evaluación de Incidentes": análisis APARTE del de manejo, sobre lo que
+  // registra la máquina en cada ordeño (recolocaciones/deslizamientos/
+  // bloqueos/retiradas forzadas/patadas) — ver rutina.componente_incidentes.
+  const incidentes = s.incidentes || { score: null, detalle: [] };
+  const barrasIncidentes = incidentes.detalle.map(d => `
+    <div class="rm-fila">
+      <div class="rm-cab"><span>${d.label} <span style="opacity:.6">(${d.peso}%)</span></span><span class="rm-val" style="color:${colorScore(d.valor)}">${d.valor == null ? 'sin datos' : d.valor + '%'}</span></div>
+      <div class="rm-barra"><div style="width:${d.valor == null ? 0 : d.valor}%;background:${colorScore(d.valor)}"></div></div>
+    </div>`).join('');
   const hallazgos = s.hallazgos.length
     ? '<ul class="rutina-hallazgos">' + s.hallazgos.map(h => `<li>${h.texto}</li>`).join('') + '</ul>'
     : '<div class="aviso">Sin hallazgos relevantes en esta sesión.</div>';
@@ -8951,6 +8960,12 @@ function pintarRutinaSesion() {
         <div class="aviso" style="margin-bottom:4px">Hallazgos</div>
         ${hallazgos}
       </div>
+      <div style="border-top:1px solid var(--baseline);padding-top:12px">
+        <div class="aviso">Evaluación de Incidentes</div>
+        <div class="rutina-score-nota" style="color:${colorScore(incidentes.score)}">${textoScore(incidentes.score, true)}</div>
+        <div class="aviso">Lo que registra la máquina en cada ordeño, aparte del manejo del corral.</div>
+      </div>
+      <div class="rutina-medidor">${barrasIncidentes}</div>
     </div>`;
   document.getElementById('rutina-zoom').addEventListener('input', (e) => {
     rutinaZoom = Number(e.target.value);

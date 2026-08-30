@@ -95,21 +95,31 @@ PREP_SIN_UMBRAL = (
 # "entrada → leche"; en una sala donde la ID sea en el puesto, ese nombre queda
 # corto pero el número es el mismo.
 
-# Pesos propios de esta sala, y NO son los de la rotativa reordenados: son otros
-# componentes. Acá "prep_90s" mide entrada→leche (más ruidoso que la colocación
-# real, así que pesa menos que los 30 de allá), entra "identificacion" —que en
-# la rotativa pesa 0— porque en esta sala el 17% de los ordeños quedan a nombre
-# del comodín, y "ocupacion" pasa a ser el tiempo vacío entre mangadas
-# (ver `_vacio_entre_mangadas`). El total sigue siendo 100.
+# Pesos de "Evaluación de Manejo" confirmados por el tambo (24/08/2026,
+# reemplazan al reparto anterior). "ocupacion" (tiempo vacío entre mangadas,
+# `_vacio_entre_mangadas`) y "flujo" (bimodalidad) quedan en 0: el tambo los
+# sacó de Manejo en el rediseño -- la máquina siguen calculándolos (quedan
+# disponibles si algún día se los quiere reincorporar), simplemente no
+# entran al promedio. "entre_grupos" y "manejo_corral" son los que el tambo
+# llama "Tiempos Entre grupos" y "Tiempos entre mangadas" respectivamente.
 PESOS = {
-    "prep_90s": 15,        # entrada a la sala → leche (objetivo del tambo)
-    "identificacion": 15,  # ordeños que quedaron a nombre del comodín
-    "lerdas": 10,          # atrasos por vacas lerdas
-    "entre_grupos": 15,    # tiempos muertos entre rodeos
-    "manejo_corral": 10,   # demoras trayendo animales dentro del mismo rodeo
-    "mezcla_rodeos": 10,   # vacas de un rodeo coladas en el turno de otro
-    "ocupacion": 10,       # lado de la sala completamente vacío (entre mangadas)
-    "flujo": 15,           # estímulo, leído en la bimodalidad de la curva
+    "prep_90s": 30,        # entrada a la sala → leche (objetivo del tambo)
+    "identificacion": 30,  # ordeños que quedaron a nombre del comodín
+    "lerdas": 5,           # atrasos por vacas lerdas
+    "entre_grupos": 15,    # tiempos muertos entre rodeos ("Tiempos Entre grupos")
+    "manejo_corral": 15,   # demoras trayendo animales dentro del mismo rodeo ("Tiempos entre mangadas")
+    "mezcla_rodeos": 5,    # vacas de un rodeo coladas en el turno de otro
+    "ocupacion": 0,        # lado de la sala completamente vacío -- fuera de Manejo en el rediseño
+    "flujo": 0,            # estímulo (bimodalidad) -- fuera de Manejo en el rediseño
+}
+
+# "Evaluación de Incidentes" (ver rutina.componente_incidentes): análisis
+# APARTE del de Manejo, sobre lo que registra la máquina en cada ordeño. SIN
+# "retiradas_forzadas" a propósito -- es mecánicamente imposible en una sala
+# de tandas (ver el docstring de `sql_rutina`), a diferencia de la rotativa
+# (`rutina.PESOS_INCIDENTES`), que sí la incluye.
+PESOS_INCIDENTES = {
+    "recolocaciones": 30, "deslizamientos": 40, "bloqueos": 20, "patadas": 10,
 }
 
 
@@ -177,13 +187,25 @@ def sql_rutina(fecha: str) -> str:
     `hora_id` cae a `BeginTime` cuando no hay sello (si no, la fila no tendría
     eje de tiempo y se rompería el corte en sesiones), y `sin_id` viaja al lado
     para que el tramo hasta la leche NO se puntúe en esas filas: sin lectura no
-    hay desde dónde medir. Ver `rutina._analizar_sesion`."""
+    hay desde dónde medir. Ver `rutina._analizar_sesion`.
+
+    `retirada_forzada` viaja igual que en la rotativa por completitud de
+    columnas, pero acá NO SIGNIFICA NADA: es mecánicamente imposible en una
+    sala de tandas (no hay una plataforma que lleve a la vaca a una "zona de
+    sellado" a horario fijo, esté lista o no) — de ahí que dé 0 en las
+    32.051 filas de La Martina. `componente_incidentes` no la incluye para
+    esta sala (ver `PESOS_INCIDENTES`). Las otras cuatro SÍ son reales acá:
+    `SessionMilkYieldEx` las trae con datos variados y no nulos (medido en
+    La Martina: 6,6%/34,2%/17,3%/4,8% de los ordeños con recolocación/
+    deslizamiento/bloqueo/patada en dos semanas)."""
     return f"""
         SELECT ex.MPCNo AS puesto, b.Number AS rp, b.[Group] AS grupo,
                COALESCE(ex.IdTimestamp, y.BeginTime) AS hora_id,
                CASE WHEN ex.IdTimestamp IS NULL THEN 1 ELSE 0 END AS sin_id,
                y.BeginTime AS hora_coloc, y.EndTime AS hora_fin,
                CAST(ex.ForcedRetract AS int) AS retirada_forzada,
+               ex.NoOfReattaches AS recolocaciones, ex.Slips AS deslizamientos,
+               ex.Blocks AS bloqueos, ex.KickOffs AS patadas,
                ex.SideNo AS lado, ex.BatchNo AS bloque,
                -- Curva de flujo para el componente de estimulo, ya en kg/min
                -- (ver ESCALA_FLUJO: en Alpro estos tramos vienen x100).
@@ -341,34 +363,6 @@ def _rotaciones_tandas(visitas: list, duracion_seg: float) -> int | None:
     return len(tandas) or None
 
 
-# Qué proporción de los cambios de tanda pueden ser reapariciones antes de dar
-# por inservible la numeración. Con tandas sanas esto es 0: cada tanda entra,
-# se ordeña y no vuelve. San José daba 25 cambios limpios; La Martina, 112 de
-# 143 (78%). El corte en la mitad deja lugar a algún solapamiento puntual entre
-# lados sin tragarse un caso como el de La Martina.
-FRAGMENTACION_MAXIMA = 0.5
-
-
-def _fragmentacion_de_tandas(visitas: list) -> float:
-    """Qué fracción de los cambios de tanda son tandas que YA habían aparecido.
-
-    Es la prueba de si `BatchNo` sirve para segmentar: en una sala de tandas
-    sana, cada tanda ocupa un tramo continuo del tiempo. Si el mismo número va
-    y viene, no está identificando un grupo de vacas."""
-    cambios, repetidas, vistas, actual = 0, 0, set(), None
-    for v in visitas:
-        clave = (v.get("lado"), v.get("bloque"))
-        if clave == actual:
-            continue
-        if actual is not None:
-            cambios += 1
-            if clave in vistas:
-                repetidas += 1
-        vistas.add(clave)
-        actual = clave
-    return repetidas / cambios if cambios else 0.0
-
-
 def _bloques_de_rodeo(visitas: list) -> list:
     """Un número de bloque por visita: sube cada vez que EMPIEZA una corrida
     larga de un rodeo distinto.
@@ -418,8 +412,12 @@ def _huecos_por_rodeo(visitas: list, duracion_seg: float, nombres: dict | None =
     quedó VACÍO se sacan de acá — los mide `_vacio_entre_mangadas`, que es su
     componente propio.
 
-    Reemplaza a `_huecos_tandas`, que cortaba por (lado, tanda) y quedó
-    inservible: ver `_fragmentacion_de_tandas`."""
+    Reemplaza a un criterio anterior que cortaba por (lado, tanda) en vez de
+    por rodeo y quedó inservible: `BatchNo` no marca tandas de verdad (en La
+    Martina los números se cortan y reaparecen 112 veces sobre 143 cambios,
+    las vacas de una tanda no quedan juntas en el tiempo), así que lo que esa
+    métrica llamaba "cambio de tanda" eran en su mayoría reapariciones del
+    mismo número — daba entre_grupos=0 en las tres sesiones reales."""
     bloques = _bloques_de_rodeo(visitas)
     ocup = _OcupacionLado(visitas)
 
@@ -501,79 +499,6 @@ def _info_huecos(gaps: list, duracion_seg: float, que: str) -> str:
     return f"{round(exceso)}s perdidos en {que} (lo normal en esta sesión: {round(mediana)}s)."
 
 
-def _huecos_tandas(visitas: list, duracion_seg: float, nombres: dict | None = None) -> dict:
-    """Análogo de `rutina._huecos_rotativa`, pero NO se puede reusar tal cual:
-    esa versión compara todo contra UNA mediana de sesión, y en una sala de
-    tandas eso rompe. Medido contra San José (26/07, sesión de la mañana):
-    los gaps DENTRO de una tanda tienen mediana 5s (373 casos); los gaps ENTRE
-    tandas (el otro lado ordeñando) tienen mediana 399s, de 177s a 1359s (25
-    casos). Con una mediana pooled (~5s), CUALQUIER cambio de tanda —algo
-    esperado y normal— queda por encima del umbral y se marca como "hueco":
-    dio manejo_corral=0 y entre_grupos=26-59 en las tres sesiones reales, un
-    puntaje que no refleja ningún problema real de manejo.
-
-    Acá el corte es CAMBIO DE TANDA (lado, bloque), no cambio de grupo —la
-    pausa estructural de esta sala es entre tandas, no entre rodeos—, y cada
-    lado del corte usa SU PROPIA mediana como referencia.
-
-    PERO ESO EXIGE QUE `BatchNo` MARQUE TANDAS DE VERDAD, y no siempre lo hace.
-    En La Martina (10/08/2026, sesión de 731 ordeños) los números de tanda se
-    cortan y REAPARECEN 112 veces sobre 143 cambios: las vacas de una tanda no
-    quedan juntas en el tiempo, ni ordenando por identificación ni por arranque
-    de leche. Con eso, lo que la métrica llama "cambio de tanda" son en su
-    mayoría reapariciones del mismo número, la mediana entre tandas cae a 5-7s
-    y CUALQUIER pausa real queda marcada como anormal: daba 12.850s "perdidos"
-    y entre_grupos=0 en las tres sesiones, o sea acusar al tambo de perder tres
-    horas por ordeñe cuando el dato no dice eso.
-
-    Cuando la fragmentación pasa de `FRAGMENTACION_MAXIMA`, los dos componentes
-    se devuelven en None y se excluyen del score (mismo mecanismo que
-    "ocupación" y "colocación"). Es preferible no medir a publicar un número
-    que parece un diagnóstico y no lo es."""
-    fragmentacion = _fragmentacion_de_tandas(visitas)
-    if fragmentacion > FRAGMENTACION_MAXIMA:
-        return {
-            "s3": None, "s4": None,
-            "info3": (f"No se puede evaluar: los números de tanda de esta sala no agrupan a las "
-                      f"vacas de forma contigua ({round(100 * fragmentacion)}% de los cambios son "
-                      f"tandas que ya habían aparecido antes), así que no hay forma de separar "
-                      f"una pausa real de un cambio de tanda."),
-            "info4": "No se puede evaluar por el mismo motivo que la fila de arriba.",
-            "hallazgos": [],
-        }
-    gaps = [((b["hora_id"] - a["hora_id"]).total_seconds(),
-             (a.get("lado"), a.get("bloque")) != (b.get("lado"), b.get("bloque")), a, b)
-            for a, b in zip(visitas, visitas[1:])]
-    intra = [g for g, cambio, _, _ in gaps if not cambio]
-    inter = [g for g, cambio, _, _ in gaps if cambio]
-    mediana_intra = statistics.median(intra) if intra else 0
-    mediana_inter = statistics.median(inter) if inter else 0
-    umbral_intra = max(mediana_intra * rutina.FACTOR_HUECO, rutina.UMBRAL_HUECO_MIN_S)
-    umbral_inter = max(mediana_inter * rutina.FACTOR_HUECO, rutina.UMBRAL_HUECO_MIN_S)
-
-    exceso_entre_tandas = sum(g - mediana_inter for g in inter if g > umbral_inter)
-    exceso_intra_tanda = sum(g - mediana_intra for g in intra if g > umbral_intra)
-    s3 = 100.0 * max(0.0, 1 - rutina.K_PENALIZACION * exceso_entre_tandas / duracion_seg)
-    s4 = 100.0 * max(0.0, 1 - rutina.K_PENALIZACION * exceso_intra_tanda / duracion_seg)
-
-    hallazgos = [{
-        "tipo": "hueco_grupo", "severidad": g, "puesto": None, "rp": None,
-        "texto": f"Hueco de {round(g / 60, 1)} min al cambiar de tanda (lado {a.get('lado')}, "
-                 f"bloque {a.get('bloque')} → lado {b.get('lado')}, bloque {b.get('bloque')}) "
-                 f"a las {b['hora_id'].strftime('%H:%M')}, bastante más largo que el resto de "
-                 "los cambios de tanda de esta sesión.",
-    } for g, cambio, a, b in gaps if cambio and g > umbral_inter]
-
-    return {
-        "s3": s3, "s4": s4,
-        "info3": f"{round(exceso_entre_tandas)}s perdidos en cambios de tanda anormalmente largos "
-                 f"(mediana real entre tandas: {round(mediana_inter)}s).",
-        "info4": f"{round(exceso_intra_tanda)}s perdidos por demoras trayendo animales dentro "
-                 f"de la misma tanda (mediana real: {round(mediana_intra)}s).",
-        "hallazgos": hallazgos,
-    }
-
-
 def _opciones_score(umbral_prep_s):
     """Los argumentos comunes de `analizar_dia`/`resumen_dia`. El objetivo de
     entrada→leche sale del tambo (`umbral_prep_s`, de ⚙ Configuración) y, si no
@@ -587,19 +512,21 @@ def _opciones_score(umbral_prep_s):
 
 def analizar_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                  max_sesiones=None, nombres=None, umbral_prep_s=None,
-                 identificacion_pct=None) -> dict:
+                 identificacion_pct=None, pesos_incidentes=None) -> dict:
     # `tambo` no hace falta acá — queda en la firma solo para cumplir la
     # interfaz común (ver salas/rotativa.py).
     return rutina.analizar_dia(columns, rows, fecha, grupos, pesos or PESOS, max_sesiones,
                                nombres, identificacion_pct=identificacion_pct,
+                               pesos_incidentes=pesos_incidentes or PESOS_INCIDENTES,
                                **_opciones_score(umbral_prep_s))
 
 
 def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                 max_sesiones=None, nombres=None, umbral_prep_s=None,
-                identificacion_pct=None):
+                identificacion_pct=None, pesos_incidentes=None):
     return rutina.resumen_dia(columns, rows, fecha, grupos, pesos or PESOS, max_sesiones,
                               nombres, identificacion_pct=identificacion_pct,
+                              pesos_incidentes=pesos_incidentes or PESOS_INCIDENTES,
                               **_opciones_score(umbral_prep_s))
 
 

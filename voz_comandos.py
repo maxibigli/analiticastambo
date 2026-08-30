@@ -96,12 +96,37 @@ VERBOS_CANCELAR = {
     "cancelar", "cancela", "cancele", "cancelen", "cancelalo",
     "frenar", "frena", "frene", "frenalo",
     "cortar", "corta", "corte", "cortalo",
+    # Formas que el tambo usa igual y antes caían en "no entendí". Ampliar
+    # ESTA lista es barato en riesgo: parar es la dirección segura, y si no
+    # hay ningún lavado corriendo, cancelar no toca ningún relé.
+    "terminar", "termina", "termine", "terminalo",
+    "finalizar", "finaliza", "finalice",
+    "abortar", "aborta", "aborte",
+    "suspender", "suspende", "suspenda",
+    "basta", "stop", "listo",
 }
-VERBOS_PRENDER = {"prender", "prende", "prenda", "prendelo", "encender", "encende", "enciende", "encienda"}
+VERBOS_PRENDER = {"prender", "prende", "prenda", "prendelo", "encender", "encende", "enciende", "encienda",
+                  "poner", "pone", "pongan", "ponga", "activar", "activa", "active"}
 # "apagar" es el único verbo AMBIGUO: "apagar el lavado" es cancelar el
 # ciclo, "apagar bomba de agua" es apagar ese relé. Lo resuelve lo que
 # viene después (ver interpretar).
-VERBOS_APAGAR = {"apagar", "apaga", "apague", "apaguen", "apagalo"}
+VERBOS_APAGAR = {"apagar", "apaga", "apague", "apaguen", "apagalo",
+                 "sacar", "saca", "saque", "desactivar", "desactiva", "desactive"}
+
+# Muletillas que la gente pone ANTES del verbo ("por favor pará el
+# lavado", "dale arrancá"). Se descartan hasta encontrar el verbo. Lo que
+# NO puede entrar acá es una negación: "no quiero iniciar el lavado" tiene
+# que seguir siendo "no entendí" y jamás convertirse en la orden de
+# arrancar. Por eso "no" está deliberadamente afuera.
+PALABRAS_PREVIAS = {
+    "por", "favor", "porfavor", "dale", "che", "jarvis", "ahora", "ya",
+    "quiero", "queria", "necesito", "podes", "podrias", "puede", "podria",
+    "me", "nos", "a", "vamos", "anda", "anda",
+}
+
+# Pronombres pegados al final del verbo ("parale", "prendela", "cortale").
+# Se prueban de más largo a más corto para que "melo" gane sobre "lo".
+_SUFIJOS_PEGADOS = ("selo", "sela", "melo", "mela", "los", "las", "le", "lo", "la", "me", "nos")
 
 # Verbos de CONSULTA: no tocan nada, solo informan. Por eso su rama puede
 # ser más permisiva que las que actúan -- el peor caso de una consulta mal
@@ -213,6 +238,38 @@ def _es_del_lavado(resto: str, vacio_cuenta: bool = True) -> bool:
     return all(_parecido(p, PALABRA_LAVADO) >= UMBRAL_LAVADO for p in palabras)
 
 
+def _es_verbo_conocido(palabra: str) -> bool:
+    return (palabra in VERBOS_INICIAR or palabra in VERBOS_CANCELAR
+            or palabra in VERBOS_PRENDER or palabra in VERBOS_APAGAR
+            or palabra in VERBOS_CONSULTA)
+
+
+def _verbo_base(palabra: str) -> str:
+    """Saca el pronombre pegado si con eso queda un verbo conocido
+    ("parale" -> "para", "prendela" -> "prende"). Si no, devuelve la palabra
+    tal cual: solo se acorta cuando el resultado ES un verbo de la lista,
+    así que no puede inventar un comando a partir de una palabra cualquiera."""
+    if _es_verbo_conocido(palabra):
+        return palabra
+    for suf in _SUFIJOS_PEGADOS:
+        if palabra.endswith(suf) and len(palabra) - len(suf) >= 3:
+            base = palabra[:-len(suf)]
+            if _es_verbo_conocido(base):
+                return base
+    return palabra
+
+
+def _partir_en_verbo(palabras: list) -> tuple:
+    """(verbo, resto) descartando las muletillas de adelante. Devuelve
+    ("", "") si no queda nada."""
+    i = 0
+    while i < len(palabras) and palabras[i] in PALABRAS_PREVIAS and not _es_verbo_conocido(palabras[i]):
+        i += 1
+    if i >= len(palabras):
+        return "", ""
+    return _verbo_base(palabras[i]), " ".join(palabras[i + 1:])
+
+
 def _menciona_lavado(resto: str) -> bool:
     """True si ALGUNA palabra de `resto` nombra el lavado.
 
@@ -297,8 +354,9 @@ def interpretar(texto: str) -> dict:
     texto_norm = _normalizar(texto)
     if not texto_norm:
         return {"tipo": "desconocido"}
-    palabras = texto_norm.split()
-    verbo, resto = palabras[0], " ".join(palabras[1:])
+    verbo, resto = _partir_en_verbo(texto_norm.split())
+    if not verbo:
+        return {"tipo": "desconocido"}
 
     # Las consultas van PRIMERO: son de solo lectura, así que no hay riesgo
     # en atenderlas, y evita que una pregunta caiga por casualidad en una
