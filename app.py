@@ -2437,7 +2437,13 @@ def _ejecutar_comando_voz(interpretado: dict) -> str:
         else:
             ok = voz_comandos.solicitar_apagado(clave)
         if ok:
-            return f"{nombre} {'encendida' if prender else 'apagada'}"
+            # Verbo en vez de adjetivo a propósito: el nombre lo escribe el
+            # tambo como texto libre (⚙ Configuración › 🔌 Entradas/Salidas)
+            # y no hay forma de saber su género ("Bomba de Agua" es
+            # femenino, "Compresor" no) -- "encendida/apagada" quedaría mal
+            # con la mitad de los nombres posibles. "Prendí/Apagué" no
+            # necesita concordancia.
+            return f"{'Prendí' if prender else 'Apagué'} {nombre}"
         return "No puedo, hay un lavado en curso"
     return "No entendí, repetí"
 
@@ -2453,8 +2459,24 @@ def api_iot_pantalla_voz():
     if _pedido_via_tunel():
         return jsonify({"error": "No se puede usar comandos de voz desde fuera de la red del tambo"}), 403
     audio = request.get_data()
-    texto = voz_stt.transcribir(audio)
-    interpretado = voz_comandos.interpretar(texto)
+    try:
+        texto = voz_stt.transcribir(audio)
+    except Exception:  # noqa: BLE001
+        # Un WAV vacío/truncado/corrupto -- lo más previsible que puede
+        # pasar viniendo de un micrófono por WiFi en un tambo -- hace que
+        # wave.open() (adentro de transcribir) tire wave.Error/EOFError.
+        # Para quien habló eso es EXACTAMENTE el mismo evento que "no
+        # entendí" (habló y no pasó nada), así que se trata igual: no se
+        # toca ningún relé y se contesta con la misma confirmación hablada
+        # del caso "desconocido". Se responde 200 con un WAV real a
+        # propósito, no 400: la pantalla solo sabe reproducir lo que le
+        # llega, un código de error HTTP se traduce en silencio para el
+        # operario, que es justo lo que se quiere evitar. El error de
+        # verdad queda en el log del servidor para poder diagnosticarlo.
+        app.logger.exception("voz_stt.transcribir() falló (audio inválido o corrupto)")
+        interpretado = {"tipo": "desconocido"}
+    else:
+        interpretado = voz_comandos.interpretar(texto)
     confirmacion = _ejecutar_comando_voz(interpretado)
     wav = voz_sintesis.sintetizar_wav(confirmacion)
     return Response(wav, mimetype="audio/wav")
