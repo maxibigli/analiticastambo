@@ -2531,6 +2531,12 @@ def api_iot_pantalla_voz():
         interpretado = {"tipo": "desconocido"}
     else:
         interpretado = voz_comandos.interpretar(texto)
+        # QUÉ se escuchó, no solo qué se decidió: sin esto, un "No entendí"
+        # es un callejón sin salida -- no distingue "el audio llegó cortado"
+        # de "se transcribió bien pero la frase no está en el vocabulario",
+        # que se arreglan de formas totalmente distintas.
+        app.logger.warning("voz: %d bytes -> transcripto %r -> %r",
+                           len(audio), texto, interpretado)
 
     # El rechazo va ANTES de ejecutar nada: el único camino que llega a
     # _ejecutar_comando_voz es el `else`.
