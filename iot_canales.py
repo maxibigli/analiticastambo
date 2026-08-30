@@ -16,6 +16,7 @@ misma para no armar un import circular.
 import json
 import os
 import threading
+import unicodedata
 
 _RUTA = os.path.join(os.path.dirname(__file__), "iot_canales_nombres.json")
 _lock = threading.Lock()
@@ -38,13 +39,38 @@ def nombres() -> dict:
         return {}
 
 
+def _comparable(nombre: str) -> str:
+    """Minúsculas, sin tildes y con los espacios colapsados -- así "Bomba de
+    Agua" y "bomba de agua" cuentan como el MISMO nombre. Es la misma
+    normalización que usa voz_comandos para matchear lo que se dice en voz
+    alta; se repite acá (chiquita) en vez de importarla para no romper la
+    regla de que este módulo no importa a nadie del proyecto."""
+    nombre = unicodedata.normalize("NFD", nombre.lower())
+    nombre = "".join(c for c in nombre if unicodedata.category(c) != "Mn")
+    return " ".join(nombre.split())
+
+
 def guardar(nombres_nuevos: dict) -> None:
     limpio = {}
+    vistos = {}   # nombre comparable -> primera clave que lo usó
     for clave, nombre in (nombres_nuevos or {}).items():
         if clave not in CLAVES_VALIDAS:
             raise ValueError(f"Canal desconocido: {clave!r}.")
         nombre = str(nombre).strip()
         if nombre:   # vacío = "usar el nombre generico", no hace falta guardarlo
+            # Nombres repetidos NO se aceptan: los comandos de voz eligen el
+            # actuador por su nombre ("prender bomba de agua"), y con dos
+            # salidas llamadas igual no hay forma de saber cuál se pidió --
+            # antes de este chequeo se activaba siempre la primera, en
+            # silencio (ver voz_comandos._buscar_actuador).
+            repetido = vistos.get(_comparable(nombre))
+            if repetido:
+                raise ValueError(
+                    f"El nombre {nombre!r} está repetido ({repetido} y {clave}). "
+                    "Cada entrada/salida necesita un nombre distinto: los "
+                    "comandos de voz eligen el actuador por su nombre."
+                )
+            vistos[_comparable(nombre)] = clave
             limpio[clave] = nombre
     with _lock:
         with open(_RUTA, "w", encoding="utf-8") as f:
