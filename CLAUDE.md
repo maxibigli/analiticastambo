@@ -1607,6 +1607,11 @@ una salida prendida indefinidamente desde una pantalla que no ve el equipo.
 La pantalla pide CONFIRMACIÓN (tocar dos veces) antes de mandar el pulso,
 justamente por controlar equipos físicos reales.
 
+> **Esto vale para el BOTÓN de la pantalla, y desde los comandos de voz ya
+> no vale para la salida en sí**: un "prender bomba de agua" dicho en voz
+> alta la deja SOSTENIDA hasta que alguien pida apagarla. Ver "Comandos de
+> voz Jarvis" al final de este archivo.
+
 **`iot_lavado.py` es el ÚNICO dueño de la conexión Modbus al M300** — antes
 solo sondeaba 2 entradas (lavado/barrido), ahora sondea las 8
 (`CANALES` en ese archivo) y además revisa una tabla `comandos_actuador`
@@ -1810,6 +1815,204 @@ cambia algo" (`JSON.stringify(actual) !== original`) y mismo endpoint
 admin-gateado (`@auth.requiere_rol("admin")`) que el resto de
 Configuración. `cargarCanalesGateway()` se agregó a la lista de loaders de
 `cargarConfiguracion()`, junto a `cargarWhatsappIa()` y el resto.
+
+## Comandos de voz "Jarvis" desde la pantalla ESP32 (29/08/2026)
+
+Pedido del tambo: manejar el Lavado Automático y los actuadores con las
+manos ocupadas o mojadas, diciendo "Jarvis" en vez de tocar la pantalla.
+Diseño completo en
+`docs/superpowers/specs/2026-08-29-comandos-voz-jarvis-design.md`.
+
+**El pipeline, y por qué está partido donde está**: el ESP32 escucha la
+wake word "Jarvis" LOCALMENTE (WakeNet9 de ESP-SR, modelo "Jarvis" gratuito
+e incluido, corre sin red), graba ~4s y los manda a
+`POST /api/iot/pantalla/voz` (LAN-only, mismo guard de `CF-Connecting-IP`
+que `/actuador` y `/lavado/iniciar`). El comando en sí NO se reconoce en el
+micro: **MultiNet, el reconocedor de comandos de Espressif, solo soporta
+inglés y chino**. Del lado de la PC: `voz_stt.transcribir` (Vosk, local) →
+`voz_comandos.interpretar` (vocabulario cerrado) → se ENCOLA el pedido en
+SQLite → `voz_sintesis.sintetizar_wav` arma la confirmación hablada y el
+WAV vuelve como body de la respuesta, para que la pantalla lo reproduzca.
+Igual que Actuadores y Lavado Automático, **Flask nunca escribe Modbus**:
+el único dueño de esa conexión sigue siendo `iot_lavado.py`.
+
+**Vosk y no Whisper, y el motivo importa para producción**: `faster-whisper`
+era la primera opción y **no se puede ni importar en esta PC** — Windows
+Smart App Control bloquea el binario nativo de PyAV, del que depende, y SAC
+no tiene excepción por archivo (solo se desactiva por completo, y eso es
+irreversible sin reinstalar Windows). Vosk no tiene esa dependencia. Como
+la PC de producción es OTRA máquina, **hay que confirmar `import vosk` ahí
+antes de dar la función por terminada** (ver Despliegue, abajo). Por eso
+mismo `import vosk` vive DENTRO de `voz_stt._cargar_modelo()` y no arriba
+del archivo: `app.py` importa `voz_stt` al arrancar, así que un vosk
+ausente o bloqueado tiraría el `ImportError` al importar `app` y dejaría a
+**LactIA entera** sin levantar (`servidor.py` importa `app`) por una
+función opcional. Adentro de la función, el mismo error viaja como
+excepción de `transcribir()`, que el endpoint ya maneja bien ("No entendí,
+repetí", sin tocar ningún relé). Verificado con vosk bloqueado a propósito:
+`app` importa sus 114 rutas igual.
+
+**EL VERBO DECIDE LA INTENCIÓN. Comparar la frase entera era peligroso.**
+La primera versión de `voz_comandos.interpretar` usaba
+`difflib.get_close_matches` contra frases fijas completas. Como "lavado" es
+la palabra dominante y está en las dos familias de frases, el verbo —lo
+único que distingue arrancar de parar— quedaba diluido entre los caracteres
+compartidos. Medido con las constantes que tenía ese código:
+
+    'parar el lavado'   -> lavado_iniciar  ('iniciar el lavado', 0,750)
+    'parar lavado'      -> lavado_iniciar  ('arrancar lavado',   0,815)
+    'para el lavado'    -> lavado_iniciar  ('iniciar el lavado', 0,774)
+    'pare el lavado'    -> lavado_iniciar  ('iniciar el lavado', 0,774)
+    'frenar el lavado'  -> lavado_iniciar  ('iniciar el lavado', 0,788)
+    'cortar el lavado'  -> lavado_iniciar  ('iniciar el lavado', 0,788)
+    'apagar el lavado'  -> lavado_iniciar  ('iniciar el lavado', 0,727)
+
+O sea: **pedir que PARE arrancaba las bombas y contestaba "Lavado
+iniciado"**. Y no es un caso de laboratorio — Vosk transcribe "parar el
+lavado" como "para el lavado", una de esas filas. Ahora se parsea el primer
+token contra listas explícitas de verbos (`VERBOS_INICIAR`,
+`VERBOS_CANCELAR`, `VERBOS_PRENDER`, `VERBOS_APAGAR`, comparación EXACTA
+sobre el texto normalizado sin tildes) y la comparación difusa se usa SOLO
+para el resto de la frase, que es donde de verdad hace falta tolerar
+errores del transcriptor. Las reglas, todas sesgadas al lado seguro:
+
+- Verbo de arrancar **+ el lavado nombrado explícitamente**: cualquier otra
+  cosa ("iniciar" solo, "arrancar eso") es "No entendí, repetí". Prender
+  bombas es la dirección peligrosa.
+- Verbo de parar solo, o seguido de palabras del lavado, o de algo que no
+  se reconoce → cancelar. Frenar nunca se traba (mismo criterio que ya
+  regía el botón de cancelar de la pantalla).
+- `apagar` es el único AMBIGUO ("apagar el lavado" es cancelar el ciclo,
+  "apagar bomba de agua" es ese relé): se resuelve por lo que sigue, y sin
+  evidencia positiva de una de las dos cosas no hace nada.
+- Lo del lavado se chequea SIEMPRE ANTES que los nombres de actuador. Hace
+  falta de verdad: hoy `do_1` se llama **"Bomba de Lavado"**, y sin ese
+  orden "parar el lavado" apagaría ese relé en vez de cancelar el ciclo.
+
+**Los tres umbrales salen de una medición, no de un número lindo**
+(batería en el scratchpad, `medir_umbrales_voz.py` + `test_voz_comandos.py`,
+que los re-chequea en cada corrida):
+
+    UMBRAL_CONFIANZA  0,72   nombre de actuador: lo que TIENE que reconocerse
+                             da >= 0,960 (con errores de STT incluidos), lo
+                             que NO tiene que reconocerse da <= 0,400
+    MARGEN_AMBIGUEDAD 0,15   ventaja mínima sobre el segundo actuador: los
+                             comandos que deben resolver sacan >= 0,214, los
+                             genuinamente ambiguos <= 0,096
+    UMBRAL_LAVADO     0,70   por PALABRA contra "lavado": variantes plausibles
+                             >= 0,727, palabras de comandos de actuador <= 0,625
+
+`UMBRAL_CONFIANZA` conserva el 0,72 que ya estaba, pero ahora cae en el
+medio de una banda vacía medida en vez de ser un número asumido.
+
+**Nombres parecidos: se rechaza en vez de elegir.** Con "Bomba de Agua
+Fría" y "Bomba de Agua Caliente" configuradas, "prender bomba de agua"
+daba 0,839 contra 0,743 y elegía "fría" **en silencio**. Ahora, si el
+segundo candidato queda dentro del margen, la respuesta es "No entendí,
+repetí". Excepción necesaria: **el nombre dicho EXACTO gana sin mirar el
+margen** — "salida 5" a "salida 8" (nombres reales de hoy) se parecen 0,875
+entre sí, y sin esa salida el margen dejaría inservible justamente al
+comando bien dicho. Además `iot_canales.guardar` **rechaza nombres
+repetidos** (comparando sin tildes ni mayúsculas): con dos salidas llamadas
+igual no hay forma de saber cuál se pidió.
+
+**Una salida del M300 ya NO es solo un pulso momentáneo.** Los comandos de
+voz la dejan SOSTENIDA (tabla `voz_actuadores_estado`) hasta que alguien
+pida apagarla — el botón de la pantalla sigue siendo el pulso de 0,5s de
+siempre, son dos cosas distintas sobre el mismo relé. Por eso
+`iot_monitoreo.panel_io()` ahora informa `sostenido_desde` por salida
+además de `ultima_activacion`: un relé que puede quedar prendido para
+siempre necesita un indicador en algún lado. **El tope máximo de tiempo
+encendida NO se inventó**: es una pregunta para el tambo, misma regla que
+las duraciones de etapa y los umbrales de retirada.
+
+**Un apagado por voz SIEMPRE escribe, aunque no haya transición.**
+`procesar_comandos_voz` es de flanco (solo escribe cuando cambia su propio
+estado, para que el régimen normal no machaque Modbus cada 3s). Eso hacía
+que un "apagar X" sobre un relé que la capa de voz no había prendido —lo
+prendió la web del propio M300, o quedó de un apagado de arranque que
+falló— no escribiera NADA mientras la pantalla ya decía que lo había
+apagado. Ahora `solicitar_apagado` anota el pedido en
+`voz_apagados_pendientes` y el ejecutor lo escribe una vez y lo consume
+(si la escritura no se confirma, no lo consume: reintenta la vuelta
+siguiente).
+
+**Confirmaciones en PRESENTE, no en pasado.** "Arrancando el lavado",
+"Prendiendo X" — el endpoint solo ENCOLA; quien mueve el relé es
+`iot_lavado.py` en su ciclo de 3s. Con ese proceso parado, un "Lavado
+iniciado" sería mentira lisa y llana en cada comando.
+
+**Un comando de voz nunca pisa la etapa ACTUAL de un lavado en curso, y el
+chequeo tiene que estar en el EJECUTOR.** El de Flask
+(`voz_comandos.solicitar_*`) mira el estado de un instante anterior: un
+"apagar bomba" aceptado durante la etapa 1 llegaba al ejecutor justo cuando
+la etapa 2 acababa de prender ese mismo relé, y lo apagaba — la etapa
+seguía corriendo con la bomba muerta informando avance normal.
+`procesar_ciclo_lavado` ahora DEVUELVE los relés que tiene tomados y
+`procesar_comandos_voz` los descarta (y lo registra en el log) en vez de
+volver a consultar la base con datos de otro momento.
+
+**Reiniciar `iot_lavado.py` en medio de un lavado CORTA el ciclo.** Es
+deliberado y es un cambio respecto de antes de esta rama: el apagado de
+seguridad del arranque de-energiza las 8 salidas, incluidas las de la etapa
+en curso, y el motor solo escribe en los CAMBIOS de etapa — dejar el ciclo
+"activo" haría que el resto de esa etapa corriera con las bombas apagadas
+informando avance normal. `limpiar_ciclo_lavado_al_arrancar` lo da por
+terminado, lo grita en el log y hay que volver a arrancarlo a mano.
+También descarta un `comando` que hubiera quedado encolado mientras el
+proceso estaba caído: un "iniciar" pedido vaya a saber cuándo, sin nadie al
+lado del equipo, no puede arrancar bombas porque el proceso volvió.
+
+**`_escribir_reles` MIRA LA RESPUESTA del M300, no solo si hubo excepción.**
+Es el mismo error que ya está documentado más arriba en este archivo:
+`ExceptionResponse(exception_code=2, "Illegal Data Address")` —lo que
+devolvían TODAS las salidas antes de cargar la tabla de mapeo de nodos—
+**deja el socket sano**. Con `client.connected` como única señal de éxito,
+el apagado de seguridad del arranque devolvía "listo" en la primera vuelta
+con los ocho relés sin tocar; y como `client.close()` en el `except` hace
+que los relés siguientes reconecten, ese chequeo además solo reflejaba el
+resultado del ÚLTIMO relé (podía fallar `do_1` y dar éxito igual). Ahora
+`_escribir_reles` devuelve el SET de claves que no se pudieron confirmar,
+el apagado de arranque reintenta SOLO esas, y si algo queda sin confirmar
+lo avisa con una banda de exclamaciones en el log. Mismo criterio en los
+pulsos manuales (`ejecutar_comandos_pendientes`): un pulso rechazado por el
+M300 ya no queda guardado como `"ok"`, y si lo que falla es el apagado del
+FINAL del pulso —el relé puede haber quedado energizado— es alarma.
+
+**Si falla la síntesis de voz, el aviso va al log del servidor.**
+`voz_sintesis.sintetizar_wav` corre PowerShell con `check=True`: si falla,
+falla DESPUÉS de haber encolado el comando. Antes eso moría en un 500 con
+un stack trace de `subprocess` y ninguna pista de lo peligroso del caso (un
+relé pedido y el operario sin escuchar nada, creyendo que no pasó nada).
+Ahora se loguea diciendo exactamente eso y se contesta 503.
+
+**Probado con clientes Modbus FALSOS y con el `test_client` de Flask** (los
+scripts quedan en el scratchpad: `test_voz_comandos.py`,
+`test_iot_lavado_voz.py`, `test_voz_endpoint_fix2.py`,
+`test_voz_stt_sin_vosk.py`, `medir_umbrales_voz.py`). Nunca se arrancó
+`iot_lavado.py` ni se le habló al M300 real. La prueba del endpoint
+sintetiza el audio en el momento y lo transcribe con Vosk de verdad: no hay
+mocks en el camino audio → texto → intención → fila encolada.
+
+### Despliegue de esta función (hacer en este orden)
+
+1. `pip install -r requirements.txt` en la máquina de producción (`vosk`
+   es dependencia nueva; sin eso, la voz no anda — pero el resto de LactIA
+   sí, ver arriba).
+2. **Confirmar `import vosk` ahí**, en una consola, antes de nada: es OTRA
+   máquina que la de desarrollo y este es el punto que puede fallar por
+   política de Windows (Smart App Control).
+3. **Precalentar el modelo desde una consola** (`python -c "import voz_stt;
+   voz_stt._cargar_modelo()"`, parado en la carpeta del proyecto): la
+   primera vez se BAJAN ~38 MB, y si eso pasa dentro del primer comando de
+   voz, pasa dentro del hilo del pedido HTTP y sin timeout.
+4. Reiniciar `iot_lavado.py` (los cambios de este archivo no aplican solos)
+   **arrancándolo desde la carpeta del proyecto**: la ruta de
+   `iot_sensores.db` es relativa.
+5. Después de ese primer reinicio, **confirmar FÍSICAMENTE que las ocho
+   salidas quedaron des-energizadas** en vez de confiar en el log. Es
+   exactamente el motivo por el que el apagado de arranque tuvo que
+   aprender a detectar su propia falla.
 
 ## Entorno de desarrollo (esta PC)
 

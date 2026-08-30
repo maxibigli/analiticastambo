@@ -38,6 +38,9 @@ import iot_canales
 import iot_conexion
 import iot_monitoreo
 import lavado_programa
+import voz_comandos
+import voz_sintesis
+import voz_stt
 import laserenisima
 import mantenimiento
 import merito
@@ -94,7 +97,8 @@ app.permanent_session_lifetime = datetime.timedelta(days=30)
 # Rutas que no requieren haber iniciado sesión.
 _RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla", "/api/iot/pantalla/historico",
                     "/api/iot/pantalla/io", "/api/iot/pantalla/actuador", "/api/iot/pantalla/lavado",
-                    "/api/iot/pantalla/lavado/iniciar", "/api/iot/pantalla/lavado/cancelar"}
+                    "/api/iot/pantalla/lavado/iniciar", "/api/iot/pantalla/lavado/cancelar",
+                    "/api/iot/pantalla/voz"}
 
 
 @app.before_request
@@ -2411,6 +2415,95 @@ def api_iot_pantalla_lavado_cancelar():
         return jsonify({"error": "No se puede cancelar un lavado desde fuera de la red del tambo"}), 403
     lavado_programa.solicitar_cancelacion()
     return jsonify({"ok": True}), 202
+
+
+def _ejecutar_comando_voz(interpretado: dict) -> str:
+    """Dispara la acción reconocida y devuelve el texto de confirmación a
+    sintetizar. Nunca toca Modbus directo -- solo encola pedidos, mismo
+    criterio que el resto de /api/iot/pantalla*.
+
+    Las confirmaciones van en presente ("Arrancando el lavado"), no en
+    pasado ("Lavado iniciado"), justamente porque acá solo se ENCOLA: quien
+    prende el relé de verdad es iot_lavado.py, en su ciclo de 3s. Si ese
+    proceso no está corriendo, un "Lavado iniciado" sería mentira lisa y
+    llana; "Arrancando" es lo que efectivamente pasó de este lado."""
+    tipo = interpretado.get("tipo")
+    if tipo == "lavado_iniciar":
+        if lavado_programa.solicitar_inicio():
+            return "Arrancando el lavado"
+        return "No puedo, revisá si ya hay un lavado en curso o si falta configurar las etapas"
+    if tipo == "lavado_cancelar":
+        lavado_programa.solicitar_cancelacion()
+        return "Cancelando el lavado"
+    if tipo == "actuador":
+        clave, prender = interpretado["clave"], interpretado["prender"]
+        nombre = iot_canales.nombres().get(clave, clave)
+        if prender:
+            ok = voz_comandos.solicitar_encendido(clave)
+        else:
+            ok = voz_comandos.solicitar_apagado(clave)
+        if ok:
+            # Verbo en vez de adjetivo a propósito: el nombre lo escribe el
+            # tambo como texto libre (⚙ Configuración › 🔌 Entradas/Salidas)
+            # y no hay forma de saber su género ("Bomba de Agua" es
+            # femenino, "Compresor" no) -- "encendida/apagada" quedaría mal
+            # con la mitad de los nombres posibles. "Prendiendo/Apagando" no
+            # necesita concordancia.
+            return f"{'Prendiendo' if prender else 'Apagando'} {nombre}"
+        return "No puedo, hay un lavado en curso"
+    return "No entendí, repetí"
+
+
+@app.post("/api/iot/pantalla/voz")
+def api_iot_pantalla_voz():
+    """Comando de voz "Jarvis" pedido desde la pantalla ESP32: recibe el
+    audio grabado DESPUÉS de la wake word (WAV, 16kHz mono), lo transcribe,
+    lo interpreta (voz_comandos.interpretar) y devuelve un WAV con la
+    confirmación hablada para que la pantalla lo reproduzca por su
+    parlante. Mismo criterio de seguridad que /actuador y /lavado/iniciar:
+    bloqueado si el pedido llega por el túnel de Cloudflare."""
+    if _pedido_via_tunel():
+        return jsonify({"error": "No se puede usar comandos de voz desde fuera de la red del tambo"}), 403
+    audio = request.get_data()
+    try:
+        texto = voz_stt.transcribir(audio)
+    except Exception:  # noqa: BLE001
+        # Un WAV vacío/truncado/corrupto -- lo más previsible que puede
+        # pasar viniendo de un micrófono por WiFi en un tambo -- hace que
+        # wave.open() (adentro de transcribir) tire wave.Error/EOFError.
+        # Para quien habló eso es EXACTAMENTE el mismo evento que "no
+        # entendí" (habló y no pasó nada), así que se trata igual: no se
+        # toca ningún relé y se contesta con la misma confirmación hablada
+        # del caso "desconocido". Se responde 200 con un WAV real a
+        # propósito, no 400: la pantalla solo sabe reproducir lo que le
+        # llega, un código de error HTTP se traduce en silencio para el
+        # operario, que es justo lo que se quiere evitar. El error de
+        # verdad queda en el log del servidor para poder diagnosticarlo.
+        app.logger.exception("voz_stt.transcribir() falló (audio inválido o corrupto)")
+        interpretado = {"tipo": "desconocido"}
+    else:
+        interpretado = voz_comandos.interpretar(texto)
+    confirmacion = _ejecutar_comando_voz(interpretado)
+    try:
+        wav = voz_sintesis.sintetizar_wav(confirmacion)
+    except Exception:  # noqa: BLE001
+        # La síntesis corre PowerShell con check=True y timeout=15: si falla
+        # (voz no instalada, PowerShell bloqueado, la PC clavada), esto pasa
+        # DESPUÉS de haber encolado el comando. Sin este try, el pedido moría
+        # en un 500 y en el log quedaba un stack trace de subprocess sin
+        # ninguna pista de que un relé quedó pedido y el operario no escuchó
+        # nada -- que es lo peligroso del caso. No hay forma de devolver
+        # audio si justamente falló el audio; se contesta un 503 limpio (la
+        # pantalla ya sabe seguir de largo cuando el POST no le trae nada,
+        # ver el spec) y el aviso queda fuerte del lado del servidor.
+        app.logger.exception(
+            "voz_sintesis.sintetizar_wav() falló: el comando de voz YA SE EJECUTÓ "
+            "(%s) y se respondió %r, pero la pantalla NO va a reproducir nada. "
+            "El operario puede creer que no pasó nada mientras el pedido quedó encolado.",
+            interpretado, confirmacion)
+        return jsonify({"error": "No se pudo sintetizar la confirmación hablada",
+                        "confirmacion": confirmacion}), 503
+    return Response(wav, mimetype="audio/wav")
 
 
 @app.get("/api/lavado_automatico/programa")
