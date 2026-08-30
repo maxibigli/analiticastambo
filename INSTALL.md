@@ -503,3 +503,44 @@ del dashboard, funciona incluso en tambos de producción).
 Un número que no está en la lista de autorizados se ignora en silencio (no
 recibe ningún error ni respuesta) — es la protección contra que cualquiera
 que le escriba al número le pueda sacar datos del tambo.
+
+### Comandos de voz "Jarvis" desde la pantalla ESP32
+
+La pantalla táctil manda el audio grabado después de la palabra "Jarvis" y
+la PC lo transcribe **local** (Vosk, sin nube). Pasos en la PC donde corre
+la app, EN ESTE ORDEN:
+
+1. Dependencia nueva (`vosk`):
+   ```powershell
+   python -m pip install -r requirements.txt
+   ```
+2. **Confirmar que se puede importar en ESTA máquina** antes de seguir:
+   ```powershell
+   python -c "import vosk; print('vosk OK')"
+   ```
+   Si esto falla (Windows Smart App Control puede bloquear binarios nativos
+   de Python — ya pasó en la PC de desarrollo con otro motor de voz), la
+   función de voz no va a andar acá. El resto de LactIA arranca igual: el
+   `import` está aislado a propósito.
+3. **Precalentar el modelo desde la consola**, parado en la carpeta del
+   proyecto — la primera vez baja ~38 MB, y si eso pasa dentro del primer
+   comando de voz, pasa dentro del pedido HTTP y sin límite de tiempo:
+   ```powershell
+   python -c "import voz_stt; voz_stt._cargar_modelo(); print('modelo listo')"
+   ```
+4. Reiniciar `iot_lavado.py` (doble clic en `iniciar_iot.bat`, o
+   `python iot_lavado.py` **desde la carpeta del proyecto**: la base
+   `iot_sensores.db` se abre por ruta relativa). Los cambios de ese archivo
+   no se aplican solos.
+5. Después de ese primer reinicio, **mirar los 8 relés del módulo físico** y
+   confirmar que quedaron apagados. Al arrancar, el proceso los apaga a
+   propósito (es el estado conocido después de un reinicio) y avisa en su
+   ventana si no pudo confirmar alguno — pero conviene verlo con los ojos la
+   primera vez.
+
+Los nombres que se dicen en voz alta son los de **⚙ Configuración → 🔌
+Entradas/Salidas** ("prender bomba de agua"). Dos salidas no pueden tener el
+mismo nombre (la app lo rechaza al guardar): si se llaman igual, no hay
+forma de saber cuál se pidió. Y si dos nombres se parecen mucho ("bomba de
+agua fría" / "bomba de agua caliente"), hay que decir el nombre COMPLETO —
+ante la duda la pantalla contesta "No entendí, repetí" en vez de elegir una.
