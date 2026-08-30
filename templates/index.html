@@ -2774,6 +2774,7 @@
     <button class="lac-segment__item" data-tab="metas" aria-pressed="false">🎯 Calibración de Objetivos</button>
     <button class="lac-segment__item" data-tab="ia_whatsapp" aria-pressed="false">🤖 IA por WhatsApp</button>
     <button class="lac-segment__item" data-tab="iot_canales" aria-pressed="false">🔌 Entradas/Salidas</button>
+    <button class="lac-segment__item" data-tab="lavado_auto" aria-pressed="false">🧼 Lavado Automático</button>
   </div>
 
   <section class="card" id="config-general-card">
@@ -3116,10 +3117,44 @@
       (lavado y barrido de la rotativa); el resto se muestran con un nombre genérico hasta que
       les pongas uno acá. Dejar el campo vacío vuelve al nombre genérico.
     </p>
+    <div style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-bottom:16px">
+      <div style="font-weight:600;margin-bottom:8px">Dirección del gateway M300</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end">
+        <label>IP <input type="text" id="config-iot-conexion-host" placeholder="192.168.1.1"
+            style="width:150px;padding:6px;margin-left:6px"></label>
+        <label>Puerto <input type="number" id="config-iot-conexion-port" placeholder="502"
+            style="width:90px;padding:6px;margin-left:6px"></label>
+        <button class="secundario" id="config-iot-conexion-guardar">Guardar dirección</button>
+        <span class="aviso" id="config-iot-conexion-estado"></span>
+      </div>
+      <p class="explica" style="margin-top:10px">
+        Solo lo usa <code>iot_lavado.py</code> (el proceso que sondea el gateway) al arrancar --
+        si lo cambiás acá, hace falta reiniciar ese proceso para que tome el valor nuevo.
+      </p>
+    </div>
+
     <div class="aviso" id="config-iot-canales-estado" style="margin:8px 0"></div>
     <div style="overflow-x:auto"><table class="tabla" id="config-iot-canales-tabla"></table></div>
     <div style="margin-top:14px">
       <button id="config-iot-canales-guardar" disabled>Guardar</button>
+    </div>
+  </section>
+
+  <section class="card" id="config-lavado-auto-card" hidden>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🧼 Lavado Automático</h2>
+      <span class="aviso">Etapas del ciclo que se arranca desde la pantalla táctil.</span>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      Hasta 3 etapas, cada una prende uno o más relés de salida del M300 durante una
+      duración fija (en segundos) y después los apaga y pasa a la siguiente. No hay un
+      tiempo por defecto: ajustalo según lo que tarde la vuelta de la rotativa en este
+      tambo. Una etapa sin ningún relé tildado queda sin usar.
+    </p>
+    <div class="aviso" id="config-lavado-auto-estado" style="margin:8px 0"></div>
+    <div id="config-lavado-auto-etapas"></div>
+    <div style="margin-top:14px">
+      <button id="config-lavado-auto-guardar" disabled>Guardar</button>
     </div>
   </section>
   </div>
@@ -10643,7 +10678,9 @@ async function cargarConfiguracion() {
     cargarCanalesAlertas();
     cargarHorarioAlertas();
     cargarWhatsappIa();
+    cargarConexionIot();
     cargarCanalesGateway();
+    cargarLavadoAuto();
     estado.textContent = '';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
@@ -10667,6 +10704,7 @@ document.getElementById('config-tabs').addEventListener('click', ev => {
   document.getElementById('config-metas-card').hidden = tab !== 'metas';
   document.getElementById('config-ia-whatsapp-card').hidden = tab !== 'ia_whatsapp';
   document.getElementById('config-iot-canales-card').hidden = tab !== 'iot_canales';
+  document.getElementById('config-lavado-auto-card').hidden = tab !== 'lavado_auto';
 });
 
 // --- Editor de la plantilla del check-list ---------------------------------
@@ -10882,6 +10920,34 @@ document.getElementById('config-ia-whatsapp-guardar').addEventListener('click', 
   }
 });
 
+// --- Direccion IP/puerto del gateway M300 -----------------------------------
+async function cargarConexionIot() {
+  const estado = document.getElementById('config-iot-conexion-estado');
+  try {
+    const d = await pedirJSON('/api/iot/conexion');
+    document.getElementById('config-iot-conexion-host').value = d.host || '';
+    document.getElementById('config-iot-conexion-port').value = d.port || '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('config-iot-conexion-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('config-iot-conexion-estado');
+  const host = document.getElementById('config-iot-conexion-host').value.trim();
+  const port = document.getElementById('config-iot-conexion-port').value;
+  estado.textContent = 'Guardando…';
+  try {
+    await pedirJSON('/api/iot/conexion', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ host, port }),
+    });
+    estado.textContent = '✔ Guardado (reiniciá iot_lavado.py para aplicarlo).';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+});
+
 // --- Nombres de las entradas/salidas del gateway IoT (M300) -----------------
 // Lista de 16 canales FIJOS (no se agregan ni se sacan filas, a diferencia de
 // la tabla de arriba): se edita {clave: nombre} directo, sin array intermedio.
@@ -10942,6 +11008,90 @@ document.getElementById('config-iot-canales-guardar').addEventListener('click', 
       body: JSON.stringify({ nombres: canalesGatewayActual }),
     });
     canalesGatewayOriginal = JSON.stringify(canalesGatewayActual);
+    estado.textContent = '✔ Guardado.';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+});
+
+// --- Etapas del lavado automático (hasta 3, cada una con relés + duración) --
+let lavadoAutoReles = [];
+let lavadoAutoEtapas = [];   // siempre 3 posiciones en memoria; se manda solo las que tienen relés
+let lavadoAutoOriginal = '';
+
+async function cargarLavadoAuto() {
+  const estado = document.getElementById('config-lavado-auto-estado');
+  estado.textContent = 'Cargando…';
+  try {
+    const d = await pedirJSON('/api/lavado_automatico/programa');
+    lavadoAutoReles = d.reles_disponibles || [];
+    const guardadas = d.etapas || [];
+    lavadoAutoEtapas = [0, 1, 2].map(i => ({
+      reles: (guardadas[i] || {}).reles ? [...guardadas[i].reles] : [],
+      duracion_s: guardadas[i] ? String(guardadas[i].duracion_s) : '',
+    }));
+    lavadoAutoOriginal = JSON.stringify(lavadoAutoEtapas);
+    pintarLavadoAuto();
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+function pintarLavadoAuto() {
+  const cont = document.getElementById('config-lavado-auto-etapas');
+  cont.innerHTML = lavadoAutoEtapas.map((etapa, i) => `
+    <div style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-bottom:12px">
+      <div style="font-weight:600;margin-bottom:10px">Etapa ${i + 1}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:14px;margin-bottom:10px">
+        ${lavadoAutoReles.map(r => `
+          <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+            <input type="checkbox" data-etapa="${i}" data-rele="${escHtml(r.clave)}"
+              ${etapa.reles.includes(r.clave) ? 'checked' : ''}>
+            ${escHtml(r.nombre)}
+          </label>`).join('')}
+      </div>
+      <label>Duración (segundos):
+        <input type="number" min="1" step="1" data-etapa-duracion="${i}" value="${escHtml(etapa.duracion_s)}"
+          placeholder="sin definir" style="width:110px;padding:6px;margin-left:8px">
+      </label>
+    </div>`).join('');
+  const cambiado = JSON.stringify(lavadoAutoEtapas) !== lavadoAutoOriginal;
+  document.getElementById('config-lavado-auto-guardar').disabled = !cambiado;
+}
+
+document.getElementById('config-lavado-auto-etapas').addEventListener('change', ev => {
+  if (ev.target.dataset.etapa !== undefined) {
+    const etapa = lavadoAutoEtapas[Number(ev.target.dataset.etapa)];
+    const rele = ev.target.dataset.rele;
+    etapa.reles = ev.target.checked
+      ? [...new Set([...etapa.reles, rele])]
+      : etapa.reles.filter(r => r !== rele);
+  } else if (ev.target.dataset.etapaDuracion !== undefined) {
+    lavadoAutoEtapas[Number(ev.target.dataset.etapaDuracion)].duracion_s = ev.target.value;
+  } else {
+    return;
+  }
+  const cambiado = JSON.stringify(lavadoAutoEtapas) !== lavadoAutoOriginal;
+  document.getElementById('config-lavado-auto-guardar').disabled = !cambiado;
+});
+
+document.getElementById('config-lavado-auto-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('config-lavado-auto-estado');
+  const enUso = lavadoAutoEtapas.filter(e => e.reles.length > 0);
+  const sinDuracion = enUso.filter(e => !Number(e.duracion_s) || Number(e.duracion_s) <= 0);
+  if (sinDuracion.length) {
+    estado.textContent = 'Falta la duración de ' + sinDuracion.length + ' etapa(s) con relés elegidos.';
+    return;
+  }
+  estado.textContent = 'Guardando…';
+  try {
+    await pedirJSON('/api/lavado_automatico/programa', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ etapas: enUso.map(e => ({ reles: e.reles, duracion_s: Number(e.duracion_s) })) }),
+    });
+    lavadoAutoOriginal = JSON.stringify(lavadoAutoEtapas);
+    pintarLavadoAuto();
     estado.textContent = '✔ Guardado.';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;

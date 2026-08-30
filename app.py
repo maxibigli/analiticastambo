@@ -35,7 +35,9 @@ import genetica
 import herencia
 import gestacion
 import iot_canales
+import iot_conexion
 import iot_monitoreo
+import lavado_programa
 import laserenisima
 import mantenimiento
 import merito
@@ -91,7 +93,8 @@ app.permanent_session_lifetime = datetime.timedelta(days=30)
 
 # Rutas que no requieren haber iniciado sesión.
 _RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla", "/api/iot/pantalla/historico",
-                    "/api/iot/pantalla/io", "/api/iot/pantalla/actuador"}
+                    "/api/iot/pantalla/io", "/api/iot/pantalla/actuador", "/api/iot/pantalla/lavado",
+                    "/api/iot/pantalla/lavado/iniciar", "/api/iot/pantalla/lavado/cancelar"}
 
 
 @app.before_request
@@ -2376,6 +2379,78 @@ def api_iot_pantalla_actuador():
     if not iot_monitoreo.solicitar_pulso(canal):
         return jsonify({"error": f"Canal inválido: {canal}"}), 400
     return jsonify({"encolado": True, "canal": canal}), 202
+
+
+@app.get("/api/iot/pantalla/lavado")
+def api_iot_pantalla_lavado():
+    """Historial de ciclos de lavado/barrido de la rotativa (contactos DI,
+    ver ciclos_lavado) MÁS el estado del programa automático en curso (ver
+    lavado_programa.estado) -- todo para la pestaña Lavado Automático de la
+    pantalla ESP32. Mismo criterio público que el resto de /api/iot/pantalla*
+    para la parte de lectura."""
+    return jsonify({"ciclos": iot_monitoreo.ciclos_lavado(), "programa": lavado_programa.estado()})
+
+
+@app.post("/api/iot/pantalla/lavado/iniciar")
+def api_iot_pantalla_lavado_iniciar():
+    """Arranca el programa de lavado automático (ver lavado_programa.py) --
+    ACTIVA relés reales, mismo criterio de seguridad que /actuador: se
+    bloquea todo pedido que llegue por el túnel de Cloudflare."""
+    if _pedido_via_tunel():
+        return jsonify({"error": "No se puede iniciar un lavado desde fuera de la red del tambo"}), 403
+    if not lavado_programa.solicitar_inicio():
+        return jsonify({"error": "No hay etapas configuradas, o ya hay un lavado en curso."}), 400
+    return jsonify({"ok": True}), 202
+
+
+@app.post("/api/iot/pantalla/lavado/cancelar")
+def api_iot_pantalla_lavado_cancelar():
+    """Corta el programa de lavado automático en curso (apaga los relés de
+    la etapa activa). Mismo criterio de seguridad que /actuador e /iniciar."""
+    if _pedido_via_tunel():
+        return jsonify({"error": "No se puede cancelar un lavado desde fuera de la red del tambo"}), 403
+    lavado_programa.solicitar_cancelacion()
+    return jsonify({"ok": True}), 202
+
+
+@app.get("/api/lavado_automatico/programa")
+@auth.requiere_rol("admin")
+def api_lavado_automatico_listar():
+    """Configuración de las etapas del lavado automático, para el editor de
+    ⚙ Configuración › 🧼 Lavado Automático."""
+    custom = iot_canales.nombres()
+    reles_disponibles = [{"clave": c, "nombre": custom.get(c, l)} for c, l in iot_monitoreo.SALIDAS_PANEL]
+    return jsonify({"etapas": lavado_programa.etapas(), "reles_disponibles": reles_disponibles})
+
+
+@app.post("/api/lavado_automatico/programa")
+@auth.requiere_rol("admin")
+def api_lavado_automatico_guardar():
+    etapas = (request.json or {}).get("etapas")
+    if not isinstance(etapas, list):
+        return jsonify({"error": "Formato inválido."}), 400
+    try:
+        lavado_programa.guardar_etapas(etapas)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.get("/api/iot/conexion")
+@auth.requiere_rol("admin")
+def api_iot_conexion_listar():
+    return jsonify(iot_conexion.config())
+
+
+@app.post("/api/iot/conexion")
+@auth.requiere_rol("admin")
+def api_iot_conexion_guardar():
+    datos = request.json or {}
+    try:
+        iot_conexion.guardar(datos.get("host"), datos.get("port"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
 
 
 @app.get("/api/iot/canales")

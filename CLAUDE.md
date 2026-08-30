@@ -1642,6 +1642,165 @@ una salida sin nada conectado no hace nada (ni bueno ni malo); antes de
 cablear algo de verdad ahí, confirmar qué dirección Modbus (0 a 7, ver
 `iot_lavado.ACTUADORES`) corresponde a qué salida física del M300.
 
+**Direcciones Modbus de DI3-DI8/DO1-DO8: asumidas por convención, NO
+verificadas contra el M300 real.** El código asume numeración secuencial
+(DI*n* física = dirección *n-1*, mismo criterio ya confirmado para DI1/DI2
+-- lavado/barrido, ver el comentario de `CANALES` en `iot_lavado.py`). Es
+la convención más común en estos gateways, pero nunca se probó para el
+resto de los canales porque no hay nada cableado todavía. Antes de confiar
+en una entrada/salida nueva (DI3 en adelante, cualquier DO), conviene
+confirmarla contra la config web del M300 (si el tambo tiene acceso) o
+probarla en el lugar con un jumper/botón y mirar qué tarjeta prende en la
+pantalla -- no asumir que el número de la tarjeta es el terminal físico
+sin haberlo visto andar una vez.
+
+## Lavado Automático: secuenciador de etapas real (29/08/2026)
+
+Aclaración importante del usuario sobre lo que "Lavado Automático" tenía
+que hacer: NO es un visor del historial de lavado/barrido de la rotativa
+(esos DI son señales de un sistema EXTERNO, propio del tablero de la
+rotativa) -- es que LA APP misma controle un ciclo de lavado propio,
+prendiendo relés de salida del M300 (bombas de agua/espuma/desinfectante)
+en hasta 3 etapas configurables, cada una con sus propios relés y duración.
+
+**Sin duración por defecto, a propósito** (mismo criterio que los umbrales
+de retirada / preparación en `rutina.py`, ver más arriba): cuánto tiene que
+durar cada etapa depende de lo que tarda la vuelta de ESTA rotativa en ESTE
+tambo. `lavado_programa.py` rechaza guardar una etapa con relés elegidos
+pero sin duración, y el botón de iniciar en la pantalla no hace nada si no
+hay ninguna etapa configurada.
+
+**El secuenciador vive en `iot_lavado.py`, no en Flask.** Mismo motivo que
+`ejecutar_comandos_pendientes` (pulsos manuales de Actuadores): es el único
+proceso dueño de la conexión Modbus al M300. `procesar_ciclo_lavado()`
+corre en el MISMO ciclo de sondeo de 3s (no en un hilo aparte): lee una fila
+de estado (`ciclo_lavado_estado`, con `comando` puesto por Flask e
+`activo`/`etapa_actual`/`etapa_inicio` que actualiza este mismo proceso), y
+avanza de etapa cuando el tiempo transcurrido supera la duración configurada.
+Como corre en el ciclo de 3s, las etapas avanzan con esa precisión -- de
+sobra para un ciclo que dura minutos, y evita tener que coordinar dos
+procesos escribiendo Modbus al mismo tiempo.
+
+**Cancelar NO pide confirmación en la pantalla; iniciar sí** (tocar dos
+veces, mismo patrón que los pulsos de Actuadores). Frenar bombas reales es
+la dirección segura -- ponerle una traba justo ahí sería quitar velocidad
+de reacción exactamente cuando más importa.
+
+**Si la configuración cambia mientras el ciclo está corriendo** (se guarda
+una etapa 4 menos, por ejemplo) y la etapa activa queda fuera de rango,
+`procesar_ciclo_lavado` simplemente deja de avanzar (no cae ni inventa una
+etapa) hasta que alguien cancela -- caso raro, pero mejor quedarse quieto
+que apagar/prender algo que ya no está definido.
+
+## El M300 necesita mapeo EXPLÍCITO por punto para exponer algo por Modbus TCP (29/08/2026)
+
+Se armó todo el código de Actuadores (pulsos manuales) y Lavado Automático
+asumiendo que las 8 salidas del M300 respondían a direcciones Modbus 0-7 de
+coils, igual que las 2 entradas ya usadas (DI01/DI02, direcciones 0/1) --
+**la escritura fallaba con `ExceptionResponse(..., exception_code=2)`
+("Illegal Data Address") en TODAS las salidas.** No era un problema de
+cableado ni del código: el M300 (plataforma "USR IoT", edge computing) NO
+expone nada por Modbus TCP salvo que se lo agregues a mano a una tabla de
+mapeo. Se descubrió revisando la interfaz web del gateway (`http://192.168.1.1/`,
+sección **Edge Computing → IO Module → Protocol → Modbus TCP → Node mapping
+table`**) -- esa tabla tenía **UNA sola fila** (`DI01 → 10001, Only Read`),
+nada más. Por eso DI01 (lavado) funcionaba desde siempre y absolutamente
+nada más (ni DI02, ni ninguna salida) estaba realmente accesible desde
+afuera, aunque la propia web del M300 sí las leyera/controlara internamente.
+
+**Notación de direcciones de esa tabla** (convención Modicon clásica, la
+misma que ya se documentó para DI01/DI02):
+
+    0X   Coils            (bit, lectura/escritura)   -- para las 8 salidas
+    1X   Discrete Inputs  (bit, solo lectura)         -- para las entradas
+    3X   Input Registers  (16 bit, solo lectura)      -- analógicas
+    4X   Holding Registers(16 bit, lectura/escritura)
+
+Al agregar un punto nuevo (botón "Add" → elegir tipo 0X/1X/... y dirección
+inicial → "Add points" → elegir slave **"Local_IO"**, NO "Slave_Status" ni
+"EM60" -- esos dos son perfiles de ejemplo/no relacionados) el M300 asigna
+direcciones SECUENCIALES automáticamente a partir de la inicial elegida.
+
+**Mapeo actual, ya cargado en el M300** (coincide EXACTO con las direcciones
+que ya usaba el código -- no hizo falta tocar `iot_lavado.ACTUADORES` ni
+`CANALES` para nada de esto):
+
+    Punto (M300)   Tipo   Dirección Modbus   Usado como (código)
+    DI01           1X     10001              lavado_rotativa (dirección 0)
+    DI02           1X     10002              barrido_rotativa (dirección 1)
+    DO11           0X     00001              do_1 (dirección 0)
+    DO12           0X     00002              do_2 (dirección 1)
+    DO13..DO18     0X     00003..00008       do_3..do_8 (direcciones 2-7)
+
+**Hardware real: 2 módulos de expansión, USR-IO0080 (8 DO) y USR-IO0440 (4
+DO + 4 AI)**, conectados al bus propio del M300 (no por un puerto RS485
+genérico) -- por eso aparecen bajo el slave "Local_IO" y no como un
+"Modbus_RTU" externo. Con la base (DI01/DI02, DO01/DO02) más las dos
+expansiones, el M300 tiene en total: **2 DI, 14 DO (2+8+4), 6 AI (2+4)** --
+bastante más de lo que el diseño de "8 actuadores" necesita. Se usó
+`DO11`-`DO18` (el módulo dedicado de 8 relés) para los 8 actuadores; `DO01`,
+`DO02` y `DO21`-`DO24` quedan sin mapear/sin usar por ahora. **NO hay
+ningún módulo de expansión de DI** -- las 8 "entradas" que ya existen en el
+código/pantalla (`di_3` a `di_8`) NO tienen nada físico atrás y
+probablemente nunca lo tengan salvo que se agregue esa expansión.
+
+**Verificado en vivo, de punta a punta**: escribir `True` en el coil 0 (vía
+un script Python aislado con pymodbus, sin pasar por `iot_lavado.py`) hizo
+que el switch de `DO11` se moviera en la propia web del M300 Y que el relé
+físico prendiera de verdad (confirmado por el usuario mirando el módulo).
+Un pulso de 1 segundo no se llegó a percibir a simple vista (probablemente
+sí funcionó, solo que muy rápido para notarlo) -- con 5 segundos quedó
+clarísimo. **No hace falta alargar `iot_lavado.DURACION_PULSO_S` (0.5s) por
+esto**: un relé mecánico conmuta en milisegundos, 500ms alcanza de sobra
+para la función real (activar un pulsador), el problema era solo de
+percepción humana en la prueba de diagnóstico, no del pulso en producción.
+
+**Bug real encontrado al probar esto, ya arreglado: la conexión Modbus no se
+recuperaba sola tras un corte.** Justo el cambio de mapeo de arriba reinició
+el servicio Modbus TCP del M300, y `iot_lavado.py` (conexión persistente,
+un solo `ModbusTcpClient` para todo el proceso) se quedó con un socket
+muerto: `client.connected` seguía en `True` del lado de Python aunque el
+M300 ya había cerrado la conexión del otro lado, así que CADA pulso de
+actuador fallaba con `[WinError 10054] Se ha forzado la interrupción de una
+conexión existente por el host remoto` -- y las lecturas de DI habrían
+tenido el mismo problema silencioso (nunca se notó porque nadie reinició el
+M300 antes). Se agregó `client.close()` en el `except` de `_leer_estado`,
+`_escribir_reles` y `ejecutar_comandos_pendientes`: fuerza que el PRÓXIMO
+intento abra una conexión nueva en vez de seguir reusando un socket que ya
+no sirve para siempre. Antes de este arreglo, cualquier corte de red o
+reinicio del M300 dejaba lectura/escritura muertas hasta reiniciar
+`iot_lavado.py` a mano.
+
+## Barra de progreso del lavado (29/08/2026)
+
+`lavado_programa.estado()` calcula `progreso_pct` (0-100, % del ciclo
+COMPLETO ya transcurrido, sumando las duraciones de las etapas ya hechas
+más lo corrido de la etapa actual) y lo devuelve dentro de
+`/api/iot/pantalla/lavado` → `programa.progreso_pct`. El cálculo se hace
+ACÁ, en el servidor, y no se manda ningún timestamp para que la pantalla lo
+reste sola -- así no importa si el reloj del ESP32 está desincronizado del
+de esta PC. En la pantalla (`main.c`), la barra (`barra_lavado_progreso`,
+un `lv_bar`) y su label de porcentaje están ocultos por defecto y solo se
+muestran mientras `programa.activo` es `true`; se actualizan en
+`actualizar_estado_programa()` cada vez que llega una respuesta del
+polling (mismo intervalo que el resto de la pantalla de Lavado
+Automático).
+
+**Si en el futuro hace falta agregar otro punto** (por ejemplo activar
+`DO01`/`DO02` o una entrada nueva si se agrega expansión de DI): repetir el
+mismo camino -- Data Point (para que el M300 lo reconozca como canal) ya
+debería estar hecho si aparece en "IO Module → Status"; lo que hay que
+agregar es la fila en **Protocol → Modbus TCP → Node mapping table**, y
+recién ahí un cliente externo (nuestro `iot_lavado.py`) lo puede leer/escribir.
+
+**`iot_conexion.py`: IP/puerto del M300 ahora configurables** (⚙
+Configuración › 🔌 Entradas/Salidas, arriba de la tabla de nombres) --
+antes `HOST`/`PORT` eran constantes fijas en `iot_lavado.py`. Se lee UNA
+SOLA VEZ al arrancar ese proceso (no en caliente, a diferencia de la URL
+del servidor en el ESP32): un gateway de este tipo normalmente tiene IP
+fija en la red del tambo, así que no hace falta la complejidad de recargar
+en caliente -- cambiar el valor requiere reiniciar `iot_lavado.py`.
+
 ## Solapa 🔌 Entradas/Salidas: mismo patrón que 🤖 IA por WhatsApp
 
 Tabla editable de 16 filas FIJAS (no se agregan/sacan, a diferencia del

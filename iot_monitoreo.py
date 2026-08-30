@@ -179,6 +179,42 @@ def solicitar_pulso(canal: str) -> bool:
     return True
 
 
+def ciclos_lavado(limite: int = 20) -> list:
+    """Historial de ciclos de lavado/barrido de la rotativa, para la pestaña
+    Lavado Automático de la pantalla ESP32. `eventos_di` guarda un evento por
+    CAMBIO de estado (ver iot_lavado.registrar_si_cambio), no uno por ciclo
+    -- acá se empareja cada encendido con el próximo apagado del MISMO canal.
+    Si el último evento de un canal es un encendido sin apagado todavía
+    (está lavando/barriendo AHORA), el ciclo queda con `fin=None`."""
+    con = _conectar_db()
+    try:
+        filas = con.execute(
+            "SELECT canal, fecha_hora, estado FROM eventos_di "
+            "WHERE canal IN ('lavado_rotativa', 'barrido_rotativa') ORDER BY fecha_hora"
+        ).fetchall()
+    finally:
+        con.close()
+
+    ciclos = []
+    abiertos = {}   # canal -> fecha_hora del encendido todavía sin apagado
+    for canal, fecha_hora, estado in filas:
+        if estado:
+            abiertos[canal] = fecha_hora
+        elif canal in abiertos:
+            ciclos.append({"tipo": canal, "inicio": abiertos.pop(canal), "fin": fecha_hora})
+    for canal, inicio in abiertos.items():
+        ciclos.append({"tipo": canal, "inicio": inicio, "fin": None})
+
+    ahora = datetime.datetime.now()
+    for c in ciclos:
+        t0 = datetime.datetime.fromisoformat(c["inicio"])
+        t1 = datetime.datetime.fromisoformat(c["fin"]) if c["fin"] else ahora
+        c["duracion_s"] = int((t1 - t0).total_seconds())
+
+    ciclos.sort(key=lambda c: c["inicio"], reverse=True)
+    return ciclos[:limite]
+
+
 def lecturas_actuales() -> list:
     """Último valor conocido de cada sensor planeado (None = todavía sin
     instalar / sin datos). El ITH se calcula al vuelo si hay temp+hum de

@@ -25,8 +25,9 @@ import time
 
 from pymodbus.client import ModbusTcpClient
 
-HOST = "192.168.1.1"
-PORT = 502
+import iot_conexion
+import lavado_programa
+
 INTERVALO_POLL_S = 3      # cada cuánto se pregunta el estado
 INTERVALO_RECONEXION_S = 5
 
@@ -93,6 +94,15 @@ def _conectar_db(ruta: str = RUTA_DB) -> sqlite3.Connection:
             resultado TEXT
         )
     """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS ciclo_lavado_estado (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            comando TEXT,
+            activo INTEGER NOT NULL DEFAULT 0,
+            etapa_actual INTEGER,
+            etapa_inicio TEXT
+        )
+    """)
     con.commit()
     return con
 
@@ -106,6 +116,7 @@ def _leer_estado(client: ModbusTcpClient, direccion: int, invertido: bool):
         valor = bool(resultado.bits[0])
         return (not valor) if invertido else valor
     except Exception:  # noqa: BLE001
+        client.close()   # ver el comentario igual en _escribir_reles: fuerza reconexion
         return None
 
 
@@ -146,9 +157,90 @@ def ejecutar_comandos_pendientes(con: sqlite3.Connection, client: ModbusTcpClien
                       f"pulso en {canal} (dirección {direccion})")
             except Exception as e:  # noqa: BLE001
                 resultado = f"error: {e}"
+                # La conexion puede quedar "viva" del lado de Python (client.connected
+                # sigue en True) aunque el M300 ya la haya cerrado del otro lado (pasa,
+                # por ejemplo, cuando se reinicia su servicio Modbus TCP al cambiar la
+                # config) -- forzar el cierre ahora hace que el proximo intento la abra
+                # de nuevo en vez de seguir usando un socket muerto para siempre.
+                client.close()
         con.execute("UPDATE comandos_actuador SET ejecutado = 1, resultado = ? WHERE id = ?",
                     (resultado, cmd_id))
         con.commit()
+
+
+def _escribir_reles(client: ModbusTcpClient, claves: list, prender: bool):
+    for clave in claves:
+        direccion = ACTUADORES.get(clave)
+        if direccion is None:
+            continue
+        try:
+            if not client.connected:
+                client.connect()
+            client.write_coil(address=direccion, value=prender, device_id=1)
+        except Exception as e:  # noqa: BLE001
+            print(f"{datetime.datetime.now().isoformat(timespec='seconds')}  "
+                  f"error {'prendiendo' if prender else 'apagando'} {clave}: {e}")
+            client.close()   # mismo motivo que en ejecutar_comandos_pendientes: forzar reconexion
+
+
+def procesar_ciclo_lavado(con: sqlite3.Connection, client: ModbusTcpClient):
+    """Motor del programa de lavado automático (ver lavado_programa.py):
+    prende/apaga relés según la etapa configurada y el tiempo transcurrido.
+    Corre en el MISMO ciclo de sondeo de 3s que el resto de este archivo, no
+    en un hilo aparte -- las etapas avanzan con precisión de unos segundos,
+    que alcanza de sobra para un ciclo que dura minutos, y evita coordinar
+    dos cosas escribiendo Modbus al mismo tiempo."""
+    fila = con.execute(
+        "SELECT comando, activo, etapa_actual, etapa_inicio FROM ciclo_lavado_estado WHERE id = 1"
+    ).fetchone()
+    comando, activo, etapa_actual, etapa_inicio = fila if fila else (None, 0, None, None)
+    programa = lavado_programa.etapas()
+    ahora = datetime.datetime.now()
+
+    if comando == "cancelar":
+        if activo and etapa_actual is not None and etapa_actual < len(programa):
+            _escribir_reles(client, programa[etapa_actual]["reles"], False)
+        con.execute("UPDATE ciclo_lavado_estado SET comando = NULL, activo = 0, "
+                    "etapa_actual = NULL, etapa_inicio = NULL WHERE id = 1")
+        con.commit()
+        print(f"{ahora.isoformat(timespec='seconds')}  lavado automático: cancelado")
+        return
+
+    if comando == "iniciar" and not activo and programa:
+        _escribir_reles(client, programa[0]["reles"], True)
+        con.execute("UPDATE ciclo_lavado_estado SET comando = NULL, activo = 1, "
+                    "etapa_actual = 0, etapa_inicio = ? WHERE id = 1",
+                    (ahora.isoformat(timespec="seconds"),))
+        con.commit()
+        print(f"{ahora.isoformat(timespec='seconds')}  lavado automático: arranca etapa 1/{len(programa)}")
+        return
+
+    if comando:   # 'iniciar' pedido sin programa, o repetido con uno ya activo: se descarta
+        con.execute("UPDATE ciclo_lavado_estado SET comando = NULL WHERE id = 1")
+        con.commit()
+
+    if not (activo and etapa_actual is not None and etapa_inicio and programa):
+        return
+    if etapa_actual >= len(programa):
+        return   # config cambio mientras corria (menos etapas ahora); se corta solo en el proximo cancelar
+
+    transcurrido = (ahora - datetime.datetime.fromisoformat(etapa_inicio)).total_seconds()
+    etapa_cfg = programa[etapa_actual]
+    if transcurrido < etapa_cfg["duracion_s"]:
+        return
+
+    _escribir_reles(client, etapa_cfg["reles"], False)
+    siguiente = etapa_actual + 1
+    if siguiente < len(programa):
+        _escribir_reles(client, programa[siguiente]["reles"], True)
+        con.execute("UPDATE ciclo_lavado_estado SET etapa_actual = ?, etapa_inicio = ? WHERE id = 1",
+                    (siguiente, ahora.isoformat(timespec="seconds")))
+        print(f"{ahora.isoformat(timespec='seconds')}  lavado automático: etapa {siguiente + 1}/{len(programa)}")
+    else:
+        con.execute("UPDATE ciclo_lavado_estado SET activo = 0, etapa_actual = NULL, "
+                    "etapa_inicio = NULL WHERE id = 1")
+        print(f"{ahora.isoformat(timespec='seconds')}  lavado automático: ciclo completo")
+    con.commit()
 
 
 def _anunciar_voz(texto: str):
@@ -170,9 +262,10 @@ def _anunciar_voz(texto: str):
 
 def main():
     con = _conectar_db()
-    client = ModbusTcpClient(HOST, port=PORT)
+    cfg = iot_conexion.config()
+    client = ModbusTcpClient(cfg["host"], port=cfg["port"])
     anteriores = {canal: None for canal in CANALES}
-    print(f"Conectando a {HOST}:{PORT}... (Ctrl+C para salir)")
+    print(f"Conectando a {cfg['host']}:{cfg['port']}... (Ctrl+C para salir)")
     try:
         while True:
             if not client.connected:
@@ -186,6 +279,7 @@ def main():
                 if arranco and AUDIO_ACTIVADO and canal in MENSAJES_VOZ:
                     _anunciar_voz(MENSAJES_VOZ[canal])
             ejecutar_comandos_pendientes(con, client)
+            procesar_ciclo_lavado(con, client)
             time.sleep(INTERVALO_POLL_S)
     except KeyboardInterrupt:
         print("Cortado por el usuario.")
