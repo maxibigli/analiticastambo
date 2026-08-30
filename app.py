@@ -2451,7 +2451,39 @@ def _ejecutar_comando_voz(interpretado: dict) -> str:
             # necesita concordancia.
             return f"{'Prendiendo' if prender else 'Apagando'} {nombre}"
         return "No puedo, hay un lavado en curso"
+    if tipo == "consulta_lavado":
+        return _texto_estado_lavado()
+    if tipo == "consulta_actuadores":
+        return _texto_actuadores_prendidos()
     return "No entendí, repetí"
+
+
+def _texto_estado_lavado() -> str:
+    """Respuesta hablada de "¿cómo va el lavado?" -- solo lectura."""
+    est = lavado_programa.estado()
+    if est.get("activo"):
+        return (f"Lavado en curso, etapa {est['etapa_actual'] + 1} "
+                f"de {est['etapas_total']}, {int(est.get('progreso_pct', 0))} por ciento")
+    configuradas = est.get("etapas_configuradas", 0)
+    if configuradas:
+        return f"No hay lavado en curso. Hay {configuradas} etapas configuradas"
+    return "No hay lavado en curso, y todavía no hay etapas configuradas"
+
+
+def _texto_actuadores_prendidos() -> str:
+    """Respuesta hablada de "¿qué está prendido?" -- solo lectura.
+
+    Redactado para que el sujeto gramatical sea "actuador" y no el nombre
+    que cargó el tambo: los nombres son texto libre y no se les puede saber
+    el género (ver la nota de "Prendiendo/Apagando" más arriba)."""
+    sostenidos = voz_comandos.estado()
+    if not sostenidos:
+        return "No hay ningún actuador prendido"
+    nombres_cfg = iot_canales.nombres()
+    nombres = [nombres_cfg.get(c, c) for c in sorted(sostenidos)]
+    listado = nombres[0] if len(nombres) == 1 else ", ".join(nombres[:-1]) + " y " + nombres[-1]
+    cantidad = "uno" if len(nombres) == 1 else str(len(nombres))
+    return f"Hay {cantidad} en marcha: {listado}"
 
 
 @app.post("/api/iot/pantalla/voz")
@@ -2460,10 +2492,26 @@ def api_iot_pantalla_voz():
     audio grabado DESPUÉS de la wake word (WAV, 16kHz mono), lo transcribe,
     lo interpreta (voz_comandos.interpretar) y devuelve un WAV con la
     confirmación hablada para que la pantalla lo reproduzca por su
-    parlante. Mismo criterio de seguridad que /actuador y /lavado/iniciar:
-    bloqueado si el pedido llega por el túnel de Cloudflare."""
-    if _pedido_via_tunel():
-        return jsonify({"error": "No se puede usar comandos de voz desde fuera de la red del tambo"}), 403
+    parlante. También lo usa el botón de voz de la web (ver el push-to-talk
+    en index.html), que manda el mismo WAV.
+
+    SEGURIDAD -- dos capas distintas para los pedidos que llegan por el
+    túnel de Cloudflare (o sea, desde internet):
+
+    1. Hay que tener sesión iniciada. Antes este endpoint rechazaba ENTERO
+       cualquier pedido del túnel, así que un anónimo nunca llegaba a
+       gastar nada. Ahora que se atienden consultas desde afuera, sin este
+       chequeo cualquiera podría hacer transcribir audio (Vosk) y levantar
+       un PowerShell de síntesis por pedido, en una PC que ya anda justa de
+       RAM. La pantalla ESP32 no puede iniciar sesión, pero tampoco lo
+       necesita: entra por la LAN, no por el túnel.
+    2. Aunque haya sesión, solo se atienden los comandos que NO arrancan
+       equipos (voz_comandos.TIPOS_SEGUROS_REMOTO: consultas, cancelar y
+       "no entendí"). Es lista blanca: un tipo nuevo que no se clasifique
+       queda bloqueado desde afuera por omisión."""
+    via_tunel = _pedido_via_tunel()
+    if via_tunel and "usuario" not in session:
+        return jsonify({"error": "Iniciá sesión para usar comandos de voz"}), 401
     audio = request.get_data()
     try:
         texto = voz_stt.transcribir(audio)
@@ -2483,7 +2531,15 @@ def api_iot_pantalla_voz():
         interpretado = {"tipo": "desconocido"}
     else:
         interpretado = voz_comandos.interpretar(texto)
-    confirmacion = _ejecutar_comando_voz(interpretado)
+
+    # El rechazo va ANTES de ejecutar nada: el único camino que llega a
+    # _ejecutar_comando_voz es el `else`.
+    if via_tunel and not voz_comandos.es_seguro_remoto(interpretado.get("tipo")):
+        app.logger.warning("voz: comando %r rechazado por venir de fuera de la red del tambo "
+                           "(usuario %r)", interpretado.get("tipo"), session.get("usuario"))
+        confirmacion = "Eso no lo puedo hacer desde fuera del tambo"
+    else:
+        confirmacion = _ejecutar_comando_voz(interpretado)
     try:
         wav = voz_sintesis.sintetizar_wav(confirmacion)
     except Exception:  # noqa: BLE001
