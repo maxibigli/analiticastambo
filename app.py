@@ -38,6 +38,9 @@ import iot_canales
 import iot_conexion
 import iot_monitoreo
 import lavado_programa
+import voz_comandos
+import voz_sintesis
+import voz_stt
 import laserenisima
 import mantenimiento
 import merito
@@ -94,7 +97,8 @@ app.permanent_session_lifetime = datetime.timedelta(days=30)
 # Rutas que no requieren haber iniciado sesión.
 _RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla", "/api/iot/pantalla/historico",
                     "/api/iot/pantalla/io", "/api/iot/pantalla/actuador", "/api/iot/pantalla/lavado",
-                    "/api/iot/pantalla/lavado/iniciar", "/api/iot/pantalla/lavado/cancelar"}
+                    "/api/iot/pantalla/lavado/iniciar", "/api/iot/pantalla/lavado/cancelar",
+                    "/api/iot/pantalla/voz"}
 
 
 @app.before_request
@@ -2411,6 +2415,49 @@ def api_iot_pantalla_lavado_cancelar():
         return jsonify({"error": "No se puede cancelar un lavado desde fuera de la red del tambo"}), 403
     lavado_programa.solicitar_cancelacion()
     return jsonify({"ok": True}), 202
+
+
+def _ejecutar_comando_voz(interpretado: dict) -> str:
+    """Dispara la acción reconocida y devuelve el texto de confirmación a
+    sintetizar. Nunca toca Modbus directo -- solo encola pedidos, mismo
+    criterio que el resto de /api/iot/pantalla*."""
+    tipo = interpretado.get("tipo")
+    if tipo == "lavado_iniciar":
+        if lavado_programa.solicitar_inicio():
+            return "Lavado iniciado"
+        return "No puedo, revisá si ya hay un lavado en curso o si falta configurar las etapas"
+    if tipo == "lavado_cancelar":
+        lavado_programa.solicitar_cancelacion()
+        return "Lavado cancelado"
+    if tipo == "actuador":
+        clave, prender = interpretado["clave"], interpretado["prender"]
+        nombre = iot_canales.nombres().get(clave, clave)
+        if prender:
+            ok = voz_comandos.solicitar_encendido(clave)
+        else:
+            ok = voz_comandos.solicitar_apagado(clave)
+        if ok:
+            return f"{nombre} {'encendida' if prender else 'apagada'}"
+        return "No puedo, hay un lavado en curso"
+    return "No entendí, repetí"
+
+
+@app.post("/api/iot/pantalla/voz")
+def api_iot_pantalla_voz():
+    """Comando de voz "Jarvis" pedido desde la pantalla ESP32: recibe el
+    audio grabado DESPUÉS de la wake word (WAV, 16kHz mono), lo transcribe,
+    lo interpreta (voz_comandos.interpretar) y devuelve un WAV con la
+    confirmación hablada para que la pantalla lo reproduzca por su
+    parlante. Mismo criterio de seguridad que /actuador y /lavado/iniciar:
+    bloqueado si el pedido llega por el túnel de Cloudflare."""
+    if _pedido_via_tunel():
+        return jsonify({"error": "No se puede usar comandos de voz desde fuera de la red del tambo"}), 403
+    audio = request.get_data()
+    texto = voz_stt.transcribir(audio)
+    interpretado = voz_comandos.interpretar(texto)
+    confirmacion = _ejecutar_comando_voz(interpretado)
+    wav = voz_sintesis.sintetizar_wav(confirmacion)
+    return Response(wav, mimetype="audio/wav")
 
 
 @app.get("/api/lavado_automatico/programa")
