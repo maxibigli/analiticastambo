@@ -2014,6 +2014,87 @@ mocks en el camino audio → texto → intención → fila encolada.
    exactamente el motivo por el que el apagado de arranque tuvo que
    aprender a detectar su propia falla.
 
+## Rediseño del score de rutina: pesos nuevos + "Evaluación de Incidentes" separada (24-30/08/2026)
+
+El tambo mandó su propia planilla de criterios (Rotativa y Convencional, cada
+una con "Evaluación de Manejo" y una "Evaluación de Incidentes" nueva) para
+reemplazar los pesos que había hasta ahora. Antes de tocar código se
+verificaron dos cosas que la planilla daba por sentadas, y las dos importan:
+
+**"Retiradas Forzadas" es EXCLUSIVA de la rotativa, no un dato sospechoso de
+la convencional.** El tambo lo explicó: pasa cuando la plataforma llega a la
+zona de sellado y la vaca sigue ordeñándose (velocidad de la rotativa muy
+alta, u ordeño lento/mala rutina de esa vaca) — mecánicamente imposible en
+una sala de tandas, que no tiene una plataforma que la lleve a un punto fijo
+a horario. Esto resuelve algo que ya estaba anotado sin explicación más
+arriba en este archivo: `ForcedRetract` daba 0 en las 32.051 filas de La
+Martina porque el fenómeno no aplica ahí, no por un problema de datos.
+
+**Los otros cuatro incidentes (Recolocaciones/Deslizamientos/Bloqueos/
+Patadas) SÍ existen para la convencional**, con datos reales — se dudaba
+porque `salas/convencional.py` solo leía `ForcedRetract` de
+`SessionMilkYieldEx` (la sala nunca los había necesitado hasta ahora).
+Medido en La Martina (14 días): 6,6%/34,2%/17,3%/4,8% de los ordeños con
+recolocación/deslizamiento/bloqueo/patada respectivamente — variado y real,
+no ceros. Se agregaron a `salas/convencional.sql_rutina` (columnas
+`ex.NoOfReattaches/Slips/Blocks/KickOffs`) y a `rutina.sql_rutina` (ya
+existían en `CMSMilkYield` para la rotativa, ver la sección de incidencias
+más arriba en este archivo — solo faltaba leerlos en ESTA consulta puntual,
+la de "Rutina de ordeño", no la de "Rendimiento Sala").
+
+**"Evaluación de Incidentes" es un score 0-100 APARTE del de manejo**
+(`rutina.componente_incidentes`, en el mismo diccionario de salida de
+`_analizar_sesion` que ya tenía `detalle`/`score`/`hallazgos`, bajo la clave
+`"incidentes"`): mide lo que registra la MÁQUINA en cada ordeño, no la
+logística de traer los animales al corral — puede ser falla de rutina, pero
+también de mantenimiento o del equipo en sí, y hay que poder mirarlo aparte
+para saber cuál de las tres es. Cada tipo se puntúa
+`100 × (1 - ocurrencias/vacas)`, lineal a propósito (a diferencia de
+"identificación", que sí tiene curva no lineal confirmada — acá todavía no
+hay motivo medido para inventar una). Pesos confirmados por el tambo:
+
+    Rotativa: Recolocaciones 20 · Deslizamientos 20 · Bloqueos 10 ·
+              Retiradas forzadas 45 · Patadas 5      (rutina.PESOS_INCIDENTES)
+    Convencional: Recolocaciones 30 · Deslizamientos 40 · Bloqueos 20 ·
+              Patadas 10, SIN retiradas forzadas     (salas.convencional.PESOS_INCIDENTES)
+
+En el frontend (`pintarRutinaSesion`) se agregó como una segunda tarjeta
+dentro del mismo panel de la sesión, debajo de Hallazgos — mismas barras de
+componente que "Evaluación de Manejo", separada por un borde.
+
+**Pesos de "Evaluación de Manejo" reemplazados** (antes: `rutina.PESOS` /
+`salas.convencional.PESOS`), confirmados por el tambo:
+
+    Rotativa: Colocación 30 · Identificación 30 · Lerdas 5 · Entre grupos 10 ·
+              Mezcladas 5 · Ocupación 10 (+ Paradas de la rotativa 10, ver abajo)
+    Convencional: Colocación 30 · Identificación 30 · Lerdas 5 ·
+              Entre grupos 15 · Entre mangadas 15 · Mezcladas 5
+
+Dos componentes que YA EXISTÍAN quedan en peso 0 en el rediseño, no
+eliminados del código: "manejo_corral" en la rotativa (el tambo lo fusionó
+conceptualmente en "Entre grupos" — tiene sentido, `_huecos_rotativa` ya
+usaba un solo umbral de sesión para las dos cosas, a diferencia de la
+convencional donde sí están bien separadas) y "ocupación"/"flujo" en la
+convencional. Como el editor de pesos del frontend lee los componentes del
+propio análisis (`componentesDelScore`), un tambo que quiera reactivarlos
+puede hacerlo desde ⚙ (por tambo), sin tocar código.
+
+**Pendiente, sin resolver todavía: "Paradas de la rotativa" (10% del diseño
+del tambo).** Se investigó si DDM tiene el dato: existe una tabla
+`Chi_TempRotaryStops24` (motor "Chi" = analítica propia de DeLaval dentro de
+DelPro) con `parlor/HH/Animals/Spintime/PercGaps/Stops/StopsLt5/Stops5to10/
+StopsGt10` por hora, pero tiene SOLO 18 filas de un único día (15-16/07/2026)
+y nunca se actualizó — el nombre "Temp" no es casualidad: por el patrón (otro
+grupo de tablas `Chi*` con `create_date` del 30/07, mismo comportamiento)
+parece ser una tabla de trabajo que algún reporte de DelPro genera al vuelo
+cuando se lo abre, no un historial acumulado. Falta que el tambo confirme
+(con una captura de esa pantalla de DelPro) si ese reporte dispara un
+recálculo cada vez que se abre — recién ahí se puede decidir si LactIA puede
+leer la misma tabla o si hace falta otra fuente. Hasta entonces, el peso
+correspondiente simplemente no está en `rutina.PESOS` (ver el comentario ahí):
+los demás pesos de Manejo no necesitan sumar 100, `_analizar_sesion` normaliza
+por el peso de los componentes disponibles, no por un total fijo.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

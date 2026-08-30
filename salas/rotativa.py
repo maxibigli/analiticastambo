@@ -50,24 +50,28 @@ def sql_rutina(fecha: str) -> str:
 
 def analizar_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                  max_sesiones=None, nombres=None, umbral_prep_s=None,
-                 identificacion_pct=None) -> dict:
+                 identificacion_pct=None, pesos_incidentes=None) -> dict:
     # `tambo` no hace falta acá — está en la firma solo para que coincida con
     # la interfaz común (ver salas/convencional.py). `identificacion_pct` SÍ
     # se usa acá: `rutina.sql_rutina` todavía filtra `IDTime IS NOT NULL`
     # (a diferencia de `sql_rendimiento`, que ya se corrigió) y por eso
     # `sin_identificar` daba siempre 0 por sesión — mismo síntoma que tenía
     # convencional, mismo arreglo (ver `app.py::_identificacion_pct_de`).
+    # `pesos_incidentes`: None cae a `rutina.PESOS_INCIDENTES`, hecho para
+    # esta sala (incluye "retiradas_forzadas").
     return rutina.analizar_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
                                umbral_prep_s=umbral_prep_s,
-                               identificacion_pct=identificacion_pct)
+                               identificacion_pct=identificacion_pct,
+                               pesos_incidentes=pesos_incidentes)
 
 
 def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                 max_sesiones=None, nombres=None, umbral_prep_s=None,
-                identificacion_pct=None):
+                identificacion_pct=None, pesos_incidentes=None):
     return rutina.resumen_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
                               umbral_prep_s=umbral_prep_s,
-                              identificacion_pct=identificacion_pct)
+                              identificacion_pct=identificacion_pct,
+                              pesos_incidentes=pesos_incidentes)
 
 
 # La curva de flujo YA viene en kg/min en `CMSMilkYield`, así que no hay que

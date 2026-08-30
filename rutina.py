@@ -43,27 +43,32 @@ UMBRAL_CORRIDA_MEZCLA = 3  # corrida de este largo o menos = animal(es) suelto(s
 # (visto en la práctica: ~6800 filas/día en un día normal de bastante movimiento).
 MAX_FILAS_DIA = 20000
 
-# Pesos del score (documentan qué mide cada uno de los problemas que se buscan detectar).
+# Pesos de "Evaluación de Manejo" confirmados por el tambo (24/08/2026,
+# reemplazan al reparto anterior). "manejo_corral" queda en 0: el tambo lo
+# sacó de Manejo en el rediseño, fusionado conceptualmente en "Tiempos Entre
+# grupos" (acá "entre_grupos") -- en la rotativa esa separación ya pesaba
+# menos igual, porque el ritmo de entrada es continuo aunque cambie el grupo
+# (ver `_huecos_rotativa`, un solo umbral de sesión para las dos cosas).
+# "identificacion" pasa a pesar 30 (antes 0): el tambo decidió que SÍ entre
+# al score acá, no solo mostrarse aparte en Rendimiento Sala.
 PESOS = {
     "prep_90s": 30,        # errores de rutina: pezonera colocada a tiempo
-    "lerdas": 10,          # atrasos por vacas lerdas
-    "entre_grupos": 20,    # tiempos muertos entre distintos grupos
-    "manejo_corral": 15,   # mal manejo de traída de animales dentro del mismo grupo
-    "mezcla_rodeos": 10,   # vacas de un grupo que se mezclaron en el turno de otro
-    "ocupacion": 15,       # puestos de la rotativa que giraron vacíos
-    # Bimodalidad de la curva de flujo. PESA 0 POR DEFECTO a propósito: en la
-    # rotativa la rutina ya se mide con "prep_90s" (el tiempo real hasta
-    # colocar la pezonera), que es una señal más directa. Este componente es
-    # para las salas que NO registran ese instante y quedarían sin nada con qué
-    # calificar la preparación — ver `salas.convencional.PESOS`, donde toma los
-    # 30 puntos que allá no puede usar "prep_90s".
+    "lerdas": 5,           # atrasos por vacas lerdas
+    "entre_grupos": 10,    # tiempos muertos entre distintos grupos
+    "manejo_corral": 0,    # fuera de Manejo en el rediseño (ver arriba)
+    "mezcla_rodeos": 5,    # vacas de un grupo que se mezclaron en el turno de otro
+    "ocupacion": 10,       # puestos de la rotativa que giraron vacíos
+    # Bimodalidad de la curva de flujo. Sigue en 0: en la rotativa la rutina
+    # ya se mide con "prep_90s" (el tiempo real hasta colocar la pezonera),
+    # que es una señal más directa. Este componente es para las salas que NO
+    # registran ese instante — ver `salas.convencional.PESOS`.
     "flujo": 0,
-    # Vacas que la sala no logró identificar (el comodín RP 0). PESA 0 POR
-    # DEFECTO por el mismo motivo que "flujo": en la rotativa el % de
-    # identificación ya se muestra en Rendimiento Sala como métrica propia, y
-    # meterlo al score movería el puntaje histórico de ese tambo. Las salas que
-    # lo quieran adentro le ponen peso — ver `salas.convencional.PESOS`.
-    "identificacion": 0,
+    "identificacion": 30,  # ordeños que quedaron a nombre del comodín
+    # Falta "Paradas de la rotativa" (10% en el diseño del tambo): no hay
+    # todavía una fuente de datos confiable para contarlas (ver CLAUDE.md,
+    # "Paradas de la rotativa"). Hasta resolverlo, los 90 puntos de arriba
+    # son el 100% del score -- normalizado, no absoluto (ver `peso_total`
+    # en `_analizar_sesion`), así que no hace falta que sumen 100 acá.
 }
 
 # Bimodalidad: la vaca arranca a dar leche, la bajada se corta y vuelve. Es el
@@ -164,13 +169,21 @@ def normalizar_grupos(grupos) -> set | None:
 
 def sql_rutina(fecha: str) -> str:
     """Visitas de un día (con 6h de margen a cada lado para no cortar sesiones
-    que arrancan antes de medianoche, como la primera vuelta del día)."""
+    que arrancan antes de medianoche, como la primera vuelta del día).
+
+    Las cinco últimas columnas son los incidentes que registra la máquina en
+    cada ordeño, para el componente "Evaluación de Incidentes" (ver
+    `componente_incidentes`) — un análisis APARTE del score de manejo: mide
+    al equipo/la interacción vaca-máquina, no la logística de traer los
+    animales al corral."""
     fecha = validar_fecha(fecha)
     return f"""
         SELECT
           m.Place AS puesto, b.Number AS rp, b.[Group] AS grupo,
           m.IDTime AS hora_id, c.VerifiedTime AS hora_coloc, y.MilkConfirmTime AS hora_fin,
-          y.ForcedRetract AS retirada_forzada
+          y.ForcedRetract AS retirada_forzada,
+          y.NoOfReattaches AS recolocaciones, y.Slips AS deslizamientos,
+          y.Blocks AS bloqueos, y.KickOffs AS patadas
         FROM MilkingDeviceVisit m
         JOIN BasicAnimal b ON b.OID = m.Animal
         LEFT JOIN CMSDeviceVisit c ON c.OID = m.OID
@@ -1062,7 +1075,8 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
                  prep_max_s: int | None = None, prep_label: str = "Colocación",
                  sin_prep_info: str | None = None,
                  incluir_sin_grupo: bool = False,
-                 identificacion_pct: float | None = None) -> dict:
+                 identificacion_pct: float | None = None,
+                 pesos_incidentes: dict | None = None) -> dict:
     """Separa las visitas del día (+ margen) en sesiones y puntúa cada una.
     Solo se devuelven las sesiones que se solapan con el día pedido.
 
@@ -1070,6 +1084,8 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
     de otros grupos se excluyen de raíz, antes de separar en sesiones, para
     que no distorsionen los huecos/mezclas del análisis.
     `pesos`: pesos 0-100 por componente (ver PESOS); None = los de por defecto.
+    `pesos_incidentes`: pesos de "Evaluación de Incidentes" (ver
+    `componente_incidentes`); None = PESOS_INCIDENTES (rotativa).
     `max_sesiones`: tope de sesiones del día (los ordeños/día que tiene
     declarado el tambo). Si el corte por huecos da más, se vuelven a unir
     (ver _fusionar_hasta). None = sin tope.
@@ -1122,6 +1138,14 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
             # queda en None y se excluye, que es lo que pasa en la rotativa.
             "f0_15": r[idx["f0_15"]] if "f0_15" in idx else None,
             "f15_30": r[idx["f15_30"]] if "f15_30" in idx else None,
+            # Incidentes de equipo/rutina que registra la máquina en cada
+            # ordeño, para "Evaluación de Incidentes" (ver
+            # `componente_incidentes`) — análisis aparte del score de manejo.
+            # Las dos consultas (rotativa y convencional) ya los traen.
+            "recolocaciones": bool(r[idx["recolocaciones"]]) if "recolocaciones" in idx and r[idx["recolocaciones"]] is not None else False,
+            "deslizamientos": bool(r[idx["deslizamientos"]]) if "deslizamientos" in idx and r[idx["deslizamientos"]] is not None else False,
+            "bloqueos": bool(r[idx["bloqueos"]]) if "bloqueos" in idx and r[idx["bloqueos"]] is not None else False,
+            "patadas": bool(r[idx["patadas"]]) if "patadas" in idx and r[idx["patadas"]] is not None else False,
         })
     visitas.sort(key=lambda v: v["hora_id"])
 
@@ -1152,7 +1176,8 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
         del_dia = _fusionar_hasta(del_dia, max_sesiones)
     sesiones = [_analizar_sesion(vs, pesos, nombres, ocupacion_fn, huecos_fn, umbral_prep_s,
                                  mide_colocacion, prep_max_s, prep_label,
-                                 sin_prep_info, identificacion_pct) for vs in del_dia]
+                                 sin_prep_info, identificacion_pct,
+                                 pesos_incidentes) for vs in del_dia]
     sesiones.sort(key=lambda s: s["inicio"])
     for i, s in enumerate(sesiones):
         s["indice"] = i
@@ -1192,6 +1217,62 @@ def componente_flujo(visitas: list) -> tuple:
     return score, bimodales, len(con_curva)
 
 
+# --- Evaluación de Incidentes: APARTE del score de manejo (23/08/2026) -----
+# Pedido del tambo: separar lo que depende del OPERARIO (manejo del corral,
+# colocación) de lo que registra la MÁQUINA en cada ordeño (recolocaciones,
+# deslizamientos, bloqueos, retiradas forzadas, patadas) — esto último puede
+# ser falla de rutina, pero también de mantenimiento o del equipo en sí, y
+# hay que poder mirarlo por separado para saber cuál de las tres es.
+# ---------------------------------------------------------------------------
+_LABEL_INCIDENTE = {
+    "recolocaciones": "Recolocaciones", "deslizamientos": "Deslizamientos",
+    "bloqueos": "Bloqueos", "retiradas_forzadas": "Retiradas forzadas", "patadas": "Patadas",
+}
+# Clave del componente -> campo de la visita (ver rutina.analizar_dia).
+_CAMPO_INCIDENTE = {
+    "recolocaciones": "recolocaciones", "deslizamientos": "deslizamientos",
+    "bloqueos": "bloqueos", "retiradas_forzadas": "retirada_forzada", "patadas": "patadas",
+}
+
+# Pesos por defecto para la ROTATIVA (confirmados por el tambo). La
+# convencional usa los suyos, sin "retiradas_forzadas" — ver
+# `salas.convencional.PESOS_INCIDENTES` y el porqué en `salas.convencional.sql_rutina`.
+PESOS_INCIDENTES = {
+    "recolocaciones": 20, "deslizamientos": 20, "bloqueos": 10,
+    "retiradas_forzadas": 45, "patadas": 5,
+}
+
+
+def componente_incidentes(visitas: list, pesos: dict | None = None) -> dict:
+    """Evaluación de Incidentes: score 0-100 APARTE del de manejo, sobre lo que
+    la máquina registra en cada ordeño. Cada tipo se puntúa
+    100 * (1 - ocurrencias/vacas) -- una tasa más baja es mejor. Lineal a
+    propósito: a diferencia de "identificación" (ver `_credito_identificacion`),
+    todavía no hay un motivo medido para creer que el impacto no es
+    proporcional, y no vale la pena inventar una curva sin ese motivo.
+
+    `pesos`: qué incidentes entran y con qué peso (ver `PESOS_INCIDENTES` y
+    `salas.convencional.PESOS_INCIDENTES`) -- una sala que no tenga sentido
+    para un incidente (la convencional con "retiradas_forzadas") simplemente
+    no lo incluye en su diccionario, en vez de forzarlo a 0."""
+    pesos = pesos or PESOS_INCIDENTES
+    n = len(visitas)
+    if not n:
+        return {"score": None, "detalle": []}
+    conteos = {clave: sum(1 for v in visitas if v.get(_CAMPO_INCIDENTE[clave])) for clave in pesos}
+    valores = {clave: 100.0 * (1 - conteos[clave] / n) for clave in pesos}
+    peso_total = sum(pesos[c] for c in valores)
+    score = round(sum(pesos[c] * v for c, v in valores.items()) / peso_total) if peso_total else None
+    detalle = [
+        {"clave": clave, "label": _LABEL_INCIDENTE[clave], "valor": round(valores[clave]),
+         "peso": pesos[clave],
+         "info": f"{conteos[clave]}/{n} ordeños con {_LABEL_INCIDENTE[clave].lower()} "
+                 f"({round(100 * conteos[clave] / n, 1)}%)."}
+        for clave in pesos
+    ]
+    return {"score": max(0, min(100, score)) if score is not None else None, "detalle": detalle}
+
+
 def _score_ponderado(sesiones: list):
     """Score del día: promedio de las sesiones ponderado por vacas.
 
@@ -1213,23 +1294,30 @@ def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = Non
                 prep_max_s: int | None = None, prep_label: str = "Colocación",
                 sin_prep_info: str | None = None,
                 incluir_sin_grupo: bool = False,
-                identificacion_pct: float | None = None):
+                identificacion_pct: float | None = None,
+                pesos_incidentes: dict | None = None):
     """Reduce las sesiones de un día a UN punto (promedio ponderado por vacas)
     para graficar la evolución de la rutina a lo largo del tiempo. None si el
     día no tiene ordeños (fin de semana sin datos, feriado, hueco de la copia).
     `grupos`/`pesos`/`max_sesiones`/`ocupacion_fn`/`huecos_fn`/`umbral_prep_s`/
-    `mide_colocacion`/`identificacion_pct`: igual que en analizar_dia."""
+    `mide_colocacion`/`identificacion_pct`/`pesos_incidentes`: igual que en
+    analizar_dia."""
     dia = analizar_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
                        ocupacion_fn, huecos_fn, umbral_prep_s, mide_colocacion,
                        prep_max_s, prep_label, sin_prep_info, incluir_sin_grupo,
-                       identificacion_pct)
+                       identificacion_pct, pesos_incidentes)
     sesiones = dia["sesiones"]
     total_vacas = sum(s["vacas"] for s in sesiones)
     if not sesiones or total_vacas == 0:
         return None
     duracion_total_min = sum(s["duracion_min"] for s in sesiones)
+    pares_inc = [(s["vacas"], s["incidentes"]["score"]) for s in sesiones
+                if s["incidentes"]["score"] is not None]
+    peso_total_inc = sum(p for p, _ in pares_inc)
     punto = {"fecha": fecha, "vacas": total_vacas, "num_sesiones": len(sesiones),
              "score": _score_ponderado(sesiones),
+             "score_incidentes": (round(sum(p * v for p, v in pares_inc) / peso_total_inc)
+                                  if peso_total_inc else None),
              "vacas_por_hora": (round(total_vacas / (duracion_total_min / 60), 1)
                                 if duracion_total_min else None),
              "retiradas_forzadas": sum(s["retiradas_forzadas"] for s in sesiones)}
@@ -1358,9 +1446,9 @@ def _huecos_rotativa(visitas: list, duracion_seg: float, nombres: dict | None = 
     al cambiar de lote—, así que separar el umbral por tipo no hace falta acá.
 
     Intercambiable (`huecos_fn`) por la misma razón que la ocupación: una sala
-    de tandas SÍ tiene una pausa estructural entre tandas (mientras el otro
+    de tandas SÍ tiene una pausa estructural entre mangadas (mientras el otro
     lado ordeña) que no es un hueco real, y necesita un umbral propio por tipo
-    en vez de uno solo — ver `salas.convencional._huecos_tandas`."""
+    en vez de uno solo — ver `salas.convencional._huecos_por_rodeo`."""
     gaps = [((b["hora_id"] - a["hora_id"]).total_seconds(), a["grupo"] != b["grupo"], a, b)
             for a, b in zip(visitas, visitas[1:])]
     mediana_gap = statistics.median(g for g, _, _, _ in gaps) if gaps else 0
@@ -1389,7 +1477,8 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                      mide_colocacion: bool = True,
                      prep_max_s: int | None = None, prep_label: str = "Colocación",
                      sin_prep_info: str | None = None,
-                     identificacion_pct: float | None = None) -> dict:
+                     identificacion_pct: float | None = None,
+                     pesos_incidentes: dict | None = None) -> dict:
     """`mide_colocacion`: si esta sala tiene un instante real de COLOCACIÓN de
     la pezonera. En la rotativa sí (`VerifiedTime`). En una sala de tandas tipo
     Alpro NO: el único sello previo a la leche es la identificación, y la vaca
@@ -1445,6 +1534,9 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     inicio, fin = visitas[0]["hora_id"], max((v["hora_fin"] or v["hora_id"]) for v in visitas)
     duracion_seg = max((fin - inicio).total_seconds(), 1)
     retiradas_forzadas = sum(1 for v in visitas if v["retirada_forzada"])
+    # Evaluación de Incidentes: análisis APARTE del score de manejo de acá
+    # abajo, ver `componente_incidentes`.
+    incidentes = componente_incidentes(visitas, pesos_incidentes)
 
     # --- Colocación de pezonera dentro de los 90s (el KPI que marca DelPro),
     # con crédito gradual en vez de un corte binario (ver _credito_prep). Si a
@@ -1603,6 +1695,7 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
         "vacas": len(visitas),
         "score": max(0, min(100, score)) if score is not None else None,
         "retiradas_forzadas": retiradas_forzadas,
+        "incidentes": incidentes,
         "detalle": [
             # El umbral solo se nombra si de verdad se está midiendo contra él:
             # con el componente apagado, un "≤90s" en la etiqueta se lee como el
@@ -1636,7 +1729,7 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                       f"({round(mediana_ordeño)}s).") if mediana_ordeño else "Sin datos de duración."},
             # s3/s4 pueden venir en None: la sala puede no tener cómo separar
             # una pausa real de un cambio de tanda (ver
-            # `salas.convencional._huecos_tandas`). Se excluyen del score igual
+            # `salas.convencional._huecos_por_rodeo`). Se excluyen del score igual
             # que "ocupación" y "colocación".
             {"clave": "entre_grupos", "label": "Sin tiempos muertos entre grupos",
              "valor": round(s3) if s3 is not None else None,
