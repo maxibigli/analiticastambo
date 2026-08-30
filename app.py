@@ -2420,15 +2420,21 @@ def api_iot_pantalla_lavado_cancelar():
 def _ejecutar_comando_voz(interpretado: dict) -> str:
     """Dispara la acción reconocida y devuelve el texto de confirmación a
     sintetizar. Nunca toca Modbus directo -- solo encola pedidos, mismo
-    criterio que el resto de /api/iot/pantalla*."""
+    criterio que el resto de /api/iot/pantalla*.
+
+    Las confirmaciones van en presente ("Arrancando el lavado"), no en
+    pasado ("Lavado iniciado"), justamente porque acá solo se ENCOLA: quien
+    prende el relé de verdad es iot_lavado.py, en su ciclo de 3s. Si ese
+    proceso no está corriendo, un "Lavado iniciado" sería mentira lisa y
+    llana; "Arrancando" es lo que efectivamente pasó de este lado."""
     tipo = interpretado.get("tipo")
     if tipo == "lavado_iniciar":
         if lavado_programa.solicitar_inicio():
-            return "Lavado iniciado"
+            return "Arrancando el lavado"
         return "No puedo, revisá si ya hay un lavado en curso o si falta configurar las etapas"
     if tipo == "lavado_cancelar":
         lavado_programa.solicitar_cancelacion()
-        return "Lavado cancelado"
+        return "Cancelando el lavado"
     if tipo == "actuador":
         clave, prender = interpretado["clave"], interpretado["prender"]
         nombre = iot_canales.nombres().get(clave, clave)
@@ -2441,9 +2447,9 @@ def _ejecutar_comando_voz(interpretado: dict) -> str:
             # tambo como texto libre (⚙ Configuración › 🔌 Entradas/Salidas)
             # y no hay forma de saber su género ("Bomba de Agua" es
             # femenino, "Compresor" no) -- "encendida/apagada" quedaría mal
-            # con la mitad de los nombres posibles. "Prendí/Apagué" no
+            # con la mitad de los nombres posibles. "Prendiendo/Apagando" no
             # necesita concordancia.
-            return f"{'Prendí' if prender else 'Apagué'} {nombre}"
+            return f"{'Prendiendo' if prender else 'Apagando'} {nombre}"
         return "No puedo, hay un lavado en curso"
     return "No entendí, repetí"
 
@@ -2478,7 +2484,25 @@ def api_iot_pantalla_voz():
     else:
         interpretado = voz_comandos.interpretar(texto)
     confirmacion = _ejecutar_comando_voz(interpretado)
-    wav = voz_sintesis.sintetizar_wav(confirmacion)
+    try:
+        wav = voz_sintesis.sintetizar_wav(confirmacion)
+    except Exception:  # noqa: BLE001
+        # La síntesis corre PowerShell con check=True y timeout=15: si falla
+        # (voz no instalada, PowerShell bloqueado, la PC clavada), esto pasa
+        # DESPUÉS de haber encolado el comando. Sin este try, el pedido moría
+        # en un 500 y en el log quedaba un stack trace de subprocess sin
+        # ninguna pista de que un relé quedó pedido y el operario no escuchó
+        # nada -- que es lo peligroso del caso. No hay forma de devolver
+        # audio si justamente falló el audio; se contesta un 503 limpio (la
+        # pantalla ya sabe seguir de largo cuando el POST no le trae nada,
+        # ver el spec) y el aviso queda fuerte del lado del servidor.
+        app.logger.exception(
+            "voz_sintesis.sintetizar_wav() falló: el comando de voz YA SE EJECUTÓ "
+            "(%s) y se respondió %r, pero la pantalla NO va a reproducir nada. "
+            "El operario puede creer que no pasó nada mientras el pedido quedó encolado.",
+            interpretado, confirmacion)
+        return jsonify({"error": "No se pudo sintetizar la confirmación hablada",
+                        "confirmacion": confirmacion}), 503
     return Response(wav, mimetype="audio/wav")
 
 
