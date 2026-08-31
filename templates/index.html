@@ -4,6 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>LactIA — DDM</title>
+<script>
+  /* Tema elegido por el usuario. VA ACÁ ARRIBA Y NO AL FINAL a propósito:
+     si se aplicara después de que la página pintó, se vería un parpadeo del
+     tema equivocado en cada carga. El default sigue siendo oscuro, que es lo
+     que estaba fijo antes de que esto existiera. */
+  (function () {
+    try {
+      var t = localStorage.getItem('lactia-tema');
+      if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    } catch (e) { /* storage bloqueado: se queda con el default del atributo */ }
+  })();
+</script>
 <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
 <link rel="stylesheet" href="/static/css/lactia-tokens.css">
 <link rel="stylesheet" href="/static/css/lactia-components.css">
@@ -16,8 +28,13 @@
      del usuario del 23/08/2026 (vio la muestra rediseñada en oscuro y la
      prefirió a la clara). Para volver a claro fijo: cambiar el atributo a
      "light" (mismo mecanismo, ver lactia-tokens.css). */
+  /* color-scheme sigue al tema elegido: es lo que hace que las barras de
+     scroll y los controles nativos del navegador acompañen, no solo el
+     CSS propio. */
+  :root { color-scheme: dark; }
+  :root[data-theme="light"] { color-scheme: light; }
+
   :root {
-    color-scheme: dark;
     --surface-1: var(--lac-surface); --page: var(--lac-bg);
     --text-primary: var(--lac-fg); --text-secondary: var(--lac-fg-muted); --muted: var(--lac-fg-subtle);
     --grid: var(--lac-border); --baseline: var(--lac-border-strong); --border: var(--lac-border);
@@ -649,6 +666,12 @@
       </label>
       <span class="sub" id="ia-estado">{% if ia_disponible %}IA activa{% else %}IA no configurada — solo consultas predefinidas{% endif %}</span>
       <span class="sub" style="margin-left:auto;display:flex;align-items:center;gap:10px">
+        <button id="btn-tema" type="button"
+                title="Cambiar entre tema claro y oscuro"
+                aria-label="Cambiar tema"
+                style="padding:6px 12px;border-radius:999px;font-size:14px;background:transparent;color:var(--text-secondary);border:1px solid var(--border)">
+          🌙
+        </button>
         <button id="btn-voz" type="button" hidden
                 title="Mantené apretado para hablar"
                 style="padding:6px 14px;border-radius:999px;font-size:13px">
@@ -11249,6 +11272,38 @@ document.getElementById('sidebar-fondo').addEventListener('click', cerrarMenuMov
 // Primero se resuelve el tambo, luego se muestra la página inicial (la de la
 // URL si hay hash, si no el Dashboard) y se cargan solo SUS datos.
 cargarTambos().then(() => irAPagina(location.hash.slice(1) || PAGINAS[0]));
+
+// --- Selector de tema claro/oscuro ----------------------------------------
+// El tema YA se aplicó en el <head> (para no parpadear); acá solo va el
+// botón que lo cambia y lo guarda. Los tokens de lactia-tokens.css ya
+// definen las dos paletas completas, así que no hace falta tocar colores.
+(function () {
+  const btn = document.getElementById('btn-tema');
+  if (!btn) return;
+  const raiz = document.documentElement;
+
+  function pintar() {
+    const oscuro = raiz.getAttribute('data-theme') !== 'light';
+    // El ícono muestra a qué se va a cambiar, no en qué está: es lo que
+    // espera la gente de un botón (una acción, no un estado).
+    btn.textContent = oscuro ? '☀️' : '🌙';
+    btn.title = oscuro ? 'Cambiar a tema claro' : 'Cambiar a tema oscuro';
+  }
+
+  btn.addEventListener('click', () => {
+    const nuevo = raiz.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+    raiz.setAttribute('data-theme', nuevo);
+    try { localStorage.setItem('lactia-tema', nuevo); } catch (e) {}
+    pintar();
+    // Chart.js dibuja sobre canvas: los colores ya renderizados NO se
+    // actualizan solos al cambiar el CSS. Se redibuja lo que esté a la vista.
+    if (window.Chart && Chart.instances) {
+      Object.values(Chart.instances).forEach(c => { try { c.update(); } catch (e) {} });
+    }
+  });
+
+  pintar();
+})();
 
 // --- Comandos de voz desde la web (mantener apretado para hablar) ----------
 // Manda el MISMO WAV que la pantalla ESP32 a /api/iot/pantalla/voz y
