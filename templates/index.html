@@ -731,12 +731,10 @@
   <section class="card" id="resumen-animales-card">
     <h2 style="margin:0">Composición del rodeo</h2>
     <div class="aviso" id="resumen-animales-info" style="margin-top:6px"></div>
-    <div class="rutina-layout" style="margin-top:10px">
-      <div style="flex:1 1 260px;min-width:220px">
-        <div class="chart-box" style="height:240px"><canvas id="chart-resumen-animales"></canvas></div>
-      </div>
-      <div class="kpis" id="resumen-reproduccion-kpis" style="flex:2 1 320px"></div>
-    </div>
+    {# Las tres tarjetas que estaban acá al lado (novillas preñadas, vacas
+       preñadas, DIM) subieron a la fila única de arriba, para que todas las
+       tarjetas del Dashboard estén juntas. Queda el gráfico solo. #}
+    <div class="chart-box" style="height:260px;margin-top:10px"><canvas id="chart-resumen-animales"></canvas></div>
   </section>
 
   <section class="card" id="resumen-duraciones-card">
@@ -3527,10 +3525,10 @@ function refrescoSinSolape(fn, ms, setId, inmediato) {
 // "Kg de leche" incluía la leche sin identificar y "Producción diaria" no, y
 // "Vacas en ordeño" contaba además el comodín como una vaca más.
 // ---------------------------------------------------------------------------
-let dashKpis = null, dashResumen = null, dashRepro = null;
+let dashKpis = null, dashResumen = null, dashRepro = null, dashAnimales = null;
 
 function pintarKpisDashboard() {
-  const k = dashKpis || {}, r = dashResumen || {};
+  const k = dashKpis || {}, r = dashResumen || {}, an = dashAnimales || {};
   const a = r.ayer || {}, v = r.variacion || {};
   const flecha = (n, unidad = '') => n == null ? null
     : `<span style="color:${n >= 0 ? css('--good') : css('--critical')}">`
@@ -3567,7 +3565,20 @@ function pintarKpisDashboard() {
     ['Rodeo activo', fmt(k.animales_activos), '',
       k.prenadas != null
         ? `${fmt(k.prenadas)} preñadas${pctVacias != null ? ` · ${pctVacias}% vacías` : ''}` : null],
-  ];
+    // Venían de "Composición del rodeo", en un bloque de tarjetas aparte más
+    // abajo. Suben acá para que TODAS las tarjetas estén juntas; el nombre
+    // largo ("Novillas preñadas / novillas") se parte en título y subtítulo,
+    // como el resto de esta fila.
+    ['Novillas preñadas', an.pct_novillas_prenadas ?? null, '%', 'sobre el total de novillas'],
+    ['Vacas preñadas', an.pct_vacas_prenadas ?? null, '%', 'sobre el total de vacas'],
+    ['Días en ordeño', an.dim_promedio ?? null, '', 'DIM promedio del rodeo'],
+  ].map(([l, val, uni, sub, ojo]) => {
+    // Un valor ausente se muestra como guión, y SIN la unidad al lado: "— kg"
+    // se lee como si midiera algo.
+    const vacio = val == null || val === '—';
+    return [l, vacio ? '—' : (typeof val === 'number' ? fmt(val) : val),
+            vacio ? '' : uni, sub, ojo];
+  });
   document.getElementById('kpis').innerHTML = tiles.map(([l, val, uni, sub, ojo]) => `
     <div class="tile${ojo ? ' tile-atencion' : ''}">
       <div class="label">${l}</div>
@@ -3675,13 +3686,11 @@ async function cargarResumenAnimales() {
     info.textContent = `${fmt(d.total)} animales en total` +
       (d.altas_ayer || d.bajas_ayer
         ? ` (${neto > 0 ? '+' : ''}${neto} vs. ayer: ${d.altas_ayer} alta(s), ${d.bajas_ayer} baja(s))` : '');
-    const tiles = [
-      ['Novillas preñadas / novillas', d.pct_novillas_prenadas != null ? d.pct_novillas_prenadas + '%' : '—'],
-      ['Vacas preñadas / vacas', d.pct_vacas_prenadas != null ? d.pct_vacas_prenadas + '%' : '—'],
-      ['Días en ordeño (DIM promedio)', d.dim_promedio ?? '—'],
-    ];
-    document.getElementById('resumen-reproduccion-kpis').innerHTML = tiles.map(([l, val]) =>
-      `<div class="tile"><div class="label">${l}</div><div class="value">${val}</div></div>`).join('');
+    // Estas tres tarjetas subieron a la fila única de arriba, para que todas
+    // las tarjetas del Dashboard estén juntas en un solo lugar. Acá queda el
+    // gráfico de composición del rodeo, que es lo propio de este bloque.
+    dashAnimales = d;
+    pintarKpisDashboard();
   } catch (e) {
     if (e.calentando) { info.textContent = e.message; setTimeout(cargarResumenAnimales, 3000); }
     else info.textContent = 'Error: ' + e.message;
@@ -8881,7 +8890,7 @@ async function cargarTambos() {
       // La fila de tarjetas del Dashboard se arma con dos endpoints: si no se
       // limpian los dos, mientras carga el tambo nuevo se ve media fila con
       // números del anterior (el bug que ya pasó en Salud del rodeo).
-      dashKpis = dashResumen = dashRepro = null;
+      dashKpis = dashResumen = dashRepro = dashAnimales = null;
       cargarDatosDePagina(paginaActual);
       // La evolución NO se recarga sola: es pesada, se dispara solo con
       // "Aplicar" o "Ver mes completo".
