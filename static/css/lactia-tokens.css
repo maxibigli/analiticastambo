@@ -8,11 +8,65 @@
    Capa 3: tokens de instrumento (siempre oscuros, en los 2 modos)
    ============================================================ */
 
-/* Sin @import de Google Fonts: en un tambo con internet intermitente, un
-   @import dentro de una hoja de estilos BLOQUEA el renderizado esperando la
-   red antes de seguir. Se usan directo las fuentes de sistema equivalentes
-   (ya estaban como fallback en --lac-font-*) — visualmente casi igual, sin
-   depender de que haya internet. */
+/* Tipografías EMPAQUETADAS, no traídas de Google. Un @import (o un <link>)
+   a Google Fonts en un tambo con internet intermitente bloquea el
+   renderizado esperando la red; servidas desde el propio Flask, cargan
+   siempre y a la misma velocidad que el resto del CSS.
+
+   Son fuentes variables: UN archivo cubre todos los pesos (400 a 700), así
+   que pesan menos que las 3-4 estáticas que harían falta si no. Solo se
+   bajaron los subconjuntos `latin` y `latin-ext` — alcanza de sobra para
+   español (acentos y ñ están en latin) y evita arrastrar cirílico, griego
+   y vietnamita al pedo. Total: 204 KB las dos fuentes completas.
+
+   `font-display: swap` a propósito: si por lo que sea la fuente tardara,
+   el texto se ve YA con la del sistema y cambia cuando llega, en vez de
+   dejar la pantalla en blanco. En una sala de ordeñe, ver el dato tarde
+   nunca es mejor que verlo con otra tipografía.
+
+   Las dos son de licencia abierta (SIL Open Font License). */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/static/fonts/Inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+                 U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+                 U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/static/fonts/Inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+                 U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF,
+                 U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url('/static/fonts/Archivo-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+                 U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+                 U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 500 700;
+  font-display: swap;
+  src: url('/static/fonts/Archivo-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+                 U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF,
+                 U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
 
 :root {
   /* ---------- Capa 1 · paleta cruda ---------- */
@@ -99,7 +153,15 @@
   /* ---------- Tipografía ---------- */
   --lac-font-display: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
   --lac-font-body:    'Inter', system-ui, -apple-system, sans-serif;
-  --lac-font-data:    'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Cifras en la MISMA fuente que el texto, no en monoespaciada. La
+     alineación de columnas la sigue garantizando `font-variant-numeric:
+     tabular-nums` (ya está en cada componente que la usa), que hace todos
+     los dígitos del mismo ancho SIN el aspecto de terminal: un caudal que
+     salta de 9,9 a 10,0 tampoco mueve el layout. Es lo que hace el
+     dashboard de referencia, y se nota sobre todo en las cifras grandes.
+     La mono queda disponible abajo por si algo la necesita de verdad. */
+  --lac-font-data:    var(--lac-font-body);
+  --lac-font-mono:    'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
   --lac-size-2xs:  11px;
   --lac-size-xs:   12px;
@@ -141,6 +203,17 @@
   --lac-control-h-sm:   32px;
   --lac-control-h-lg:   48px;
 
+  /* ---------- Elevación ----------
+     Sombras SUTILES, no dramáticas: el template de referencia usa una sola
+     sombra chica en TODO el contenido (10 usos de shadow-sm) y reserva las
+     grandes solo para lo que flota por encima — diálogos, menús. Una
+     tarjeta no "flota", apenas se despega del fondo. */
+  --lac-shadow-sm: 0 1px 2px 0 rgba(14, 23, 32, .05);
+  --lac-shadow-md: 0 4px 6px -1px rgba(14, 23, 32, .08),
+                   0 2px 4px -2px rgba(14, 23, 32, .06);
+  --lac-shadow-lg: 0 10px 15px -3px rgba(14, 23, 32, .10),
+                   0 4px 6px -4px rgba(14, 23, 32, .08);
+
   /* ---------- Movimiento ---------- */
   --lac-dur-fast: 120ms;
   --lac-dur-base: 200ms;
@@ -172,6 +245,13 @@
   --lac-danger-soft-fg: #F5A9A9;
   --lac-ok-soft:        #0C3226;
   --lac-ok-fg:          #7FD9B8;
+
+  /* Sobre fondo oscuro una sombra gris no se ve: van en negro y más opacas. */
+  --lac-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, .40);
+  --lac-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, .50),
+                   0 2px 4px -2px rgba(0, 0, 0, .40);
+  --lac-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, .55),
+                   0 4px 6px -4px rgba(0, 0, 0, .45);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -195,5 +275,10 @@
     --lac-danger-soft-fg: #F5A9A9;
     --lac-ok-soft:        #0C3226;
     --lac-ok-fg:          #7FD9B8;
+    --lac-shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, .40);
+    --lac-shadow-md: 0 4px 6px -1px rgba(0, 0, 0, .50),
+                     0 2px 4px -2px rgba(0, 0, 0, .40);
+    --lac-shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, .55),
+                     0 4px 6px -4px rgba(0, 0, 0, .45);
   }
 }

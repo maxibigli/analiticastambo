@@ -121,27 +121,73 @@ body {
   background: var(--lac-surface);
   border: 1px solid var(--lac-border);
   border-radius: var(--lac-radius-card);
+  box-shadow: var(--lac-shadow-sm);
   padding: var(--lac-space-5);
 }
 .lac-card__header { display: flex; align-items: baseline; justify-content: space-between; gap: var(--lac-space-3); margin-bottom: var(--lac-space-4); }
 
 /* Tarjeta de métrica: etiqueta chica arriba, cifra grande abajo */
-.lac-metric { background: var(--lac-surface); border: 1px solid var(--lac-border); border-radius: var(--lac-radius-card); padding: var(--lac-space-4); }
+.lac-metric { background: var(--lac-surface); border: 1px solid var(--lac-border); border-radius: var(--lac-radius-card); box-shadow: var(--lac-shadow-sm); padding: var(--lac-space-4); }
 .lac-metric__label { font-size: var(--lac-size-xs); color: var(--lac-fg-muted); margin: 0 0 var(--lac-space-2); }
 .lac-metric__value { font-family: var(--lac-font-data); font-variant-numeric: tabular-nums; font-size: var(--lac-size-2xl); font-weight: var(--lac-weight-medium); line-height: 1; margin: 0; }
 .lac-metric__delta { font-size: var(--lac-size-xs); margin: var(--lac-space-2) 0 0; }
 .lac-metric__delta--up   { color: var(--lac-ok-fg); }
 .lac-metric__delta--down { color: var(--lac-danger-soft-fg); }
 
-.lac-grid { display: grid; gap: var(--lac-space-4); }
+/* Más aire entre tarjetas. El template separa con 56px y SIN borde;
+   conservando el borde no hace falta tanto, pero 16px quedaba apretado
+   para el peso visual que tienen. */
+.lac-grid { display: grid; gap: var(--lac-space-5); }
 .lac-grid--auto { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+
+/* ---------- KPI compuesta ----------
+   Estructura tomada de Tremor Insights: título + variación en badge, valor
+   grande alineado por baseline con su descripción, lista de sub-métricas
+   con barra fina, y nota al pie. El contraste lo hace el TAMAÑO y no la
+   negrita — por eso el valor va sin peso extra. */
+.lac-kpi {
+  background: var(--lac-surface);
+  border: 1px solid var(--lac-border);
+  border-radius: var(--lac-radius-card);
+  box-shadow: var(--lac-shadow-sm);
+  padding: var(--lac-space-5);
+}
+.lac-kpi__head  { display: flex; align-items: center; gap: var(--lac-space-2); }
+.lac-kpi__title { font-size: var(--lac-size-sm); font-weight: var(--lac-weight-strong); color: var(--lac-fg); margin: 0; }
+
+.lac-kpi__value-row { display: flex; align-items: baseline; gap: var(--lac-space-2); margin-top: var(--lac-space-2); }
+.lac-kpi__value {
+  font-family: var(--lac-font-data); font-variant-numeric: tabular-nums;
+  font-size: var(--lac-size-xl); line-height: var(--lac-leading-tight);
+  color: var(--lac-fg); margin: 0;
+}
+.lac-kpi__value-desc { font-size: var(--lac-size-sm); color: var(--lac-fg-muted); }
+
+.lac-kpi__list { list-style: none; margin: var(--lac-space-4) 0 0; padding: 0; display: flex; flex-direction: column; gap: var(--lac-space-5); }
+.lac-kpi__row  { display: flex; justify-content: space-between; gap: var(--lac-space-3); font-size: var(--lac-size-sm); margin: 0 0 var(--lac-space-2); }
+.lac-kpi__row-name  { font-weight: var(--lac-weight-medium); color: var(--lac-fg); }
+.lac-kpi__row-val   { font-weight: var(--lac-weight-medium); color: var(--lac-fg); font-family: var(--lac-font-data); font-variant-numeric: tabular-nums; }
+.lac-kpi__row-total { font-weight: var(--lac-weight-regular); color: var(--lac-fg-muted); }
+.lac-kpi__foot { font-size: var(--lac-size-xs); color: var(--lac-fg-muted); margin: var(--lac-space-5) 0 0; }
+
+/* Barra de progreso fina (6px). NO confundir con .lac-levelbar, que es el
+   vúmetro segmentado del panel de instrumento. */
+.lac-progress { height: 6px; border-radius: var(--lac-radius-pill); background: var(--lac-surface-sunken); overflow: hidden; }
+.lac-progress__bar { height: 100%; border-radius: inherit; background: var(--lac-accent); transition: width var(--lac-dur-base) var(--lac-ease); }
+.lac-progress--ok     .lac-progress__bar { background: var(--lac-ok); }
+.lac-progress--warn   .lac-progress__bar { background: var(--lac-warn); }
+.lac-progress--danger .lac-progress__bar { background: var(--lac-danger); }
 
 /* ---------- Estado ---------- */
 
 .lac-badge {
   display: inline-flex; align-items: center; gap: var(--lac-space-2);
   padding: 4px var(--lac-space-3); border-radius: var(--lac-radius-pill);
-  font-size: var(--lac-size-xs); font-weight: var(--lac-weight-medium); line-height: 1.4;
+  font-size: var(--lac-size-xs); font-weight: var(--lac-weight-strong); line-height: 1.4;
+  /* Anillo del color del propio badge al 28%: es lo que le da el aspecto
+     "de vidrio" del template sin meter un borde duro. Si el navegador no
+     soporta color-mix simplemente no dibuja el anillo, no rompe nada. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentColor 28%, transparent);
 }
 .lac-badge--info   { background: var(--lac-accent-soft); color: var(--lac-accent-soft-fg); }
 .lac-badge--ok     { background: var(--lac-ok-soft);     color: var(--lac-ok-fg); }

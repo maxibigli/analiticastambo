@@ -96,12 +96,52 @@ VERBOS_CANCELAR = {
     "cancelar", "cancela", "cancele", "cancelen", "cancelalo",
     "frenar", "frena", "frene", "frenalo",
     "cortar", "corta", "corte", "cortalo",
+    # Formas que el tambo usa igual y antes caían en "no entendí". Ampliar
+    # ESTA lista es barato en riesgo: parar es la dirección segura, y si no
+    # hay ningún lavado corriendo, cancelar no toca ningún relé.
+    "terminar", "termina", "termine", "terminalo",
+    "finalizar", "finaliza", "finalice",
+    "abortar", "aborta", "aborte",
+    "suspender", "suspende", "suspenda",
+    "basta", "stop", "listo",
 }
-VERBOS_PRENDER = {"prender", "prende", "prenda", "prendelo", "encender", "encende", "enciende", "encienda"}
+VERBOS_PRENDER = {"prender", "prende", "prenda", "prendelo", "encender", "encende", "enciende", "encienda",
+                  "poner", "pone", "pongan", "ponga", "activar", "activa", "active"}
 # "apagar" es el único verbo AMBIGUO: "apagar el lavado" es cancelar el
 # ciclo, "apagar bomba de agua" es apagar ese relé. Lo resuelve lo que
 # viene después (ver interpretar).
-VERBOS_APAGAR = {"apagar", "apaga", "apague", "apaguen", "apagalo"}
+VERBOS_APAGAR = {"apagar", "apaga", "apague", "apaguen", "apagalo",
+                 "sacar", "saca", "saque", "desactivar", "desactiva", "desactive"}
+
+# Muletillas que la gente pone ANTES del verbo ("por favor pará el
+# lavado", "dale arrancá"). Se descartan hasta encontrar el verbo. Lo que
+# NO puede entrar acá es una negación: "no quiero iniciar el lavado" tiene
+# que seguir siendo "no entendí" y jamás convertirse en la orden de
+# arrancar. Por eso "no" está deliberadamente afuera.
+PALABRAS_PREVIAS = {
+    "por", "favor", "porfavor", "dale", "che", "jarvis", "ahora", "ya",
+    "quiero", "queria", "necesito", "podes", "podrias", "puede", "podria",
+    "me", "nos", "a", "vamos", "anda", "anda",
+}
+
+# Pronombres pegados al final del verbo ("parale", "prendela", "cortale").
+# Se prueban de más largo a más corto para que "melo" gane sobre "lo".
+_SUFIJOS_PEGADOS = ("selo", "sela", "melo", "mela", "los", "las", "le", "lo", "la", "me", "nos")
+
+# Verbos de CONSULTA: no tocan nada, solo informan. Por eso su rama puede
+# ser más permisiva que las que actúan -- el peor caso de una consulta mal
+# entendida es contestar algo que no se preguntó, no prender una bomba.
+VERBOS_CONSULTA = {
+    "como", "estado", "que", "situacion",
+    "decime", "deci", "informame", "contame", "hay",
+}
+# Palabras que indican que la pregunta es por lo que está ENCENDIDO ahora,
+# no por el ciclo de lavado.
+PALABRAS_PRENDIDO = {
+    "prendido", "prendidos", "prendida", "prendidas",
+    "encendido", "encendidos", "encendida", "encendidas",
+    "andando", "funcionando", "activo", "activos", "activa", "activas",
+}
 
 # Palabras que no aportan a QUÉ se está nombrando: se descartan antes de
 # decidir si el resto de la frase habla del ciclo de lavado.
@@ -111,6 +151,29 @@ PALABRAS_VACIAS = {
 }
 ARTICULOS = {"el", "la", "los", "las", "un", "una", "lo"}
 PALABRA_LAVADO = "lavado"
+
+# Qué se puede pedir por voz desde FUERA de la red del tambo (ver el
+# endpoint en app.py). Es una lista BLANCA a propósito: cualquier tipo de
+# comando que se agregue en el futuro y no se sume acá queda bloqueado
+# desde afuera por omisión, que es el lado seguro del error.
+#
+# `lavado_cancelar` SÍ está permitido aunque toque relés: frenar es siempre
+# la dirección segura, y poder parar un lavado desde el celular estando
+# lejos suma seguridad en vez de restarla (mismo criterio que en la
+# pantalla, donde cancelar no pide confirmación y arrancar sí).
+# `desconocido` también: su única consecuencia es contestar "No entendí".
+TIPOS_SEGUROS_REMOTO = frozenset({
+    "lavado_cancelar", "consulta_lavado", "consulta_actuadores", "desconocido",
+})
+# Los que arrancan equipos: solo desde la red del tambo. Se declaran
+# explícitamente (y no como "todo lo que no sea seguro") para que el test
+# pueda verificar que NINGÚN tipo quedó sin una decisión tomada a mano.
+TIPOS_QUE_ACTUAN = frozenset({"lavado_iniciar", "actuador"})
+
+
+def es_seguro_remoto(tipo) -> bool:
+    """True si `tipo` se puede atender aunque el pedido venga de internet."""
+    return tipo in TIPOS_SEGUROS_REMOTO
 
 _lock = threading.Lock()
 
@@ -173,6 +236,55 @@ def _es_del_lavado(resto: str, vacio_cuenta: bool = True) -> bool:
     if not palabras:
         return vacio_cuenta
     return all(_parecido(p, PALABRA_LAVADO) >= UMBRAL_LAVADO for p in palabras)
+
+
+def _es_verbo_conocido(palabra: str) -> bool:
+    return (palabra in VERBOS_INICIAR or palabra in VERBOS_CANCELAR
+            or palabra in VERBOS_PRENDER or palabra in VERBOS_APAGAR
+            or palabra in VERBOS_CONSULTA)
+
+
+def _verbo_base(palabra: str) -> str:
+    """Saca el pronombre pegado si con eso queda un verbo conocido
+    ("parale" -> "para", "prendela" -> "prende"). Si no, devuelve la palabra
+    tal cual: solo se acorta cuando el resultado ES un verbo de la lista,
+    así que no puede inventar un comando a partir de una palabra cualquiera."""
+    if _es_verbo_conocido(palabra):
+        return palabra
+    for suf in _SUFIJOS_PEGADOS:
+        if palabra.endswith(suf) and len(palabra) - len(suf) >= 3:
+            base = palabra[:-len(suf)]
+            if _es_verbo_conocido(base):
+                return base
+    return palabra
+
+
+def _partir_en_verbo(palabras: list) -> tuple:
+    """(verbo, resto) descartando las muletillas de adelante. Devuelve
+    ("", "") si no queda nada."""
+    i = 0
+    while i < len(palabras) and palabras[i] in PALABRAS_PREVIAS and not _es_verbo_conocido(palabras[i]):
+        i += 1
+    if i >= len(palabras):
+        return "", ""
+    return _verbo_base(palabras[i]), " ".join(palabras[i + 1:])
+
+
+def _menciona_lavado(resto: str) -> bool:
+    """True si ALGUNA palabra de `resto` nombra el lavado.
+
+    A diferencia de _es_del_lavado (que exige que TODAS lo sean, porque
+    decide si se arrancan o paran bombas), esto es deliberadamente
+    permisivo: lo usan solo las consultas, que son de solo lectura. Así
+    "como VA EL lavado" o "que pasa con el lavado" funcionan sin tener que
+    meter cada muletilla en PALABRAS_VACIAS -- una lista que es
+    justamente la que protege a los verbos peligrosos y conviene no tocar
+    para hacerle lugar a una pregunta."""
+    return any(_parecido(p, PALABRA_LAVADO) >= UMBRAL_LAVADO for p in resto.split())
+
+
+def _pregunta_por_prendido(resto: str) -> bool:
+    return any(p in PALABRAS_PRENDIDO for p in resto.split())
 
 
 def _sin_articulo(resto: str) -> str:
@@ -242,8 +354,19 @@ def interpretar(texto: str) -> dict:
     texto_norm = _normalizar(texto)
     if not texto_norm:
         return {"tipo": "desconocido"}
-    palabras = texto_norm.split()
-    verbo, resto = palabras[0], " ".join(palabras[1:])
+    verbo, resto = _partir_en_verbo(texto_norm.split())
+    if not verbo:
+        return {"tipo": "desconocido"}
+
+    # Las consultas van PRIMERO: son de solo lectura, así que no hay riesgo
+    # en atenderlas, y evita que una pregunta caiga por casualidad en una
+    # rama que actúa.
+    if verbo in VERBOS_CONSULTA:
+        if _pregunta_por_prendido(resto):
+            return {"tipo": "consulta_actuadores"}
+        if _menciona_lavado(resto):
+            return {"tipo": "consulta_lavado"}
+        return {"tipo": "desconocido"}
 
     if verbo in VERBOS_INICIAR:
         # Arrancar bombas es la dirección peligrosa: se exige que el resto
