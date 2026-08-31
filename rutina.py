@@ -64,11 +64,13 @@ PESOS = {
     # registran ese instante — ver `salas.convencional.PESOS`.
     "flujo": 0,
     "identificacion": 30,  # ordeños que quedaron a nombre del comodín
-    # Falta "Paradas de la rotativa" (10% en el diseño del tambo): no hay
-    # todavía una fuente de datos confiable para contarlas (ver CLAUDE.md,
-    # "Paradas de la rotativa"). Hasta resolverlo, los 90 puntos de arriba
-    # son el 100% del score -- normalizado, no absoluto (ver `peso_total`
-    # en `_analizar_sesion`), así que no hace falta que sumen 100 acá.
+    # "Paradas de la rotativa" del diseño del tambo. DDM no guarda un conteo
+    # de la plataforma parándose (se investigó a fondo, ver CLAUDE.md); el
+    # proxy que sí hay es el control manual del enganche (`ManualMode`, ver
+    # el docstring de `sql_rutina`). Sin clave equivalente en
+    # `salas.convencional.PESOS` -- esa sala no tiene brazo automático que
+    # reemplazar por la mano del operario.
+    "paradas_rotativa": 10,
 }
 
 # Bimodalidad: la vaca arranca a dar leche, la bajada se corta y vuelve. Es el
@@ -136,16 +138,23 @@ def validar_fecha(fecha: str) -> str:
     return fecha
 
 
-def normalizar_pesos(pesos: dict | None) -> dict:
-    """Combina pesos personalizados (0 o más claves de PESOS, valores 0-100)
-    con los pesos por defecto para las claves que falten. Ignora claves
-    desconocidas o valores inválidos en vez de fallar, así una URL manual mal
-    armada no rompe el análisis."""
-    resultado = dict(PESOS)
+def normalizar_pesos(pesos: dict | None, defecto: dict | None = None) -> dict:
+    """Combina pesos personalizados (0 o más claves de `defecto`, valores
+    0-100) con los pesos por defecto para las claves que falten. Ignora
+    claves desconocidas o valores inválidos en vez de fallar, así una URL
+    manual mal armada no rompe el análisis.
+
+    `defecto`: el universo de claves válidas y sus valores por defecto;
+    None = PESOS (rotativa). Cada sala tiene que pasar el suyo (ver
+    `salas.convencional.analizar_dia`) -- si no, una clave que solo tiene
+    sentido en una sala (como "paradas_rotativa", rotativa-only) se cuela en
+    la otra con el valor de acá, aunque esa sala nunca la haya pedido."""
+    defecto = defecto if defecto is not None else PESOS
+    resultado = dict(defecto)
     if not pesos:
         return resultado
     for clave, valor in pesos.items():
-        if clave in PESOS:
+        if clave in defecto:
             try:
                 resultado[clave] = max(0.0, min(100.0, float(valor)))
             except (TypeError, ValueError):
@@ -171,11 +180,24 @@ def sql_rutina(fecha: str) -> str:
     """Visitas de un día (con 6h de margen a cada lado para no cortar sesiones
     que arrancan antes de medianoche, como la primera vuelta del día).
 
-    Las cinco últimas columnas son los incidentes que registra la máquina en
-    cada ordeño, para el componente "Evaluación de Incidentes" (ver
+    Las cinco columnas de incidentes son las que registra la máquina en cada
+    ordeño, para el componente "Evaluación de Incidentes" (ver
     `componente_incidentes`) — un análisis APARTE del score de manejo: mide
     al equipo/la interacción vaca-máquina, no la logística de traer los
-    animales al corral."""
+    animales al corral.
+
+    `control_manual` (`CMSMilkYield.ManualMode`) es de "Evaluación de
+    Manejo", no de Incidentes: el operario enganchó la pezonera a mano
+    porque el brazo automático no pudo (ver `ordeno.sql_incidentes_diarios`,
+    donde ya se usaba para el gráfico de tendencia). Hace de proxy de
+    "Paradas de la rotativa" del diseño del tambo: no es un conteo de la
+    plataforma parándose, es la intervención manual más cercana que DDM
+    registra por vaca — no hay una tabla nativa de paradas de plataforma
+    (se investigó a fondo, ver CLAUDE.md). Solo tiene sentido en la
+    rotativa: la convencional no tiene brazo automático que reemplazar por
+    la mano del operario, así que esta sala ni siquiera pide la columna
+    (ver `salas.convencional.sql_rutina` y `PESOS`, sin la clave
+    `paradas_rotativa`)."""
     fecha = validar_fecha(fecha)
     return f"""
         SELECT
@@ -183,7 +205,8 @@ def sql_rutina(fecha: str) -> str:
           m.IDTime AS hora_id, c.VerifiedTime AS hora_coloc, y.MilkConfirmTime AS hora_fin,
           y.ForcedRetract AS retirada_forzada,
           y.NoOfReattaches AS recolocaciones, y.Slips AS deslizamientos,
-          y.Blocks AS bloqueos, y.KickOffs AS patadas
+          y.Blocks AS bloqueos, y.KickOffs AS patadas,
+          CASE WHEN y.ManualMode = 1 THEN 1 ELSE 0 END AS control_manual
         FROM MilkingDeviceVisit m
         JOIN BasicAnimal b ON b.OID = m.Animal
         LEFT JOIN CMSDeviceVisit c ON c.OID = m.OID
@@ -1076,7 +1099,8 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
                  sin_prep_info: str | None = None,
                  incluir_sin_grupo: bool = False,
                  identificacion_pct: float | None = None,
-                 pesos_incidentes: dict | None = None) -> dict:
+                 pesos_incidentes: dict | None = None,
+                 pesos_defecto: dict | None = None) -> dict:
     """Separa las visitas del día (+ margen) en sesiones y puntúa cada una.
     Solo se devuelven las sesiones que se solapan con el día pedido.
 
@@ -1086,6 +1110,10 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
     `pesos`: pesos 0-100 por componente (ver PESOS); None = los de por defecto.
     `pesos_incidentes`: pesos de "Evaluación de Incidentes" (ver
     `componente_incidentes`); None = PESOS_INCIDENTES (rotativa).
+    `pesos_defecto`: universo de claves válidas para `pesos` y sus valores
+    por defecto (ver `normalizar_pesos`); None = PESOS (rotativa). Cada sala
+    pasa el suyo -- si no, una clave rotativa-only como "paradas_rotativa"
+    se cuela en la convencional con el valor de acá.
     `max_sesiones`: tope de sesiones del día (los ordeños/día que tiene
     declarado el tambo). Si el corte por huecos da más, se vuelven a unir
     (ver _fusionar_hasta). None = sin tope.
@@ -1096,7 +1124,7 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
     `umbral_prep_s`: objetivo de colocación en segundos (ver `_analizar_sesion`);
     None = UMBRAL_PREP_S."""
     grupos = normalizar_grupos(grupos)
-    pesos = normalizar_pesos(pesos)
+    pesos = normalizar_pesos(pesos, pesos_defecto)
     idx = {c: i for i, c in enumerate(columns)}
     visitas = []
     for r in rows:
@@ -1146,6 +1174,10 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
             "deslizamientos": bool(r[idx["deslizamientos"]]) if "deslizamientos" in idx and r[idx["deslizamientos"]] is not None else False,
             "bloqueos": bool(r[idx["bloqueos"]]) if "bloqueos" in idx and r[idx["bloqueos"]] is not None else False,
             "patadas": bool(r[idx["patadas"]]) if "patadas" in idx and r[idx["patadas"]] is not None else False,
+            # De "Evaluación de Manejo", no de Incidentes -- ver el docstring
+            # de sql_rutina. Solo la rotativa lo selecciona.
+            "control_manual": bool(r[idx["control_manual"]])
+                if "control_manual" in idx and r[idx["control_manual"]] is not None else False,
         })
     visitas.sort(key=lambda v: v["hora_id"])
 
@@ -1265,9 +1297,8 @@ def componente_incidentes(visitas: list, pesos: dict | None = None) -> dict:
     score = round(sum(pesos[c] * v for c, v in valores.items()) / peso_total) if peso_total else None
     detalle = [
         {"clave": clave, "label": _LABEL_INCIDENTE[clave], "valor": round(valores[clave]),
-         "peso": pesos[clave],
-         "info": f"{conteos[clave]}/{n} ordeños con {_LABEL_INCIDENTE[clave].lower()} "
-                 f"({round(100 * conteos[clave] / n, 1)}%)."}
+         "peso": pesos[clave], "cantidad": conteos[clave],
+         "info": f"{conteos[clave]} de {n} ordeños ({round(100 * conteos[clave] / n, 1)}%)."}
         for clave in pesos
     ]
     return {"score": max(0, min(100, score)) if score is not None else None, "detalle": detalle}
@@ -1295,17 +1326,18 @@ def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = Non
                 sin_prep_info: str | None = None,
                 incluir_sin_grupo: bool = False,
                 identificacion_pct: float | None = None,
-                pesos_incidentes: dict | None = None):
+                pesos_incidentes: dict | None = None,
+                pesos_defecto: dict | None = None):
     """Reduce las sesiones de un día a UN punto (promedio ponderado por vacas)
     para graficar la evolución de la rutina a lo largo del tiempo. None si el
     día no tiene ordeños (fin de semana sin datos, feriado, hueco de la copia).
     `grupos`/`pesos`/`max_sesiones`/`ocupacion_fn`/`huecos_fn`/`umbral_prep_s`/
-    `mide_colocacion`/`identificacion_pct`/`pesos_incidentes`: igual que en
-    analizar_dia."""
+    `mide_colocacion`/`identificacion_pct`/`pesos_incidentes`/`pesos_defecto`:
+    igual que en analizar_dia."""
     dia = analizar_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
                        ocupacion_fn, huecos_fn, umbral_prep_s, mide_colocacion,
                        prep_max_s, prep_label, sin_prep_info, incluir_sin_grupo,
-                       identificacion_pct, pesos_incidentes)
+                       identificacion_pct, pesos_incidentes, pesos_defecto)
     sesiones = dia["sesiones"]
     total_vacas = sum(s["vacas"] for s in sesiones)
     if not sesiones or total_vacas == 0:
@@ -1538,6 +1570,15 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     # abajo, ver `componente_incidentes`.
     incidentes = componente_incidentes(visitas, pesos_incidentes)
 
+    # --- "Paradas de la rotativa" del diseño del tambo: proxy por control
+    # manual del enganche (ver el docstring de sql_rutina para el porqué).
+    # Solo la rotativa manda `control_manual`; sin la columna, todas las
+    # visitas quedan en False y esto da 100 -- inofensivo, porque la
+    # convencional no tiene la clave "paradas_rotativa" en sus PESOS
+    # (ver `pesos.get` más abajo) y el componente se saca de la vista.
+    controles_manuales = sum(1 for v in visitas if v.get("control_manual"))
+    s9 = 100.0 * (1 - controles_manuales / len(visitas))
+
     # --- Colocación de pezonera dentro de los 90s (el KPI que marca DelPro),
     # con crédito gradual en vez de un corte binario (ver _credito_prep). Si a
     # casi toda la sesión le falta el dato de colocación, es una falla de
@@ -1631,9 +1672,12 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
 
     componentes = {"prep_90s": s1, "lerdas": s2, "entre_grupos": s3,
                    "manejo_corral": s4, "mezcla_rodeos": s5, "ocupacion": s6,
-                   "flujo": s7, "identificacion": s8}
+                   "flujo": s7, "identificacion": s8, "paradas_rotativa": s9}
     disponibles = {c: v for c, v in componentes.items() if v is not None}
-    peso_total = sum(pesos[c] for c in disponibles)
+    # .get(c, 0): "paradas_rotativa" no está en los PESOS de la convencional
+    # a propósito (ver el docstring de sql_rutina) -- sin el default,
+    # calificar una sesión de esa sala tiraría KeyError acá.
+    peso_total = sum(pesos.get(c, 0) for c in disponibles)
     # SI QUEDA MUY POCO PESO VIVO, NO HAY SCORE. Excluir un componente que no
     # aplica es correcto, pero con la mitad del peso afuera lo que queda ya no
     # es una calificación de la rutina: es el promedio de lo poco que se pudo
@@ -1643,7 +1687,7 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     # saltaba de 37 a 93 — de acusar al tambo injustamente a felicitarlo
     # injustamente. Ninguna de las dos cosas es un dato. None = "no se puede
     # calificar con lo que registra esta sala".
-    score = (round(sum(pesos[c] * v for c, v in disponibles.items()) / peso_total)
+    score = (round(sum(pesos.get(c, 0) * v for c, v in disponibles.items()) / peso_total)
              if peso_total >= PESO_MINIMO_SCORE else None)
 
     # Colores por grupo, en orden de aparición.
@@ -1727,16 +1771,35 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
              "peso": pesos["lerdas"],
              "info": (f"{lerdas} vaca(s) con ordeño 50%+ más largo que la mediana "
                       f"({round(mediana_ordeño)}s).") if mediana_ordeño else "Sin datos de duración."},
-            # s3/s4 pueden venir en None: la sala puede no tener cómo separar
-            # una pausa real de un cambio de tanda (ver
-            # `salas.convencional._huecos_por_rodeo`). Se excluyen del score igual
-            # que "ocupación" y "colocación".
-            {"clave": "entre_grupos", "label": "Sin tiempos muertos entre grupos",
-             "valor": round(s3) if s3 is not None else None,
-             "peso": pesos["entre_grupos"], "info": huecos["info3"]},
+            # Orden y presencia de acá para abajo: EN ESTE ORDEN a propósito,
+            # calcado del rediseño del tambo (ver CLAUDE.md, "Rediseño del
+            # score de rutina") -- coincide en las dos salas una vez que el
+            # frontend saca los de peso 0 (ver pintarRutinaSesion). s3/s4
+            # pueden venir en None: la sala puede no tener cómo separar una
+            # pausa real de un cambio de tanda (ver
+            # `salas.convencional._huecos_por_rodeo`). Se excluyen del score
+            # igual que "ocupación" y "colocación".
             {"clave": "manejo_corral", "label": "Manejo de corral (entrada fluida)",
              "valor": round(s4) if s4 is not None else None,
              "peso": pesos["manejo_corral"], "info": huecos["info4"]},
+            {"clave": "entre_grupos", "label": "Sin tiempos muertos entre grupos",
+             "valor": round(s3) if s3 is not None else None,
+             "peso": pesos["entre_grupos"], "info": huecos["info3"]},
+            {"clave": "mezcla_rodeos", "label": "Sin mezcla de rodeos", "valor": round(s5),
+             "peso": pesos["mezcla_rodeos"],
+             "info": (f"{total_mezcladas}/{len(evaluables)} vacas sueltas coladas en el turno de otro grupo."
+                      if total_mezcladas else "Ningún animal suelto se coló en otro turno.")},
+            {"clave": "ocupacion", "label": ocupacion["label"],
+             "valor": round(s6) if s6 is not None else None,
+             "peso": pesos["ocupacion"], "info": ocupacion["info"]},
+            # Sin clave en los PESOS de la convencional (peso 0 vía .get): no
+            # hay brazo automático que reemplazar por la mano del operario en
+            # una sala de tandas. Ver el docstring de sql_rutina.
+            {"clave": "paradas_rotativa", "label": "Paradas de la rotativa (control manual)",
+             "valor": round(s9), "peso": pesos.get("paradas_rotativa", 0),
+             "info": (f"{controles_manuales}/{len(visitas)} ordeños con enganche manual de la pezonera "
+                      "(el brazo automático no pudo). Proxy de paradas: DDM no guarda un conteo de la "
+                      "plataforma parándose, esto es la intervención manual más cercana que sí registra.")},
             {"clave": "flujo", "label": "Estímulo (sin bimodalidad)",
              "valor": round(s7) if s7 is not None else None, "peso": pesos["flujo"],
              "info": (f"{bimodales}/{con_curva} ordeños con la bajada cortada y vuelta a "
@@ -1745,13 +1808,6 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                       f"{round(BIMODAL_PCT_SANO)}%, malo desde {round(BIMODAL_PCT_MALO)}%."
                       if s7 is not None else
                       "Esta sala no registra la curva de flujo de cada ordeño.")},
-            {"clave": "mezcla_rodeos", "label": "Sin mezcla de rodeos", "valor": round(s5),
-             "peso": pesos["mezcla_rodeos"],
-             "info": (f"{total_mezcladas}/{len(evaluables)} vacas sueltas coladas en el turno de otro grupo."
-                      if total_mezcladas else "Ningún animal suelto se coló en otro turno.")},
-            {"clave": "ocupacion", "label": ocupacion["label"],
-             "valor": round(s6) if s6 is not None else None,
-             "peso": pesos["ocupacion"], "info": ocupacion["info"]},
         ],
         "grupos": [{"grupo": g["grupo"], "nombre": _grupo_txt(g["grupo"], nombres),
                     "color": g["color"], "cantidad": g["cantidad"],

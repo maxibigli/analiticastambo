@@ -2079,21 +2079,63 @@ convencional. Como el editor de pesos del frontend lee los componentes del
 propio análisis (`componentesDelScore`), un tambo que quiera reactivarlos
 puede hacerlo desde ⚙ (por tambo), sin tocar código.
 
-**Pendiente, sin resolver todavía: "Paradas de la rotativa" (10% del diseño
-del tambo).** Se investigó si DDM tiene el dato: existe una tabla
+**"Paradas de la rotativa" (10% del diseño del tambo): RESUELTO, con un
+proxy, no con el dato literal (30/08/2026).** Se investigó a fondo si DDM
+tiene un conteo real de la plataforma parándose: existe una tabla
 `Chi_TempRotaryStops24` (motor "Chi" = analítica propia de DeLaval dentro de
 DelPro) con `parlor/HH/Animals/Spintime/PercGaps/Stops/StopsLt5/Stops5to10/
 StopsGt10` por hora, pero tiene SOLO 18 filas de un único día (15-16/07/2026)
 y nunca se actualizó — el nombre "Temp" no es casualidad: por el patrón (otro
 grupo de tablas `Chi*` con `create_date` del 30/07, mismo comportamiento)
 parece ser una tabla de trabajo que algún reporte de DelPro genera al vuelo
-cuando se lo abre, no un historial acumulado. Falta que el tambo confirme
-(con una captura de esa pantalla de DelPro) si ese reporte dispara un
-recálculo cada vez que se abre — recién ahí se puede decidir si LactIA puede
-leer la misma tabla o si hace falta otra fuente. Hasta entonces, el peso
-correspondiente simplemente no está en `rutina.PESOS` (ver el comentario ahí):
-los demás pesos de Manejo no necesitan sumar 100, `_analizar_sesion` normaliza
-por el peso de los componentes disponibles, no por un total fijo.
+cuando se lo abre, no un historial acumulado. Se buscó también por columnas
+`%Stop%`/`%Downtime%`/`%Halt%`/`%Idle%` en todo el esquema y por
+`CMSRotaryController` (solo config de red del controlador) — nada.
+
+**La salida fue mirar el reporte nativo "Rendimiento de ordeño" de DelPro**
+(el mismo que ya se replica 162/162 campos en `rutina.sql_rendimiento`, ver
+más abajo): tiene una columna **"Controles manuales"**, que resultó ser
+`CMSMilkYield.ManualMode` — YA usada en el código
+(`ordeno.sql_incidentes_diarios`, con el comentario *"el operario enganchó
+la pezonera a mano en vez de que lo haga la rotativa sola"*). No es un
+conteo de la plataforma parándose (una vaca puede necesitar enganche manual
+mientras el resto de la plataforma sigue girando sola), pero es la
+intervención manual más cercana que DDM sí registra, y el tambo la aceptó
+como proxy.
+
+`rutina.sql_rutina` ahora trae `CASE WHEN y.ManualMode = 1 THEN 1 ELSE 0
+END AS control_manual` (solo la rotativa la pide: la convencional no tiene
+brazo automático que reemplazar a mano). `_analizar_sesion` calcula el
+componente `paradas_rotativa` con el mismo criterio lineal que "Evaluación
+de Incidentes" (`100 × (1 − controles_manuales/vacas)`), y `rutina.PESOS` ya
+tiene `"paradas_rotativa": 10` — con esto los pesos de Manejo de la rotativa
+vuelven a sumar 100 exacto.
+
+**Bug encontrado y arreglado en el camino: `normalizar_pesos` colaba claves
+rotativa-only a la convencional.** La función siempre completaba los
+huecos de un `pesos` parcial contra `rutina.PESOS` (el universo de la
+rotativa) sin importar para qué sala se estaba llamando — inofensivo
+mientras las dos salas tuvieran EXACTAMENTE las mismas 8 claves, pero con
+"paradas_rotativa" como novena clave solo de rotativa, la convencional
+terminaba heredando peso 10 para un componente que en esa sala vale
+siempre 100 (nunca pide `control_manual`), inflando el score sin que nadie
+lo hubiera pedido. Se agregó un parámetro `defecto` a `normalizar_pesos`
+(el universo de claves válidas y sus valores por defecto) y
+`salas.convencional.analizar_dia`/`resumen_dia` ahora pasan
+`pesos_defecto=PESOS` (el de ESA sala) explícitamente en vez de dejar que
+`rutina.py` asuma el suyo. Vale la pena recordar esto si algún día se
+agrega una clave nueva que no sea universal a las tres salas.
+
+**Orden de los componentes en pantalla, y por qué algunos no se muestran.**
+`_analizar_sesion` arma `detalle` en el orden pedido por el tambo:
+`prep_90s, identificacion, lerdas, manejo_corral, entre_grupos,
+mezcla_rodeos, ocupacion, paradas_rotativa, flujo` — ese orden, filtrado por
+peso > 0 en el frontend (`pintarRutinaSesion`), da EXACTO la lista y el
+orden de las dos planillas del tambo (rotativa sin manejo_corral/flujo,
+convencional sin ocupacion/flujo/paradas_rotativa, con manejo_corral ANTES
+que entre_grupos — por eso ese orden y no el alfabético). El editor de
+pesos (⚙ Configurar análisis) sigue leyendo la lista COMPLETA sin filtrar,
+así que un tambo puede reactivar cualquiera de estos sin tocar código.
 
 ## Entorno de desarrollo (esta PC)
 
