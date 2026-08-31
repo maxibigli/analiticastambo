@@ -514,10 +514,14 @@ def analizar_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                  max_sesiones=None, nombres=None, umbral_prep_s=None,
                  identificacion_pct=None, pesos_incidentes=None) -> dict:
     # `tambo` no hace falta acá — queda en la firma solo para cumplir la
-    # interfaz común (ver salas/rotativa.py).
+    # interfaz común (ver salas/rotativa.py). `pesos_defecto=PESOS` (el de
+    # ESTA sala, no el de rutina.py): sin esto, `rutina.normalizar_pesos`
+    # completa contra el universo de la rotativa y le cuela "paradas_rotativa"
+    # a la convencional, que no tiene brazo automático que reemplazar a mano.
     return rutina.analizar_dia(columns, rows, fecha, grupos, pesos or PESOS, max_sesiones,
                                nombres, identificacion_pct=identificacion_pct,
                                pesos_incidentes=pesos_incidentes or PESOS_INCIDENTES,
+                               pesos_defecto=PESOS,
                                **_opciones_score(umbral_prep_s))
 
 
@@ -527,6 +531,7 @@ def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
     return rutina.resumen_dia(columns, rows, fecha, grupos, pesos or PESOS, max_sesiones,
                               nombres, identificacion_pct=identificacion_pct,
                               pesos_incidentes=pesos_incidentes or PESOS_INCIDENTES,
+                              pesos_defecto=PESOS,
                               **_opciones_score(umbral_prep_s))
 
 

@@ -8914,7 +8914,11 @@ function pintarRutinaSesion() {
   const cuerpo = document.getElementById('rutina-cuerpo');
   if (!rutinaData || !rutinaData.sesiones.length) { cuerpo.innerHTML = ''; return; }
   const s = rutinaData.sesiones[rutinaSesionIdx];
-  const barras = s.detalle.map(d => `
+  // Peso 0 = el tambo lo sacó de "Evaluación de Manejo" en el rediseño (ver
+  // CLAUDE.md) -- sigue calculándose (el editor de pesos en ⚙ Configurar
+  // análisis lo puede reactivar sin tocar código) pero no se muestra acá,
+  // para que la lista coincida con los componentes que el tambo definió.
+  const barras = s.detalle.filter(d => d.peso > 0).map(d => `
     <div class="rm-fila">
       <div class="rm-cab"><span>${d.label} <span style="opacity:.6">(${d.peso}%)</span></span><span class="rm-val" style="color:${colorScore(d.valor)}">${d.valor == null ? 'sin datos' : d.valor + '%'}</span></div>
       <div class="rm-barra"><div style="width:${d.valor == null ? 0 : d.valor}%;background:${colorScore(d.valor)}"></div></div>
@@ -8927,6 +8931,7 @@ function pintarRutinaSesion() {
     <div class="rm-fila">
       <div class="rm-cab"><span>${d.label} <span style="opacity:.6">(${d.peso}%)</span></span><span class="rm-val" style="color:${colorScore(d.valor)}">${d.valor == null ? 'sin datos' : d.valor + '%'}</span></div>
       <div class="rm-barra"><div style="width:${d.valor == null ? 0 : d.valor}%;background:${colorScore(d.valor)}"></div></div>
+      <div class="aviso" style="font-size:11px;margin-top:2px;opacity:.8">${d.info}</div>
     </div>`).join('');
   const hallazgos = s.hallazgos.length
     ? '<ul class="rutina-hallazgos">' + s.hallazgos.map(h => `<li>${h.texto}</li>`).join('') + '</ul>'
