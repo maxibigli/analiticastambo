@@ -578,11 +578,34 @@ def _tambo_del_request() -> str:
     return tambo
 
 
+def _version_estaticos() -> str:
+    """Marca de versión para los <link>/<script> de /static, sacada de la
+    fecha del archivo más nuevo de static/css y static/js.
+
+    Sin esto, un cambio de CSS puede quedar INVISIBLE detrás del caché del
+    navegador: pasó al agregar las tipografías -- el servidor ya devolvía la
+    hoja nueva y el navegador seguía usando la vieja. En SERVER-DELPRO eso
+    significa desplegar un cambio de estilos y que nadie lo vea hasta que
+    limpie el caché a mano."""
+    ultimo = 0.0
+    for carpeta in ("static/css", "static/js"):
+        ruta = os.path.join(os.path.dirname(os.path.abspath(__file__)), carpeta)
+        if not os.path.isdir(ruta):
+            continue
+        for nombre in os.listdir(ruta):
+            try:
+                ultimo = max(ultimo, os.path.getmtime(os.path.join(ruta, nombre)))
+            except OSError:
+                pass
+    return str(int(ultimo))
+
+
 @app.get("/")
 def index():
     return render_template("index.html", ia_disponible=ai.api_disponible(),
                             usuario=auth.usuario_actual(), rol=auth.rol_actual(),
-                            paginas_visibles=auth.paginas_visibles())
+                            paginas_visibles=auth.paginas_visibles(),
+                            v=_version_estaticos())
 
 
 @app.get("/api/tambos")

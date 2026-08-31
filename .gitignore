@@ -95,3 +95,6 @@ bitacora.db-shm
 bitacora_fotos/
 
 .worktrees/
+
+# Copias de resguardo locales antes de cambios grandes (no se comparten)
+porlasdudas/

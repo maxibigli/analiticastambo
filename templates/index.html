@@ -17,8 +17,11 @@
   })();
 </script>
 <link rel="icon" type="image/svg+xml" href="/static/img/logo.svg">
-<link rel="stylesheet" href="/static/css/lactia-tokens.css">
-<link rel="stylesheet" href="/static/css/lactia-components.css">
+<!-- ?v= sale de la fecha del archivo más nuevo de static/ (ver
+     _version_estaticos en app.py). Sin esto un cambio de CSS puede quedar
+     invisible detrás del caché del navegador. -->
+<link rel="stylesheet" href="/static/css/lactia-tokens.css?v={{ v }}">
+<link rel="stylesheet" href="/static/css/lactia-components.css?v={{ v }}">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 <style>
   /* Paleta de la app: apunta a los tokens de static/css/lactia-tokens.css.
