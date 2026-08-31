@@ -69,6 +69,9 @@
     border-radius: var(--lac-radius-card); padding: var(--lac-space-4);
     box-shadow: var(--lac-shadow-sm);
   }
+  /* "Sin identificar" NO es una métrica de producción: la franja ámbar la
+     separa de las demás para que no se lea como un número que conviene subir. */
+  .tile.tile-atencion { border-top-color: var(--warning); }
   .tile .label {
     color: var(--text-secondary); font-size: var(--lac-size-2xs); font-weight: var(--lac-weight-strong);
     text-transform: uppercase; letter-spacing: var(--lac-track-eyebrow);
@@ -701,6 +704,9 @@
   <div class="page" id="page-dashboard" hidden>
   <div class="aviso" id="dashboard-estado"></div>
 
+  {# La fecha se dice UNA vez acá, no repetida entre paréntesis en cada
+     tarjeta como estaba antes. #}
+  <div class="aviso" id="dashboard-fecha" style="margin-bottom:10px"></div>
   <section class="kpis" id="kpis"></section>
 
   <section class="grid2">
@@ -717,12 +723,9 @@
   <section class="card" id="resumen-produccion-card">
     <h2 style="margin:0">Resumen diario de producción — últimos 7 días</h2>
     <div class="aviso" id="resumen-produccion-info" style="margin-top:6px"></div>
-    <div class="rutina-layout" style="margin-top:10px">
-      <div style="flex:2 1 480px;min-width:0">
-        <div class="chart-box" style="height:260px"><canvas id="chart-resumen-produccion"></canvas></div>
-      </div>
-      <div class="kpis" id="resumen-produccion-kpis" style="flex:1 1 220px;grid-template-columns:1fr"></div>
-    </div>
+    {# La columna de tarjetas que estaba acá al lado subió a la fila de arriba:
+       repetía los litros y las vacas del día que ya mostraba #kpis. #}
+    <div class="chart-box" style="height:260px;margin-top:10px"><canvas id="chart-resumen-produccion"></canvas></div>
   </section>
 
   <section class="card" id="resumen-animales-card">
@@ -3516,18 +3519,73 @@ function refrescoSinSolape(fn, ms, setId, inmediato) {
   setId(setTimeout(vuelta, ms));
 }
 
+// ---------------------------------------------------------------------------
+// Fila de tarjetas del Dashboard. UNA sola fila, armada con datos de DOS
+// endpoints (/api/dashboard y /api/resumen/produccion) que llegan por separado:
+// cada uno guarda lo suyo acá y vuelve a pintar con lo que haya. Antes eran dos
+// bloques distintos de tarjetas y REPETÍAN el mismo día contado distinto —
+// "Kg de leche" incluía la leche sin identificar y "Producción diaria" no, y
+// "Vacas en ordeño" contaba además el comodín como una vaca más.
+// ---------------------------------------------------------------------------
+let dashKpis = null, dashResumen = null, dashRepro = null;
+
+function pintarKpisDashboard() {
+  const k = dashKpis || {}, r = dashResumen || {};
+  const a = r.ayer || {}, v = r.variacion || {};
+  const flecha = (n, unidad = '') => n == null ? null
+    : `<span style="color:${n >= 0 ? css('--good') : css('--critical')}">`
+      + `${n > 0 ? '▲ +' : n < 0 ? '▼ ' : '— '}${fmt(Math.abs(n))}${unidad}</span>`;
+
+  // % sin identificar: sobre el TOTAL del día (identificada + desconocida), que
+  // es la pregunta real ("cuánta de la leche de hoy no tiene dueño").
+  const total = (a.kg_total || 0) + (a.kg_desconocida || 0);
+  const pctDesc = total ? Math.round(1000 * a.kg_desconocida / total) / 10 : null;
+
+  // % de vacías: del MISMO dato que dibuja el anillo, para que no puedan diferir.
+  let pctVacias = null;
+  if (dashRepro && dashRepro.rows && dashRepro.columns) {
+    const iE = dashRepro.columns.indexOf('estado'), iV = dashRepro.columns.indexOf('vacas');
+    if (iE >= 0 && iV >= 0) {
+      const tot = dashRepro.rows.reduce((s, f) => s + (f[iV] || 0), 0);
+      const vac = dashRepro.rows.filter(f => /vac/i.test(f[iE]))
+                                .reduce((s, f) => s + (f[iV] || 0), 0);
+      if (tot) pctVacias = Math.round(100 * vac / tot);
+    }
+  }
+
+  const ordPorVaca = (k.ordenos_ultimo_dia && a.vacas_ordenadas)
+    ? Math.round(10 * k.ordenos_ultimo_dia / a.vacas_ordenadas) / 10 : null;
+
+  const tiles = [
+    ['Producción del día', fmt(a.kg_total), 'kg', flecha(v.kg_total, ' kg')],
+    ['Promedio por vaca', fmt(a.promedio_kg), 'kg', flecha(v.promedio_kg, ' kg')],
+    ['Vacas ordeñadas', fmt(a.vacas_ordenadas), '',
+      k.ordenos_ultimo_dia != null
+        ? `${fmt(k.ordenos_ultimo_dia)} ordeños${ordPorVaca ? ` · ${fmt(ordPorVaca)} por vaca` : ''}` : null],
+    ['Sin identificar', pctDesc != null ? fmt(pctDesc) : '—', '%',
+      a.kg_desconocida != null ? `${fmt(Math.round(a.kg_desconocida))} kg sin dueño` : null, true],
+    ['Rodeo activo', fmt(k.animales_activos), '',
+      k.prenadas != null
+        ? `${fmt(k.prenadas)} preñadas${pctVacias != null ? ` · ${pctVacias}% vacías` : ''}` : null],
+  ];
+  document.getElementById('kpis').innerHTML = tiles.map(([l, val, uni, sub, ojo]) => `
+    <div class="tile${ojo ? ' tile-atencion' : ''}">
+      <div class="label">${l}</div>
+      <div class="value">${val ?? '—'}${uni ? `<small style="font-size:.55em;font-weight:500;opacity:.75;margin-left:3px">${uni}</small>` : ''}</div>
+      ${sub ? `<div class="aviso" style="margin-top:4px">${sub}</div>` : ''}
+    </div>`).join('');
+
+  const fecha = a.fecha || k.fecha_dato;
+  document.getElementById('dashboard-fecha').innerHTML = fecha
+    ? `Último día completo: <b>${fecha}</b> · las variaciones comparan contra el día anterior.` : '';
+}
+
 async function cargarDashboard(intento = 0) {
   try {
     const d = await pedirJSON('/api/dashboard?tambo=' + encodeURIComponent(tamboActual));
-    const k = d.kpis || {};
-    const f = k.fecha_dato ? ` (${k.fecha_dato})` : '';
-    const tiles = [
-      ['Kg de leche' + f, k.kg_ultimo_dia], ['Vacas en ordeño' + f, k.vacas_en_ordeno],
-      ['Ordeños' + f, k.ordenos_ultimo_dia], ['Animales activos', k.animales_activos],
-      ['Preñadas', k.prenadas],
-    ];
-    document.getElementById('kpis').innerHTML = tiles.map(([l, v]) =>
-      `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
+    dashKpis = d.kpis || {};
+    dashRepro = d.reproduccion || null;
+    pintarKpisDashboard();
     chartProd = dibujar('chart-prod', chartProd,
       construirGrafica(d.produccion, { tipo: 'line', eje_x: 'fecha', series: ['kg_leche'] }));
     chartRepro = dibujar('chart-repro', chartRepro,
@@ -3579,22 +3637,13 @@ async function cargarResumenProduccion() {
         },
       },
     });
-    const v = d.variacion || {}, a = d.ayer || {};
-    const deltaTxt = (n) => n == null ? '' : (n > 0 ? '▲ +' : n < 0 ? '▼ ' : '— ') + fmt(Math.abs(n));
-    const deltaEstilo = (n) => n == null ? '' : `style="color:${n >= 0 ? css('--good') : css('--critical')}"`;
-    const tiles = [
-      ['Producción diaria (kg)', a.kg_total, v.kg_total],
-      ['Producción desconocida (kg)', a.kg_desconocida, v.kg_desconocida],
-      ['Promedio por vaca (kg)', a.promedio_kg, v.promedio_kg],
-      ['Vacas ordeñadas', a.vacas_ordenadas, v.vacas_ordenadas],
-    ];
-    document.getElementById('resumen-produccion-kpis').innerHTML = tiles.map(([l, val, delta]) => `
-      <div class="tile">
-        <div class="label">${l}</div>
-        <div class="value">${fmt(val)}</div>
-        <div class="aviso" ${deltaEstilo(delta)}>${deltaTxt(delta)}</div>
-      </div>`).join('');
-    info.textContent = a.fecha ? `Último día completo: ${a.fecha} (comparado con el día anterior)` : 'Sin datos suficientes.';
+    // Las tarjetas de este bloque subieron a la fila única de arriba (repetían
+    // los litros y las vacas del día). Acá sólo queda el gráfico; los números
+    // se le pasan a `pintarKpisDashboard`, que arma la fila con los dos
+    // endpoints juntos.
+    dashResumen = d;
+    pintarKpisDashboard();
+    info.textContent = (d.ayer || {}).fecha ? '' : 'Sin datos suficientes.';
   } catch (e) {
     if (e.calentando) { info.textContent = e.message; setTimeout(cargarResumenProduccion, 3000); }
     else info.textContent = 'Error: ' + e.message;
@@ -8829,6 +8878,10 @@ async function cargarTambos() {
       // esté cargado es de OTRO tambo, así que hay que volver a ofrecer el
       // botón "▶ Calcular" la próxima vez que se abra cada una.
       RUTINA_TABS_PREPARADAS.clear();
+      // La fila de tarjetas del Dashboard se arma con dos endpoints: si no se
+      // limpian los dos, mientras carga el tambo nuevo se ve media fila con
+      // números del anterior (el bug que ya pasó en Salud del rodeo).
+      dashKpis = dashResumen = dashRepro = null;
       cargarDatosDePagina(paginaActual);
       // La evolución NO se recarga sola: es pesada, se dispara solo con
       // "Aplicar" o "Ver mes completo".

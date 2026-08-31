@@ -193,12 +193,24 @@ KPIS_SQL = """
     )
     SELECT
       (SELECT d FROM ult) AS fecha_dato,
-      (SELECT ROUND(SUM(TotalYield), 0) FROM AnimalDaily
-         WHERE GCRecord IS NULL AND IsYieldValid = 1
-           AND Date = (SELECT d FROM ult)) AS kg_ultimo_dia,
-      (SELECT COUNT(DISTINCT BasicAnimal) FROM AnimalDaily
-         WHERE GCRecord IS NULL AND IsYieldValid = 1 AND TotalYield > 0
-           AND Date = (SELECT d FROM ult)) AS vacas_en_ordeno,
+      -- Los kg del día salían de acá SIN separar la leche sin identificar, y
+      -- el dashboard los mostraba al lado de "Producción diaria" (que sí la
+      -- separa): dos números distintos del mismo día, uno arriba del otro.
+      -- Ahora el dashboard usa el de `resumen.SQL_PRODUCCION_DIARIA`, que
+      -- además trae la variación contra el día anterior, y esta subconsulta
+      -- —que escanea AnimalDaily entero— quedó sin ningún consumidor.
+      -- `b.Number > 0` SACA EL COMODÍN, y no es un detalle: DelPro le carga
+      -- toda la leche sin identificar a UN animal ficticio (`Number = 0`, ver
+      -- CLAUDE.md), que sin este filtro se contaba como una vaca más. Medido el
+      -- 24/08/2026 en La Ponderosa: 1.566 contra las 1.565 reales, todos los
+      -- días. Es el mismo criterio que ya usa `resumen.SQL_PRODUCCION_DIARIA`,
+      -- y por no compartirlo las dos tarjetas del dashboard mostraban números
+      -- distintos para el mismo día.
+      (SELECT COUNT(DISTINCT ad.BasicAnimal) FROM AnimalDaily ad
+         JOIN BasicAnimal b ON b.OID = ad.BasicAnimal
+         WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1 AND ad.TotalYield > 0
+           AND b.GCRecord IS NULL AND b.Number > 0
+           AND ad.Date = (SELECT d FROM ult)) AS vacas_en_ordeno,
       (SELECT COUNT(*) FROM SessionMilkYield
          WHERE CAST(BeginTime AS date) = (SELECT d FROM ult)) AS ordenos_ultimo_dia,
       (SELECT COUNT(*) FROM BasicAnimal
