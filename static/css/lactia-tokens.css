@@ -99,7 +99,15 @@
   /* ---------- Tipografía ---------- */
   --lac-font-display: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
   --lac-font-body:    'Inter', system-ui, -apple-system, sans-serif;
-  --lac-font-data:    'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  /* Cifras en la MISMA fuente que el texto, no en monoespaciada. La
+     alineación de columnas la sigue garantizando `font-variant-numeric:
+     tabular-nums` (ya está en cada componente que la usa), que hace todos
+     los dígitos del mismo ancho SIN el aspecto de terminal: un caudal que
+     salta de 9,9 a 10,0 tampoco mueve el layout. Es lo que hace el
+     dashboard de referencia, y se nota sobre todo en las cifras grandes.
+     La mono queda disponible abajo por si algo la necesita de verdad. */
+  --lac-font-data:    var(--lac-font-body);
+  --lac-font-mono:    'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace;
 
   --lac-size-2xs:  11px;
   --lac-size-xs:   12px;
