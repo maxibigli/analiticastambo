@@ -654,7 +654,9 @@
     {% if 'rutina' in paginas_visibles %}<button class="nav-item" data-pagina="rutina">⏱️ <span>Rutina de ordeño</span></button>{% endif %}
     {% if 'rendimiento' in paginas_visibles %}<button class="nav-item" data-pagina="rendimiento">⚡ <span>Rendimiento Sala</span></button>{% endif %}
     {% if 'flujos' in paginas_visibles %}<button class="nav-item" data-pagina="flujos">💧 <span>Flujos de ordeño</span></button>{% endif %}
-    {% if 'evolucion' in paginas_visibles %}<button class="nav-item" data-pagina="evolucion">📈 <span>Evolución</span></button>{% endif %}
+    {# "Evolución" ya no es una entrada del menú: pasó a ser una pestaña dentro
+       de "Rutina de ordeño", que es a lo que pertenece. Sigue gateada por el
+       permiso 'evolucion' (ver auth.PAGINAS_POR_ROL), ahora en la pestaña. #}
     {% if 'proyeccion' in paginas_visibles %}<button class="nav-item" data-pagina="proyeccion">🔮 <span>Proyección de Rebaños</span></button>{% endif %}
     {% if 'repro' in paginas_visibles %}<button class="nav-item" data-pagina="repro">🧬 <span>Análisis Reproductivo</span></button>{% endif %}
     {% if 'alimentacion' in paginas_visibles %}<button class="nav-item" data-pagina="alimentacion">🌾 <span>Alimentación</span></button>{% endif %}
@@ -1766,6 +1768,16 @@
   </div>
 
   <div class="page" id="page-rutina" hidden>
+  {# Menú secundario horizontal, mismo patrón que #config-tabs y #repro-tabs.
+     Sólo aparece si el usuario tiene el permiso 'evolucion': sin él la página
+     queda exactamente como antes (una sola tarjeta, sin barra de una pestaña
+     sola, que no significaría nada). El operario NO lo tiene. #}
+  {% if 'evolucion' in paginas_visibles %}
+  <div class="lac-segment" id="rutina-tabs" role="group" aria-label="Sección" style="margin-bottom:14px">
+    <button class="lac-segment__item" data-tab="rutina" aria-pressed="true">⏱️ Del día</button>
+    <button class="lac-segment__item" data-tab="evolucion" aria-pressed="false">📈 Evolución</button>
+  </div>
+  {% endif %}
   <section class="card" id="rutina-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">Rutina de ordeño</h2>
@@ -1797,6 +1809,59 @@
     <div class="rutina-layout" id="rutina-cuerpo"></div>
   </section>
   <div class="rutina-tooltip" id="rutina-tooltip"></div>
+
+  {# --- Pestaña "Evolución" (antes era la página #page-evolucion) -----------
+     Las tres tarjetas se movieron acá tal cual estaban; los ids NO cambiaron
+     porque `cargarEvolucion` los busca por id (evolucion-desde/hasta/mes/anio,
+     chart-evolucion, y las dos de rendimiento que pinta al final).
+     Arrancan ocultas: la pestaña activa al entrar es "Del día". #}
+  {% if 'evolucion' in paginas_visibles %}
+  <section class="card" id="evolucion-card" hidden>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Evolución de la rutina de ordeño</h2>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="evolucion-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="evolucion-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="evolucion-aplicar">Aplicar</button>
+        <span class="aviso">·</span>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Mes
+          <select id="evolucion-mes" style="padding:6px 8px"></select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Año
+          <select id="evolucion-anio" style="padding:6px 8px"></select>
+        </label>
+        <button class="secundario" id="evolucion-ver-mes" title="Carga el mes completo, día por día">Ver mes completo</button>
+      </div>
+    </div>
+    <div class="aviso" id="evolucion-info" style="margin-top:8px"></div>
+    <div class="chart-box" style="height:340px;margin-top:10px;overflow-x:auto;overflow-y:hidden">
+      <div id="evolucion-chart-wrap" style="height:100%">
+        <canvas id="chart-evolucion"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="rendimiento-card" hidden>
+    <h2 style="margin:0">Rutina vs. rendimiento de la rotativa</h2>
+    <span class="aviso">Cada punto es UNA sesión: score general de esa sesión vs. vacas/hora que dio la rotativa. Mismo rango de fechas que arriba.</span>
+    <div class="aviso" id="rendimiento-info" style="margin-top:8px"></div>
+    <div class="chart-box" style="height:320px;margin-top:10px"><canvas id="chart-rendimiento"></canvas></div>
+  </section>
+
+  <section class="card" id="rendimiento-linea-card" hidden>
+    <h2 style="margin:0">Rutina y rendimiento por día (línea de tiempo)</h2>
+    <span class="aviso">Un día por punto (total del día) · calidad de rutina, vacas/hora y retiradas forzadas, cada uno con su escala.</span>
+    <div class="chart-box" style="height:320px;margin-top:10px;overflow-x:auto;overflow-y:hidden">
+      <div id="rendimiento-linea-wrap" style="height:100%">
+        <canvas id="chart-rendimiento-linea"></canvas>
+      </div>
+    </div>
+  </section>
+  {% endif %}
   </div>
 
   <div class="page" id="page-rendimiento" hidden>
@@ -2279,54 +2344,6 @@
         año pasado. Los meses proyectados van marcados con <b>·proy</b>.
       </p>
       <div style="overflow-x:auto" id="proy-tabla"></div>
-    </div>
-  </section>
-  </div>
-
-  <div class="page" id="page-evolucion" hidden>
-  <section class="card" id="evolucion-card">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">Evolución de la rutina de ordeño</h2>
-      <div class="controls" style="margin-left:auto">
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
-          <input type="date" id="evolucion-desde" style="padding:6px 8px">
-        </label>
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
-          <input type="date" id="evolucion-hasta" style="padding:6px 8px">
-        </label>
-        <button class="secundario" id="evolucion-aplicar">Aplicar</button>
-        <span class="aviso">·</span>
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Mes
-          <select id="evolucion-mes" style="padding:6px 8px"></select>
-        </label>
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Año
-          <select id="evolucion-anio" style="padding:6px 8px"></select>
-        </label>
-        <button class="secundario" id="evolucion-ver-mes" title="Carga el mes completo, día por día">Ver mes completo</button>
-      </div>
-    </div>
-    <div class="aviso" id="evolucion-info" style="margin-top:8px"></div>
-    <div class="chart-box" style="height:340px;margin-top:10px;overflow-x:auto;overflow-y:hidden">
-      <div id="evolucion-chart-wrap" style="height:100%">
-        <canvas id="chart-evolucion"></canvas>
-      </div>
-    </div>
-  </section>
-
-  <section class="card" id="rendimiento-card">
-    <h2 style="margin:0">Rutina vs. rendimiento de la rotativa</h2>
-    <span class="aviso">Cada punto es UNA sesión: score general de esa sesión vs. vacas/hora que dio la rotativa. Mismo rango de fechas que arriba.</span>
-    <div class="aviso" id="rendimiento-info" style="margin-top:8px"></div>
-    <div class="chart-box" style="height:320px;margin-top:10px"><canvas id="chart-rendimiento"></canvas></div>
-  </section>
-
-  <section class="card" id="rendimiento-linea-card">
-    <h2 style="margin:0">Rutina y rendimiento por día (línea de tiempo)</h2>
-    <span class="aviso">Un día por punto (total del día) · calidad de rutina, vacas/hora y retiradas forzadas, cada uno con su escala.</span>
-    <div class="chart-box" style="height:320px;margin-top:10px;overflow-x:auto;overflow-y:hidden">
-      <div id="rendimiento-linea-wrap" style="height:100%">
-        <canvas id="chart-rendimiento-linea"></canvas>
-      </div>
     </div>
   </section>
   </div>
@@ -10409,7 +10426,10 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-const PAGINAS = ['dashboard', 'consultas', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'evolucion', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
+// 'evolucion' ya NO es una página: es una pestaña dentro de 'rutina' (ver
+// #rutina-tabs). Sigue existiendo como PERMISO en auth.PAGINAS_POR_ROL, que es
+// lo que decide si la pestaña se dibuja.
+const PAGINAS = ['dashboard', 'consultas', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -10707,8 +10727,36 @@ function cargarDatosDePagina(id) {
   else if (id === 'consultas') cargarPredefinidas();
   else if (id === 'tablero') cargarTablero();
   else if (id === 'configuracion') cargarConfiguracion();
-  // 'evolucion' no se autocarga: solo con "Aplicar" / "Ver mes completo".
+  // La pestaña "Evolución" (dentro de 'rutina') NO se autocarga: sigue
+  // esperando "Aplicar" / "Ver mes completo", igual que cuando era página.
 }
+
+// --- Pestañas de "Rutina de ordeño" (menú secundario horizontal) -----------
+// Mismo patrón que #config-tabs: sólo prende y apaga tarjetas, no dispara
+// consultas. La barra no existe si el usuario no tiene el permiso 'evolucion'
+// (la plantilla la envuelve en un condicional), así que todo esto tiene que
+// tolerar que no esté.
+const RUTINA_TABS = {
+  rutina: ['rutina-card'],
+  evolucion: ['evolucion-card', 'rendimiento-card', 'rendimiento-linea-card'],
+};
+
+function activarTabRutina(tab) {
+  const barra = document.getElementById('rutina-tabs');
+  if (!barra) return;                       // sin permiso: una sola vista
+  if (!RUTINA_TABS[tab]) tab = 'rutina';
+  barra.querySelectorAll('[data-tab]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.tab === tab)));
+  Object.entries(RUTINA_TABS).forEach(([clave, ids]) => ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.hidden = clave !== tab;
+  }));
+}
+
+document.getElementById('rutina-tabs')?.addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-tab]');
+  if (btn) activarTabRutina(btn.dataset.tab);
+});
 
 function cerrarMenuMovil() {
   document.getElementById('sidebar').classList.remove('abierta');
@@ -10716,8 +10764,13 @@ function cerrarMenuMovil() {
 }
 
 function irAPagina(id) {
+  // "#evolucion" dejó de ser una página y pasó a ser una pestaña de "rutina".
+  // Un link viejo (un favorito, algo pegado en un chat) tiene que seguir
+  // llevando ahí y no caer al dashboard por "página desconocida".
+  let tabRutina = null;
+  if (id === 'evolucion') { id = 'rutina'; tabRutina = 'evolucion'; }
   if (!PAGINAS.includes(id)) id = PAGINAS[0];
-  if (id === paginaActual) return;
+  if (id === paginaActual) { if (tabRutina) activarTabRutina(tabRutina); return; }
   paginaActual = id;
   PAGINAS.forEach(p => { document.getElementById('page-' + p).hidden = p !== id; });
   document.querySelectorAll('.nav-item').forEach(el =>
@@ -10725,6 +10778,9 @@ function irAPagina(id) {
   cerrarMenuMovil();
   if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
   cargarDatosDePagina(id);
+  // Sólo si vino pedida (link viejo a #evolucion): entrar a Rutina de vuelta
+  // deja la pestaña donde estaba, igual que ⚙ Configuración.
+  if (tabRutina) activarTabRutina(tabRutina);
   // El auto-refresco del ordeño solo tiene sentido con esa página a la vista.
   if (id === 'ordeno') reprogramarRefrescoOrdeno(); else clearInterval(ordenoTimer);
   if (id === 'sala_cms') reprogramarRefrescoSala(); else clearInterval(salaTimer);

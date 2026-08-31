@@ -24,12 +24,18 @@ _RUTA_USUARIOS = os.path.join(os.path.dirname(__file__), "usuarios.json")
 
 ROLES = ("admin", "operario")
 
-# Páginas del sidebar visibles por rol. El frontend oculta las que no
-# corresponden y el backend además bloquea sus endpoints (ver requiere_rol).
+# Secciones visibles por rol. El frontend oculta las que no corresponden y el
+# backend además bloquea sus endpoints (ver requiere_rol).
+#
+# NO todas son entradas del menú lateral: "evolucion" pasó a ser una PESTAÑA
+# dentro de "Rutina de ordeño" (31/08/2026, para achicar el menú), y sigue acá
+# porque el permiso no cambió — es lo que decide si esa pestaña se dibuja. El
+# operario tiene "rutina" pero NO "evolucion", así que ve la página sin la
+# barra de pestañas; `/api/rutina/evolucion` además exige rol admin.
 PAGINAS_POR_ROL = {
-    # El orden es el mismo que el del menú lateral (ver templates/index.html):
-    # cosmético para esta lista (solo se usa para membresía, "x in ..."), pero
-    # mantenerlo igual evita que alguien lea un orden que ya no es el real.
+    # El orden sigue al del menú lateral (ver templates/index.html): cosmético
+    # para esta lista (solo se usa para membresía, "x in ..."), pero mantenerlo
+    # igual evita que alguien lea un orden que ya no es el real.
     "admin": ["dashboard", "consultas", "tablero", "ordeno", "sala_cms", "rutina", "rendimiento", "flujos",
               "evolucion", "proyeccion", "repro", "alimentacion", "entregas", "salud", "ficha", "iot",
               "tareas", "checklist", "sensehub", "configuracion"],
