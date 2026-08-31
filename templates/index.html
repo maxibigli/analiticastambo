@@ -56,7 +56,16 @@
     display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
   }
   header .sub { color: var(--text-secondary); font-size: 13px; }
+  /* EL ANCHO ESCALA CON LA PANTALLA. Con 1100px fijos, en el monitor grande
+     del tambo (y peor en un televisor 4K) el contenido quedaba embutido en una
+     columna angosta al centro con más de media pantalla vacía. Los bloques de
+     texto NO se estiran con esto: `.explica` los sigue acotando a 105ch, que
+     es lo que hace ilegible una línea larga. Lo que sí aprovecha el ancho es
+     lo que tiene que aprovecharlo — tarjetas, gráficos y tablas. */
   main { max-width: 1100px; margin: 0 auto; padding: 20px 24px 60px; }
+  @media (min-width: 1500px) { main { max-width: 1420px; } }
+  @media (min-width: 1800px) { main { max-width: 1700px; } }
+  @media (min-width: 2100px) { main { max-width: 1980px; padding: 26px 32px 60px; } }
   /* .tile/.card enganchados a la escala del design system. Los COLORES ya
      salian de los tokens; lo que estaba suelto eran los tamanos y las
      sombras en pixeles fijos. Se dejan las clases con su nombre a
@@ -64,6 +73,11 @@
      de nada visual, y el objetivo era que los tokens manden, no que las
      clases se llamen distinto. */
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--lac-space-3); }
+  /* La fila del Dashboard son 8 tarjetas fijas. Con `auto-fit` el reparto
+     depende del ancho exacto y puede dejar una sola colgando en el último
+     renglón (7+1); acá se fija en cantidades que dividen a 8. */
+  @media (min-width: 1000px) { #kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+  @media (min-width: 1800px) { #kpis { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
   .tile {
     background: var(--surface-1); border: 1px solid var(--border); border-top: 3px solid var(--accent);
     border-radius: var(--lac-radius-card); padding: var(--lac-space-4);
@@ -93,7 +107,20 @@
   }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: var(--lac-space-4); }
   @media (max-width: 800px) { .grid2 { grid-template-columns: 1fr; } }
+  /* Grilla de los gráficos del Dashboard: sigue al ancho de la pantalla en vez
+     de apilarlos a todo lo ancho, que en un monitor grande daba gráficos
+     chatísimos y scroll de más. Las tarjetas traen `margin-top` propio (para
+     cuando van apiladas), que acá lo maneja el `gap`. */
+  .dash-graficos { display: grid; gap: var(--lac-space-4); grid-template-columns: 1fr; }
+  .dash-graficos > .card { margin-top: 0; }
+  @media (min-width: 1000px) { .dash-graficos { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (min-width: 1800px) { .dash-graficos { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
   .chart-box { position: relative; height: 280px; }
+  /* Va DESPUÉS de la regla de arriba a propósito: una media query no suma
+     especificidad, así que declarada antes la pisaría el 280px.
+     En una pantalla grande y alta los gráficos crecen — en un televisor,
+     280px de alto dejan la mitad de abajo vacía. */
+  @media (min-width: 1800px) and (min-height: 900px) { .chart-box { height: 360px; } }
   .controls { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
   select, input[type=text], textarea, button {
     font: inherit; color: var(--text-primary); background: var(--page);
@@ -709,7 +736,12 @@
   <div class="aviso" id="dashboard-fecha" style="margin-bottom:10px"></div>
   <section class="kpis" id="kpis"></section>
 
-  <section class="grid2">
+  {# Todos los gráficos del Dashboard en UNA grilla que sigue al ancho de
+     la pantalla: 1 columna en el celular, 2 en una notebook y 3 en el
+     monitor grande del tambo. Antes los dos primeros iban en `grid2` y los
+     otros cuatro apilados a todo el ancho, que en un televisor daba
+     gráficos chatísimos y mucho scroll. #}
+  <section class="dash-graficos">
     <div class="card">
       <h2>Producción de leche — últimos 30 días</h2>
       <div class="chart-box"><canvas id="chart-prod"></canvas></div>
@@ -718,14 +750,13 @@
       <h2>Estado reproductivo del rodeo</h2>
       <div class="chart-box"><canvas id="chart-repro"></canvas></div>
     </div>
-  </section>
 
   <section class="card" id="resumen-produccion-card">
     <h2 style="margin:0">Resumen diario de producción — últimos 7 días</h2>
     <div class="aviso" id="resumen-produccion-info" style="margin-top:6px"></div>
     {# La columna de tarjetas que estaba acá al lado subió a la fila de arriba:
        repetía los litros y las vacas del día que ya mostraba #kpis. #}
-    <div class="chart-box" style="height:260px;margin-top:10px"><canvas id="chart-resumen-produccion"></canvas></div>
+    <div class="chart-box" style="margin-top:10px"><canvas id="chart-resumen-produccion"></canvas></div>
   </section>
 
   <section class="card" id="resumen-animales-card">
@@ -734,22 +765,23 @@
     {# Las tres tarjetas que estaban acá al lado (novillas preñadas, vacas
        preñadas, DIM) subieron a la fila única de arriba, para que todas las
        tarjetas del Dashboard estén juntas. Queda el gráfico solo. #}
-    <div class="chart-box" style="height:260px;margin-top:10px"><canvas id="chart-resumen-animales"></canvas></div>
+    <div class="chart-box" style="margin-top:10px"><canvas id="chart-resumen-animales"></canvas></div>
   </section>
 
   <section class="card" id="resumen-duraciones-card">
     <h2 style="margin:0">Duraciones de ordeño — últimos 7 días</h2>
     <span class="aviso">Minutos por sesión (hasta 3 por día).</span>
     <div class="aviso" id="resumen-duraciones-error" style="color:var(--critical);margin-top:6px"></div>
-    <div class="chart-box" style="height:260px;margin-top:10px"><canvas id="chart-resumen-duraciones"></canvas></div>
+    <div class="chart-box" style="margin-top:10px"><canvas id="chart-resumen-duraciones"></canvas></div>
   </section>
 
   <section class="card" id="resumen-grupo-card">
     <h2 style="margin:0">Producción media por grupo — últimos 30 días</h2>
     <span class="aviso">Kg/vaca/día de los grupos más numerosos, con el promedio general del tambo (línea punteada).</span>
     <div class="aviso" id="resumen-grupo-error" style="color:var(--critical);margin-top:6px"></div>
-    <div class="chart-box" style="height:280px;margin-top:10px"><canvas id="chart-resumen-grupo"></canvas></div>
+    <div class="chart-box" style="margin-top:10px"><canvas id="chart-resumen-grupo"></canvas></div>
   </section>
+  </section>{# cierra .dash-graficos #}
 
   </div>
 
