@@ -2196,6 +2196,87 @@ sesiones y pasaba ordeños a la sesión anterior; el tambo ya lo corrigió. El
 Los promedios por SESIÓN (ordeños/hora, litros/hora) **no** se filtran: son
 tasas, no sumas, y el día parcial no las distorsiona igual.
 
+## "Respuesta inválida del servidor" en SERVER-DELPRO: cómo se diagnostica (31/08/2026)
+
+El tambo reportó ese texto en las dos tarjetas de Rendimiento Sala. **Se
+resolvió reiniciando el proceso, y NUNCA se llegó a capturar el traceback**:
+sabemos cuándo se arregló, no exactamente por qué fallaba. Lo que sigue es
+para que la próxima vez se agarre *mientras* está fallando.
+
+**QUÉ SIGNIFICA ESE TEXTO, exactamente.** Sale de `pedirJSON` (index.html)
+cuando la respuesta **no es ok Y el body no es JSON** — o sea la página HTML
+de error de Flask (un 500), o una página de error de Cloudflare. No es "no
+hay datos" ni "la consulta tardó": esos casos tienen sus propios mensajes.
+
+**Lo que se descartó con medición, para no volver a recorrerlo:**
+
+- Túnel y producción: responden bien (401 JSON en la API, 302 a /login).
+- Base de producción: conecta, `delpro_lectura` entra. **NO** era el
+  problema del restore que deja el usuario huérfano (error 4060).
+- Dependencias: todas importan, y en las MISMAS versiones que desarrollo
+  (numpy 2.5.1, cv2 5.0.0, pymodbus 3.14.0, flask 3.1.3). ODBC Driver 18
+  presente.
+- Los dos endpoints, apuntando a la base de PRODUCCIÓN desde la PC de
+  desarrollo, devuelven 200 con JSON válido. O sea: ni el código ni los
+  datos producían el error.
+
+**PRODUCCIÓN CORRE PYTHON 3.14.6, y no por decisión de nadie.** El intérprete
+es `C:\Users\DelPro\AppData\Local\Python\pythoncore-3.14-64\python.exe`,
+instalado por el **Python Manager de la Microsoft Store**. `iniciar.bat`
+arranca con `python` a secas y la Store lo resuelve a lo que tenga por
+defecto — o sea que **una actualización de Windows puede cambiar la versión
+de Python en producción sin que nadie toque nada**, con cuatro dependencias
+de binarios nativos de por medio (`pyodbc`, `opencv-python-headless`,
+`numpy`, `vosk`). Conviene que `iniciar.bat` use la RUTA COMPLETA del
+intérprete con el que se corrió `pip install -r requirements.txt`.
+
+**LOS DOS `servidor.py` DEL ADMINISTRADOR DE TAREAS NO SON DOS INSTANCIAS.**
+Se ven así:
+
+    7508    "python"  servidor.py
+            -> C:\Program Files\WindowsApps\PythonSoftwareFoundation.PythonManager...\python.exe
+    12496   ...\pythoncore-3.14-64\python.exe  servidor.py   <- ESTE tiene el puerto
+
+El primero es el **shim** de WindowsApps que resuelve `python`; el segundo, el
+intérprete real que lanza. Mismo segundo de creación, y **sólo el segundo
+escucha el 5310**. El lock de instancia única está funcionando: no hay que
+matar los dos. Se distinguen con `Get-Process python* | Select-Object Id, Path`
+y `Get-NetTCPConnection -LocalPort 5310 -State Listen`.
+
+**HAY DOS COPIAS DEL PROYECTO EN ESA MÁQUINA, y una es basura vieja:**
+
+    C:\delpro-analitica                              <- LA QUE CORRE (git pull acá)
+    C:\Users\DelPro\Desktop\delpro-analitica-deploy  <- restos del 25/07, NO corre
+
+**Para saber cuál corre, mirar `.servidor.lock`**: el proceso vivo lo mantiene
+abierto en SU carpeta, y en la del Desktop directamente no existe. El nombre
+`-deploy` engaña: no es la instalación productiva. (Costó un rato de esta
+investigación creer lo contrario.)
+
+**Trampa del diagnóstico: el caché es POR PROCESO.** Un script que pega a los
+endpoints en un proceso nuevo arranca con el caché vacío, recibe 202
+"calentando" y **nunca pasa de ahí** si sale y vuelve a entrar — el hilo que
+llena el caché es daemon y muere con el proceso. Hay que ESPERARLO adentro
+del mismo proceso, o pegarle al servidor que ya está corriendo.
+
+**`_refresh_rendimiento_async` se traga la excepción** (`except Exception:
+pass`, no cachea el error). Consecuencia que conviene tener presente al
+diagnosticar: si la consulta de fondo falla, el endpoint devuelve **202 para
+siempre** y la pantalla dice "Calculando…", nunca un error. Así que un 500 en
+esa pantalla NO viene de esa consulta: viene del código que corre en el hilo
+del request (`analizar_rendimiento`, `_nombres_grupos`, `_grupos_ordene`,
+`armar_identificacion`).
+
+**`diagnostico_rendimiento.py`** (raíz del repo) hace todo esto de una: imprime
+versión/intérprete/carpeta, versiones de las dependencias nativas, drivers
+ODBC, la conexión a la base, y los dos endpoints — primero contra **el
+servidor que está corriendo** (entrando con una cookie de sesión firmada con
+la propia secret key) y después en su propio proceso con
+`PROPAGATE_EXCEPTIONS`, para que salga el traceback completo en vez del HTML
+de error. Es de sólo lectura: no escribe en la base, no manda alertas, no
+toca configuración. Se corre parado en la carpeta del proyecto y con el
+intérprete que tiene el puerto.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).
