@@ -102,7 +102,19 @@ _CAMPOS_ENUM = {
 #              el indice mas preciso, solo muestra mas candidatas de la misma
 #              lista ya ordenada. Se puso configurable porque un rodeo grande
 #              con muchos casos reales se queda corto con 15 fijas.
-_CAMPOS_INT = ("puerto", "personas", "arreo_min", "umbral_prep_s", "top_atencion")
+#   ordenos_dia  cuantos ordenes por dia hace el tambo (2 o 3). Sirve para
+#              saber que dias estan INCOMPLETOS y sacarlos de las estadisticas
+#              que promedian por dia: la copia de la base corta a mitad de un
+#              dia, y ese dia a medias entraba al promedio con el mismo peso
+#              que uno entero y lo tiraba abajo (medido en produccion el
+#              31/08/2026: el 25/08 tenia UNA sesion de 68 min contra los
+#              13,1-14,0 h de un dia normal). Un dia con menos sesiones que
+#              este numero no se promedia -- se cuenta aparte y se avisa.
+#              NO se deduce de `CMSGroupMilkSetting.NumberOfMilkings`: lo pone
+#              el tambo, que es quien sabe su rutina. Vacio = no se filtra
+#              nada (mismo comportamiento que antes de que esto existiera).
+_CAMPOS_INT = ("puerto", "personas", "arreo_min", "umbral_prep_s", "top_atencion",
+               "ordenos_dia")
 
 DEFAULT = {
     "nombre": None, "ip": None, "puerto": None, "usuario": None, "contrasena": None,
@@ -116,6 +128,7 @@ DEFAULT = {
     "arreo_min": None,
     "umbral_prep_s": None,
     "top_atencion": None,
+    "ordenos_dia": None,
     "ruta_toros": None,
     "ruta_precios": None,
     # IP del controlador SenseHub/Allflex en la red del tambo (ver

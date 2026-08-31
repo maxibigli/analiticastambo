@@ -2137,6 +2137,65 @@ que entre_grupos — por eso ese orden y no el alfabético). El editor de
 pesos (⚙ Configurar análisis) sigue leyendo la lista COMPLETA sin filtrar,
 así que un tambo puede reactivar cualquiera de estos sin tocar código.
 
+## Días INCOMPLETOS fuera de los promedios por día (31/08/2026)
+
+Reportado por el tambo: "Horas/día en ordeño" daba un número imposible. Tuvo
+DOS causas distintas, arregladas una después de la otra:
+
+**1. La cuenta estaba mal (daba 24,4 h/día).** Sumaba `(arreo + permanencia/2)`
+de CADA rodeo. `permanencia_min` es entrada de la PRIMERA vaca del grupo →
+salida de la ÚLTIMA: con rezagadas esa ventana se estira y SE PISA con la del
+grupo siguiente, así que sumar los 7 rodeos cuenta el mismo tiempo de sala
+varias veces (44 h de permanencias sumadas en un día de 24). Y el arreo pasa
+FUERA de la sala, en paralelo con el ordeñe de otro grupo. Ahora suma la
+duración de las SESIONES del día, que es lo que la tarjeta dice medir y queda
+acotado por construcción.
+
+**OJO con las dos tarjetas, que miden cosas distintas y no tienen por qué
+coincidir**: "promedio por rodeo" mide cuánto está fuera del corral UNA vaca
+(ahí arreo y permanencia/2 SÍ corresponden); "total de la sala" mide cuánto
+trabajó la SALA. La columna "Total del día (todos los rodeos)" de la tabla de
+detalle es la PRIMERA cuenta, no la segunda — el texto de esa tabla lo aclara
+porque ya se había prestado a confusión.
+
+**2. Un día a medias tiraba el promedio abajo.** La copia de DDM corta a mitad
+de un día y ese día entraba al promedio con el mismo peso que uno entero.
+Medido en producción sobre el rango 01-31/08:
+
+    dias    horas/dia   vacas/dia
+    25 (con el parcial)     13,4        1620
+    24 (sin el parcial)     13,9        1666
+
+El 25/08 tenía UNA sesión de 68 min contra los 13,1-14,0 h de un día normal.
+Es el MISMO error que ya estaba documentado para la tasa de concepción (los
+últimos meses censurados inventaban un derrumbe).
+
+**LA REGLA: un día entra sólo si tiene al menos `ordenos_dia` sesiones**
+(`app._dias_completos`, y la misma lógica en `index.html` para la tarjeta
+gemela — que las dos pantallas den el mismo número es regla del tablero).
+
+`ordenos_dia` lo carga el tambo en ⚙ Configuración → Sala de ordeño. **NO se
+deduce de `CMSGroupMilkSetting.NumberOfMilkings`**: hay tambos de 2 y de 3
+ordeños y quien sabe la rutina es el tambo — misma regla que ya rige para los
+umbrales de retirada, `umbral_prep_s` y las duraciones de etapa del lavado.
+Vacío = no se descarta ningún día (comportamiento de antes).
+
+Dos guardas, las dos deliberadas:
+  - **Si NINGÚN día llega al mínimo se devuelven TODOS.** Eso significa que el
+    número configurado no coincide con lo que trae la base, y dejar la tarjeta
+    en blanco esconde el problema en vez de mostrarlo.
+  - **El descarte NUNCA es silencioso**: el detalle de la tarjeta dice sobre
+    cuántos días promedió y cuántos dejó afuera. Un promedio sobre 24 días no
+    puede leerse como si fuera sobre 25.
+
+**Un día de 4 sesiones NO se descarta** (el filtro es "al menos", no "igual
+a"). Aparecen porque DelPro, cuando el tambo arrancaba antes, asignaba mal las
+sesiones y pasaba ordeños a la sesión anterior; el tambo ya lo corrigió. El
+14/08 es uno de esos: 4 sesiones, pero el día cierra en 13,7 h normales.
+
+Los promedios por SESIÓN (ordeños/hora, litros/hora) **no** se filtran: son
+tasas, no sumas, y el día parcial no las distorsiona igual.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

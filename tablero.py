@@ -146,7 +146,12 @@ INDICADORES = [
                   "que se pisan entre sí y daban más de 24 h en un día. Para saber "
                   "cuánto tiempo está fuera del corral UNA vaca, mirá «promedio por "
                   "rodeo», que es otra pregunta. Es el mismo número que la tarjeta "
-                  "«Horas/día en ordeño» de Rendimiento Sala."),
+                  "«Horas/día en ordeño» de Rendimiento Sala. "
+                  "Los días INCOMPLETOS no se promedian: la copia de la base corta a "
+                  "mitad de un día y ese día a medias tiraba el número abajo. Un día "
+                  "entra si tiene al menos los «ordeños por día» que carga el tambo "
+                  "en ⚙ Configuración; el detalle de la tarjeta dice sobre cuántos "
+                  "días promedió y cuántos dejó afuera."),
     },
     {
         "clave": "ordenos_hora",

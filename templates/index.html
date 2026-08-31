@@ -1883,10 +1883,16 @@
         sesión (desde que entra su primera vaca hasta que sale la última), la mitad de esa
         ventana —que es lo que espera la vaca promedio— más el <b>arreo</b> de ⚙ Configuración,
         una vez por sesión. La suma de las sesiones del día es el total de esa fila.
-        <br>La última columna es la <b>suma de todos los rodeos</b> de ese día: cuántas horas
-        del día le consume el ordeñe al tambo. Las dos tarjetas de arriba muestran las dos
-        cosas — el promedio dice cuánto le lleva a <b>una vaca</b>, la suma cuánto al
-        <b>tambo entero</b>.
+        <br>La última columna suma esa cuenta en <b>todos los rodeos</b> del día. Ojo: ese
+        total <b>no</b> es la tarjeta «suma de las sesiones del día» de arriba, y no tienen
+        por qué coincidir. Acá se suman las ventanas de cada rodeo, que <b>se pisan entre
+        sí</b> (con rezagadas, la ventana de un grupo se estira sobre la del siguiente), y
+        además se suma el arreo, que pasa <b>fuera</b> de la sala. Por eso esta columna puede
+        dar más que las horas que la sala estuvo funcionando — de hecho llegó a dar más de 24 h
+        en un día, que es lo que motivó separar las dos cuentas. Sirve para ver cuánto tiempo
+        de vaca consume el ordeñe; para cuánto trabajó la <b>sala</b>, la tarjeta de arriba.
+        <br>Los <b>días incompletos</b> (con menos sesiones que los ordeños/día del tambo) no
+        aparecen acá, igual que no entran a los promedios.
         <span id="rend-perm-arreo-nota"></span>
       </p>
       <div style="overflow-x:auto;margin-top:10px" id="rend-perm-tabla"></div>
@@ -2885,6 +2891,9 @@
       <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Personas en el ordeño
         <input type="number" id="cfg-personas" min="1" max="50" style="width:100px;padding:7px 8px">
       </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Ordeños por día
+        <input type="number" id="cfg-ordenos-dia" min="1" max="6" style="width:110px;padding:7px 8px">
+      </label>
       <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Arreo por sesión (min)
         <input type="number" id="cfg-arreo" min="0" max="240" style="width:110px;padding:7px 8px">
       </label>
@@ -2892,10 +2901,16 @@
         <input type="number" id="cfg-umbral-prep" min="10" max="600" style="width:130px;padding:7px 8px">
       </label>
     </div>
-    <span class="aviso">Ninguno de los tres sale de DelPro, los carga el tambo. <b>Personas</b>
+    <span class="aviso">Ninguno sale de DelPro, los carga el tambo. <b>Personas</b>
       alimenta "vacas por persona"; <b>arreo</b> es lo que lleva traer el rodeo desde su corral
       hasta el corral de espera — tiempo en que la vaca ya salió del corral pero todavía no hay
       registro en la base. Los dos se usan en Rendimiento Sala.</span>
+    <br><span class="aviso"><b>Ordeños por día</b> (2 o 3) sirve para saber qué días quedaron
+      <b>incompletos</b> y dejarlos afuera de los promedios. La copia de la base corta a mitad de
+      un día, y ese día a medias entraba al promedio con el mismo peso que uno entero y lo tiraba
+      abajo: el 25/08/2026 tenía una sola sesión de 68 minutos contra las 13 a 14 horas de un día
+      normal. Un día con menos sesiones que este número no se promedia, y la tarjeta avisa cuántos
+      dejó afuera. Vacío = no se descarta ningún día.</span>
     <br><span class="aviso" id="cfg-umbral-prep-ayuda"><b>Objetivo hasta la leche</b> es el tramo
       que se puntúa en el score de rutina, y <b>no tiene un valor universal</b>: en una rotativa
       la vaca se identifica en el puesto, así que ese tramo ES la colocación de la pezonera y
@@ -4076,8 +4091,33 @@ async function cargarRendimiento() {
     // indicadores es, en los hechos, la evolución de "vacas_dia" escalada.
     const infoTambo = tambosInfo[tamboActual] || {};
     const puestos = infoTambo.puestos, personas = infoTambo.personas;
+
+    // DÍAS INCOMPLETOS FUERA de todo lo que se promedia POR DÍA. La copia de
+    // la base corta a mitad de un día y ese día a medias entraba al promedio
+    // con el mismo peso que uno entero: el 25/08/2026 tenía UNA sesión de 68
+    // min contra las 13,1-14,0 h de un día normal. Es el mismo error que ya
+    // está documentado para la tasa de concepción (los últimos meses
+    // censurados inventaban un derrumbe).
+    // `ordenos_dia` lo carga el tambo en ⚙ Configuración (hay tambos de 2 y de
+    // 3 ordeños); vacío = no se descarta nada, como antes. Misma regla que el
+    // backend (`_dias_completos` en app.py) — que las dos pantallas den el
+    // mismo número es regla del tablero.
+    const ordenosDia = infoTambo.ordenos_dia || 0;
+    let sesionesFull = sesiones, diasParciales = 0;
+    if (ordenosDia) {
+      const nPorDia = {};
+      sesiones.forEach(s => { nPorDia[s.fecha] = (nPorDia[s.fecha] || 0) + 1; });
+      const completos = new Set(Object.keys(nPorDia).filter(f => nPorDia[f] >= ordenosDia));
+      // Si NINGÚN día llega al mínimo, el número configurado no coincide con
+      // lo que trae la base: se muestran todos igual, porque dejar la pantalla
+      // en blanco esconde el problema en vez de mostrarlo.
+      if (completos.size) {
+        sesionesFull = sesiones.filter(s => completos.has(s.fecha));
+        diasParciales = Object.keys(nPorDia).length - completos.size;
+      }
+    }
     const vacasPorDia = {};
-    sesiones.forEach(s => { if (s.vacas_dia != null) vacasPorDia[s.fecha] = s.vacas_dia; });
+    sesionesFull.forEach(s => { if (s.vacas_dia != null) vacasPorDia[s.fecha] = s.vacas_dia; });
     const fechasVacas = Object.keys(vacasPorDia).sort();
     const vacasDiaProm = fechasVacas.length
       ? Math.round(fechasVacas.reduce((a, f) => a + vacasPorDia[f], 0) / fechasVacas.length) : null;
@@ -4103,7 +4143,7 @@ async function cargarRendimiento() {
     // Detalle del cálculo, para la tabla que lo abre paso a paso más abajo:
     // una fila por día y rodeo con las permanencias de cada sesión.
     const detallePerm = {};        // {"fecha|grupo": {fecha, grupo, permanencias[], vacas[]}}
-    sesiones.forEach(s => (s.grupos || []).forEach(g => {
+    sesionesFull.forEach(s => (s.grupos || []).forEach(g => {
       const dia = permPorDiaGrupo[s.fecha] = permPorDiaGrupo[s.fecha] || {};
       dia[g.grupo] = (dia[g.grupo] || 0) + (arreoMin + g.permanencia_min / 2) / 60;
       const diaV = vacasPorDiaGrupo[s.fecha] = vacasPorDiaGrupo[s.fecha] || {};
@@ -4142,8 +4182,9 @@ async function cargarRendimiento() {
     // SÍ los usa: mide cuánto está fuera del corral UNA vaca, otra pregunta.
     // Mismo cálculo que el tablero (ver horas_ordeno_total en app.py) --
     // que las dos pantallas den el mismo número es regla del tablero.
+    // Sólo días COMPLETOS (`sesionesFull`, ver arriba).
     const durPorDia = {};
-    sesiones.forEach(s => {
+    sesionesFull.forEach(s => {
       durPorDia[s.fecha] = (durPorDia[s.fecha] || 0) + (s.duracion_min || 0) / 60;
     });
     const permSumaPorDia = Object.keys(durPorDia).sort().map(f => durPorDia[f]);
@@ -4173,14 +4214,26 @@ async function cargarRendimiento() {
       ['Vacas por persona (promedio)', vacasPorPersonaProm ?? '—'],
       ['Horas/día en ordeño (promedio de todos los rodeos)',
         permPromedioGeneral != null ? (Math.round(10 * permPromedioGeneral) / 10) + ' h' : '—'],
-      ['Horas/día en ordeño (suma de todos los rodeos)',
+      // "suma de las sesiones", no "de todos los rodeos": desde que esta
+      // tarjeta dejó de sumar permanencias por rodeo (daba más de 24 h/día),
+      // la etiqueta vieja describía una cuenta que ya no se hace.
+      ['Horas/día en ordeño (suma de las sesiones del día)',
         permSumaGeneral != null ? (Math.round(10 * permSumaGeneral) / 10) + ' h' : '—'],
     ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
     const faltan = [];
     if (!personas) faltan.push('la cantidad de personas (para "vacas por persona")');
     if (!infoTambo.arreo_min) faltan.push('el arreo por sesión (hoy las horas/día en ordeño se calculan sin él, o sea de menos)');
-    document.getElementById('rend-dotacion-nota').textContent = faltan.length
-      ? 'Falta configurar ' + faltan.join(' y ') + ' — en ⚙ Configuración → Sala de ordeño.' : '';
+    if (!ordenosDia) faltan.push('los ordeños por día (sin eso, un día incompleto entra al promedio y lo tira abajo)');
+    // El descarte de días NUNCA es silencioso: si se dejaron días afuera hay
+    // que decirlo, si no un promedio sobre 6 días se lee como si fuera sobre 7.
+    const notas = [];
+    if (faltan.length)
+      notas.push('Falta configurar ' + faltan.join(' y ') + ' — en ⚙ Configuración → Sala de ordeño.');
+    if (diasParciales)
+      notas.push(`Se dejaron afuera ${diasParciales} día(s) con menos de ${ordenosDia} `
+                 + `sesiones (incompletos): los promedios por día son sobre `
+                 + `${Object.keys(durPorDia).length} día(s) completo(s).`);
+    document.getElementById('rend-dotacion-nota').textContent = notas.join(' ');
 
     chartRendProd = dibujar('chart-rend-produccion', chartRendProd, {
       type: 'bar',
@@ -10729,6 +10782,7 @@ async function cargarConfiguracion() {
     _llenarSelect('cfg-sala', [SIN_OVERRIDE, ...cat.sala], cfg.sala || '');
     document.getElementById('cfg-personas').value = cfg.personas || '';
     document.getElementById('cfg-arreo').value = cfg.arreo_min ?? '';
+    document.getElementById('cfg-ordenos-dia').value = cfg.ordenos_dia ?? '';
     document.getElementById('cfg-umbral-prep').value = cfg.umbral_prep_s ?? '';
     document.getElementById('cfg-top-atencion').value = cfg.top_atencion ?? '';
     document.getElementById('cfg-ruta-toros').value = cfg.ruta_toros || '';
@@ -11238,6 +11292,7 @@ document.getElementById('config-guardar').addEventListener('click', async () => 
     sala: document.getElementById('cfg-sala').value || null,
     personas: numOrNull(document.getElementById('cfg-personas').value),
     arreo_min: numOrNull(document.getElementById('cfg-arreo').value),
+    ordenos_dia: numOrNull(document.getElementById('cfg-ordenos-dia').value),
     umbral_prep_s: numOrNull(document.getElementById('cfg-umbral-prep').value),
     top_atencion: numOrNull(document.getElementById('cfg-top-atencion').value),
     ruta_toros: document.getElementById('cfg-ruta-toros').value.trim() || null,

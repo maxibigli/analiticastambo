@@ -619,6 +619,9 @@ def api_tambos():
         _cfg = configuracion_tambo.config_de(t["id"])
         t["personas"] = _cfg.get("personas")
         t["arreo_min"] = _cfg.get("arreo_min")
+        # Ordeños/día del tambo: lo usa Rendimiento Sala para descartar de sus
+        # promedios los días INCOMPLETOS (ver `_dias_completos`).
+        t["ordenos_dia"] = _cfg.get("ordenos_dia")
         # "Vacas en ordeñe" para indicadores de dotación (vacas por puesto,
         # vacas por persona) -- se lee del caché de KPIs del dashboard, ya
         # calculado y refrescado en segundo plano; si todavía no está tibio
@@ -927,6 +930,44 @@ def _calentar_alimentacion(tambo: str, herd):
             _refreshing.discard(key)
 
 
+def _dias_completos(sesiones: list, ordenos_dia: int | None) -> tuple[list, int]:
+    """Saca de `sesiones` los días INCOMPLETOS. Devuelve (sesiones, n_excluidos).
+
+    POR QUÉ: la copia de DDM corta a mitad de un día, y ese día a medias entraba
+    a los promedios POR DÍA con el mismo peso que uno entero. Medido en
+    producción el 31/08/2026: del 10 al 24/08 los días dan 13,1-14,0 h; el
+    25/08 —el último con datos— tiene UNA sesión de 68 min y 1,1 h. Es el mismo
+    error que este proyecto ya tiene documentado para la tasa de concepción
+    (los últimos meses censurados inventaban un derrumbe).
+
+    LA REGLA: un día entra sólo si tiene al menos `ordenos_dia` sesiones, que
+    el tambo carga en ⚙ Configuración. No se deduce de
+    `CMSGroupMilkSetting.NumberOfMilkings` a propósito: hay tambos de 2 y de 3
+    ordeños y quien sabe la rutina es el tambo, misma regla que ya rige para
+    los umbrales de retirada y las duraciones de etapa del lavado.
+
+    Sin `ordenos_dia` configurado NO se filtra nada — el comportamiento de
+    antes de que esto existiera, para no cambiarle el número a un tambo que
+    todavía no cargó el dato.
+
+    Si NINGÚN día llega al mínimo se devuelven TODAS las sesiones (con el conteo
+    en 0): eso significa que el número configurado no coincide con lo que trae
+    la base, y dejar la tarjeta en blanco esconde el problema en vez de
+    mostrarlo. El caso se ve en el detalle de la tarjeta, que sigue diciendo
+    sobre cuántos días promedió.
+    """
+    if not ordenos_dia or not sesiones:
+        return sesiones, 0
+    por_dia: dict = {}
+    for s in sesiones:
+        por_dia[s.get("fecha")] = por_dia.get(s.get("fecha"), 0) + 1
+    completos = {f for f, n in por_dia.items() if n >= ordenos_dia}
+    if not completos:
+        return sesiones, 0
+    return ([s for s in sesiones if s.get("fecha") in completos],
+            len(por_dia) - len(completos))
+
+
 def _valores_tablero(tambo: str) -> dict:
     """{clave: {"valor"|"falta"|"calculando"}} para cada indicador del tablero.
 
@@ -1048,12 +1089,20 @@ def _valores_tablero(tambo: str) -> dict:
                 # personas de ⚙ Configuración) contra las vacas DISTINTAS
                 # ordeñadas por día, promediadas en el período.
                 cfg = configuracion_tambo.config_de(tambo)
+                # A partir de acá se promedia POR DÍA, así que se trabaja sobre
+                # los días COMPLETOS: un día cortado a la mitad (el último de la
+                # copia de la base) tiraba todos estos números abajo. Los que
+                # promedian por SESIÓN (ordeños/hora, litros/hora, arriba) no se
+                # tocan: son tasas, no sumas, y no las distorsiona el día parcial.
+                ses_full, dias_parciales = _dias_completos(sesiones, cfg.get("ordenos_dia"))
+                nota_parciales = (f" · {dias_parciales} día(s) incompleto(s) fuera"
+                                  if dias_parciales else "")
                 try:
                     puestos = salas.de(tambo).cantidad_puestos(tambo)
                 except Exception:  # noqa: BLE001
                     puestos = None
                 personas = cfg.get("personas")
-                vacas_por_dia = {s["fecha"]: s["vacas_dia"] for s in sesiones
+                vacas_por_dia = {s["fecha"]: s["vacas_dia"] for s in ses_full
                                  if s.get("fecha") and s.get("vacas_dia") is not None}
                 vacas_dia_prom = (round(sum(vacas_por_dia.values()) / len(vacas_por_dia))
                                   if vacas_por_dia else None)
@@ -1064,12 +1113,14 @@ def _valores_tablero(tambo: str) -> dict:
                        if vacas_dia_prom and puestos else None),
                       falta=falta_dot,
                       detalle=(f"{vacas_dia_prom} vacas/día · {puestos} puestos"
+                               + nota_parciales
                                if vacas_dia_prom and puestos else None))
                 poner("vacas_persona",
                       (round(vacas_dia_prom / personas)
                        if vacas_dia_prom and personas else None),
                       falta=falta_dot,
                       detalle=(f"{vacas_dia_prom} vacas/día · {personas} persona(s)"
+                               + nota_parciales
                                if vacas_dia_prom and personas else None))
 
                 # Horas/día en ordeño: EXACTAMENTE la misma cuenta que la
@@ -1089,7 +1140,7 @@ def _valores_tablero(tambo: str) -> dict:
                 # esta misma pantalla.
                 arreo_min = cfg.get("arreo_min") or 0
                 perm_por_dia_grupo = {}
-                for s in sesiones:
+                for s in ses_full:
                     dia = perm_por_dia_grupo.setdefault(s.get("fecha"), {})
                     for g in (s.get("grupos") or []):
                         nombre_g = g.get("grupo")
@@ -1108,7 +1159,8 @@ def _valores_tablero(tambo: str) -> dict:
                 nota_arreo = "" if arreo_min else " · sin arreo configurado"
                 poner("horas_ordeno", horas,
                       falta=sin_sesiones,
-                      detalle=(f"promedio de {len(perm_prom_por_grupo)} rodeo(s)" + nota_arreo
+                      detalle=(f"promedio de {len(perm_prom_por_grupo)} rodeo(s)"
+                               + nota_arreo + nota_parciales
                                if horas is not None else None))
 
                 # TOTAL de la sala: cuántas horas por día la SALA estuvo
@@ -1131,12 +1183,16 @@ def _valores_tablero(tambo: str) -> dict:
                 # La otra tarjeta ("promedio por rodeo") SÍ debe seguir usando
                 # arreo + permanencia/2: esa mide cuánto está fuera del corral
                 # UNA vaca, que es otra pregunta y ahí las dos cosas cuentan.
+                #
+                # Sólo días COMPLETOS (`ses_full`): el 25/08/2026 tenía UNA
+                # sesión de 68 min contra los 13,1-14,0 h de un día normal, y
+                # promediado con el resto tiraba la tarjeta abajo.
                 dur_por_dia = {}
-                for s in sesiones:
+                for s in ses_full:
                     f = s.get("fecha")
                     dur_por_dia[f] = dur_por_dia.get(f, 0.0) + (s.get("duracion_min") or 0) / 60
                 sesiones_por_dia = {}
-                for s in sesiones:
+                for s in ses_full:
                     f = s.get("fecha")
                     sesiones_por_dia[f] = sesiones_por_dia.get(f, 0) + 1
                 horas_total = (round(sum(dur_por_dia.values()) / len(dur_por_dia), 1)
@@ -1145,7 +1201,8 @@ def _valores_tablero(tambo: str) -> dict:
                             if sesiones_por_dia else None)
                 poner("horas_ordeno_total", horas_total,
                       falta=sin_sesiones,
-                      detalle=(f"suma de {ses_prom} sesión(es) por día"
+                      detalle=(f"{len(dur_por_dia)} día(s) · {ses_prom} sesión(es) por día"
+                               + nota_parciales
                                if horas_total is not None else None))
     except Exception as exc:  # noqa: BLE001
         for c in ("horas_ordeno", "horas_ordeno_total", "pct_identificacion",
