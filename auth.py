@@ -27,12 +27,15 @@ ROLES = ("admin", "operario")
 # Secciones visibles por rol. El frontend oculta las que no corresponden y el
 # backend además bloquea sus endpoints (ver requiere_rol).
 #
-# NO todas son entradas del menú lateral: "rendimiento", "flujos" y
-# "evolucion" pasaron a ser PESTAÑAS dentro de "Rutina de ordeño" (31/08/2026,
-# para achicar el menú), y siguen acá porque el permiso no cambió — es lo que
-# decide si cada pestaña se dibuja. El operario tiene "rutina" y
-# "rendimiento" pero NO "flujos" ni "evolucion", así que ve dos pestañas y no
-# cuatro; los endpoints de esas dos además exigen rol admin.
+# NO todas son entradas del menú lateral. Varias pasaron a ser PESTAÑAS dentro
+# de otra sección (31/08/2026, para achicar el menú) y siguen acá porque el
+# permiso no cambió — es lo que decide si cada pestaña se dibuja:
+#   "rendimiento", "flujos", "evolucion"  ->  dentro de "Rutina de ordeño"
+#   "proyeccion"                          ->  última pestaña de "Análisis
+#                                             Reproductivo"
+# El operario tiene "rutina" y "rendimiento" pero NO "flujos" ni "evolucion",
+# así que ve dos pestañas y no cuatro; los endpoints de esas dos además exigen
+# rol admin. "proyeccion" y "repro" son admin-only enteras.
 PAGINAS_POR_ROL = {
     # El orden sigue al del menú lateral (ver templates/index.html): cosmético
     # para esta lista (solo se usa para membresía, "x in ..."), pero mantenerlo

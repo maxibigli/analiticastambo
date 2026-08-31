@@ -657,7 +657,9 @@
        Las cuatro miran el ordeño y pertenecen a la misma sección; el menú
        lateral se estaba haciendo largo. Cada una sigue gateada por SU permiso
        de auth.PAGINAS_POR_ROL, ahora en la pestaña en vez del ítem. #}
-    {% if 'proyeccion' in paginas_visibles %}<button class="nav-item" data-pagina="proyeccion">🔮 <span>Proyección de Rebaños</span></button>{% endif %}
+    {# "Proyección de Rebaños" pasó a ser la ÚLTIMA pestaña de "Análisis
+       Reproductivo", que es a lo que pertenece. Sigue gateada por su permiso
+       'proyeccion' (auth.PAGINAS_POR_ROL), ahora en la pestaña. #}
     {% if 'repro' in paginas_visibles %}<button class="nav-item" data-pagina="repro">🧬 <span>Análisis Reproductivo</span></button>{% endif %}
     {% if 'alimentacion' in paginas_visibles %}<button class="nav-item" data-pagina="alimentacion">🌾 <span>Alimentación</span></button>{% endif %}
     {% if 'entregas' in paginas_visibles %}<button class="nav-item" data-pagina="entregas">🥛 <span>Entrega de Leche</span></button>{% endif %}
@@ -764,6 +766,9 @@
         <button class="lac-segment__item" data-tab="terneros" aria-pressed="false">Bajas de Terneros</button>
         <button class="lac-segment__item" data-tab="tasa" aria-pressed="false">Tasa de Preñez</button>
         <button class="lac-segment__item" data-tab="gestacion" aria-pressed="false">Análisis de Gestación</button>
+        {# Última, como pidió el tambo. Lleva su propio permiso: era una página
+           del menú y sigue siendo admin-only. #}
+        {% if 'proyeccion' in paginas_visibles %}<button class="lac-segment__item" data-tab="proyeccion" aria-pressed="false">🔮 Proyección de Rebaños</button>{% endif %}
       </div>
     </div>
 
@@ -1214,6 +1219,106 @@
     </div>
 
   </section>
+
+  {% if 'proyeccion' in paginas_visibles %}
+  {# --- Pestaña "Proyección de Rebaños" (antes era la página
+     #page-proyeccion). Va como tarjeta HERMANA de la de Análisis
+     Reproductivo, no adentro: la barra #repro-tabs vive en el
+     encabezado de esa tarjeta, así que con sus paneles ocultos queda
+     el encabezado con las pestañas y debajo esta tarjeta. #}
+  <section class="card" id="proyeccion-card" hidden>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Proyección de Rebaños</h2>
+      <span class="aviso">Vacas lactantes y producción, mes a mes, hacia atrás y hacia adelante.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="month" id="proy-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="month" id="proy-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="proy-aplicar">Aplicar</button>
+      </div>
+    </div>
+    <div class="controls" style="margin-top:10px;align-items:center">
+      <span class="aviso">Ver como</span>
+      <div class="lac-segment" id="proy-tipo" role="group" aria-label="Tipo de gráfico">
+        <button class="lac-segment__item" data-tipo="line" aria-pressed="true">Líneas</button>
+        <button class="lac-segment__item" data-tipo="bar" aria-pressed="false">Barras</button>
+        <button class="lac-segment__item" data-tipo="point" aria-pressed="false">Puntos</button>
+      </div>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Qué es.</b> Cómo va a evolucionar el rodeo en los próximos meses: cuántas vacas van a estar
+      en ordeñe y cuánta leche van a dar, partiendo de las preñeces que ya están confirmadas.
+      <br><b>Cómo se calcula.</b> Mes a mes, con la misma ecuación de balance que usa DelPro:
+      <code>lactantes = lactantes del mes anterior + vacas a parir + novillas a parir − secados − salidas</code>.
+      El punto de partida son las vacas lactantes de hoy en los tres rebaños de la base (animales
+      activos, con al menos un parto y sin marca de secado). Los partos previstos salen de la
+      inseminación efectiva más 280 días de gestación; los secados, de restarle 60 días al parto
+      esperado; las salidas, de la tasa de bajas del mismo mes del año pasado.
+      <br><b>La producción</b> es <code>vacas lactantes × kg por vaca y por día del año pasado × días del mes</code>,
+      igual que DelPro. Ojo: no es la leche realmente ordeñada, y las dos filas de producción usan el
+      mismo promedio diario — lo único que cambia entre ellas es la cantidad de vacas.
+    </p>
+    <div class="aviso" id="proy-alerta" style="margin-top:8px;color:var(--warning)"></div>
+    <div class="aviso" id="proy-info" style="margin-top:8px"></div>
+    <div class="kpis" id="proy-kpis" style="margin-top:10px"></div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Vacas lactantes</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> La curva de vacas en ordeñe contra la del mismo mes del año pasado.
+        Donde la línea baja hay un bache de partos que se puede anticipar.
+        <br><b>Cómo se calcula.</b> Balance mes a mes anclado en las vacas lactantes de hoy, que es
+        el único dato exacto. La tercera línea punteada es un conteo alternativo, hecho contando
+        partos reales de los últimos 330 días: da más bajo porque faltan eventos de parto. El valor
+        real está entre las dos líneas.
+        <br><b>Rebaño.</b> Todo esto es de La Ponderosa. La base la comparten tres tambos, y el
+        informe de DelPro que se usó de referencia estaba en "Todos los rebaños": por eso sus
+        números son casi el doble (3.253 vacas lactantes contra las 1.621 de La Ponderosa sola).
+      </p>
+      <div class="chart-box" style="height:300px"><canvas id="chart-proy-lactantes"></canvas></div>
+    </div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Producción de leche mensual</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> Los kilos de leche que se esperan cada mes, contra los del mismo mes del
+        año pasado. La diferencia entre las dos curvas es puro efecto de la cantidad de vacas: el
+        rendimiento por vaca que se usa es el mismo en ambas.
+        <br><b>Cómo se calcula.</b> <code>vacas lactantes × kg por vaca y por día × días del mes</code>.
+        El rendimiento por vaca sale de la leche realmente medida en <code>AnimalDaily</code> del año
+        anterior. Los meses sin lectura válida quedan en cero — en el informe de DelPro pasa lo mismo
+        de julio a octubre.
+      </p>
+      <div class="chart-box" style="height:300px"><canvas id="chart-proy-produccion"></canvas></div>
+    </div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Movimiento del rodeo</h3>
+      <p class="explica">
+        <b>Qué muestra.</b> Las cuatro corrientes que mueven el número de vacas en ordeñe: las que
+        entran por parto (vacas y novillas) y las que salen por secado o por baja. Sirve para ver de
+        dónde viene cada subida o bajada de la curva anterior.
+        <br><b>Cómo se calcula.</b> Los partos, de las preñeces confirmadas más la gestación. Los
+        secados, restando el período seco al parto esperado, repartidos entre los meses que
+        corresponde. Las salidas, aplicando la tasa de bajas del mismo mes del año pasado a las
+        vacas del mes anterior.
+      </p>
+      <div class="chart-box" style="height:300px"><canvas id="chart-proy-movimiento"></canvas></div>
+    </div>
+
+    <div style="margin-top:20px">
+      <h3 class="g-titulo">Detalle mes a mes</h3>
+      <p class="explica">
+        Las mismas filas del informe de DelPro, con los meses hacia abajo. "AA" es el mismo mes del
+        año pasado. Los meses proyectados van marcados con <b>·proy</b>.
+      </p>
+      <div style="overflow-x:auto" id="proy-tabla"></div>
+    </div>
+  </section>
+  {% endif %}
   </div>
 
   <div class="page" id="page-alimentacion" hidden>
@@ -2268,100 +2373,6 @@
 
 
 
-  <div class="page" id="page-proyeccion" hidden>
-  <section class="card" id="proyeccion-card">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">Proyección de Rebaños</h2>
-      <span class="aviso">Vacas lactantes y producción, mes a mes, hacia atrás y hacia adelante.</span>
-      <div class="controls" style="margin-left:auto">
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
-          <input type="month" id="proy-desde" style="padding:6px 8px">
-        </label>
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
-          <input type="month" id="proy-hasta" style="padding:6px 8px">
-        </label>
-        <button class="secundario" id="proy-aplicar">Aplicar</button>
-      </div>
-    </div>
-    <div class="controls" style="margin-top:10px;align-items:center">
-      <span class="aviso">Ver como</span>
-      <div class="lac-segment" id="proy-tipo" role="group" aria-label="Tipo de gráfico">
-        <button class="lac-segment__item" data-tipo="line" aria-pressed="true">Líneas</button>
-        <button class="lac-segment__item" data-tipo="bar" aria-pressed="false">Barras</button>
-        <button class="lac-segment__item" data-tipo="point" aria-pressed="false">Puntos</button>
-      </div>
-    </div>
-    <p class="explica" style="margin-top:10px">
-      <b>Qué es.</b> Cómo va a evolucionar el rodeo en los próximos meses: cuántas vacas van a estar
-      en ordeñe y cuánta leche van a dar, partiendo de las preñeces que ya están confirmadas.
-      <br><b>Cómo se calcula.</b> Mes a mes, con la misma ecuación de balance que usa DelPro:
-      <code>lactantes = lactantes del mes anterior + vacas a parir + novillas a parir − secados − salidas</code>.
-      El punto de partida son las vacas lactantes de hoy en los tres rebaños de la base (animales
-      activos, con al menos un parto y sin marca de secado). Los partos previstos salen de la
-      inseminación efectiva más 280 días de gestación; los secados, de restarle 60 días al parto
-      esperado; las salidas, de la tasa de bajas del mismo mes del año pasado.
-      <br><b>La producción</b> es <code>vacas lactantes × kg por vaca y por día del año pasado × días del mes</code>,
-      igual que DelPro. Ojo: no es la leche realmente ordeñada, y las dos filas de producción usan el
-      mismo promedio diario — lo único que cambia entre ellas es la cantidad de vacas.
-    </p>
-    <div class="aviso" id="proy-alerta" style="margin-top:8px;color:var(--warning)"></div>
-    <div class="aviso" id="proy-info" style="margin-top:8px"></div>
-    <div class="kpis" id="proy-kpis" style="margin-top:10px"></div>
-
-    <div style="margin-top:20px">
-      <h3 class="g-titulo">Vacas lactantes</h3>
-      <p class="explica">
-        <b>Qué muestra.</b> La curva de vacas en ordeñe contra la del mismo mes del año pasado.
-        Donde la línea baja hay un bache de partos que se puede anticipar.
-        <br><b>Cómo se calcula.</b> Balance mes a mes anclado en las vacas lactantes de hoy, que es
-        el único dato exacto. La tercera línea punteada es un conteo alternativo, hecho contando
-        partos reales de los últimos 330 días: da más bajo porque faltan eventos de parto. El valor
-        real está entre las dos líneas.
-        <br><b>Rebaño.</b> Todo esto es de La Ponderosa. La base la comparten tres tambos, y el
-        informe de DelPro que se usó de referencia estaba en "Todos los rebaños": por eso sus
-        números son casi el doble (3.253 vacas lactantes contra las 1.621 de La Ponderosa sola).
-      </p>
-      <div class="chart-box" style="height:300px"><canvas id="chart-proy-lactantes"></canvas></div>
-    </div>
-
-    <div style="margin-top:20px">
-      <h3 class="g-titulo">Producción de leche mensual</h3>
-      <p class="explica">
-        <b>Qué muestra.</b> Los kilos de leche que se esperan cada mes, contra los del mismo mes del
-        año pasado. La diferencia entre las dos curvas es puro efecto de la cantidad de vacas: el
-        rendimiento por vaca que se usa es el mismo en ambas.
-        <br><b>Cómo se calcula.</b> <code>vacas lactantes × kg por vaca y por día × días del mes</code>.
-        El rendimiento por vaca sale de la leche realmente medida en <code>AnimalDaily</code> del año
-        anterior. Los meses sin lectura válida quedan en cero — en el informe de DelPro pasa lo mismo
-        de julio a octubre.
-      </p>
-      <div class="chart-box" style="height:300px"><canvas id="chart-proy-produccion"></canvas></div>
-    </div>
-
-    <div style="margin-top:20px">
-      <h3 class="g-titulo">Movimiento del rodeo</h3>
-      <p class="explica">
-        <b>Qué muestra.</b> Las cuatro corrientes que mueven el número de vacas en ordeñe: las que
-        entran por parto (vacas y novillas) y las que salen por secado o por baja. Sirve para ver de
-        dónde viene cada subida o bajada de la curva anterior.
-        <br><b>Cómo se calcula.</b> Los partos, de las preñeces confirmadas más la gestación. Los
-        secados, restando el período seco al parto esperado, repartidos entre los meses que
-        corresponde. Las salidas, aplicando la tasa de bajas del mismo mes del año pasado a las
-        vacas del mes anterior.
-      </p>
-      <div class="chart-box" style="height:300px"><canvas id="chart-proy-movimiento"></canvas></div>
-    </div>
-
-    <div style="margin-top:20px">
-      <h3 class="g-titulo">Detalle mes a mes</h3>
-      <p class="explica">
-        Las mismas filas del informe de DelPro, con los meses hacia abajo. "AA" es el mismo mes del
-        año pasado. Los meses proyectados van marcados con <b>·proy</b>.
-      </p>
-      <div style="overflow-x:auto" id="proy-tabla"></div>
-    </div>
-  </section>
-  </div>
 
   <div class="page" id="page-salud" hidden>
     <section class="card" id="salud-kpis-card">
@@ -6165,6 +6176,17 @@ document.getElementById('repro-tabs').addEventListener('click', ev => {
   document.getElementById('repro-panel-terneros').hidden = tab !== 'terneros';
   document.getElementById('repro-panel-tasa').hidden = tab !== 'tasa';
   document.getElementById('repro-panel-gestacion').hidden = tab !== 'gestacion';
+  // "Proyección de Rebaños" (antes una página del menú) no es un panel dentro
+  // de esta tarjeta sino una tarjeta hermana, y puede no existir: lleva su
+  // propio permiso. Con `tab === 'proyeccion'` los siete paneles de arriba
+  // quedan ocultos y se ve el encabezado con las pestañas más esta tarjeta.
+  const cardProy = document.getElementById('proyeccion-card');
+  if (cardProy) cardProy.hidden = tab !== 'proyeccion';
+  // Consulta pesada: se ofrece con "▶ Calcular" la primera vez, igual que las
+  // demás de esta barra. `proyDatos` evita volver a pisar lo ya cargado.
+  if (tab === 'proyeccion' && !proyDatos)
+    activarAPedido('proy-info', cargarProyeccion, 'la proyección', DEMORA);
+  if (tab !== 'proyeccion') clearTimeout(proyReintento);
   if (tab === 'gestacion' && !gsDatos)
     activarAPedido('gs-info', cargarGestacion, 'el análisis de gestación', DEMORA);
   if (tab !== 'gestacion') clearTimeout(gsReintento);
@@ -10445,13 +10467,23 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-// 'rendimiento', 'flujos' y 'evolucion' ya NO son páginas: son pestañas
-// dentro de 'rutina' (ver #rutina-tabs). Siguen existiendo como PERMISOS en
-// auth.PAGINAS_POR_ROL, que es lo que decide si cada pestaña se dibuja, y
-// `irAPagina` traduce sus ids viejos a la pestaña — el Tablero tiene 7
-// indicadores que saltan a 'rendimiento'.
-const PAGINAS = ['dashboard', 'consultas', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
+// Varias secciones dejaron de ser páginas del menú y pasaron a ser PESTAÑAS
+// dentro de otra: 'rendimiento'/'flujos'/'evolucion' en 'rutina', y
+// 'proyeccion' en 'repro'. Siguen existiendo como PERMISOS en
+// auth.PAGINAS_POR_ROL, que es lo que decide si cada pestaña se dibuja.
+const PAGINAS = ['dashboard', 'consultas', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
   .filter(p => PAGINAS_VISIBLES.includes(p));
+
+// Id viejo -> dónde vive ahora. `irAPagina` lo traduce para que un favorito,
+// un link pegado en un chat o un salto del Tablero sigan funcionando: sin
+// esto caerían al dashboard por el fallback de "página desconocida". El
+// Tablero tiene SIETE indicadores que saltan a 'rendimiento'.
+const PAGINAS_MUDADAS = {
+  rendimiento: { pagina: 'rutina', tab: 'rendimiento' },
+  flujos:      { pagina: 'rutina', tab: 'flujos' },
+  evolucion:   { pagina: 'rutina', tab: 'evolucion' },
+  proyeccion:  { pagina: 'repro',  tab: 'proyeccion' },
+};
 const paginasCargadas = new Set();
 let paginaActual = null;
 
@@ -10727,7 +10759,9 @@ function cargarDatosDePagina(id) {
   // `prepararTabRutina` la primera vez que se abre cada una, para no disparar
   // tres consultas grandes por entrar a la sección.
   else if (id === 'rutina') cargarRutina();
-  else if (id === 'proyeccion') activarAPedido('proy-info', cargarProyeccion, 'la proyección', DEMORA);
+  // 'proyeccion' pasó a ser la última pestaña de 'repro': la ofrece el
+  // handler de #repro-tabs al abrirla, igual que las demás pestañas pesadas
+  // de esa barra.
   // Parámetros Reproductivos y Calibración de Objetivos se movieron a
   // ⚙ Configuración (24/08/2026: son configuración del tambo, no un análisis
   // que se compare entre períodos). Arranca en Resultados, la primera
@@ -10806,16 +10840,25 @@ function cerrarMenuMovil() {
   document.getElementById('sidebar-fondo').classList.remove('abierta');
 }
 
+// Abre la pestaña donde vive ahora una sección que era página (PAGINAS_MUDADAS).
+// Rutina tiene su propio activador; para las barras que ya existían —#repro-tabs—
+// se dispara un click en el botón, que es como ya lo hace `saltarDesdeTablero`
+// con #alim-tabs: así se reusa su handler en vez de duplicar qué mostrar.
+// El botón puede no existir (cada pestaña lleva su permiso): entonces no se
+// hace nada y queda la pestaña por defecto de esa página.
+function abrirTabMudada({ pagina, tab }) {
+  if (pagina === 'rutina') { activarTabRutina(tab); return; }
+  document.querySelector(`#${pagina}-tabs [data-tab="${tab}"]`)?.click();
+}
+
 function irAPagina(id) {
-  // Estas tres dejaron de ser páginas y pasaron a ser pestañas de "rutina".
-  // Sus ids viejos tienen que seguir funcionando: un favorito, un link pegado
-  // en un chat, y sobre todo los 7 indicadores del Tablero que saltan a
-  // 'rendimiento' (ver `saltarDesdeTablero`). Sin esto caerían al dashboard
-  // por el fallback de "página desconocida", que es peor que no navegar.
-  let tabRutina = null;
-  if (['rendimiento', 'flujos', 'evolucion'].includes(id)) { tabRutina = id; id = 'rutina'; }
+  // Traducir los ids de las secciones que se mudaron a una pestaña (ver
+  // PAGINAS_MUDADAS): favoritos, links pegados en un chat y los saltos del
+  // Tablero tienen que seguir llevando adonde corresponde.
+  const mudada = PAGINAS_MUDADAS[id] || null;
+  if (mudada) id = mudada.pagina;
   if (!PAGINAS.includes(id)) id = PAGINAS[0];
-  if (id === paginaActual) { if (tabRutina) activarTabRutina(tabRutina); return; }
+  if (id === paginaActual) { if (mudada) abrirTabMudada(mudada); return; }
   paginaActual = id;
   PAGINAS.forEach(p => { document.getElementById('page-' + p).hidden = p !== id; });
   document.querySelectorAll('.nav-item').forEach(el =>
@@ -10823,9 +10866,9 @@ function irAPagina(id) {
   cerrarMenuMovil();
   if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
   cargarDatosDePagina(id);
-  // Sólo si vino pedida (id viejo / salto del Tablero): entrar a Rutina de
-  // vuelta deja la pestaña donde estaba, igual que ⚙ Configuración.
-  if (tabRutina) activarTabRutina(tabRutina);
+  // Sólo si vino pedida (id viejo / salto del Tablero): volver a entrar a la
+  // página deja la pestaña donde estaba, igual que ⚙ Configuración.
+  if (mudada) abrirTabMudada(mudada);
   // El auto-refresco del ordeño solo tiene sentido con esa página a la vista.
   if (id === 'ordeno') reprogramarRefrescoOrdeno(); else clearInterval(ordenoTimer);
   if (id === 'sala_cms') reprogramarRefrescoSala(); else clearInterval(salaTimer);
@@ -10841,7 +10884,9 @@ function irAPagina(id) {
     clearTimeout(rendDiaReintento);
   }
   if (id !== 'sala_cms') clearTimeout(salaReintento);
-  if (id !== 'proyeccion') clearTimeout(proyReintento);
+  // Proyección es ahora una pestaña de 'repro': el corte va al salir de ESA
+  // página (el handler de #repro-tabs ya corta al cambiar de pestaña).
+  if (id !== 'repro') clearTimeout(proyReintento);
   if (id !== 'repro') clearTimeout(reproReintento);
   if (id !== 'tablero') clearTimeout(tabReintento);
   // Cámaras y actividad en vivo de "Problemas podales": solo mientras se ve la página.
