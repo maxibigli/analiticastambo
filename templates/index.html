@@ -652,11 +652,11 @@
     {% if 'ordeno' in paginas_visibles %}<button class="nav-item" data-pagina="ordeno">🔄 <span>Ordeño en vivo</span></button>{% endif %}
     {% if 'sala_cms' in paginas_visibles %}<button class="nav-item" data-pagina="sala_cms">🐟 <span>Ordeño en Vivo Sala CMS</span></button>{% endif %}
     {% if 'rutina' in paginas_visibles %}<button class="nav-item" data-pagina="rutina">⏱️ <span>Rutina de ordeño</span></button>{% endif %}
-    {% if 'rendimiento' in paginas_visibles %}<button class="nav-item" data-pagina="rendimiento">⚡ <span>Rendimiento Sala</span></button>{% endif %}
-    {% if 'flujos' in paginas_visibles %}<button class="nav-item" data-pagina="flujos">💧 <span>Flujos de ordeño</span></button>{% endif %}
-    {# "Evolución" ya no es una entrada del menú: pasó a ser una pestaña dentro
-       de "Rutina de ordeño", que es a lo que pertenece. Sigue gateada por el
-       permiso 'evolucion' (ver auth.PAGINAS_POR_ROL), ahora en la pestaña. #}
+    {# "Rendimiento Sala", "Flujos de ordeño" y "Evolución" ya NO son entradas
+       del menú: son PESTAÑAS dentro de "Rutina de ordeño" (ver #rutina-tabs).
+       Las cuatro miran el ordeño y pertenecen a la misma sección; el menú
+       lateral se estaba haciendo largo. Cada una sigue gateada por SU permiso
+       de auth.PAGINAS_POR_ROL, ahora en la pestaña en vez del ítem. #}
     {% if 'proyeccion' in paginas_visibles %}<button class="nav-item" data-pagina="proyeccion">🔮 <span>Proyección de Rebaños</span></button>{% endif %}
     {% if 'repro' in paginas_visibles %}<button class="nav-item" data-pagina="repro">🧬 <span>Análisis Reproductivo</span></button>{% endif %}
     {% if 'alimentacion' in paginas_visibles %}<button class="nav-item" data-pagina="alimentacion">🌾 <span>Alimentación</span></button>{% endif %}
@@ -1769,13 +1769,16 @@
 
   <div class="page" id="page-rutina" hidden>
   {# Menú secundario horizontal, mismo patrón que #config-tabs y #repro-tabs.
-     Sólo aparece si el usuario tiene el permiso 'evolucion': sin él la página
-     queda exactamente como antes (una sola tarjeta, sin barra de una pestaña
-     sola, que no significaría nada). El operario NO lo tiene. #}
-  {% if 'evolucion' in paginas_visibles %}
+     Cada pestaña lleva SU propio permiso: el operario tiene 'rendimiento'
+     pero no 'flujos' ni 'evolucion', así que ve dos pestañas y no cuatro.
+     La barra entera se omite si no hay ninguna pestaña además de la primera
+     — una barra de una sola opción no significa nada. #}
+  {% if 'rendimiento' in paginas_visibles or 'flujos' in paginas_visibles or 'evolucion' in paginas_visibles %}
   <div class="lac-segment" id="rutina-tabs" role="group" aria-label="Sección" style="margin-bottom:14px">
-    <button class="lac-segment__item" data-tab="rutina" aria-pressed="true">⏱️ Del día</button>
-    <button class="lac-segment__item" data-tab="evolucion" aria-pressed="false">📈 Evolución</button>
+    <button class="lac-segment__item" data-tab="rutina" aria-pressed="true">⏱️ Análisis de Rutina</button>
+    {% if 'rendimiento' in paginas_visibles %}<button class="lac-segment__item" data-tab="rendimiento" aria-pressed="false">⚡ Rendimiento Sala</button>{% endif %}
+    {% if 'flujos' in paginas_visibles %}<button class="lac-segment__item" data-tab="flujos" aria-pressed="false">💧 Flujos de ordeño</button>{% endif %}
+    {% if 'evolucion' in paginas_visibles %}<button class="lac-segment__item" data-tab="evolucion" aria-pressed="false">📈 Evolución</button>{% endif %}
   </div>
   {% endif %}
   <section class="card" id="rutina-card">
@@ -1810,61 +1813,11 @@
   </section>
   <div class="rutina-tooltip" id="rutina-tooltip"></div>
 
-  {# --- Pestaña "Evolución" (antes era la página #page-evolucion) -----------
-     Las tres tarjetas se movieron acá tal cual estaban; los ids NO cambiaron
-     porque `cargarEvolucion` los busca por id (evolucion-desde/hasta/mes/anio,
-     chart-evolucion, y las dos de rendimiento que pinta al final).
-     Arrancan ocultas: la pestaña activa al entrar es "Del día". #}
-  {% if 'evolucion' in paginas_visibles %}
-  <section class="card" id="evolucion-card" hidden>
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">Evolución de la rutina de ordeño</h2>
-      <div class="controls" style="margin-left:auto">
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
-          <input type="date" id="evolucion-desde" style="padding:6px 8px">
-        </label>
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
-          <input type="date" id="evolucion-hasta" style="padding:6px 8px">
-        </label>
-        <button class="secundario" id="evolucion-aplicar">Aplicar</button>
-        <span class="aviso">·</span>
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Mes
-          <select id="evolucion-mes" style="padding:6px 8px"></select>
-        </label>
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Año
-          <select id="evolucion-anio" style="padding:6px 8px"></select>
-        </label>
-        <button class="secundario" id="evolucion-ver-mes" title="Carga el mes completo, día por día">Ver mes completo</button>
-      </div>
-    </div>
-    <div class="aviso" id="evolucion-info" style="margin-top:8px"></div>
-    <div class="chart-box" style="height:340px;margin-top:10px;overflow-x:auto;overflow-y:hidden">
-      <div id="evolucion-chart-wrap" style="height:100%">
-        <canvas id="chart-evolucion"></canvas>
-      </div>
-    </div>
-  </section>
-
-  <section class="card" id="rendimiento-card" hidden>
-    <h2 style="margin:0">Rutina vs. rendimiento de la rotativa</h2>
-    <span class="aviso">Cada punto es UNA sesión: score general de esa sesión vs. vacas/hora que dio la rotativa. Mismo rango de fechas que arriba.</span>
-    <div class="aviso" id="rendimiento-info" style="margin-top:8px"></div>
-    <div class="chart-box" style="height:320px;margin-top:10px"><canvas id="chart-rendimiento"></canvas></div>
-  </section>
-
-  <section class="card" id="rendimiento-linea-card" hidden>
-    <h2 style="margin:0">Rutina y rendimiento por día (línea de tiempo)</h2>
-    <span class="aviso">Un día por punto (total del día) · calidad de rutina, vacas/hora y retiradas forzadas, cada uno con su escala.</span>
-    <div class="chart-box" style="height:320px;margin-top:10px;overflow-x:auto;overflow-y:hidden">
-      <div id="rendimiento-linea-wrap" style="height:100%">
-        <canvas id="chart-rendimiento-linea"></canvas>
-      </div>
-    </div>
-  </section>
-  {% endif %}
-  </div>
-
-  <div class="page" id="page-rendimiento" hidden>
+  {% if 'rendimiento' in paginas_visibles %}
+  {# --- Pestana "Rendimiento Sala" (antes era la pagina #page-rendimiento).
+     Se movio el contenedor ENTERO, sin tocar nada adentro: los ids que
+     busca el JavaScript que la llena siguen siendo los mismos. #}
+  <div id="panel-rendimiento" hidden>
   <section class="card" id="rendimiento-sala-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">Rendimiento Sala</h2>
@@ -2096,8 +2049,13 @@
     </div>
   </section>
   </div>
+  {% endif %}
 
-  <div class="page" id="page-flujos" hidden>
+  {% if 'flujos' in paginas_visibles %}
+  {# --- Pestana "Flujos de ordeno" (antes era la pagina #page-flujos).
+     Se movio el contenedor ENTERO, sin tocar nada adentro: los ids que
+     busca el JavaScript que la llena siguen siendo los mismos. #}
+  <div id="panel-flujos" hidden>
   <section class="card" id="flujos-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">Análisis de Flujos de Ordeño</h2>
@@ -2252,6 +2210,63 @@
     </div>
   </section>
   </div>
+  {% endif %}
+
+  {# --- Pestaña "Evolución" (antes era la página #page-evolucion) -----------
+     Las tres tarjetas se movieron acá tal cual estaban; los ids NO cambiaron
+     porque `cargarEvolucion` los busca por id (evolucion-desde/hasta/mes/anio,
+     chart-evolucion, y las dos de rendimiento que pinta al final).
+     Arrancan ocultas: la pestaña activa al entrar es "Del día". #}
+  {% if 'evolucion' in paginas_visibles %}
+  <section class="card" id="evolucion-card" hidden>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Evolución de la rutina de ordeño</h2>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="evolucion-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="evolucion-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="evolucion-aplicar">Aplicar</button>
+        <span class="aviso">·</span>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Mes
+          <select id="evolucion-mes" style="padding:6px 8px"></select>
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Año
+          <select id="evolucion-anio" style="padding:6px 8px"></select>
+        </label>
+        <button class="secundario" id="evolucion-ver-mes" title="Carga el mes completo, día por día">Ver mes completo</button>
+      </div>
+    </div>
+    <div class="aviso" id="evolucion-info" style="margin-top:8px"></div>
+    <div class="chart-box" style="height:340px;margin-top:10px;overflow-x:auto;overflow-y:hidden">
+      <div id="evolucion-chart-wrap" style="height:100%">
+        <canvas id="chart-evolucion"></canvas>
+      </div>
+    </div>
+  </section>
+
+  <section class="card" id="rendimiento-card" hidden>
+    <h2 style="margin:0">Rutina vs. rendimiento de la rotativa</h2>
+    <span class="aviso">Cada punto es UNA sesión: score general de esa sesión vs. vacas/hora que dio la rotativa. Mismo rango de fechas que arriba.</span>
+    <div class="aviso" id="rendimiento-info" style="margin-top:8px"></div>
+    <div class="chart-box" style="height:320px;margin-top:10px"><canvas id="chart-rendimiento"></canvas></div>
+  </section>
+
+  <section class="card" id="rendimiento-linea-card" hidden>
+    <h2 style="margin:0">Rutina y rendimiento por día (línea de tiempo)</h2>
+    <span class="aviso">Un día por punto (total del día) · calidad de rutina, vacas/hora y retiradas forzadas, cada uno con su escala.</span>
+    <div class="chart-box" style="height:320px;margin-top:10px;overflow-x:auto;overflow-y:hidden">
+      <div id="rendimiento-linea-wrap" style="height:100%">
+        <canvas id="chart-rendimiento-linea"></canvas>
+      </div>
+    </div>
+  </section>
+  {% endif %}
+  </div>
+
+
 
   <div class="page" id="page-proyeccion" hidden>
   <section class="card" id="proyeccion-card">
@@ -8788,6 +8803,10 @@ async function cargarTambos() {
       // Solo se recarga la página actual (las demás son datos de otro tambo,
       // pero recién se vuelven a pedir si el usuario realmente las visita).
       paginasCargadas.clear();
+      // Ídem las pestañas pesadas de Rutina (Rendimiento Sala, Flujos): lo que
+      // esté cargado es de OTRO tambo, así que hay que volver a ofrecer el
+      // botón "▶ Calcular" la próxima vez que se abra cada una.
+      RUTINA_TABS_PREPARADAS.clear();
       cargarDatosDePagina(paginaActual);
       // La evolución NO se recarga sola: es pesada, se dispara solo con
       // "Aplicar" o "Ver mes completo".
@@ -10426,10 +10445,12 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
 // las 6 secciones de una si el usuario solo quiere ver una.
 // ---------------------------------------------------------------------------
 const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
-// 'evolucion' ya NO es una página: es una pestaña dentro de 'rutina' (ver
-// #rutina-tabs). Sigue existiendo como PERMISO en auth.PAGINAS_POR_ROL, que es
-// lo que decide si la pestaña se dibuja.
-const PAGINAS = ['dashboard', 'consultas', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'rendimiento', 'flujos', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
+// 'rendimiento', 'flujos' y 'evolucion' ya NO son páginas: son pestañas
+// dentro de 'rutina' (ver #rutina-tabs). Siguen existiendo como PERMISOS en
+// auth.PAGINAS_POR_ROL, que es lo que decide si cada pestaña se dibuja, y
+// `irAPagina` traduce sus ids viejos a la pestaña — el Tablero tiene 7
+// indicadores que saltan a 'rendimiento'.
+const PAGINAS = ['dashboard', 'consultas', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'proyeccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 const paginasCargadas = new Set();
 let paginaActual = null;
@@ -10701,12 +10722,11 @@ function cargarDatosDePagina(id) {
   }
   else if (id === 'ordeno') { cargarOrdeno(); cargarMantenimiento(); cargarIncidentesDia(); }
   else if (id === 'sala_cms') { cargarSalaConfig().then(cargarSala); }
+  // Sólo la pestaña "Análisis de Rutina" carga al entrar. Rendimiento Sala y
+  // Flujos son consultas pesadas y ahora viven en pestañas: las prepara
+  // `prepararTabRutina` la primera vez que se abre cada una, para no disparar
+  // tres consultas grandes por entrar a la sección.
   else if (id === 'rutina') cargarRutina();
-  else if (id === 'rendimiento') {
-    activarAPedido('rend-dia-info', cargarRendimientoDia, 'rendimiento de ordeño por día', DEMORA);
-    activarAPedido('rend-info', cargarRendimiento, 'rendimiento de sala', DEMORA);
-  }
-  else if (id === 'flujos') activarAPedido('flu-info', cargarFlujos, 'flujos de ordeño', DEMORA);
   else if (id === 'proyeccion') activarAPedido('proy-info', cargarProyeccion, 'la proyección', DEMORA);
   // Parámetros Reproductivos y Calibración de Objetivos se movieron a
   // ⚙ Configuración (24/08/2026: son configuración del tambo, no un análisis
@@ -10732,25 +10752,48 @@ function cargarDatosDePagina(id) {
 }
 
 // --- Pestañas de "Rutina de ordeño" (menú secundario horizontal) -----------
-// Mismo patrón que #config-tabs: sólo prende y apaga tarjetas, no dispara
-// consultas. La barra no existe si el usuario no tiene el permiso 'evolucion'
-// (la plantilla la envuelve en un condicional), así que todo esto tiene que
-// tolerar que no esté.
+// Mismo patrón que #config-tabs. Cada pestaña puede faltar (cada una tiene su
+// permiso en auth.PAGINAS_POR_ROL y la plantilla la omite si no lo tiene), y
+// la barra entera puede no existir, así que todo esto tolera ids ausentes.
 const RUTINA_TABS = {
   rutina: ['rutina-card'],
+  rendimiento: ['panel-rendimiento'],
+  flujos: ['panel-flujos'],
   evolucion: ['evolucion-card', 'rendimiento-card', 'rendimiento-linea-card'],
 };
 
+// Rendimiento Sala y Flujos son consultas PESADAS. Cuando eran páginas se
+// ofrecían con el botón "▶ Calcular" al entrar; ahora se ofrecen la primera
+// vez que se abre su pestaña. Tiene que ser UNA sola vez: `activarAPedido`
+// pisa el contenido del contenedor con el botón, así que llamarlo de nuevo
+// borraría el resultado ya cargado y lo volvería a pedir.
+const RUTINA_TABS_PREPARADAS = new Set();
+
+function prepararTabRutina(tab) {
+  if (RUTINA_TABS_PREPARADAS.has(tab)) return;
+  RUTINA_TABS_PREPARADAS.add(tab);
+  if (tab === 'rendimiento') {
+    activarAPedido('rend-dia-info', cargarRendimientoDia, 'rendimiento de ordeño por día', DEMORA);
+    activarAPedido('rend-info', cargarRendimiento, 'rendimiento de sala', DEMORA);
+  } else if (tab === 'flujos') {
+    activarAPedido('flu-info', cargarFlujos, 'flujos de ordeño', DEMORA);
+  }
+  // 'evolucion' no se prepara: espera "Aplicar" / "Ver mes completo".
+}
+
 function activarTabRutina(tab) {
   const barra = document.getElementById('rutina-tabs');
-  if (!barra) return;                       // sin permiso: una sola vista
-  if (!RUTINA_TABS[tab]) tab = 'rutina';
+  if (!barra) return;                       // sin permisos: una sola vista
+  // Una pestaña que el usuario no tiene (link viejo, salto del Tablero) cae
+  // en la primera, que siempre está.
+  if (!RUTINA_TABS[tab] || !barra.querySelector(`[data-tab="${tab}"]`)) tab = 'rutina';
   barra.querySelectorAll('[data-tab]').forEach(b =>
     b.setAttribute('aria-pressed', String(b.dataset.tab === tab)));
   Object.entries(RUTINA_TABS).forEach(([clave, ids]) => ids.forEach(id => {
     const el = document.getElementById(id);
     if (el) el.hidden = clave !== tab;
   }));
+  prepararTabRutina(tab);
 }
 
 document.getElementById('rutina-tabs')?.addEventListener('click', ev => {
@@ -10764,11 +10807,13 @@ function cerrarMenuMovil() {
 }
 
 function irAPagina(id) {
-  // "#evolucion" dejó de ser una página y pasó a ser una pestaña de "rutina".
-  // Un link viejo (un favorito, algo pegado en un chat) tiene que seguir
-  // llevando ahí y no caer al dashboard por "página desconocida".
+  // Estas tres dejaron de ser páginas y pasaron a ser pestañas de "rutina".
+  // Sus ids viejos tienen que seguir funcionando: un favorito, un link pegado
+  // en un chat, y sobre todo los 7 indicadores del Tablero que saltan a
+  // 'rendimiento' (ver `saltarDesdeTablero`). Sin esto caerían al dashboard
+  // por el fallback de "página desconocida", que es peor que no navegar.
   let tabRutina = null;
-  if (id === 'evolucion') { id = 'rutina'; tabRutina = 'evolucion'; }
+  if (['rendimiento', 'flujos', 'evolucion'].includes(id)) { tabRutina = id; id = 'rutina'; }
   if (!PAGINAS.includes(id)) id = PAGINAS[0];
   if (id === paginaActual) { if (tabRutina) activarTabRutina(tabRutina); return; }
   paginaActual = id;
@@ -10778,17 +10823,23 @@ function irAPagina(id) {
   cerrarMenuMovil();
   if (location.hash !== '#' + id) history.replaceState(null, '', '#' + id);
   cargarDatosDePagina(id);
-  // Sólo si vino pedida (link viejo a #evolucion): entrar a Rutina de vuelta
-  // deja la pestaña donde estaba, igual que ⚙ Configuración.
+  // Sólo si vino pedida (id viejo / salto del Tablero): entrar a Rutina de
+  // vuelta deja la pestaña donde estaba, igual que ⚙ Configuración.
   if (tabRutina) activarTabRutina(tabRutina);
   // El auto-refresco del ordeño solo tiene sentido con esa página a la vista.
   if (id === 'ordeno') reprogramarRefrescoOrdeno(); else clearInterval(ordenoTimer);
   if (id === 'sala_cms') reprogramarRefrescoSala(); else clearInterval(salaTimer);
   // El reintento de Salud solo tiene sentido con esa página a la vista.
   if (id !== 'salud') clearTimeout(saludReintento);
-  // Ídem el reintento del análisis de flujos mientras el caché se calienta.
-  if (id !== 'flujos') clearTimeout(fluReintento);
-  if (id !== 'rendimiento') { clearTimeout(rendReintento); clearTimeout(rendDiaReintento); }
+  // Ídem los reintentos de Flujos y Rendimiento Sala mientras el caché se
+  // calienta. Ahora son PESTAÑAS de 'rutina', así que el corte es al salir de
+  // esa página — no al cambiar de pestaña, para que una consulta pesada que ya
+  // arrancó no se pierda por mirar otra pestaña un segundo.
+  if (id !== 'rutina') {
+    clearTimeout(fluReintento);
+    clearTimeout(rendReintento);
+    clearTimeout(rendDiaReintento);
+  }
   if (id !== 'sala_cms') clearTimeout(salaReintento);
   if (id !== 'proyeccion') clearTimeout(proyReintento);
   if (id !== 'repro') clearTimeout(reproReintento);
