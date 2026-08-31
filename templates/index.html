@@ -4133,14 +4133,20 @@ async function cargarRendimiento() {
       permPromPorGrupo[g] = promediar(fechasPerm.map(f => permPorDiaGrupo[f][g]).filter(v => v != null));
     });
     const permPromedioGeneral = promediar(Object.values(permPromPorGrupo).filter(v => v != null));
-    // SUMA de todos los rodeos: cuántas horas del día le consume el ordeñe al
-    // tambo entero. Es otra pregunta que el promedio de arriba —ese dice
-    // cuánto le lleva a UNA vaca—, y las dos sirven: con seis rodeos, 2,5 h
-    // por vaca son unas 8 h de ordeñe en el día. Se suma por día y recién
-    // después se promedian los días, para que un día con un rodeo sin ordeñar
-    // no infle el total.
-    const permSumaPorDia = fechasPerm.map(f =>
-      Object.values(permPorDiaGrupo[f]).reduce((a, b) => a + b, 0));
+    // TOTAL de la sala: cuántas horas por día estuvo FUNCIONANDO la sala =
+    // la suma de las SESIONES del día, y nada más. NO se suman las
+    // permanencias por rodeo (la ventana entrada->salida de un grupo se
+    // estira con las rezagadas y se pisa con la del grupo siguiente: sumar
+    // los rodeos daba más de 24 h en un día) ni el arreo (pasa FUERA de la
+    // sala, en paralelo con el ordeñe de otro grupo). El promedio de arriba
+    // SÍ los usa: mide cuánto está fuera del corral UNA vaca, otra pregunta.
+    // Mismo cálculo que el tablero (ver horas_ordeno_total en app.py) --
+    // que las dos pantallas den el mismo número es regla del tablero.
+    const durPorDia = {};
+    sesiones.forEach(s => {
+      durPorDia[s.fecha] = (durPorDia[s.fecha] || 0) + (s.duracion_min || 0) / 60;
+    });
+    const permSumaPorDia = Object.keys(durPorDia).sort().map(f => durPorDia[f]);
     const permSumaGeneral = promediar(permSumaPorDia);
 
     // % de identificación: viene de su propia consulta (d.identificacion), NO

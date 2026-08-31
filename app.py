@@ -1111,20 +1111,41 @@ def _valores_tablero(tambo: str) -> dict:
                       detalle=(f"promedio de {len(perm_prom_por_grupo)} rodeo(s)" + nota_arreo
                                if horas is not None else None))
 
-                # TOTAL de la sala: la SUMA de todos los rodeos, que es otra
-                # pregunta que el promedio de arriba —ese dice cuánto le lleva a
-                # UNA vaca, este cuánto le consume al TAMBO—. Se suma por día y
-                # recién después se promedian los días: sumar los promedios por
-                # rodeo daría distinto cuando algún rodeo no ordeña todos los
-                # días, y este es EXACTAMENTE el orden que usa la tarjeta de
-                # Rendimiento Sala (ver permSumaPorDia en templates/index.html).
-                # Que las dos pantallas muestren el mismo número no es un
-                # detalle: es la regla del tablero.
-                sumas_dia = [sum(dia.values()) for dia in perm_por_dia_grupo.values() if dia]
-                horas_total = (round(sum(sumas_dia) / len(sumas_dia), 1) if sumas_dia else None)
+                # TOTAL de la sala: cuántas horas por día la SALA estuvo
+                # funcionando = la suma de las SESIONES del día (inicio -> fin
+                # de cada una), y nada más.
+                #
+                # ANTES se sumaba (arreo + permanencia/2) de cada rodeo, y daba
+                # imposible: 24,4 h/día en un día de 24. Dos motivos, los dos
+                # reales (reportado por el tambo el 31/08/2026):
+                #
+                #  1. `permanencia_min` es entrada del PRIMER animal del grupo
+                #     -> salida del ÚLTIMO. Con rezagadas esa ventana se estira
+                #     y SE PISA con la del grupo siguiente, asi que sumar los 7
+                #     rodeos cuenta el mismo tiempo de sala varias veces (daban
+                #     44 h de permanencia sumada en un día).
+                #  2. El arreo pasa FUERA de la sala y en paralelo con el
+                #     ordeñe de otro grupo; sumarlo una vez por rodeo agregaba
+                #     otras 2,3 h (7 rodeos x 20 min) de sala que no existieron.
+                #
+                # La otra tarjeta ("promedio por rodeo") SÍ debe seguir usando
+                # arreo + permanencia/2: esa mide cuánto está fuera del corral
+                # UNA vaca, que es otra pregunta y ahí las dos cosas cuentan.
+                dur_por_dia = {}
+                for s in sesiones:
+                    f = s.get("fecha")
+                    dur_por_dia[f] = dur_por_dia.get(f, 0.0) + (s.get("duracion_min") or 0) / 60
+                sesiones_por_dia = {}
+                for s in sesiones:
+                    f = s.get("fecha")
+                    sesiones_por_dia[f] = sesiones_por_dia.get(f, 0) + 1
+                horas_total = (round(sum(dur_por_dia.values()) / len(dur_por_dia), 1)
+                               if dur_por_dia else None)
+                ses_prom = (round(sum(sesiones_por_dia.values()) / len(sesiones_por_dia), 1)
+                            if sesiones_por_dia else None)
                 poner("horas_ordeno_total", horas_total,
                       falta=sin_sesiones,
-                      detalle=(f"suma de {len(perm_prom_por_grupo)} rodeo(s)" + nota_arreo
+                      detalle=(f"suma de {ses_prom} sesión(es) por día"
                                if horas_total is not None else None))
     except Exception as exc:  # noqa: BLE001
         for c in ("horas_ordeno", "horas_ordeno_total", "pct_identificacion",

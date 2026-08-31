@@ -139,12 +139,14 @@ INDICADORES = [
         "fuente": "rendimiento", "pagina": "rendimiento",
         "destino": "Rendimiento Sala",
         "grupo": "Ordeño",
-        "ayuda": ("Cuántas horas del día le consume el ordeñe al tambo entero: la "
-                  "SUMA de todos los rodeos, no el promedio. Es el mismo número que "
-                  "la tarjeta «Horas/día en ordeño (suma de todos los rodeos)» de "
-                  "Rendimiento Sala. Se suma por día y recién después se promedian "
-                  "los días, para que un día con un rodeo sin ordeñar no infle el "
-                  "total."),
+        "ayuda": ("Cuántas horas por día estuvo FUNCIONANDO la sala: la suma de "
+                  "las sesiones de ordeño del día (inicio a fin de cada una), y "
+                  "nada más. NO suma el arreo —pasa fuera de la sala, en paralelo "
+                  "con el ordeñe de otro grupo— ni las permanencias de cada rodeo, "
+                  "que se pisan entre sí y daban más de 24 h en un día. Para saber "
+                  "cuánto tiempo está fuera del corral UNA vaca, mirá «promedio por "
+                  "rodeo», que es otra pregunta. Es el mismo número que la tarjeta "
+                  "«Horas/día en ordeño» de Rendimiento Sala."),
     },
     {
         "clave": "ordenos_hora",
