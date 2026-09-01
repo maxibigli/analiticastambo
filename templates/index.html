@@ -115,6 +115,15 @@
   .dash-graficos > .card { margin-top: 0; }
   @media (min-width: 1000px) { .dash-graficos { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (min-width: 1800px) { .dash-graficos { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  /* Ranking por grupo (Dashboard): nombre · barra · valor, en una línea. */
+  .rank-fila { display: flex; align-items: center; gap: var(--lac-space-3); margin-bottom: 10px; }
+  .rank-fila:last-child { margin-bottom: 0; }
+  .rank-n { width: 88px; flex-shrink: 0; color: var(--text-secondary); font-size: var(--lac-size-xs); }
+  .rank-riel { flex: 1 1 auto; height: 16px; background: var(--surface-2, var(--page));
+               border-radius: 8px; overflow: hidden; }
+  .rank-barra { display: block; height: 100%; background: var(--accent); border-radius: 8px; }
+  .rank-v { width: 52px; text-align: right; flex-shrink: 0; font-weight: var(--lac-weight-strong);
+            font-variant-numeric: tabular-nums; font-size: var(--lac-size-xs); }
   .chart-box { position: relative; height: 280px; }
   /* Va DESPUÉS de la regla de arriba a propósito: una media query no suma
      especificidad, así que declarada antes la pisaría el 280px.
@@ -759,13 +768,17 @@
     <div class="chart-box" style="margin-top:10px"><canvas id="chart-resumen-produccion"></canvas></div>
   </section>
 
-  <section class="card" id="resumen-animales-card">
-    <h2 style="margin:0">Composición del rodeo</h2>
-    <div class="aviso" id="resumen-animales-info" style="margin-top:6px"></div>
-    {# Las tres tarjetas que estaban acá al lado (novillas preñadas, vacas
-       preñadas, DIM) subieron a la fila única de arriba, para que todas las
-       tarjetas del Dashboard estén juntas. Queda el gráfico solo. #}
-    <div class="chart-box" style="margin-top:10px"><canvas id="chart-resumen-animales"></canvas></div>
+  {# Acá estaba el anillo de "Composición del rodeo". Lo reemplaza el RANKING
+     por grupo, que se lee de un vistazo. Las tres tarjetas de ese bloque
+     (novillas preñadas, vacas preñadas, DIM) ya habían subido a la fila de
+     arriba, así que de aquella tarjeta sólo se va el gráfico.
+     Es el complemento del otro bloque de grupos, no un duplicado: acá se ve
+     el ORDEN de hoy, allá la TENDENCIA de los 30 días. #}
+  <section class="card" id="resumen-ranking-card">
+    <h2 style="margin:0">Producción media por grupo</h2>
+    <span class="aviso">Últimos 30 días · kg por vaca</span>
+    <div class="aviso" id="resumen-ranking-error" style="color:var(--critical);margin-top:6px"></div>
+    <div id="resumen-ranking" style="margin-top:12px"></div>
   </section>
 
   <section class="card" id="resumen-duraciones-card">
@@ -3684,7 +3697,8 @@ async function cargarDashboard(intento = 0) {
 // ayer), composición del rodeo (donut + reproducción), duraciones de ordeño
 // (7 días) y producción media por grupo (30 días).
 // ---------------------------------------------------------------------------
-let chartResumenProduccion = null, chartResumenAnimales = null,
+// `chartResumenAnimales` se fue con el anillo de composición del rodeo.
+let chartResumenProduccion = null,
     chartResumenDuraciones = null, chartResumenGrupo = null;
 
 async function cargarResumenProduccion() {
@@ -3728,39 +3742,21 @@ async function cargarResumenProduccion() {
   }
 }
 
+// El anillo de "Composición del rodeo" se sacó del Dashboard (lo reemplazó el
+// ranking por grupo). ESTA CONSULTA SIGUE HACIÉNDOSE: alimenta tres tarjetas
+// de la fila de arriba (novillas preñadas, vacas preñadas, DIM), que ya no
+// tienen otra fuente. Lo único que se dejó de dibujar es el gráfico.
 async function cargarResumenAnimales() {
-  const info = document.getElementById('resumen-animales-info');
   try {
     const d = await pedirJSON('/api/resumen/animales?tambo=' + encodeURIComponent(tamboActual));
-    const segmentos = [
-      ['Vacas en ordeño', d.vacas_ordeno, SERIES[0]],
-      ['Vacas secas', d.vacas_secas, css('--warning')],
-      ['Novillas preñadas', d.novillas_prenadas, css('--muted')],
-      ['Novillas sin preñar', d.novillas_sin_prenar, css('--good')],
-    ];
-    chartResumenAnimales = dibujar('chart-resumen-animales', chartResumenAnimales, {
-      type: 'doughnut',
-      data: {
-        labels: segmentos.map(s => s[0]),
-        datasets: [{ data: segmentos.map(s => s[1]), backgroundColor: segmentos.map(s => s[2]) }],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 12, boxHeight: 12 } } },
-      },
-    });
-    const neto = (d.altas_ayer || 0) - (d.bajas_ayer || 0);
-    info.textContent = `${fmt(d.total)} animales en total` +
-      (d.altas_ayer || d.bajas_ayer
-        ? ` (${neto > 0 ? '+' : ''}${neto} vs. ayer: ${d.altas_ayer} alta(s), ${d.bajas_ayer} baja(s))` : '');
-    // Estas tres tarjetas subieron a la fila única de arriba, para que todas
-    // las tarjetas del Dashboard estén juntas en un solo lugar. Acá queda el
-    // gráfico de composición del rodeo, que es lo propio de este bloque.
     dashAnimales = d;
     pintarKpisDashboard();
   } catch (e) {
-    if (e.calentando) { info.textContent = e.message; setTimeout(cargarResumenAnimales, 3000); }
-    else info.textContent = 'Error: ' + e.message;
+    if (e.calentando) { setTimeout(cargarResumenAnimales, 3000); }
+    // Si falla, las tres tarjetas que alimenta quedan en guión: no hay dónde
+    // poner el error ahora que este bloque no tiene tarjeta propia, y una fila
+    // de tarjetas no es lugar para un texto de error.
+    else if (window.console) console.error('resumen/animales:', e);
   }
 }
 
@@ -3803,6 +3799,33 @@ async function cargarResumenDuraciones() {
   }
 }
 
+// Ranking de producción por grupo. Barras en HTML y no un gráfico de barras:
+// acá lo que importa es leer nombre-barra-número en una línea, y Chart.js no
+// dibuja el valor al final de la barra sin un plugin que no tenemos cargado.
+function pintarRankingGrupos(grupos, porGrupo, fechas, nombres) {
+  const cont = document.getElementById('resumen-ranking');
+  if (!cont) return;
+  const filas = grupos.map(g => {
+    const vals = fechas.map(f => (porGrupo[g] || {})[f]).filter(v => v != null);
+    return {
+      nombre: nombres[g] || `Grupo ${g}`,
+      kg: vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null,
+    };
+  }).filter(f => f.kg != null).sort((a, b) => b.kg - a.kg);
+
+  if (!filas.length) { cont.innerHTML = '<div class="aviso">Sin datos por grupo.</div>'; return; }
+  const max = Math.max(...filas.map(f => f.kg));
+  cont.innerHTML = filas.map(f => `
+    <div class="rank-fila">
+      <span class="rank-n">${f.nombre}</span>
+      <span class="rank-riel"><span class="rank-barra" style="width:${
+        // Mínimo 3%: con un grupo muy por debajo del mejor, una barra de 1px
+        // no se distingue de "sin dato".
+        Math.max(3, Math.round(100 * f.kg / max))}%"></span></span>
+      <span class="rank-v">${fmt(Math.round(10 * f.kg) / 10)}</span>
+    </div>`).join('');
+}
+
 async function cargarResumenGrupo() {
   const errBox = document.getElementById('resumen-grupo-error');
   try {
@@ -3834,6 +3857,11 @@ async function cargarResumenGrupo() {
       borderColor: css('--text-primary'), backgroundColor: css('--text-primary'),
       borderDash: [6, 4], borderWidth: 2.2, pointRadius: 0, tension: .25, spanGaps: true,
     });
+    // RANKING (reemplaza al anillo de composición del rodeo). Sale de los
+    // MISMOS datos que la serie de abajo — un promedio de las fechas que
+    // tiene cada grupo — así que las dos tarjetas no pueden discrepar.
+    pintarRankingGrupos(d.grupos || [], porGrupo, fechas, nombresG);
+
     chartResumenGrupo = dibujar('chart-resumen-grupo', chartResumenGrupo, {
       type: 'line',
       data: { labels: fechas, datasets },
@@ -11384,8 +11412,9 @@ async function cargarConfigTv() {
 }
 
 function tvValores() {
+  const s = document.getElementById('tv-segundos').value;
   return {
-    segundos: numOrNull(document.getElementById('tv-segundos').value),
+    segundos: s === '' ? null : Number(s),
     vistas: [...document.querySelectorAll('.tv-vista:checked')].map(c => c.value),
   };
 }
