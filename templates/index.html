@@ -23,6 +23,10 @@
 <link rel="stylesheet" href="/static/css/lactia-tokens.css?v={{ v }}">
 <link rel="stylesheet" href="/static/css/lactia-components.css?v={{ v }}">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
+<!-- Botón "Transmitir a Chromecast" de ⚙ Configuración › Modo televisor.
+     Se carga siempre (es liviano y async): sin Application ID configurado
+     (pantalla_tv.CAST_APP_ID en None) el botón queda oculto igual. -->
+<script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js" async></script>
 <style>
   /* Paleta de la app: apunta a los tokens de static/css/lactia-tokens.css.
      Un solo lugar para cambiar identidad visual — revertible con git si
@@ -3333,7 +3337,9 @@
       <input type="text" id="tv-url" readonly style="flex:1 1 460px;min-width:280px;padding:8px">
       <button class="secundario" id="tv-copiar">Copiar</button>
       <button class="secundario" id="tv-abrir">Abrir</button>
+      <button class="secundario" id="tv-transmitir" hidden>📡 Transmitir a Chromecast</button>
     </div>
+    <span class="aviso" id="tv-transmitir-estado" style="display:block;margin-top:6px"></span>
     <span class="aviso" style="display:block;margin-top:8px">
       <b>Esa dirección es la llave: quien la tenga ve los datos del tambo.</b> Cargala una
       sola vez en el televisor — al abrirla, la pantalla se la guarda y la saca de la barra
@@ -11462,6 +11468,8 @@ async function cargarConfigTv() {
     tvOriginal = JSON.stringify(tvValores());
     document.getElementById('tv-guardar').disabled = true;
     estado.textContent = '';
+    castAppId = d.cast_app_id || null;
+    actualizarBotonCast();
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
   }
@@ -11492,6 +11500,66 @@ document.getElementById('tv-copiar').addEventListener('click', () => {
 
 document.getElementById('tv-abrir').addEventListener('click', () => {
   window.open(document.getElementById('tv-url').value, '_blank');
+});
+
+// --- Botón "Transmitir a Chromecast" ----------------------------------
+// El SDK avisa por acá cuando terminó de cargar (puede tardar más que
+// cargarConfigTv, así que los dos lados se avisan solos con esta variable en
+// vez de asumir un orden). `castAppId` sale de `pantalla_tv.CAST_APP_ID`: en
+// null (todavía no se registró ninguna aplicación en la consola de Google
+// Cast) el botón se queda oculto.
+let castAppId = null;
+let castSdkListo = false;
+let castContextoListo = false;
+
+window['__onGCastApiAvailable'] = function (disponible) {
+  castSdkListo = !!disponible;
+  actualizarBotonCast();
+};
+
+// `castSdkListo` avisa que Chrome detectó el componente de Cast, pero el
+// script es `async` -- puede haber una carrera donde ese aviso llegue antes
+// de que `window.cast` (el objeto que arma el propio script) ya exista.
+// Por eso esta función SIEMPRE vuelve a chequear `window.cast` posta, no
+// confía solo en la bandera.
+function castListo() {
+  return !!(window.cast && window.cast.framework);
+}
+
+function actualizarBotonCast() {
+  const btn = document.getElementById('tv-transmitir');
+  if (!btn) return;
+  if (!castSdkListo || !castAppId) { btn.hidden = true; return; }
+  if (!castListo()) {
+    // `disponible` ya llegó pero `window.cast` todavía no -- es la carrera
+    // de arriba. Reintenta solo, no se pierde el aviso.
+    btn.hidden = true;
+    setTimeout(actualizarBotonCast, 300);
+    return;
+  }
+  if (!castContextoListo) {
+    cast.framework.CastContext.getInstance().setOptions({
+      receiverApplicationId: castAppId,
+      autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+    });
+    castContextoListo = true;
+  }
+  btn.hidden = false;
+}
+
+document.getElementById('tv-transmitir').addEventListener('click', async () => {
+  const estado = document.getElementById('tv-transmitir-estado');
+  if (!castListo()) { estado.textContent = 'El componente de Chromecast todavía no cargó, esperá un segundo y probá de nuevo.'; return; }
+  estado.textContent = 'Buscando Chromecasts en la red…';
+  try {
+    await cast.framework.CastContext.getInstance().requestSession();
+    estado.textContent = '✔ Transmitiendo.';
+  } catch (e) {
+    // Cerrar el selector de dispositivos sin elegir uno también cae acá
+    // ('cancel'): no es un error real, no hace falta mostrar nada.
+    estado.textContent = e === 'cancel' ? ''
+      : 'No se encontró ningún Chromecast en la red (¿está registrado en la consola de Google Cast?).';
+  }
 });
 
 document.getElementById('tv-guardar').addEventListener('click', async () => {

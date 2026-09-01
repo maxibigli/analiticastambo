@@ -45,6 +45,14 @@ VISTAS_LABEL = {
     "alertas": "Alertas y pendientes",
 }
 
+# Botón "Transmitir a Chromecast" en ⚙ Configuración › Modo televisor. El
+# Application ID sale de la consola de Google Cast (cast.google.com/publish,
+# $5 únicos) al registrar el receiver apuntando a la URL de `pantalla_tv_vista`
+# -- NO es un secreto (viaja igual en el JS del sender, a la vista de
+# cualquiera), así que alcanza con una constante acá. En `None` el botón de
+# Configuración queda oculto: todavía no se registró ninguna aplicación.
+CAST_APP_ID = "CFA16559"
+
 
 def _leer() -> dict:
     try:

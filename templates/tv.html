@@ -130,6 +130,26 @@
   <div class="pie-barra"><i id="progreso"></i></div>
 </div>
 
+<!--
+  Modo Chromecast: si esta página la lanzó un Chromecast (botón "Transmitir"
+  de Configuración), hay que avisarle a la plataforma de Cast que el receiver
+  arrancó bien -- si nunca se llama a context.start(), Cast la da por
+  colgada y corta la sesión sola a los pocos segundos.
+  EN UN SCRIPT APARTE, a propósito: el bloque de abajo es ES5 puro para
+  smart TV viejas (ver su comentario), y `cast.framework` es sintaxis
+  moderna. Si algún navegador viejo no entiende ESTE script, que falle solo
+  él -- un <script> que no parsea no frena a los de al lado.
+  Abrir la página DIRECTO en el navegador de la TV (sin Cast) también carga
+  este script: es inofensivo, sólo se queda escuchando una sesión de Cast que
+  nunca va a llegar.
+-->
+<script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+<script>
+  if (window.cast && cast.framework) {
+    cast.framework.CastReceiverContext.getInstance().start();
+  }
+</script>
+
 <script>
 /* eslint-disable */
 // JS deliberadamente conservador (ES5 + XMLHttpRequest): ver el comentario del

@@ -2915,6 +2915,7 @@ def api_tv_config():
         "vistas_activas": pantalla_tv.vistas_activas(),
         "vistas": [{"clave": c, "label": pantalla_tv.VISTAS_LABEL[c]}
                    for c in pantalla_tv.VISTAS],
+        "cast_app_id": pantalla_tv.CAST_APP_ID,
     })
 
 
