@@ -34,6 +34,11 @@ iot_canales_nombres.json
 iot_conexion.json
 lavado_programa.json
 
+# Token de acceso del modo televisor (ver pantalla_tv.py). ES UNA LLAVE: quien
+# tenga la URL con ese token ve los datos del tambo, asi que no puede viajar en
+# git ni compartirse entre instalaciones.
+pantalla_tv.json
+
 # Python
 __pycache__/
 *.pyc

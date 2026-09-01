@@ -1,0 +1,405 @@
+<!doctype html>
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ nombre_tambo }} — LactIA</title>
+<link rel="stylesheet" href="/static/css/lactia-tokens.css?v={{ v }}">
+<style>
+  /*
+    MODO TELEVISOR. Se escribe conservador A PROPOSITO: el equipo que va a
+    manejar la pantalla todavia no esta definido y el navegador de un smart TV
+    suele ser viejo. Por eso:
+      * layout con flexbox, sin `gap` (soporte tardio en flex) -- se separa con
+        margenes;
+      * nada de :has(), container queries, aspect-ratio ni CSS anidado;
+      * las tipografias salen de lactia-tokens.css, que las trae EMPAQUETADAS
+        localmente -- en un tambo con internet intermitente, depender de la red
+        para la fuente es quedarse sin fuente;
+      * los tamanos escalan con vw/vh: la misma pagina tiene que leerse a 3
+        metros en un televisor y en el monitor de una PC.
+  */
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--lac-bg, #0a1220);
+    color: var(--lac-text, #eef4fb);
+    font-family: var(--lac-font-body, system-ui, "Helvetica Neue", Arial, sans-serif);
+    overflow: hidden;                       /* una pantalla fija no se scrollea */
+  }
+  .pantalla { height: 100%; display: flex; flex-direction: column; padding: 2.2vh 2.4vw; }
+
+  /* ---- encabezado ---- */
+  .cab { display: flex; align-items: baseline; flex-shrink: 0; }
+  .cab .tambo {
+    font-family: var(--lac-font-display, inherit);
+    font-size: 2.6vh; font-weight: 700; letter-spacing: .01em;
+  }
+  .cab .vista {
+    font-size: 2.2vh; color: var(--lac-accent, #2b91e8); margin-left: 1.4vw;
+    font-weight: 600;
+  }
+  .cab .der { margin-left: auto; font-size: 2.2vh; color: var(--lac-text-muted, #8fa4bd); }
+  .cab .reloj { font-variant-numeric: tabular-nums; }
+  .punto {
+    display: inline-block; width: 1.1vh; height: 1.1vh; border-radius: 50%;
+    background: var(--lac-ok, #3ecf8e); margin-left: .9vw; vertical-align: middle;
+  }
+  .punto.mal { background: var(--lac-danger, #f2724b); }
+
+  /* ---- cuerpo ---- */
+  .cuerpo { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
+            justify-content: center; }
+  .fila { display: flex; flex-wrap: wrap; margin: -0.8vh -0.6vw; }
+  .caja {
+    flex: 1 1 20%; margin: 0.8vh 0.6vw; padding: 2.2vh 1.6vw;
+    background: var(--lac-surface, #0f1c2e);
+    border: 1px solid var(--lac-border, #1e3350);
+    border-top: .5vh solid var(--lac-accent, #0072CE);
+    border-radius: 1.4vh; min-width: 18vw;
+  }
+  .caja.ok    { border-top-color: var(--lac-ok, #3ecf8e); }
+  .caja.warn  { border-top-color: var(--lac-warn, #e8b23a); }
+  .caja.mal   { border-top-color: var(--lac-danger, #f2724b); }
+  .caja .rot {
+    font-size: 1.9vh; font-weight: 600; letter-spacing: .1em; text-transform: uppercase;
+    color: var(--lac-text-muted, #8fa4bd);
+  }
+  .caja .num {
+    font-family: var(--lac-font-display, inherit);
+    font-size: 8vh; font-weight: 700; line-height: 1.05; margin-top: .8vh;
+    font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+  }
+  .caja .num .u { font-size: .42em; font-weight: 500; opacity: .75; margin-left: .12em; }
+  .caja .pie { font-size: 2vh; color: var(--lac-text-muted, #8fa4bd); margin-top: .8vh; }
+  .caja .pie.sube { color: var(--lac-ok, #3ecf8e); }
+  .caja .pie.baja { color: var(--lac-danger, #f2724b); }
+
+  /* Caja ancha, para listas */
+  .caja.ancha { flex: 1 1 100%; }
+  .lista { margin: 0; padding: 0; list-style: none; }
+  .lista li {
+    display: flex; align-items: baseline; padding: 1.1vh 0;
+    border-bottom: 1px solid var(--lac-border, #1e3350); font-size: 2.6vh;
+  }
+  .lista li:last-child { border-bottom: 0; }
+  .lista .sem {
+    display: inline-block; width: 1.4vh; height: 1.4vh; border-radius: 50%;
+    margin-right: 1vw; flex-shrink: 0;
+  }
+  .lista .sem.mal { background: var(--lac-danger, #f2724b); }
+  .lista .sem.atencion { background: var(--lac-warn, #e8b23a); }
+  .lista .val { margin-left: auto; font-weight: 700; font-variant-numeric: tabular-nums;
+                padding-left: 1.5vw; }
+  .lista .men { color: var(--lac-text-muted, #8fa4bd); font-size: .8em; margin-left: 1vw; }
+
+  /* Barras de los componentes del score */
+  .barra-fila { display: flex; align-items: center; margin-bottom: 1.2vh; font-size: 2.2vh; }
+  .barra-fila .n { width: 26%; color: var(--lac-text-muted, #8fa4bd); }
+  .barra-riel { flex: 1 1 auto; height: 2.2vh; background: var(--lac-surface-sunken, #132339);
+                border-radius: 1.1vh; overflow: hidden; }
+  .barra-relleno { height: 100%; background: var(--lac-accent, #0072CE); }
+  .barra-fila .v { width: 8%; text-align: right; font-weight: 700;
+                   font-variant-numeric: tabular-nums; }
+
+  .grande { text-align: center; }
+  .grande .num { font-size: 22vh; }
+  .grande .rot { font-size: 2.6vh; }
+
+  .vacio { text-align: center; color: var(--lac-text-muted, #8fa4bd); font-size: 3.4vh; }
+  .vacio .ok { color: var(--lac-ok, #3ecf8e); font-size: 6vh; display: block; margin-bottom: 1.5vh; }
+
+  /* ---- pie: progreso de la rotacion ---- */
+  .pie-barra { flex-shrink: 0; height: .6vh; background: var(--lac-border, #1e3350);
+               border-radius: .3vh; margin-top: 1.8vh; overflow: hidden; }
+  .pie-barra i { display: block; height: 100%; width: 0;
+                 background: var(--lac-accent, #2b91e8); }
+</style>
+</head>
+<body>
+<div class="pantalla">
+  <div class="cab">
+    <span class="tambo">{{ nombre_tambo }}</span>
+    <span class="vista" id="titulo-vista"></span>
+    <span class="der">
+      <span class="reloj" id="reloj"></span>
+      <span class="punto" id="conexion" title="Conexión con el servidor"></span>
+    </span>
+  </div>
+  <div class="cuerpo" id="cuerpo"></div>
+  <div class="pie-barra"><i id="progreso"></i></div>
+</div>
+
+<script>
+/* eslint-disable */
+// JS deliberadamente conservador (ES5 + XMLHttpRequest): ver el comentario del
+// CSS. Sin arrow functions, sin template literals, sin fetch, sin ?. ni ??.
+(function () {
+  var VISTAS = {{ vistas | tojson }};
+  var LABELS = {{ labels | tojson }};
+  var SEGUNDOS = {{ segundos }};
+  var TAMBO = {{ tambo | tojson }};
+  var REFRESCO_MS = 30000;          // el payload junta 5 endpoints: no conviene menos
+
+  var datos = null;                 // ULTIMO payload BUENO
+  var iVista = 0;
+  var t0Vista = new Date().getTime();
+  var pidiendo = false;
+
+  function $(id) { return document.getElementById(id); }
+
+  function num(v, dec) {
+    if (v === null || v === undefined || v === '') return '—';
+    if (typeof v !== 'number') return String(v);
+    var s = v.toFixed(dec === undefined ? (v % 1 === 0 ? 0 : 1) : dec);
+    var p = s.split('.');
+    p[0] = p[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return p.join(',');
+  }
+
+  // "2026-08-24T05:12:33" -> "05:12". Se parte el texto en vez de usar Date:
+  // un ISO sin zona lo interpreta distinto cada navegador, y en un televisor
+  // viejo eso puede correr la hora.
+  function hora(iso) {
+    if (!iso || typeof iso !== 'string') return '';
+    var p = iso.split('T');
+    return p.length > 1 ? p[1].substring(0, 5) : iso;
+  }
+
+  function esc(s) {
+    return String(s === null || s === undefined ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  function caja(rotulo, valor, unidad, pie, clase, clasePie) {
+    return '<div class="caja ' + (clase || '') + '">' +
+      '<div class="rot">' + esc(rotulo) + '</div>' +
+      '<div class="num">' + valor + (unidad ? '<span class="u">' + esc(unidad) + '</span>' : '') + '</div>' +
+      (pie ? '<div class="pie ' + (clasePie || '') + '">' + pie + '</div>' : '') +
+      '</div>';
+  }
+
+  function delta(v, unidad) {
+    if (v === null || v === undefined) return '';
+    var signo = v > 0 ? '▲ +' : (v < 0 ? '▼ ' : '— ');
+    return signo + num(Math.abs(v)) + (unidad || '');
+  }
+
+  // ---------------------------------------------------------------- vistas
+  function vistaOrdeno(d) {
+    var o = d.ordeno;
+    if (!o) return sinDatos('Sin datos del ordeño en vivo.');
+    if (!o.ordenando) {
+      return '<div class="vacio"><span class="ok">⏸</span>' +
+             'La sala no está ordeñando' +
+             (o.hace ? '<div style="font-size:2.6vh;margin-top:1.5vh">Último dato ' + esc(o.hace) + '</div>' : '') +
+             '</div>';
+    }
+    var h = '<div class="fila">';
+    h += caja('Vacas en la plataforma', num(o.vacas), '', o.hace ? esc(o.hace) : '');
+    h += caja('Leche en la vuelta', num(o.kg_plataforma), 'kg');
+    h += caja('Para apartar', num(o.apartar), '', '', o.apartar ? 'warn' : 'ok');
+    h += caja('No ordeñar', num(o.no_ordenar), '', '', o.no_ordenar ? 'mal' : 'ok');
+    h += '</div>';
+    return h;
+  }
+
+  function vistaProduccion(d) {
+    var p = d.produccion || {}, a = p.ayer || {}, v = p.variacion || {}, k = d.kpis || {};
+    if (a.kg_total === undefined || a.kg_total === null) return sinDatos('Sin producción cargada todavía.');
+    var tot = (a.kg_total || 0) + (a.kg_desconocida || 0);
+    var pct = tot ? Math.round(1000 * a.kg_desconocida / tot) / 10 : null;
+    var h = '<div class="fila">';
+    h += caja('Producción del día', num(a.kg_total), 'kg', delta(v.kg_total, ' kg'), '',
+              v.kg_total >= 0 ? 'sube' : 'baja');
+    h += caja('Promedio por vaca', num(a.promedio_kg), 'kg', delta(v.promedio_kg, ' kg'), '',
+              v.promedio_kg >= 0 ? 'sube' : 'baja');
+    h += caja('Vacas ordeñadas', num(a.vacas_ordenadas), '',
+              k.ordenos_ultimo_dia ? num(k.ordenos_ultimo_dia) + ' ordeños' : '');
+    h += caja('Sin identificar', num(pct), '%', num(Math.round(a.kg_desconocida)) + ' kg',
+              pct !== null && pct >= 3 ? 'warn' : '');
+    h += '</div>';
+    if (a.fecha) {
+      h += '<div class="pie" style="text-align:center;margin-top:2vh;font-size:2vh;opacity:.7">' +
+           'Último día completo: ' + esc(a.fecha) + '</div>';
+    }
+    return h;
+  }
+
+  function vistaGrupo(d) {
+    var g = d.grupo || {};
+    var lista = g.grupos || [];
+    if (!lista.length) return sinDatos('Sin datos de producción por grupo.');
+    var max = 0;
+    for (var i = 0; i < lista.length; i++) if (lista[i].kg > max) max = lista[i].kg;
+    var h = '<div class="caja ancha" style="padding:3vh 2.4vw">' +
+            '<div class="rot" style="margin-bottom:2.2vh">Producción media por grupo — últimos 30 días</div>';
+    for (var j = 0; j < lista.length; j++) {
+      var it = lista[j];
+      var pct = max ? Math.max(4, Math.round(100 * it.kg / max)) : 0;
+      h += '<div class="barra-fila" style="font-size:2.8vh">' +
+           '<span class="n" style="width:34%">' + esc(it.nombre) + '</span>' +
+           '<span class="barra-riel"><span class="barra-relleno" style="width:' + pct + '%"></span></span>' +
+           '<span class="v" style="width:16%">' + num(it.kg, 1) +
+           '<span style="opacity:.6;font-weight:500"> kg</span></span></div>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function vistaRutina(d) {
+    var r = d.rutina || {};
+    var ses = r.sesiones || [];
+    if (!ses.length) return sinDatos('Sin sesiones analizadas hoy.');
+    var u = ses[ses.length - 1];                       // la última del día
+    // `detalle` es una LISTA de {clave, label, valor, peso} -- verificado en
+    // rutina.py, no asumido. Cada ítem trae su propio peso, así que no hace
+    // falta cruzarlo contra otro diccionario.
+    var det = u.detalle || [];
+    var h = '<div class="fila"><div class="caja grande" style="flex:1 1 30%">' +
+            '<div class="rot">Score de la última sesión</div>' +
+            '<div class="num">' + num(u.score) + '</div>' +
+            '<div class="pie">' + esc(hora(u.inicio)) + '</div></div>';
+    h += '<div class="caja" style="flex:1 1 60%">';
+    var mostrados = 0;
+    for (var i = 0; i < det.length && mostrados < 7; i++) {
+      var d = det[i];
+      // Peso 0 = componente que esta sala no puntúa: mostrarlo confunde.
+      if (!d || d.peso === 0 || typeof d.valor !== 'number') continue;
+      h += '<div class="barra-fila"><span class="n">' + esc(d.label || d.clave) + '</span>' +
+           '<span class="barra-riel"><span class="barra-relleno" style="width:' +
+           Math.max(0, Math.min(100, d.valor)) + '%"></span></span>' +
+           '<span class="v">' + num(d.valor) + '</span></div>';
+      mostrados++;
+    }
+    if (!mostrados) h += '<div class="vacio" style="font-size:2.4vh">Sin componentes puntuados</div>';
+    h += '</div></div>';
+    return h;
+  }
+
+  function vistaAlertas(d) {
+    var a = d.alertas || {};
+    var tab = a.tablero || [], chk = a.checklist || [], bit = a.bitacora_puestos || [];
+    if (!tab.length && !chk.length && !bit.length) {
+      return '<div class="vacio"><span class="ok">✔</span>Sin alertas ni pendientes</div>';
+    }
+    var h = '<div class="fila">';
+    if (tab.length) {
+      h += '<div class="caja ancha"><div class="rot">Fuera de rango</div><ul class="lista">';
+      for (var i = 0; i < tab.length && i < 6; i++) {
+        var t = tab[i];
+        h += '<li><span class="sem ' + esc(t.nivel) + '"></span>' + esc(t.nombre) +
+             (t.viejo ? '<span class="men">dato viejo</span>' : '') +
+             '<span class="val">' + num(t.valor, t.decimales) +
+             (t.unidad ? ' ' + esc(t.unidad) : '') + '</span></li>';
+      }
+      h += '</ul></div>';
+    }
+    if (chk.length || bit.length) {
+      h += '<div class="caja ancha"><div class="rot">Pendientes</div><ul class="lista">';
+      for (var j = 0; j < chk.length && j < 5; j++) {
+        h += '<li><span class="sem mal"></span>' + esc(chk[j].tarea) +
+             (chk[j].sector ? '<span class="men">' + esc(chk[j].sector) + '</span>' : '') +
+             '<span class="val">' + (chk[j].dias !== null ? num(chk[j].dias) + ' d' : '') + '</span></li>';
+      }
+      if (bit.length) {
+        h += '<li><span class="sem atencion"></span>Bitácora: puestos con reporte abierto' +
+             '<span class="val">' + esc(bit.join(', ')) + '</span></li>';
+      }
+      h += '</ul></div>';
+    }
+    h += '</div>';
+    return h;
+  }
+
+  function sinDatos(txt) {
+    return '<div class="vacio">' + esc(txt) + '</div>';
+  }
+
+  var PINTORES = {
+    ordeno: vistaOrdeno, produccion: vistaProduccion, grupo: vistaGrupo,
+    rutina: vistaRutina, alertas: vistaAlertas
+  };
+
+  // ---------------------------------------------------------------- ciclo
+  function pintar() {
+    var clave = VISTAS[iVista] || VISTAS[0];
+    $('titulo-vista').innerHTML = esc(LABELS[clave] || clave);
+    if (!datos) {
+      $('cuerpo').innerHTML = sinDatos('Conectando…');
+      return;
+    }
+    var fn = PINTORES[clave];
+    try {
+      $('cuerpo').innerHTML = fn ? fn(datos) : sinDatos('Vista desconocida');
+    } catch (e) {
+      // Una vista que falla NO puede dejar el televisor en blanco ni frenar la
+      // rotación: se avisa y se sigue con la siguiente.
+      $('cuerpo').innerHTML = sinDatos('No se pudo mostrar esta vista');
+      if (window.console) console.error(e);
+    }
+  }
+
+  function pedir() {
+    if (pidiendo) return;
+    pidiendo = true;
+    var x = new XMLHttpRequest();
+    x.open('GET', '/api/tv/datos?tambo=' + encodeURIComponent(TAMBO), true);
+    x.timeout = 60000;
+    x.onreadystatechange = function () {
+      if (x.readyState !== 4) return;
+      pidiendo = false;
+      if (x.status === 200) {
+        try {
+          var nuevo = JSON.parse(x.responseText);
+          datos = nuevo;                                  // sólo se pisa si parseó
+          if (nuevo.vistas && nuevo.vistas.length) VISTAS = nuevo.vistas;
+          if (nuevo.segundos) SEGUNDOS = nuevo.segundos;
+          $('conexion').className = 'punto';
+          pintar();
+          return;
+        } catch (e) { /* respuesta rota: se cae al caso de abajo */ }
+      }
+      // SIN CONEXION: se deja lo último bueno en pantalla y sólo se marca el
+      // punto. Una pantalla en la pared no puede quedar en blanco porque falló
+      // un refresco.
+      $('conexion').className = 'punto mal';
+    };
+    x.onerror = x.ontimeout = function () {
+      pidiendo = false;
+      $('conexion').className = 'punto mal';
+    };
+    x.send();
+  }
+
+  function tic() {
+    var ahora = new Date();
+    var hh = ahora.getHours(), mm = ahora.getMinutes();
+    $('reloj').innerHTML = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
+
+    var pasado = (ahora.getTime() - t0Vista) / 1000;
+    var pct = Math.min(100, 100 * pasado / SEGUNDOS);
+    $('progreso').style.width = pct + '%';
+    if (pasado >= SEGUNDOS) {
+      iVista = (iVista + 1) % VISTAS.length;
+      t0Vista = ahora.getTime();
+      pintar();
+    }
+  }
+
+  pintar();
+  pedir();
+  setInterval(tic, 250);
+  setInterval(pedir, REFRESCO_MS);
+
+  // Si el navegador del televisor se suspende y vuelve, refrescar al instante
+  // en vez de esperar el próximo ciclo.
+  if (typeof document.addEventListener === 'function') {
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden) pedir();
+    });
+  }
+})();
+</script>
+</body>
+</html>

@@ -2897,6 +2897,7 @@
     <button class="lac-segment__item" data-tab="ia_whatsapp" aria-pressed="false">🤖 IA por WhatsApp</button>
     <button class="lac-segment__item" data-tab="iot_canales" aria-pressed="false">🔌 Entradas/Salidas</button>
     <button class="lac-segment__item" data-tab="lavado_auto" aria-pressed="false">🧼 Lavado Automático</button>
+    <button class="lac-segment__item" data-tab="tv" aria-pressed="false">📺 Modo televisor</button>
   </div>
 
   <section class="card" id="config-general-card">
@@ -3287,6 +3288,40 @@
     <div style="margin-top:14px">
       <button id="config-lavado-auto-guardar" disabled>Guardar</button>
     </div>
+  </section>
+
+  <section class="card" id="config-tv-card" hidden>
+    <h2 style="margin:0">📺 Modo televisor</h2>
+    <span class="aviso">Una pantalla colgada en el tambo, prendida todo el día, rotando
+      entre vistas. Se abre con la dirección de abajo y no necesita usuario ni contraseña.</span>
+
+    <div class="aviso" style="margin-top:14px;font-weight:600">Dirección para la pantalla</div>
+    <div class="controls" style="margin-top:6px">
+      <input type="text" id="tv-url" readonly style="flex:1 1 460px;min-width:280px;padding:8px">
+      <button class="secundario" id="tv-copiar">Copiar</button>
+      <button class="secundario" id="tv-abrir">Abrir</button>
+    </div>
+    <span class="aviso" style="display:block;margin-top:8px">
+      <b>Esa dirección es la llave: quien la tenga ve los datos del tambo.</b> Cargala una
+      sola vez en el televisor — al abrirla, la pantalla se la guarda y la saca de la barra
+      de direcciones, así no queda a la vista de quien pase por delante. Si se filtró,
+      generá una nueva acá abajo: la pantalla vieja deja de funcionar en el próximo refresco
+      y hay que volver a cargarle la dirección.
+    </span>
+
+    <div class="aviso" style="margin-top:16px;font-weight:600">Qué muestra y cada cuánto</div>
+    <div class="controls" style="margin-top:6px;align-items:flex-start">
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Segundos por vista
+        <input type="number" id="tv-segundos" min="5" max="300" style="width:110px;padding:7px 8px">
+      </label>
+      <div id="tv-vistas" style="display:flex;flex-wrap:wrap;gap:12px;padding-top:18px"></div>
+    </div>
+
+    <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap">
+      <button id="tv-guardar" disabled>Guardar</button>
+      <button class="secundario" id="tv-rotar">Generar dirección nueva</button>
+    </div>
+    <div class="aviso" id="tv-estado" style="margin-top:8px"></div>
   </section>
   </div>
     </main>
@@ -11046,6 +11081,7 @@ async function cargarConfiguracion() {
     cargarWhatsappIa();
     cargarConexionIot();
     cargarCanalesGateway();
+    cargarConfigTv();
     cargarLavadoAuto();
     estado.textContent = '';
   } catch (e) {
@@ -11071,6 +11107,7 @@ document.getElementById('config-tabs').addEventListener('click', ev => {
   document.getElementById('config-ia-whatsapp-card').hidden = tab !== 'ia_whatsapp';
   document.getElementById('config-iot-canales-card').hidden = tab !== 'iot_canales';
   document.getElementById('config-lavado-auto-card').hidden = tab !== 'lavado_auto';
+  document.getElementById('config-tv-card').hidden = tab !== 'tv';
 });
 
 // --- Editor de la plantilla del check-list ---------------------------------
@@ -11320,6 +11357,83 @@ document.getElementById('config-iot-conexion-guardar').addEventListener('click',
 let canalesGatewayTodos = [];
 let canalesGatewayActual = {};
 let canalesGatewayOriginal = '';
+
+// --- ⚙ Configuración › 📺 Modo televisor ----------------------------------
+// La dirección con el token se muestra para copiarla al televisor. Rotarla
+// invalida la pantalla que estuviera andando, así que se pide confirmación.
+let tvOriginal = null;
+
+async function cargarConfigTv() {
+  const estado = document.getElementById('tv-estado');
+  try {
+    const d = await pedirJSON('/api/tv/config?tambo=' + encodeURIComponent(tamboActual));
+    document.getElementById('tv-url').value = d.url || '';
+    document.getElementById('tv-segundos').value = d.segundos ?? '';
+    const activas = d.vistas_activas || [];
+    document.getElementById('tv-vistas').innerHTML = (d.vistas || []).map(v =>
+      `<label class="aviso" style="display:flex;align-items:center;gap:6px">
+         <input type="checkbox" class="tv-vista" value="${v.clave}"
+                ${activas.includes(v.clave) ? 'checked' : ''}> ${v.label}
+       </label>`).join('');
+    tvOriginal = JSON.stringify(tvValores());
+    document.getElementById('tv-guardar').disabled = true;
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+function tvValores() {
+  return {
+    segundos: numOrNull(document.getElementById('tv-segundos').value),
+    vistas: [...document.querySelectorAll('.tv-vista:checked')].map(c => c.value),
+  };
+}
+
+document.getElementById('config-tv-card').addEventListener('input', () => {
+  if (tvOriginal === null) return;
+  document.getElementById('tv-guardar').disabled =
+    JSON.stringify(tvValores()) === tvOriginal;
+});
+
+document.getElementById('tv-copiar').addEventListener('click', () => {
+  const inp = document.getElementById('tv-url');
+  inp.select();
+  // `execCommand` de respaldo: el portapapeles moderno sólo funciona en
+  // contextos seguros, y el tambo entra por HTTP en la red local.
+  navigator.clipboard?.writeText(inp.value).catch(() => document.execCommand('copy'));
+  document.getElementById('tv-estado').textContent = 'Dirección copiada.';
+});
+
+document.getElementById('tv-abrir').addEventListener('click', () => {
+  window.open(document.getElementById('tv-url').value, '_blank');
+});
+
+document.getElementById('tv-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('tv-estado');
+  try {
+    await pedirJSON('/api/tv/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(tvValores()),
+    });
+    estado.textContent = 'Guardado. La pantalla lo toma en el próximo refresco.';
+    cargarConfigTv();
+  } catch (e) { estado.textContent = 'Error: ' + e.message; }
+});
+
+document.getElementById('tv-rotar').addEventListener('click', async () => {
+  if (!confirm('Se genera una dirección nueva y la pantalla que esté andando DEJA DE '
+             + 'funcionar hasta que le cargues la nueva. ¿Seguimos?')) return;
+  const estado = document.getElementById('tv-estado');
+  try {
+    await pedirJSON('/api/tv/config', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rotar_token: true }),
+    });
+    await cargarConfigTv();
+    estado.textContent = 'Dirección nueva generada: cargala en el televisor.';
+  } catch (e) { estado.textContent = 'Error: ' + e.message; }
+});
 
 async function cargarCanalesGateway() {
   const estado = document.getElementById('config-iot-canales-estado');

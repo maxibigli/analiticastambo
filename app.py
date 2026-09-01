@@ -7,8 +7,8 @@ import statistics
 import threading
 import time
 
-from flask import (Flask, Response, jsonify, redirect, render_template, request,
-                   send_from_directory, session, url_for)
+from flask import (Flask, Response, jsonify, make_response, redirect,
+                   render_template, request, send_from_directory, session, url_for)
 
 import datetime
 
@@ -52,6 +52,7 @@ import preneces
 import parametros
 import proveedores
 import proyeccion
+import pantalla_tv
 import rebano
 import rentabilidad
 import tasa_prenez
@@ -98,7 +99,12 @@ app.permanent_session_lifetime = datetime.timedelta(days=30)
 _RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla", "/api/iot/pantalla/historico",
                     "/api/iot/pantalla/io", "/api/iot/pantalla/actuador", "/api/iot/pantalla/lavado",
                     "/api/iot/pantalla/lavado/iniciar", "/api/iot/pantalla/lavado/cancelar",
-                    "/api/iot/pantalla/voz"}
+                    "/api/iot/pantalla/voz",
+                    # Modo televisor: una pantalla colgada en el tambo no puede
+                    # iniciar sesión. NO quedan abiertas: las dos exigen el
+                    # token de `pantalla_tv.py` (ver `_tv_autorizado`), y si
+                    # falta o no coincide contestan 403 sin tocar la base.
+                    "/tv", "/api/tv/datos"}
 
 
 @app.before_request
@@ -2421,6 +2427,179 @@ def api_iot_estado():
     })
 
 
+# --- Modo televisor -------------------------------------------------------
+# Una pantalla colgada en el tambo, prendida todo el día, rotando entre vistas.
+# No puede iniciar sesión, así que entra con el token de `pantalla_tv.py`.
+
+_TV_COOKIE = "tv_token"
+_TV_COOKIE_DIAS = 365
+
+
+def _tv_autorizado() -> bool:
+    """El token puede venir en la URL (la primera vez) o en la cookie que la
+    pantalla ya canjeó. Ver `pantalla_tv.valido`: compara en tiempo constante."""
+    return pantalla_tv.valido(request.args.get("token")
+                              or request.cookies.get(_TV_COOKIE))
+
+
+@app.get("/tv")
+def pantalla_tv_vista():
+    """La pantalla en sí. Con `?token=...` lo CANJEA POR UNA COOKIE y redirige
+    a la URL limpia: en un televisor a la vista de todos, dejar la llave puesta
+    en la barra de direcciones (y en el historial) es regalarla."""
+    tok = request.args.get("token")
+    if not _tv_autorizado():
+        return ("Pantalla no autorizada. Pedile la dirección al administrador "
+                "en ⚙ Configuración → Modo televisor."), 403
+    tambo = _tambo_del_request()
+    if tok:
+        resp = redirect(url_for("pantalla_tv_vista", tambo=tambo))
+        resp.set_cookie(_TV_COOKIE, tok, max_age=_TV_COOKIE_DIAS * 24 * 3600,
+                        httponly=True, samesite="Lax")
+        return resp
+    return make_response(render_template(
+        "tv.html", tambo=tambo, nombre_tambo=tambos.nombre_de(tambo),
+        vistas=pantalla_tv.vistas_activas(),
+        labels=pantalla_tv.VISTAS_LABEL,
+        segundos=pantalla_tv.segundos_por_vista(),
+        v=_version_estaticos()))
+
+
+@app.get("/api/tv/datos")
+def api_tv_datos():
+    """Todo lo que muestra la pantalla, en UN pedido.
+
+    REUSA LOS ENDPOINTS QUE YA USA CADA PANTALLA, llamados en proceso con el
+    `test_client` (mismo criterio y mismo motivo que `agente.py`): las trampas
+    de esquema que documenta CLAUDE.md ya están resueltas ahí, y duplicar esas
+    consultas acá garantizaría que en algún momento el televisor muestre un
+    número distinto al de la app.
+
+    Un endpoint que todavía calienta contesta 202: acá eso NO es un error, se
+    devuelve la sección como `null` y la pantalla sigue mostrando lo último que
+    tenía. Una pantalla colgada en la pared no puede quedarse en blanco porque
+    el caché se enfrió."""
+    if not _tv_autorizado():
+        return jsonify({"error": "No autorizado"}), 403
+    tambo = _tambo_del_request()
+
+    cli = app.test_client()
+    with cli.session_transaction() as s:
+        s["usuario"] = "pantalla-tv"
+        s["rol"] = "admin"
+
+    def traer(ruta):
+        try:
+            r = cli.get(f"{ruta}{'&' if '?' in ruta else '?'}tambo={tambo}")
+            return r.get_json() if r.status_code == 200 else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    # Del ordeño en vivo se manda un RESUMEN, no la tabla: `rows` trae una fila
+    # por puesto con ~20 columnas y el mismo problema que ya documenta
+    # `agente._recortar` — es para dibujar la rotativa, no para leer de lejos.
+    ordeno = None
+    crudo = traer("/api/ordeno?modo=vivo")
+    if crudo:
+        cols = crudo.get("columns") or []
+        filas = crudo.get("rows") or []
+        idx = {c: i for i, c in enumerate(cols)}
+
+        def contar(col, *valores):
+            i = idx.get(col)
+            return sum(1 for f in filas if i is not None and f[i] in valores) if i is not None else None
+
+        i_kg = idx.get("produccion_kg")
+        kg = sum((f[i_kg] or 0) for f in filas) if i_kg is not None else None
+        ordeno = {
+            "vacas": crudo.get("vacas"),
+            "ordenando": crudo.get("ordenando"),
+            "en_vivo": crudo.get("en_vivo"),
+            "hace": crudo.get("hace"),
+            "kg_plataforma": round(kg, 1) if kg is not None else None,
+            "apartar": contar("apartar", "Apartar"),
+            "no_ordenar": contar("permiso", "NO ordeñar"),
+            "en_tratamiento": contar("tratamiento", "Sí"),
+        }
+    dash = traer("/api/dashboard")
+    prod = traer("/api/resumen/produccion")
+    # Producción por grupo: se promedia acá (no en el frontend) porque es la
+    # MISMA cuenta simple que ya hace `cargarResumenGrupo` en el dashboard,
+    # sólo que ahí arma una serie de 30 días y acá alcanza con un ranking
+    # (una pantalla de lejos no lee una leyenda de varias líneas).
+    grp = traer("/api/resumen/produccion_grupo")
+    grupo = None
+    if grp:
+        detalle = grp.get("detalle") or {}
+        cols = detalle.get("columns") or []
+        filas = detalle.get("rows") or []
+        if "grupo" in cols and "promedio_kg" in cols:
+            i_grupo, i_kg = cols.index("grupo"), cols.index("promedio_kg")
+            nombres = grp.get("nombres") or {}
+            suma, cant = {}, {}
+            for f in filas:
+                g, kg = f[i_grupo], f[i_kg]
+                if kg is None:
+                    continue
+                suma[g] = suma.get(g, 0) + kg
+                cant[g] = cant.get(g, 0) + 1
+            ranking = [{"nombre": nombres.get(g, f"Grupo {g}"), "kg": round(suma[g] / cant[g], 1)}
+                       for g in (grp.get("grupos") or []) if cant.get(g)]
+            ranking.sort(key=lambda x: x["kg"], reverse=True)
+            grupo = {"grupos": ranking}
+    # `/api/rutina` trae `visitas` (un renglón por ordeño, 300 a 2.400) y
+    # `grupos`: se poda con la MISMA función que ya usa el agente, en vez de
+    # escribir un segundo recorte que después se desincronice.
+    rut = traer("/api/rutina")
+    if rut:
+        rut = agente._recortar("rutina_dia", rut)
+    tab = traer("/api/tablero")
+
+    # Alertas: sólo lo que está FUERA de rango, que es lo único accionable en
+    # una pantalla que se mira de lejos.
+    # `tarjetas` y `nivel` son los nombres reales que arma `tablero.armar`
+    # (verificados en el código, no asumidos): "bien" / "atencion" / "mal" /
+    # "sin_dato". Se ordenan los rojos primero: es lo que hay que ver de lejos.
+    fuera = []
+    for ind in ((tab or {}).get("tarjetas") or []):
+        if ind.get("nivel") in ("mal", "atencion") and ind.get("valor") is not None:
+            fuera.append({"nombre": ind.get("nombre"), "valor": ind.get("valor"),
+                          "unidad": ind.get("unidad"), "nivel": ind.get("nivel"),
+                          "decimales": ind.get("decimales"),
+                          "viejo": bool(ind.get("viejo")),
+                          "detalle": ind.get("detalle")})
+    fuera.sort(key=lambda x: 0 if x["nivel"] == "mal" else 1)
+    try:
+        nov = checklist.novedades(tambo)
+        # Las claves reales son tarea/sector/fecha (no viene "dias"), y los días
+        # se calculan con el MISMO helper que usa el resumen de WhatsApp, para
+        # que la pantalla y el mensaje no puedan decir números distintos.
+        abiertas = [{"tarea": f.get("tarea"), "sector": f.get("sector"),
+                     "dias": checklist._dias_desde(f["fecha"]) if f.get("fecha") else None}
+                    for f in (nov.get("abiertas") or [])]
+    except Exception:  # noqa: BLE001
+        abiertas = []
+    try:
+        bit = bitacora.abiertos_por_puesto(tambo)
+    except Exception:  # noqa: BLE001
+        bit = {}
+
+    return jsonify({
+        "tambo": tambo,
+        "nombre_tambo": tambos.nombre_de(tambo),
+        "ordeno": ordeno,
+        "kpis": (dash or {}).get("kpis"),
+        "reproduccion": (dash or {}).get("reproduccion"),
+        "produccion": prod,
+        "grupo": grupo,
+        "rutina": rut,
+        "alertas": {"tablero": fuera, "checklist": abiertas,
+                    "bitacora_puestos": sorted(bit.keys()) if bit else []},
+        "segundos": pantalla_tv.segundos_por_vista(),
+        "vistas": pantalla_tv.vistas_activas(),
+    })
+
+
 @app.get("/api/iot/pantalla")
 def api_iot_pantalla():
     """Estado del gateway IoT para una pantalla externa (ESP32), SIN login --
@@ -2716,6 +2895,38 @@ def api_iot_conexion_guardar():
     datos = request.json or {}
     try:
         iot_conexion.guardar(datos.get("host"), datos.get("port"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.get("/api/tv/config")
+@auth.requiere_rol("admin")
+def api_tv_config():
+    """Datos de ⚙ Configuración › 📺 Modo televisor: la URL para cargar en la
+    pantalla, cada cuánto rota y qué vistas muestra.
+
+    Devuelve el token entero porque es lo que hay que copiar a la pantalla, y
+    esta ruta ya exige rol admin -- quien la ve podía ver los mismos datos."""
+    return jsonify({
+        "url": url_for("pantalla_tv_vista", _external=True,
+                       token=pantalla_tv.token(), tambo=_tambo_del_request()),
+        "segundos": pantalla_tv.segundos_por_vista(),
+        "vistas_activas": pantalla_tv.vistas_activas(),
+        "vistas": [{"clave": c, "label": pantalla_tv.VISTAS_LABEL[c]}
+                   for c in pantalla_tv.VISTAS],
+    })
+
+
+@app.post("/api/tv/config")
+@auth.requiere_rol("admin")
+def api_tv_config_guardar():
+    cuerpo = request.json or {}
+    if cuerpo.get("rotar_token"):
+        pantalla_tv.rotar()      # la pantalla que estaba andando deja de andar
+    try:
+        pantalla_tv.guardar_preferencias(segundos=cuerpo.get("segundos"),
+                                         vistas=cuerpo.get("vistas"))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True})
