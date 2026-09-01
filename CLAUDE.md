@@ -2277,6 +2277,50 @@ de error. Es de sólo lectura: no escribe en la base, no manda alertas, no
 toca configuración. Se corre parado en la carpeta del proyecto y con el
 intérprete que tiene el puerto.
 
+## "Rutina de ordeño" juntaba ordeños: DOS causas, no una (31/08/2026)
+
+Reportado por el tambo: la pantalla mostraba sesiones de 12 h con 3.150 vacas
+—el doble de un ordeñe real— y con eso el score y todos los tiempos salían
+calculados sobre una mezcla de dos ordeños.
+
+**Medido en producción antes de tocar nada** (21/08/2026, 7.155 visitas):
+
+    ANTES    23:56-12:22   12,4 h   3150 vacas   score 84   <- dos ordeños
+             15:23-19:44    4,3 h   1639 vacas   score 92
+             23:59-04:34    4,6 h   1642 vacas   score 94
+
+    DESPUES  23:56-04:28    4,5 h   1636 vacas   score 94
+             07:22-12:22    5,0 h   1514 vacas   score 92
+             15:23-19:44    4,3 h   1639 vacas   score 92
+
+**CAUSA 1 — `analizar_dia` tenía una COPIA INLINE del corte por hueco.**
+Nunca llamaba a `_separar_sesiones`, así que jamás llegaba a preguntar por
+`CMSDeviceVisit.ParlorSession` y se quedó con el criterio que el resto del
+código ya había abandonado. Ahora llama a la función compartida, y
+`sql_rutina` trae `ParlorSession` (el JOIN a `CMSDeviceVisit` ya estaba: no
+costó nada). **Ojo con esto al leer el código: había TRES lugares distintos
+armando visitas desde filas, y sólo dos leían `sesion_parlor`.**
+
+**CAUSA 2, y es la que de verdad producía el pegoteo — el filtro por día.**
+`analizar_dia` conservaba todo bloque que SE SUPERPUSIERA con el día. Como la
+consulta trae ±6h de margen, una sesión que arranca 23:59 (y pertenece al día
+siguiente) entraba TAMBIÉN en el día que se estaba mirando: quedaban 4 bloques
+donde el tambo hace 3 ordeños, y `_fusionar_hasta(4, 3)` pegaba los dos más
+cercanos. Arreglar sólo la causa 1 NO cambiaba nada —verificado, los números
+salían idénticos— porque la fusión volvía a unirlos igual.
+
+Ahora cada bloque se asigna a **UN SOLO día** con `_dia_de_bloque` (la fecha de
+su visita del medio), que es el criterio que `analizar_rendimiento` ya usaba.
+Las dos pantallas cuentan las mismas sesiones, que es regla del proyecto.
+
+**Verificado**: cinco días seguidos de La Ponderosa dan 3 sesiones de 4,3-5,5 h
+y ~4.800 vacas por día; el 27/07 (el día con la `ParlorSession` faltante que
+ya está documentado más arriba) sigue mostrando UNA sesión de 652 vacas sin
+inventar las que faltan. Y con filas sintéticas, para las dos salas: la sesión
+que arranca 23:50 se cuenta en el día siguiente, no se duplica entre días
+consecutivos y no se pierde ninguna. La convencional —que no tiene
+`ParlorSession` y sigue cortando por hueco— da lo mismo.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

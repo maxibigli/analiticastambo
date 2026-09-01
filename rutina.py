@@ -203,6 +203,15 @@ def sql_rutina(fecha: str) -> str:
         SELECT
           m.Place AS puesto, b.Number AS rp, b.[Group] AS grupo,
           m.IDTime AS hora_id, c.VerifiedTime AS hora_coloc, y.MilkConfirmTime AS hora_fin,
+          -- LA SESIÓN QUE GRABA LA MÁQUINA. Sin esto, `_separar_sesiones` caía
+          -- al corte por hueco y `_fusionar_hasta` volvía a pegar rondas REALES
+          -- en una sola: es el mismo bug que ya se había arreglado en
+          -- `sql_rendimiento` y que acá quedó vivo porque esta consulta no
+          -- traía el campo. Medido en produccion el 21/08/2026: por hueco daba
+          -- una "sesion" de 19,6 h con 4.789 vacas (tres ordeños juntos);
+          -- por ParlorSession, sesiones de ~4,4 h y ~1.640 vacas.
+          -- El JOIN a CMSDeviceVisit ya estaba, asi que no cuesta nada.
+          c.ParlorSession AS sesion_parlor,
           y.ForcedRetract AS retirada_forzada,
           y.NoOfReattaches AS recolocaciones, y.Slips AS deslizamientos,
           y.Blocks AS bloqueos, y.KickOffs AS patadas,
@@ -1061,9 +1070,11 @@ def _dia_de_bloque(vs: list):
     temprano. Así ninguno de los dos días queda con 4 sesiones y no se fusiona
     nada.
 
-    OJO al cambiarlo: `analizar_dia` (Rutina de ordeño) NO usa esto — resuelve
-    lo mismo de otra forma, descartando los bloques de días vecinos ANTES de
-    aplicar el tope. Por eso esa página nunca tuvo el pico.
+    OJO al cambiarlo: lo usan LAS DOS pantallas (Rendimiento Sala y Rutina de
+    ordeño), justamente para que cuenten las mismas sesiones. Rutina resolvía
+    esto de otra forma —se quedaba con todo bloque que SE SUPERPUSIERA con el
+    día— y por eso metía 4 bloques donde el tambo hace 3 ordeños: el tope los
+    volvía a fusionar y salía una sesión de 12,4 h con 3.150 vacas.
     """
     return vs[len(vs) // 2]["hora_id"].date()
 
@@ -1154,6 +1165,13 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
             # contra la propia hora de la leche y da 0s "en hora ✓" — o sea que
             # las vacas sin identificar mejoraban el puntaje de colocación.
             "sin_id": bool(r[idx["sin_id"]]) if "sin_id" in idx else False,
+            # La sesión que graba la máquina (`CMSDeviceVisit.ParlorSession`),
+            # para que `_separar_sesiones` corte por ahí en vez de por hueco.
+            # SIN ESTO el corte por hueco pegaba ordeños reales: medido el
+            # 21/08/2026, una "sesión" de 12,4 h con 3.150 vacas, que eran dos.
+            # Va condicional porque la sala convencional no lo tiene — ahí el
+            # corte por hueco sigue siendo lo correcto.
+            "sesion_parlor": r[idx["sesion_parlor"]] if "sesion_parlor" in idx else None,
             # "lado"/"bloque" (SideNo/BatchNo): solo los trae la consulta de una
             # sala convencional (ver `salas/convencional.py`). En la rotativa
             # quedan en None y nadie los usa — la ocupación por tanda es
@@ -1181,29 +1199,29 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
         })
     visitas.sort(key=lambda v: v["hora_id"])
 
-    bloques, actual, anterior = [], [], None
-    for v in visitas:
-        if anterior is not None and (v["hora_id"] - anterior).total_seconds() > GAP_SESION_MIN * 60:
-            bloques.append(actual)
-            actual = []
-        actual.append(v)
-        anterior = v["hora_id"]
-    if actual:
-        bloques.append(actual)
+    # ACÁ HABÍA UNA COPIA INLINE del corte por hueco, y por eso esta pantalla
+    # se quedó con el bug que `_separar_sesiones` ya tenía resuelto: nunca
+    # llegaba a preguntar por `sesion_parlor`. Con la copia, el 21/08/2026 daba
+    # una "sesión" de 12,4 h con 3.150 vacas — dos ordeños pegados, con el score
+    # y todos los tiempos calculados sobre esa mezcla.
+    # `_separar_sesiones` usa `CMSDeviceVisit.ParlorSession` si viene (rotativa)
+    # y cae al corte por hueco si no (convencional), que es lo correcto para
+    # cada sala.
+    bloques = _separar_sesiones(visitas)
 
     desde = datetime.datetime.strptime(fecha, "%Y-%m-%d")
     hasta = desde + datetime.timedelta(days=1)
-    # Primero se descartan los bloques de días vecinos (vienen del margen de
-    # ±6h de la consulta), y RECIÉN AHÍ se aplica el tope de sesiones: si no,
-    # los bloques del día anterior gastarían cupo del día que se está mirando.
-    del_dia = []
-    for vs in bloques:
-        if not vs:
-            continue
-        fin_bloque = max((v["hora_fin"] or v["hora_id"]) for v in vs)
-        if fin_bloque < desde or vs[0]["hora_id"] >= hasta:
-            continue  # sesión de un día adyacente (fuera del margen de interés)
-        del_dia.append(vs)
+    # Cada bloque se asigna a UN SOLO día, por su visita del medio
+    # (`_dia_de_bloque`) — el mismo criterio que ya usa `analizar_rendimiento`,
+    # para que las dos pantallas cuenten las mismas sesiones.
+    #
+    # ANTES se conservaba el bloque si SE SUPERPONÍA con el día, y eso era el
+    # problema: una sesión que arranca 23:59 pertenece al día siguiente pero
+    # entraba también en éste, dejando 4 bloques donde el tambo hace 3 ordeños.
+    # Con 4 bloques y tope 3, `_fusionar_hasta` pegaba los dos más cercanos y
+    # devolvía una "sesión" de 12,4 h con 3.150 vacas (medido el 21/08/2026),
+    # con el score y todos los tiempos calculados sobre esa mezcla.
+    del_dia = [vs for vs in bloques if vs and _dia_de_bloque(vs) == desde.date()]
     if max_sesiones:
         del_dia = _fusionar_hasta(del_dia, max_sesiones)
     sesiones = [_analizar_sesion(vs, pesos, nombres, ocupacion_fn, huecos_fn, umbral_prep_s,
