@@ -78,6 +78,12 @@
      renglón (7+1); acá se fija en cantidades que dividen a 8. */
   @media (min-width: 1000px) { #kpis { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
   @media (min-width: 1800px) { #kpis { grid-template-columns: repeat(8, minmax(0, 1fr)); } }
+  /* UN SOLO ritmo vertical en el Dashboard. Las tarjetas de arriba se
+     separaban con --lac-space-3 (12px) y los gráficos con --lac-space-4
+     (16px), y entre los dos bloques no había margen declarado: las tres
+     separaciones se veían distintas. Se acota a #kpis en vez de tocar `.kpis`
+     para no mover las otras pantallas que usan esa clase. */
+  #kpis { gap: var(--lac-space-4); }
   .tile {
     background: var(--surface-1); border: 1px solid var(--border); border-top: 3px solid var(--accent);
     border-radius: var(--lac-radius-card); padding: var(--lac-space-4);
@@ -111,7 +117,12 @@
      de apilarlos a todo lo ancho, que en un monitor grande daba gráficos
      chatísimos y scroll de más. Las tarjetas traen `margin-top` propio (para
      cuando van apiladas), que acá lo maneja el `gap`. */
-  .dash-graficos { display: grid; gap: var(--lac-space-4); grid-template-columns: 1fr; }
+  .dash-graficos { display: grid; gap: var(--lac-space-4); grid-template-columns: 1fr;
+                   /* MISMO valor que el `gap`: así la separación entre la fila
+                      de tarjetas y la primera de gráficos es igual a la que hay
+                      entre las filas de gráficos. Sin esto los dos bloques
+                      quedaban pegados de forma distinta al resto. */
+                   margin-top: var(--lac-space-4); }
   .dash-graficos > .card { margin-top: 0; }
   @media (min-width: 1000px) { .dash-graficos { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   @media (min-width: 1800px) { .dash-graficos { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
