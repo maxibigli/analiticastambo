@@ -2442,6 +2442,15 @@
       <div class="aviso" id="salud-estado" style="margin-top:8px"></div>
     </section>
 
+    {# El anillo de "Composición del rodeo" vivía en el Dashboard; se sacó de
+       ahí (lo reemplazó el ranking por grupo) y se movió acá, que es donde
+       encaja: es composición del rodeo, no producción. #}
+    <section class="card" id="salud-composicion-card">
+      <h2 style="margin:0">Composición del rodeo</h2>
+      <div class="aviso" id="salud-composicion-info" style="margin-top:6px"></div>
+      <div class="chart-box" style="margin-top:10px"><canvas id="chart-composicion-rodeo"></canvas></div>
+    </section>
+
     <section class="card" id="salud-atencion-card">
       <h2 style="margin:0">Atención vacas</h2>
       <span class="aviso">⚠ Índice <b>propio</b>, no es el score del add-on Chi: ese se calcula
@@ -8620,6 +8629,42 @@ function detenerPodalVivo() {
   clearInterval(podalTimer);
 }
 
+// Composición del rodeo (anillo vacas/novillas). Vivía en el Dashboard; se
+// mudó acá porque es composición del rodeo, no producción. Mismo endpoint y
+// mismo gráfico que tenía ahí, sin cambios.
+let chartComposicionRodeo = null;
+
+async function cargarComposicionRodeo() {
+  const info = document.getElementById('salud-composicion-info');
+  try {
+    const d = await pedirJSON('/api/resumen/animales?tambo=' + encodeURIComponent(tamboActual));
+    const segmentos = [
+      ['Vacas en ordeño', d.vacas_ordeno, SERIES[0]],
+      ['Vacas secas', d.vacas_secas, css('--warning')],
+      ['Novillas preñadas', d.novillas_prenadas, css('--muted')],
+      ['Novillas sin preñar', d.novillas_sin_prenar, css('--good')],
+    ];
+    chartComposicionRodeo = dibujar('chart-composicion-rodeo', chartComposicionRodeo, {
+      type: 'doughnut',
+      data: {
+        labels: segmentos.map(s => s[0]),
+        datasets: [{ data: segmentos.map(s => s[1]), backgroundColor: segmentos.map(s => s[2]) }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 12, boxHeight: 12 } } },
+      },
+    });
+    const neto = (d.altas_ayer || 0) - (d.bajas_ayer || 0);
+    info.textContent = `${fmt(d.total)} animales en total` +
+      (d.altas_ayer || d.bajas_ayer
+        ? ` (${neto > 0 ? '+' : ''}${neto} vs. ayer: ${d.altas_ayer} alta(s), ${d.bajas_ayer} baja(s))` : '');
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; setTimeout(cargarComposicionRodeo, 3000); }
+    else info.textContent = 'Error: ' + e.message;
+  }
+}
+
 // `limpiar`: false SOLO en el reintento automático de abajo. Al cambiar de
 // tambo (o entrar a la pantalla, o tocar "Actualizar") tiene que ser true:
 // SIN esto, las tarjetas grandes (RCS, BCS, Atención) se quedaban con el
@@ -10942,7 +10987,7 @@ function cargarDatosDePagina(id) {
     activarAPedido('comparar-info', cargarComparar, 'la comparación con el comprador', DEMORA);
     activarAPedido('laser-info', cargarLaser, 'la calidad de La Serenísima', DEMORA);
   }
-  else if (id === 'salud') cargarSalud();
+  else if (id === 'salud') { cargarSalud(); cargarComposicionRodeo(); }
   else if (id === 'tareas') cargarTareas();
   else if (id === 'checklist') cargarChecklist();
   else if (id === 'sensehub') cargarSenseHub();
