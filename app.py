@@ -2446,14 +2446,23 @@ def _tv_autorizado() -> bool:
 def pantalla_tv_vista():
     """La pantalla en sí. Con `?token=...` lo CANJEA POR UNA COOKIE y redirige
     a la URL limpia: en un televisor a la vista de todos, dejar la llave puesta
-    en la barra de direcciones (y en el historial) es regalarla."""
+    en la barra de direcciones (y en el historial) es regalarla.
+
+    `?vista=<clave>` FIJA un sector, sin rotar (validado contra
+    `pantalla_tv.VISTAS`: un valor inventado o vacío se ignora, no rompe la
+    página). Es la contraparte por URL de "Transmitir <sector>" de
+    ⚙ Configuración — sirve para abrir un sector fijo en cualquier
+    navegador, con o sin Chromecast."""
     tok = request.args.get("token")
     if not _tv_autorizado():
         return ("Pantalla no autorizada. Pedile la dirección al administrador "
                 "en ⚙ Configuración → Modo televisor."), 403
     tambo = _tambo_del_request()
+    vista = request.args.get("vista")
+    if vista not in pantalla_tv.VISTAS:
+        vista = None
     if tok:
-        resp = redirect(url_for("pantalla_tv_vista", tambo=tambo))
+        resp = redirect(url_for("pantalla_tv_vista", tambo=tambo, vista=vista))
         resp.set_cookie(_TV_COOKIE, tok, max_age=_TV_COOKIE_DIAS * 24 * 3600,
                         httponly=True, samesite="Lax")
         return resp
@@ -2462,6 +2471,7 @@ def pantalla_tv_vista():
         vistas=pantalla_tv.vistas_activas(),
         labels=pantalla_tv.VISTAS_LABEL,
         segundos=pantalla_tv.segundos_por_vista(),
+        vista_fija=vista,
         v=_version_estaticos()))
 
 

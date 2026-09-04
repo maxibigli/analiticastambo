@@ -2321,6 +2321,69 @@ que arranca 23:50 se cuenta en el día siguiente, no se duplica entre días
 consecutivos y no se pierde ninguna. La convencional —que no tiene
 `ParlorSession` y sigue cortando por hueco— da lo mismo.
 
+## Modo televisor: transmitir por Chromecast, 5 sectores fijos (31/08-01/09/2026)
+
+`/tv` (ver más arriba, 25/08/2026) ganó soporte de Chromecast: un botón
+"Transmitir a Chromecast" en ⚙ Configuración › Modo televisor, y después el
+pedido del tambo de poder transmitir 5 "canales" — un sector fijo de la
+pantalla (Ordeño en vivo, Producción del día, Producción por grupo, Calidad
+de rutina, Alertas y pendientes) sin rotar, cada uno a una pantalla distinta.
+
+**UNA SOLA aplicación registrada en la consola de Google Cast
+(`pantalla_tv.CAST_APP_ID = "CFA16559"`), no cinco.** No es una cuestión de
+costo (el registro es una vez por CUENTA, no por app) sino de mantenimiento:
+el receiver que registra la consola apunta a una URL FIJA, y esa URL sólo
+puede llevar el token vigente en el momento de registrarla. Como el token se
+puede rotar desde la misma pantalla de Configuración (y rotarlo dice
+explícitamente "la pantalla vieja deja de funcionar"), CADA app registrada
+con ese token quedaría muda la próxima vez que alguien lo rote — y con 5
+apps, arreglarlo es registrar 5 URLs de nuevo a mano en la consola de Google,
+no una.
+
+**Los 5 sectores se transmiten con la MISMA app ya conectada**, mandándole un
+mensaje por un namespace de Cast (`urn:x-cast:com.analiticastambo.tv`) al
+receiver que ya está corriendo — no relanzando la sesión con otra URL (que
+además el SDK de Cast no deja hacer para un Custom Web Receiver: la URL que
+carga es la registrada, fija, el sender no se la puede pisar). El botón
+"Transmitir <sector>" de la Configuración conecta (o reusa la conexión si la
+pestaña ya está transmitiendo) y manda `{vista: <clave-o-null>}`; el receiver
+(`tv.html`) escucha ese namespace y pinea el sector con
+`window.__pantallaTv.fijarVista(clave)`, sin recargar la página. `null` (el
+botón "🔁 Rotación completa") vuelve al comportamiento de siempre.
+
+**`?vista=<clave>` en la URL es la MISMA función, por otra puerta.** Sirve
+para abrir un sector fijo en cualquier navegador, con o sin Chromecast —
+`/tv` la valida server-side contra `pantalla_tv.VISTAS` (una clave inventada
+o vacía se ignora, no rompe la página) y la pasa al template como
+`vista_fija`; el canje de token (`?token=...`) la preserva a través del
+redirect a la URL limpia.
+
+**Una pestaña del navegador sostiene UNA transmisión.** `requestSession()`
+de Cast, si esa pestaña ya tiene una sesión activa, no vuelve a preguntar el
+dispositivo — resuelve con la sesión que ya hay. Eso es justo lo que se
+quiere para cambiar de sector una pantalla ya transmitiendo (un click, sin
+recastear), pero significa que para tener VARIAS transmisiones a la vez (una
+pantalla con el ordeño en vivo, otra con las alertas) hay que abrir
+Configuración en una pestaña por Chromecast — está explicado así en la
+propia tarjeta, no es una limitación oculta.
+
+Probado (sin llamar a Google): el canje de token conserva `?vista=` a través
+del redirect; una clave inventada cae a `null` sin romper la página;
+`/api/tv/config` sigue trayendo las 5 claves reales de `pantalla_tv.VISTAS`
+en orden, no las tildadas para la rotación. Del lado del receiver, extraído
+el propio `tv.html`: pinear oculta la barra de progreso y el reloj sigue
+andando pero la vista no avanza (500 vueltas del tic sin cambiar), un
+mensaje con una clave inventada cae a rotación en vez de romper, y
+"Rotación completa" libera el pin. Del lado del sender, extraído el propio
+`index.html` con un `cast.framework` mockeado: se arman los 6 botones en
+orden (Rotación + los 5 sectores), el mensaje manda la clave exacta (o
+`null`, no `""`, para "Rotación"), dos clicks en la misma pestaña reusan la
+sesión en vez de reconectar, y cancelar el selector de dispositivos no
+muestra un error feo. Se verificó además que el namespace del sender y el
+del receiver son el mismo string LITERAL, comparando los dos archivos —
+un typo ahí manda el mensaje pero el receiver nunca lo escucha, sin ningún
+error visible en ningún lado.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

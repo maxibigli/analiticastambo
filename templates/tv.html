@@ -146,7 +146,20 @@
 <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
 <script>
   if (window.cast && cast.framework) {
-    cast.framework.CastReceiverContext.getInstance().start();
+    var __ctx = cast.framework.CastReceiverContext.getInstance();
+    // Namespace propio: le permite al botón "Transmitir <sector>" de
+    // ⚙ Configuración (ver `transmitirCanal` en index.html) fijar un
+    // sector en ESTE receiver ya cargado, sin relanzar la sesión ni volver
+    // a pedir la página. El listener se registra ANTES de `.start()` a
+    // propósito (orden recomendado del SDK); igual no importaría mucho acá,
+    // porque el sender recién puede mandar un mensaje después de que la
+    // sesión ya está conectada, momento en el que este script hace rato
+    // terminó de correr.
+    __ctx.addCustomMessageListener('urn:x-cast:com.analiticastambo.tv', function (evento) {
+      var datos = (evento && evento.data) || {};
+      if (window.__pantallaTv) window.__pantallaTv.fijarVista(datos.vista || null);
+    });
+    __ctx.start();
   }
 </script>
 
@@ -159,6 +172,10 @@
   var LABELS = {{ labels | tojson }};
   var SEGUNDOS = {{ segundos }};
   var TAMBO = {{ tambo | tojson }};
+  // Sector FIJO, sin rotar: llega por `?vista=` (validado server-side contra
+  // pantalla_tv.VISTAS) o por un mensaje de Cast (ver `window.__pantallaTv`
+  // más abajo y el listener al final del archivo). null = rota normal.
+  var vistaFija = {{ vista_fija | tojson }};
   var REFRESCO_MS = 30000;          // el payload junta 5 endpoints: no conviene menos
 
   var datos = null;                 // ULTIMO payload BUENO
@@ -343,7 +360,7 @@
 
   // ---------------------------------------------------------------- ciclo
   function pintar() {
-    var clave = VISTAS[iVista] || VISTAS[0];
+    var clave = vistaFija || VISTAS[iVista] || VISTAS[0];
     $('titulo-vista').innerHTML = esc(LABELS[clave] || clave);
     if (!datos) {
       $('cuerpo').innerHTML = sinDatos('Conectando…');
@@ -397,6 +414,10 @@
     var hh = ahora.getHours(), mm = ahora.getMinutes();
     $('reloj').innerHTML = (hh < 10 ? '0' : '') + hh + ':' + (mm < 10 ? '0' : '') + mm;
 
+    // Sector fijo: no hay rotación que avanzar. La barra de progreso ya
+    // quedó oculta en `actualizarBarraProgreso`.
+    if (vistaFija) return;
+
     var pasado = (ahora.getTime() - t0Vista) / 1000;
     var pct = Math.min(100, 100 * pasado / SEGUNDOS);
     $('progreso').style.width = pct + '%';
@@ -407,6 +428,29 @@
     }
   }
 
+  // La barra de progreso ("cuánto falta para la próxima vista") no
+  // significa nada con un sector fijo: se oculta entera, no sólo en 0%,
+  // para no sugerir una rotación que no va a pasar.
+  function actualizarBarraProgreso() {
+    $('progreso').parentNode.style.visibility = vistaFija ? 'hidden' : 'visible';
+  }
+
+  // Puente para el script de Cast (deliberadamente aparte, ver su
+  // comentario más abajo): fija o libera un sector sin recargar la página.
+  // Único punto de entrada externo a este closure — todo lo demás queda
+  // privado a propósito. `PINTORES` ya es el universo de claves válidas
+  // (los 5 sectores reales): no hace falta una segunda lista para validar
+  // lo que llega en el mensaje.
+  window.__pantallaTv = {
+    fijarVista: function (clave) {
+      vistaFija = (clave && PINTORES[clave]) ? clave : null;
+      t0Vista = new Date().getTime();
+      actualizarBarraProgreso();
+      pintar();
+    }
+  };
+
+  actualizarBarraProgreso();
   pintar();
   pedir();
   setInterval(tic, 250);

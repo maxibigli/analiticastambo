@@ -23,9 +23,9 @@
 <link rel="stylesheet" href="/static/css/lactia-tokens.css?v={{ v }}">
 <link rel="stylesheet" href="/static/css/lactia-components.css?v={{ v }}">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
-<!-- Botón "Transmitir a Chromecast" de ⚙ Configuración › Modo televisor.
+<!-- Botones "Transmitir <sector>" de ⚙ Configuración › Modo televisor.
      Se carga siempre (es liviano y async): sin Application ID configurado
-     (pantalla_tv.CAST_APP_ID en None) el botón queda oculto igual. -->
+     (pantalla_tv.CAST_APP_ID en None) el bloque queda oculto igual. -->
 <script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js" async></script>
 <style>
   /* Paleta de la app: apunta a los tokens de static/css/lactia-tokens.css.
@@ -3337,9 +3337,7 @@
       <input type="text" id="tv-url" readonly style="flex:1 1 460px;min-width:280px;padding:8px">
       <button class="secundario" id="tv-copiar">Copiar</button>
       <button class="secundario" id="tv-abrir">Abrir</button>
-      <button class="secundario" id="tv-transmitir" hidden>📡 Transmitir a Chromecast</button>
     </div>
-    <span class="aviso" id="tv-transmitir-estado" style="display:block;margin-top:6px"></span>
     <span class="aviso" style="display:block;margin-top:8px">
       <b>Esa dirección es la llave: quien la tenga ve los datos del tambo.</b> Cargala una
       sola vez en el televisor — al abrirla, la pantalla se la guarda y la saca de la barra
@@ -3347,6 +3345,25 @@
       generá una nueva acá abajo: la pantalla vieja deja de funcionar en el próximo refresco
       y hay que volver a cargarle la dirección.
     </span>
+
+    {# Transmitir por Chromecast, UN SECTOR FIJO por transmisión. Reusa la
+       misma aplicación registrada (pantalla_tv.CAST_APP_ID) para las 5: no
+       hace falta dar de alta un receiver por sector en la consola de Google
+       Cast (esa cuenta se registra UNA vez, y cada receiver nuevo hay que
+       volver a cargarlo si el token rota — ver `_tv_autorizado`). El sector
+       se fija mandándole un mensaje al receiver YA CARGADO, no relanzando la
+       app con otra URL — ver `transmitirCanal` y el listener de tv.html. #}
+    <div id="tv-cast-bloque" hidden style="margin-top:16px">
+      <div class="aviso" style="font-weight:600">Transmitir a Chromecast</div>
+      <span class="aviso" style="display:block;margin-top:4px">
+        Cada botón manda ESE sector fijo — sin rotar — al Chromecast que elijas. Para tener
+        varias transmisiones a la vez (una pantalla con el ordeño en vivo, otra con las
+        alertas), abrí esta página en una pestaña por Chromecast: cada pestaña sostiene
+        una sola transmisión.
+      </span>
+      <div id="tv-canales" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px"></div>
+      <span class="aviso" id="tv-transmitir-estado" style="display:block;margin-top:6px"></span>
+    </div>
 
     <div class="aviso" style="margin-top:16px;font-weight:600">Qué muestra y cada cuánto</div>
     <div class="controls" style="margin-top:6px;align-items:flex-start">
@@ -11469,6 +11486,7 @@ async function cargarConfigTv() {
     document.getElementById('tv-guardar').disabled = true;
     estado.textContent = '';
     castAppId = d.cast_app_id || null;
+    pintarCanalesCast(d.vistas);
     actualizarBotonCast();
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
@@ -11502,12 +11520,25 @@ document.getElementById('tv-abrir').addEventListener('click', () => {
   window.open(document.getElementById('tv-url').value, '_blank');
 });
 
-// --- Botón "Transmitir a Chromecast" ----------------------------------
+// --- Transmitir a Chromecast, por sector --------------------------------
 // El SDK avisa por acá cuando terminó de cargar (puede tardar más que
 // cargarConfigTv, así que los dos lados se avisan solos con esta variable en
 // vez de asumir un orden). `castAppId` sale de `pantalla_tv.CAST_APP_ID`: en
 // null (todavía no se registró ninguna aplicación en la consola de Google
-// Cast) el botón se queda oculto.
+// Cast) el bloque se queda oculto.
+//
+// UNA SOLA aplicación registrada, no cinco. El motivo no es de costo (el
+// registro es una vez por cuenta, no por app) sino de mantenimiento: el
+// receiver que registra la consola de Google Cast apunta a una URL FIJA, y
+// esa URL sólo puede llevar el token vigente — cada vez que se rota el
+// token (⚙ Configuración lo ofrece explícitamente) TODAS las apps
+// registradas con ese token quedarían mudas hasta volver a registrarlas a
+// mano. En vez de eso, los 5 sectores (`pantalla_tv.VISTAS`, vía
+// `/api/tv/config`) se transmiten con la MISMA app ya cargada: el botón le
+// manda un MENSAJE por un namespace de Cast al receiver que ya está
+// corriendo (ver el listener en tv.html), y éste fija el sector sin
+// recargar la página ni depender de qué URL quedó registrada.
+const CAST_NS = 'urn:x-cast:com.analiticastambo.tv';
 let castAppId = null;
 let castSdkListo = false;
 let castContextoListo = false;
@@ -11527,13 +11558,13 @@ function castListo() {
 }
 
 function actualizarBotonCast() {
-  const btn = document.getElementById('tv-transmitir');
-  if (!btn) return;
-  if (!castSdkListo || !castAppId) { btn.hidden = true; return; }
+  const bloque = document.getElementById('tv-cast-bloque');
+  if (!bloque) return;
+  if (!castSdkListo || !castAppId) { bloque.hidden = true; return; }
   if (!castListo()) {
     // `disponible` ya llegó pero `window.cast` todavía no -- es la carrera
     // de arriba. Reintenta solo, no se pierde el aviso.
-    btn.hidden = true;
+    bloque.hidden = true;
     setTimeout(actualizarBotonCast, 300);
     return;
   }
@@ -11544,23 +11575,49 @@ function actualizarBotonCast() {
     });
     castContextoListo = true;
   }
-  btn.hidden = false;
+  bloque.hidden = false;
 }
 
-document.getElementById('tv-transmitir').addEventListener('click', async () => {
+// Un botón por sector + "Rotación completa" (clave vacía = el receiver
+// vuelve a rotar solo, comportamiento de siempre). `vistas` viene de
+// `/api/tv/config` con las 5 CLAVES REALES (`pantalla_tv.VISTAS`), no de
+// las tildadas para la rotación: un sector que hoy no rota en la pantalla
+// principal igual se puede transmitir fijo a otra.
+function pintarCanalesCast(vistas) {
+  const cont = document.getElementById('tv-canales');
+  if (!cont) return;
+  const opciones = [{ clave: '', label: '🔁 Rotación completa' }, ...(vistas || [])];
+  cont.innerHTML = opciones.map(v =>
+    `<button class="secundario" type="button" data-vista="${escHtml(v.clave)}" data-label="${escHtml(v.label)}">📡 ${escHtml(v.label)}</button>`).join('');
+  cont.querySelectorAll('button').forEach(btn =>
+    btn.addEventListener('click', () => transmitirCanal(btn.dataset.vista, btn.dataset.label)));
+}
+
+async function transmitirCanal(vista, label) {
   const estado = document.getElementById('tv-transmitir-estado');
-  if (!castListo()) { estado.textContent = 'El componente de Chromecast todavía no cargó, esperá un segundo y probá de nuevo.'; return; }
+  if (!castListo()) {
+    estado.textContent = 'El componente de Chromecast todavía no cargó, esperá un segundo y probá de nuevo.';
+    return;
+  }
   estado.textContent = 'Buscando Chromecasts en la red…';
   try {
+    // Si esta pestaña YA está transmitiendo, `requestSession` no vuelve a
+    // preguntar el dispositivo: resuelve con la sesión que ya está — el
+    // click sólo cambia de sector la MISMA pantalla, sin recastear.
     await cast.framework.CastContext.getInstance().requestSession();
-    estado.textContent = '✔ Transmitiendo.';
+    const sesion = cast.framework.CastContext.getInstance().getCurrentSession();
+    // Sin este mensaje la pantalla queda en lo que ya tenía (rotando, o el
+    // sector que se hubiera fijado antes) hasta el próximo click: conectar
+    // solo no alcanza para fijar el sector.
+    if (sesion) await sesion.sendMessage(CAST_NS, { vista: vista || null });
+    estado.textContent = `✔ Transmitiendo: ${label}.`;
   } catch (e) {
     // Cerrar el selector de dispositivos sin elegir uno también cae acá
     // ('cancel'): no es un error real, no hace falta mostrar nada.
     estado.textContent = e === 'cancel' ? ''
       : 'No se encontró ningún Chromecast en la red (¿está registrado en la consola de Google Cast?).';
   }
-});
+}
 
 document.getElementById('tv-guardar').addEventListener('click', async () => {
   const estado = document.getElementById('tv-estado');
