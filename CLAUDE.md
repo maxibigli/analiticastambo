@@ -2384,6 +2384,36 @@ del receiver son el mismo string LITERAL, comparando los dos archivos —
 un typo ahí manda el mensaje pero el receiver nunca lo escucha, sin ningún
 error visible en ningún lado.
 
+**Registrar cada Chromecast por número de serie ANTES de probar en un
+dispositivo real, o publicar la app para no tener que hacerlo** (aclarado
+el 01/09/2026, contra la documentación oficial de Google — no se asumió de
+memoria: https://developers.google.com/cast/docs/registration).
+
+Mientras la app (`CFA16559`) siga SIN PUBLICAR, sólo puede transmitir a los
+Chromecast que se hayan registrado uno por uno como dispositivo de prueba en
+`cast.google.com/publish` (serie del equipo, esperar ~15 min, reiniciarlo).
+No hay un tope documentado de cuántos se pueden registrar así — la duda de
+"Google permite 5" que arrancó este feature no aparece en la documentación
+oficial; probablemente se confundió con algún límite viejo o con otro
+producto de Cast.
+
+**PUBLICAR la app saca ese requisito por completo**: una vez publicada,
+funciona en cualquier Chromecast sin registrar nada. El trámite es liviano
+(nombre, descripción, ícono, la URL del sender) y no aparece review de
+diseño ni demora de aprobación en la documentación.
+
+**OJO al publicar: NO tildar la opción de listado** ("choose whether to
+list your application on Google properties such as chromecast.com/apps").
+Publicar y listar son cosas DISTINTAS — publicar solo saca el requisito de
+registrar dispositivos; listar además pone la app en un directorio público
+donde cualquiera podría encontrarla y transmitirla a su propio televisor.
+Como la URL del receiver ya tiene el token pegado (ver más arriba), alguien
+así vería los datos reales del tambo hasta que se rotara el token. Publicar
+SIN listar deja el `CFA16559` tan privado como está hoy — vive sólo en
+`/api/tv/config`, gateado por rol admin — sin la vuelta de registrar cada
+equipo. La seguridad real no depende de esto de todos modos: sigue siendo
+el token, que no cambia ni con publicar ni con listar.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).
