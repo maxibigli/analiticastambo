@@ -2414,6 +2414,29 @@ SIN listar deja el `CFA16559` tan privado como está hoy — vive sólo en
 equipo. La seguridad real no depende de esto de todos modos: sigue siendo
 el token, que no cambia ni con publicar ni con listar.
 
+**El botón "Transmitir" quedaba SIEMPRE oculto en producción: al script del
+SDK de Cast le faltaba `?loadCastFramework=1` (04/09/2026).** Reportado por
+el tambo con la app ya publicada, HTTPS, Chrome — las tres condiciones que
+hacían sospechar de otra causa. Diagnosticado EN VIVO, no adivinado:
+`window.cast` en la consola del navegador del tambo dio `undefined`.
+Confirmado contra la guía oficial de Google
+(developers.google.com/cast/docs/web_sender/integrate): el script se tiene
+que cargar con `?loadCastFramework=1` para que exponga `cast.framework.*`
+— sin ese parámetro `window.cast` puede quedar directamente sin definir.
+Todo este código (`CastContext`, `CastReceiverContext`) ya estaba escrito
+contra esa API desde el primer commit del botón; el parámetro faltaba
+desde entonces, no es un requisito de una versión nueva del SDK.
+
+Si "Transmitir" vuelve a desaparecer, el primer chequeo es ESTE, en la
+consola del navegador de quien lo reporta:
+
+    window.cast   // tiene que devolver un objeto, no "undefined"
+
+Si da `undefined`, revisar que `templates/index.html` siga cargando
+`cast_sender.js?loadCastFramework=1` (con el parámetro) antes de sospechar
+de HTTPS, del navegador o de la publicación de la app en Google Cast — esas
+tres ya se descartaron una vez para este mismo síntoma.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

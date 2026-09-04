@@ -25,8 +25,16 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.9/dist/chart.umd.min.js"></script>
 <!-- Botones "Transmitir <sector>" de ⚙ Configuración › Modo televisor.
      Se carga siempre (es liviano y async): sin Application ID configurado
-     (pantalla_tv.CAST_APP_ID en None) el bloque queda oculto igual. -->
-<script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js" async></script>
+     (pantalla_tv.CAST_APP_ID en None) el bloque queda oculto igual.
+     `?loadCastFramework=1` NO ES OPCIONAL: sin ese parámetro el script deja
+     `window.cast` directamente sin definir (verificado en vivo -- Chrome,
+     HTTPS, el dominio correcto -- y confirmado contra la guía oficial de
+     Google: developers.google.com/cast/docs/web_sender/integrate). Todo
+     este código ya está escrito contra `cast.framework.*`
+     (CastContext/CastReceiverContext), así que el parámetro hacía falta
+     desde el primer commit de este botón, no es un agregado por una API
+     nueva. -->
+<script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1" async></script>
 <style>
   /* Paleta de la app: apunta a los tokens de static/css/lactia-tokens.css.
      Un solo lugar para cambiar identidad visual — revertible con git si
