@@ -65,8 +65,18 @@
      columna angosta al centro con más de media pantalla vacía. Los bloques de
      texto NO se estiran con esto: `.explica` los sigue acotando a 105ch, que
      es lo que hace ilegible una línea larga. Lo que sí aprovecha el ancho es
-     lo que tiene que aprovecharlo — tarjetas, gráficos y tablas. */
-  main { max-width: 1100px; margin: 0 auto; padding: 20px 24px 60px; }
+     lo que tiene que aprovecharlo — tarjetas, gráficos y tablas.
+     `width: 100%` es necesario y no cosmético: `.main-area` es un flex
+     column, y ahí un margin:auto en un hijo con ancho automático ABSORBE el
+     espacio libre en vez de estirar la caja (el hijo se achica a su
+     contenido y el margin se lleva el resto) -- por eso el Dashboard (que
+     fuerza el ancho con su grilla de gráficos) se veía bien pero cualquier
+     página con contenido angosto, como el Tablero de Diagnóstico, quedaba
+     embutida en el medio con media pantalla vacía a cada lado, con el MISMO
+     max-width ya puesto. `width: 100%` le da un tamaño definido: ahora se
+     estira de verdad hasta el max-width en vez de depender de qué tan ancho
+     sea el contenido de cada página. */
+  main { width: 100%; max-width: 1100px; margin: 0 auto; padding: 20px 24px 60px; }
   @media (min-width: 1500px) { main { max-width: 1420px; } }
   @media (min-width: 1800px) { main { max-width: 1700px; } }
   @media (min-width: 2100px) { main { max-width: 1980px; padding: 26px 32px 60px; } }
@@ -498,11 +508,15 @@
      La tarjeta ES el control: se hace clic en toda su superficie para ir al
      detalle, así que tiene que verse accionable (cursor, hover, foco visible)
      y no como un cartel. */
-  .tb-grupo { margin-top: 18px; }
-  .tb-grupo h3 { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
-    color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  /* UNA sola grilla con TODAS las tarjetas (ya no una por grupo): agrupadas,
+     un grupo chico (ej. Alimentación con 1 sola tarjeta) dejaba el resto de
+     la fila vacío en una pantalla ancha. Empaquetada, ninguna fila queda a
+     medio llenar; qué grupo es cada una lo dice `.tb-grupo-tag` adentro de
+     la propia tarjeta (ver `tarjetaTablero`), no ya un <h3> por sección. */
   .tb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
     gap: 12px; }
+  .tb-grupo-tag { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); font-weight: 600; margin-bottom: 5px; }
   .tb-card { position: relative; text-align: left; width: 100%; cursor: pointer;
     background: var(--surface-1); border: 1px solid var(--border);
     border-radius: var(--lac-radius-card, 10px);
@@ -7779,12 +7793,17 @@ function pintarTablero() {
   ].map(([l, v, c]) => `<div class="tile" style="border-top-color:${c}">
       <div class="label">${l}</div><div class="value">${v}</div></div>`).join('');
 
-  // Agrupadas por área: doce tarjetas sueltas no se leen, agrupadas sí.
+  // Se siguen agrupando por área (doce tarjetas sueltas no se leen, agrupadas
+  // sí) pero TODAS en una sola grilla, no una por grupo: separadas, un grupo
+  // chico (ej. Alimentación con 1 sola tarjeta) dejaba el resto de la fila
+  // vacío en una pantalla ancha. `Object.entries` conserva el orden en que
+  // aparece cada grupo por primera vez en `d.tarjetas`, así que el orden de
+  // lectura no cambia — solo se empaquetan sin cortar por sección.
   const grupos = {};
   (d.tarjetas || []).forEach(t => { (grupos[t.grupo] = grupos[t.grupo] || []).push(t); });
-  document.getElementById('tab-grupos').innerHTML = Object.entries(grupos).map(([g, ts]) =>
-    `<div class="tb-grupo"><h3>${escHtml(g)}</h3><div class="tb-grid">
-      ${ts.map(tarjetaTablero).join('')}</div></div>`).join('');
+  const todas = Object.values(grupos).flat();
+  document.getElementById('tab-grupos').innerHTML =
+    `<div class="tb-grid">${todas.map(tarjetaTablero).join('')}</div>`;
 
   document.querySelectorAll('#tab-grupos .tb-card').forEach(el => {
     el.addEventListener('click', () => saltarDesdeTablero(el.dataset.pagina, el.dataset.tab));
@@ -7817,6 +7836,7 @@ function tarjetaTablero(t) {
       title="${escHtml(t.ayuda)}">
     ${t.calculando ? '<span class="tb-chip">calculando</span>'
       : (t.viejo ? '<span class="tb-chip viejo">última lectura</span>' : '')}
+    <div class="tb-grupo-tag">${escHtml(t.grupo)}</div>
     <div class="tb-nom">${escHtml(t.nombre)}</div>
     <div class="tb-val" style="${hayValor ? `color:${t.color}` : 'color:var(--muted);font-size:19px'}">${val}${
       hayValor ? `<small>${escHtml(t.unidad)}</small>` : ''}</div>
