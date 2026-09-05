@@ -2437,6 +2437,23 @@ Si da `undefined`, revisar que `templates/index.html` siga cargando
 de HTTPS, del navegador o de la publicación de la app en Google Cast — esas
 tres ya se descartaron una vez para este mismo síntoma.
 
+**Y con `window.cast` ya cargado, "Transmitir" se quedaba colgado en
+"Buscando Chromecasts…" para siempre, sin error en la Console — Chrome
+tenía en caché que la app estaba SIN publicar.** Mismo día, después de
+arreglar lo de arriba. Descartado uno por uno, con evidencia, antes de
+llegar a esto: el Chromecast SÍ aparecía en el "Transmitir…" nativo de
+Chrome (3 dispositivos, red y mDNS bien); el Firewall de Windows permite
+mDNS incluso en perfil "Público" (`Get-NetFirewallRule -DisplayName
+"mDNS*"` mostró el de entrada habilitado para Public); ni Flask ni
+Cloudflare mandan `Content-Security-Policy` ni `Permissions-Policy` (se
+verificó con `curl -I` contra el sitio real, no de memoria). La app ya
+estaba publicada del lado de Google — el problema era que ESTA sesión de
+Chrome había consultado el estado del `CFA16559` ANTES de publicarla, y se
+quedó con esa respuesta vieja. **Se resolvió solo con una ventana de
+incógnito** (arranca sin ese caché). Si vuelve a pasar tras publicar o
+cambiar algo en la consola de Google Cast, probar incógnito ANTES de
+sospechar de la app o de la red — ese descarte largo ya se hizo una vez.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).
