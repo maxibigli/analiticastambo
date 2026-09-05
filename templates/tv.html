@@ -157,7 +157,12 @@
     // terminó de correr.
     __ctx.addCustomMessageListener('urn:x-cast:com.analiticastambo.tv', function (evento) {
       var datos = (evento && evento.data) || {};
-      if (window.__pantallaTv) window.__pantallaTv.fijarVista(datos.vista || null);
+      if (!window.__pantallaTv) return;
+      // `pasos` (ronda propia de una Sección) y `vista` (sector fijo, o null
+      // para "Rotación completa") son mensajes DISTINTOS -- ver el docstring
+      // de `fijarRonda`/`fijarVista` más abajo.
+      if (datos.pasos) window.__pantallaTv.fijarRonda(datos.pasos);
+      else window.__pantallaTv.fijarVista(datos.vista || null);
     });
     __ctx.start();
   }
@@ -176,10 +181,16 @@
   // pantalla_tv.VISTAS) o por un mensaje de Cast (ver `window.__pantallaTv`
   // más abajo y el listener al final del archivo). null = rota normal.
   var vistaFija = {{ vista_fija | tojson }};
+  // Ronda PROPIA de una Sección (Configuración › Modo televisor): lista de
+  // {vista, segundos} que llega por Cast, cada paso con SU PROPIO tiempo en
+  // vez del único `SEGUNDOS` global. null = no hay ronda propia activa (se
+  // usa la rotación normal, `VISTAS`+`SEGUNDOS`). Un sector fijo (arriba)
+  // manda por encima de esto: las dos cosas no conviven.
+  var pasosRonda = null;
   var REFRESCO_MS = 30000;          // el payload junta 5 endpoints: no conviene menos
 
   var datos = null;                 // ULTIMO payload BUENO
-  var iVista = 0;
+  var iVista = 0;                   // índice dentro de la lista ACTIVA (rotación o ronda)
   var t0Vista = new Date().getTime();
   var pidiendo = false;
 
@@ -359,8 +370,18 @@
   };
 
   // ---------------------------------------------------------------- ciclo
+  // La lista que rota AHORA: la ronda propia de una Sección si hay una
+  // activa, si no la rotación normal (VISTAS parejo a SEGUNDOS). Un sector
+  // fijo no tiene lista -- se resuelve aparte, en `pintar`/`tic`.
+  function listaActiva() {
+    if (pasosRonda && pasosRonda.length) return pasosRonda;
+    return VISTAS.map(function (v) { return {vista: v, segundos: SEGUNDOS}; });
+  }
+
   function pintar() {
-    var clave = vistaFija || VISTAS[iVista] || VISTAS[0];
+    var lista = listaActiva();
+    var paso = lista[iVista % lista.length] || lista[0];
+    var clave = vistaFija || (paso && paso.vista) || VISTAS[0];
     $('titulo-vista').innerHTML = esc(LABELS[clave] || clave);
     if (!datos) {
       $('cuerpo').innerHTML = sinDatos('Conectando…');
@@ -418,11 +439,16 @@
     // quedó oculta en `actualizarBarraProgreso`.
     if (vistaFija) return;
 
+    var lista = listaActiva();
+    var paso = lista[iVista % lista.length];
+    // El tiempo de ESTE paso (segundos propios si hay ronda; SEGUNDOS global
+    // si no) -- por eso la ronda propia puede durar distinto en cada vista.
+    var segundos = (paso && paso.segundos) || SEGUNDOS;
     var pasado = (ahora.getTime() - t0Vista) / 1000;
-    var pct = Math.min(100, 100 * pasado / SEGUNDOS);
+    var pct = Math.min(100, 100 * pasado / segundos);
     $('progreso').style.width = pct + '%';
-    if (pasado >= SEGUNDOS) {
-      iVista = (iVista + 1) % VISTAS.length;
+    if (pasado >= segundos) {
+      iVista = (iVista + 1) % lista.length;
       t0Vista = ahora.getTime();
       pintar();
     }
@@ -430,20 +456,43 @@
 
   // La barra de progreso ("cuánto falta para la próxima vista") no
   // significa nada con un sector fijo: se oculta entera, no sólo en 0%,
-  // para no sugerir una rotación que no va a pasar.
+  // para no sugerir una rotación que no va a pasar. Con una ronda propia SÍ
+  // tiene sentido (también avanza sola), así que solo mira `vistaFija`.
   function actualizarBarraProgreso() {
     $('progreso').parentNode.style.visibility = vistaFija ? 'hidden' : 'visible';
   }
 
   // Puente para el script de Cast (deliberadamente aparte, ver su
-  // comentario más abajo): fija o libera un sector sin recargar la página.
-  // Único punto de entrada externo a este closure — todo lo demás queda
-  // privado a propósito. `PINTORES` ya es el universo de claves válidas
-  // (los 5 sectores reales): no hace falta una segunda lista para validar
-  // lo que llega en el mensaje.
+  // comentario más abajo): fija/libera un sector, o arranca/para una ronda
+  // propia, sin recargar la página. Único punto de entrada externo a este
+  // closure — todo lo demás queda privado a propósito. `PINTORES` ya es el
+  // universo de claves válidas (los 5 sectores reales): no hace falta una
+  // segunda lista para validar lo que llega en el mensaje.
   window.__pantallaTv = {
     fijarVista: function (clave) {
       vistaFija = (clave && PINTORES[clave]) ? clave : null;
+      pasosRonda = null;               // un sector fijo no es una ronda
+      iVista = 0;
+      t0Vista = new Date().getTime();
+      actualizarBarraProgreso();
+      pintar();
+    },
+    // `pasos`: [{vista, segundos}, ...] tal cual llega del sender -- se
+    // revalida ACÁ, no se confía en lo que ya filtró `index.html`, porque el
+    // mensaje de Cast es lo único que de verdad llega a este receiver.
+    // Una lista vacía (o sin ningún paso válido) equivale a "Rotación
+    // completa": no tiene sentido una ronda de cero pasos.
+    fijarRonda: function (pasos) {
+      var limpios = [];
+      for (var i = 0; i < (pasos || []).length; i++) {
+        var p = pasos[i];
+        if (p && PINTORES[p.vista] && typeof p.segundos === 'number' && p.segundos > 0) {
+          limpios.push({vista: p.vista, segundos: p.segundos});
+        }
+      }
+      vistaFija = null;                // una ronda no es un sector fijo
+      pasosRonda = limpios.length ? limpios : null;
+      iVista = 0;
       t0Vista = new Date().getTime();
       actualizarBarraProgreso();
       pintar();

@@ -645,15 +645,32 @@
   .trat-det b { color: var(--text-primary); }
   .trat-drogas { font-size: 13px; margin-top: 3px; }
   .trat-drogas b { color: var(--warning); }
-  /* Rutina de ordeño */
-  .rutina-sesiones { display: flex; gap: 8px; flex-wrap: wrap; }
-  .rutina-sesion-btn {
-    background: var(--page); border: 1px solid var(--baseline); border-radius: 9px;
-    padding: 8px 12px; cursor: pointer; text-align: left; color: var(--text-primary);
+  /* Rutina de ordeño: resumen rápido por sesión, arriba del detalle */
+  .rutina-sesiones { display: flex; flex-direction: column; gap: 10px; }
+  .rutina-sesion-fila {
+    display: grid; grid-template-columns: 96px 1fr auto; gap: 16px; align-items: center;
+    background: var(--page); border: 1px solid var(--baseline); border-radius: 10px;
+    padding: 12px 14px; cursor: pointer; text-align: left; color: var(--text-primary);
+    width: 100%; font: inherit;
   }
-  .rutina-sesion-btn.activa { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-  .rutina-sesion-btn .rs-score { font-size: 20px; font-weight: 700; }
-  .rutina-sesion-btn .rs-hora { font-size: 11.5px; color: var(--text-secondary); }
+  .rutina-sesion-fila:hover { border-color: var(--accent); }
+  .rutina-sesion-fila.activa { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .rutina-sesion-fila .rs-score { font-size: 24px; font-weight: 750; line-height: 1; }
+  .rutina-sesion-fila .rs-score small { font-size: .55em; font-weight: 600; opacity: .7; }
+  .rutina-sesion-fila .rs-hora { font-size: 11.5px; color: var(--text-secondary); margin-top: 4px; line-height: 1.4; }
+  .rs-mid { min-width: 0; }
+  .rs-tira { width: 100%; height: 30px; display: block; border-radius: 5px; overflow: hidden; }
+  .rs-tira-leyenda { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+  .rs-tira-leyenda span { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; color: var(--text-secondary); }
+  .rs-tira-leyenda i { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+  .rs-stats { display: flex; flex-direction: column; gap: 6px; text-align: right; min-width: 150px; }
+  .rs-stat { font-size: 12px; color: var(--text-secondary); white-space: nowrap; }
+  .rs-stat b { font-weight: 700; margin-right: 4px; }
+  .rs-chevron { font-size: 11px; color: var(--accent); font-weight: 600; margin-top: 2px; }
+  @media (max-width: 640px) {
+    .rutina-sesion-fila { grid-template-columns: 1fr; }
+    .rs-stats { flex-direction: row; flex-wrap: wrap; text-align: left; }
+  }
   .rutina-score-nota { font-size: 40px; font-weight: 750; }
   .rutina-layout { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; margin-top: 14px; }
   #rutina-chart { flex: 2 1 520px; min-width: 0; overflow-x: auto; }
@@ -3385,6 +3402,24 @@
       </span>
       <div id="tv-canales" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px"></div>
       <span class="aviso" id="tv-transmitir-estado" style="display:block;margin-top:6px"></span>
+    </div>
+
+    {# 5 secciones configurables: a diferencia de un sector fijo (arriba, un
+       solo botón por vista) o la rotación global (abajo, un solo tiempo para
+       todas), cada sección arma su PROPIA ronda -- qué vistas entran, en qué
+       orden y cuántos segundos dura CADA UNA -- pensada para ir a un
+       Chromecast distinto (living, oficina...). Se transmite con la MISMA
+       app y el MISMO namespace que un sector fijo (ver `transmitirSeccion`
+       más abajo), mandando `{pasos: [...]}` en vez de `{vista}`. #}
+    <div id="tv-secciones-bloque" hidden style="margin-top:20px">
+      <div class="aviso" style="font-weight:600">Secciones (rondas propias por Chromecast)</div>
+      <span class="aviso" style="display:block;margin-top:4px">
+        Cada sección es una ronda propia: elegís qué vistas entran, en qué orden y cuántos
+        segundos dura cada una — independiente de "Qué muestra y cada cuánto" de abajo, que
+        es solo para la rotación general. Guardá los cambios y después tocá "Transmitir" para
+        mandarla al Chromecast que elijas.
+      </span>
+      <div id="tv-secciones"></div>
     </div>
 
     <div class="aviso" style="margin-top:16px;font-weight:600">Qué muestra y cada cuánto</div>
@@ -9315,19 +9350,78 @@ async function cargarRutina(fecha) {
   }
 }
 
+// Tira horizontal de una sesión: los mismos bloques de rodeo del gráfico de
+// detalle, más una marca por retiro lerdo — para leer de un vistazo cómo vino
+// la sesión sin tener que abrir el detalle primero.
+function rutinaTiraSVG(s) {
+  const W = 700, H = 30;
+  const inicio = new Date(s.inicio).getTime(), fin = new Date(s.fin).getTime();
+  const dur = Math.max(fin - inicio, 1000);
+  const x = t => Math.min(W, Math.max(0, ((t - inicio) / dur) * W));
+  let rects = '';
+  s.grupos.forEach(g => {
+    const x0 = x(new Date(g.inicio).getTime()), x1 = x(new Date(g.fin).getTime());
+    rects += `<rect x="${x0.toFixed(1)}" y="0" width="${Math.max(1, x1 - x0).toFixed(1)}" height="${H}" fill="${g.color}" opacity=".3"/>`;
+  });
+  let marcas = '';
+  s.visitas.forEach(v => {
+    if (v.lerda && v.hora_fin) {
+      const xt = x(new Date(v.hora_fin).getTime());
+      marcas += `<rect x="${(xt - 1.2).toFixed(1)}" y="3" width="2.4" height="${H - 6}" fill="var(--critical)"/>`;
+    }
+  });
+  return `<svg class="rs-tira" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
+    aria-label="Bloques de rodeo de la sesión, con una marca por retiro lerdo">${rects}${marcas}</svg>`;
+}
+
+// Estadísticas rápidas de una sesión, leídas de lo que YA calculó el backend
+// (mismo `s.detalle` que arma el detalle de abajo) — nada nuevo se consulta.
+function statsRutinaFila(s) {
+  const prep = s.detalle.find(d => d.clave === 'prep_90s');
+  // Igual que en pintarRutinaSesion: un componente con peso 0 es uno que el
+  // tambo apagó a propósito, no se reintroduce acá.
+  const ident = s.detalle.find(d => d.clave === 'identificacion' && d.peso > 0);
+  const lerdas = s.visitas.filter(v => v.lerda).length;
+  let html = '';
+  if (prep && prep.valor != null) {
+    html += `<div class="rs-stat"><b style="color:${colorScore(prep.valor)}">${prep.valor}%</b>colocación</div>`;
+  }
+  if (ident && ident.valor != null) {
+    html += `<div class="rs-stat"><b style="color:${colorScore(ident.valor)}">${ident.valor}%</b>identificación</div>`;
+  }
+  html += `<div class="rs-stat"><b style="color:${lerdas ? 'var(--critical)' : 'var(--good)'}">${lerdas}</b>retiro(s) lento(s)</div>`;
+  return html;
+}
+
 function pintarRutinaSesiones() {
   const cont = document.getElementById('rutina-sesiones');
   if (!rutinaData || !rutinaData.sesiones.length) { cont.innerHTML = ''; return; }
   const hora = iso => new Date(iso).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-  cont.innerHTML = rutinaData.sesiones.map((s, i) => `
-    <button class="rutina-sesion-btn${i === rutinaSesionIdx ? ' activa' : ''}" data-i="${i}">
-      <div class="rs-score" style="color:${colorScore(s.score)}">${textoScore(s.score)}</div>
-      <div class="rs-hora">${hora(s.inicio)}–${hora(s.fin)} · ${s.vacas} vacas</div>
-    </button>`).join('');
-  cont.querySelectorAll('.rutina-sesion-btn').forEach(b => b.addEventListener('click', () => {
+  cont.innerHTML = rutinaData.sesiones.map((s, i) => {
+    const activa = i === rutinaSesionIdx;
+    const grupitos = s.grupos.filter((g, gi) => s.grupos.findIndex(g2 => g2.grupo === g.grupo) === gi)
+      .map(g => `<span><i style="background:${g.color}"></i>${g.nombre || 'Grupo ' + (g.grupo ?? '—')}</span>`).join('');
+    return `
+    <button class="rutina-sesion-fila${activa ? ' activa' : ''}" data-i="${i}">
+      <div>
+        <div class="rs-score" style="color:${colorScore(s.score)}">${textoScore(s.score)}</div>
+        <div class="rs-hora">${hora(s.inicio)}–${hora(s.fin)}<br>${s.vacas} vacas</div>
+      </div>
+      <div class="rs-mid">
+        ${rutinaTiraSVG(s)}
+        <div class="rs-tira-leyenda">${grupitos}</div>
+      </div>
+      <div class="rs-stats">
+        ${statsRutinaFila(s)}
+        <div class="rs-chevron">${activa ? 'Detalle abierto ▾' : 'Ver detalle ›'}</div>
+      </div>
+    </button>`;
+  }).join('');
+  cont.querySelectorAll('.rutina-sesion-fila').forEach(b => b.addEventListener('click', () => {
     rutinaSesionIdx = Number(b.dataset.i);
     pintarRutinaSesiones();
     pintarRutinaSesion();
+    document.getElementById('rutina-chart').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }));
 }
 
@@ -9468,6 +9562,11 @@ document.addEventListener('mousemove', (e) => {
   const hora = iso => iso ? new Date(iso).toLocaleTimeString('es-AR') : '—';
   const umbralPrep = leerConfigRutina().umbral_prep_s || UMBRAL_PREP_S_DEFECTO;
   const prep = v.prep_seg == null ? '—' : `${v.prep_seg}s ${v.cumple_90 ? '✓' : `⚠ objetivo ≤${umbralPrep}s`}`;
+  // Puntaje 0-100 de ESTA colocación puntual (misma curva de crédito gradual
+  // que arma el score de la sesión, ver rutina._credito_prep) — no es solo
+  // cumple/no cumple: pasarse por poco todavía puntúa alto.
+  const prepScoreTxt = v.prep_score == null ? '' :
+    ` · Puntaje colocación: <span style="color:${colorScore(v.prep_score)};font-weight:700">${v.prep_score}/100</span>`;
   const nomGrupo = (s.grupos.find(g => g.grupo === v.grupo) || {}).nombre
                    || 'Grupo ' + (v.grupo ?? '—');
   // Una vaca sin dueño no es "RP ?": es un ordeño real cuya leche no se le
@@ -9480,7 +9579,7 @@ document.addEventListener('mousemove', (e) => {
     : `RP ${v.rp}`;
   tip.innerHTML = `<b>Puesto ${v.puesto}</b> · ${quien} · ${nomGrupo}<br>
     ID ${v.sin_id ? '—' : hora(v.hora_id)} · Coloc. ${hora(v.hora_coloc)} · Fin ${hora(v.hora_fin)}<br>
-    Prep: ${v.sin_id ? 'no se puede medir sin la hora de identificación' : prep}${v.lerda ? ' · <span style="color:var(--critical)">lerda</span>' : ''}`;
+    Prep: ${v.sin_id ? 'no se puede medir sin la hora de identificación' : prep + prepScoreTxt}${v.lerda ? ' · <span style="color:var(--critical)">lerda</span>' : ''}`;
   tip.style.display = 'block';
   tip.style.left = (e.clientX + 14) + 'px';
   tip.style.top = (e.clientY + 14) + 'px';
@@ -11515,6 +11614,7 @@ async function cargarConfigTv() {
     estado.textContent = '';
     castAppId = d.cast_app_id || null;
     pintarCanalesCast(d.vistas);
+    pintarSecciones(d.secciones || [], d.vistas || []);
     actualizarBotonCast();
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
@@ -11587,12 +11687,18 @@ function castListo() {
 
 function actualizarBotonCast() {
   const bloque = document.getElementById('tv-cast-bloque');
+  const bloqueSecciones = document.getElementById('tv-secciones-bloque');
   if (!bloque) return;
-  if (!castSdkListo || !castAppId) { bloque.hidden = true; return; }
+  if (!castSdkListo || !castAppId) {
+    bloque.hidden = true;
+    if (bloqueSecciones) bloqueSecciones.hidden = true;
+    return;
+  }
   if (!castListo()) {
     // `disponible` ya llegó pero `window.cast` todavía no -- es la carrera
     // de arriba. Reintenta solo, no se pierde el aviso.
     bloque.hidden = true;
+    if (bloqueSecciones) bloqueSecciones.hidden = true;
     setTimeout(actualizarBotonCast, 300);
     return;
   }
@@ -11604,6 +11710,7 @@ function actualizarBotonCast() {
     castContextoListo = true;
   }
   bloque.hidden = false;
+  if (bloqueSecciones) bloqueSecciones.hidden = false;
 }
 
 // Un botón por sector + "Rotación completa" (clave vacía = el receiver
@@ -11642,6 +11749,159 @@ async function transmitirCanal(vista, label) {
   } catch (e) {
     // Cerrar el selector de dispositivos sin elegir uno también cae acá
     // ('cancel'): no es un error real, no hace falta mostrar nada.
+    estado.textContent = e === 'cancel' ? ''
+      : 'No se encontró ningún Chromecast en la red (¿está registrado en la consola de Google Cast?).';
+  }
+}
+
+// --- Secciones: 5 rondas propias, cada una a su Chromecast --------------
+// A diferencia de `transmitirCanal` (un sector fijo) o "Qué muestra y cada
+// cuánto" (una rotación con un solo tiempo para TODAS las vistas), cada
+// sección arma su propia lista de {vista, segundos} — se guarda en
+// `pantalla_tv.json` (`pantalla_tv.guardar_seccion`) y se transmite con
+// `{pasos: [...]}` por el MISMO namespace de Cast (`fijarRonda` en
+// tv.html), sin relanzar la sesión.
+let vistasDisponiblesTv = [];
+// Snapshot (JSON) de {nombre, pasos} por sección, para el mismo patrón de
+// "Guardar deshabilitado hasta que cambia algo" que ya usa `tv-guardar`.
+const seccionesOriginal = [null, null, null, null, null];
+
+function filaPasoTv(paso) {
+  const opciones = vistasDisponiblesTv.map(v =>
+    `<option value="${escHtml(v.clave)}"${v.clave === paso.vista ? ' selected' : ''}>${escHtml(v.label)}</option>`
+  ).join('');
+  return `<div class="tv-paso-fila" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+    <select class="tv-paso-vista" style="flex:1 1 200px;padding:6px 8px">${opciones}</select>
+    <input type="number" class="tv-paso-segundos" value="${paso.segundos}" min="5" max="300"
+           style="width:75px;padding:6px 8px">
+    <span class="aviso">seg</span>
+    <button type="button" class="secundario tv-paso-quitar" style="padding:4px 10px">✕</button>
+  </div>`;
+}
+
+const AVISO_SIN_PASOS = '<span class="aviso">Sin pasos — agregá al menos uno para poder transmitir esta sección.</span>';
+
+function pintarPasosTv(indice, pasos) {
+  const cont = document.getElementById(`tv-seccion-${indice}-pasos`);
+  cont.innerHTML = pasos.length ? pasos.map(filaPasoTv).join('') : AVISO_SIN_PASOS;
+}
+
+function pasosDeSeccionTv(indice) {
+  const filas = document.querySelectorAll(`#tv-seccion-${indice}-pasos .tv-paso-fila`);
+  return [...filas].map(f => ({
+    vista: f.querySelector('.tv-paso-vista').value,
+    segundos: Number(f.querySelector('.tv-paso-segundos').value),
+  }));
+}
+
+function valoresSeccionTv(indice) {
+  const nombre = document.querySelector(`.tv-seccion[data-indice="${indice}"] .tv-seccion-nombre`).value;
+  return { nombre, pasos: pasosDeSeccionTv(indice) };
+}
+
+function marcarSeccionCambiada(indice) {
+  const btn = document.querySelector(`.tv-seccion[data-indice="${indice}"] .tv-seccion-guardar`);
+  btn.disabled = JSON.stringify(valoresSeccionTv(indice)) === seccionesOriginal[indice];
+}
+
+function plantillaSeccionTv(indice, s) {
+  return `<div class="tv-seccion" data-indice="${indice}"
+      style="border:1px solid var(--baseline);border-radius:10px;padding:12px;margin-top:10px">
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input type="text" class="tv-seccion-nombre" value="${escHtml(s.nombre)}"
+             style="font-weight:600;flex:1 1 160px;padding:6px 8px">
+      <span class="aviso" id="tv-seccion-${indice}-dispositivo">${
+        s.ultimo_dispositivo ? `última vez: ${escHtml(s.ultimo_dispositivo)}` : ''}</span>
+    </div>
+    <div class="tv-seccion-pasos" id="tv-seccion-${indice}-pasos" style="margin-top:10px"></div>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+      <button type="button" class="secundario tv-seccion-agregar" style="padding:6px 12px">+ Agregar paso</button>
+      <button type="button" class="tv-seccion-guardar" disabled>Guardar</button>
+      <button type="button" class="secundario tv-seccion-transmitir">📡 Transmitir</button>
+    </div>
+    <span class="aviso tv-seccion-estado" style="display:block;margin-top:6px"></span>
+  </div>`;
+}
+
+function pintarSecciones(secciones, vistas) {
+  vistasDisponiblesTv = vistas;
+  const cont = document.getElementById('tv-secciones');
+  if (!cont) return;
+  cont.innerHTML = secciones.map((s, i) => plantillaSeccionTv(i, s)).join('');
+  secciones.forEach((s, i) => {
+    pintarPasosTv(i, s.pasos);
+    seccionesOriginal[i] = JSON.stringify({ nombre: s.nombre, pasos: s.pasos });
+    const bloque = document.querySelector(`.tv-seccion[data-indice="${i}"]`);
+    // Delegado en el contenedor: cubre también las filas que se agreguen
+    // después con "+ Agregar paso", sin tener que reenganchar listeners.
+    bloque.addEventListener('input', () => marcarSeccionCambiada(i));
+    bloque.querySelector(`#tv-seccion-${i}-pasos`).addEventListener('click', ev => {
+      if (!ev.target.classList.contains('tv-paso-quitar')) return;
+      ev.target.closest('.tv-paso-fila').remove();
+      const contPasos = document.getElementById(`tv-seccion-${i}-pasos`);
+      if (!contPasos.querySelector('.tv-paso-fila')) contPasos.innerHTML = AVISO_SIN_PASOS;
+      marcarSeccionCambiada(i);
+    });
+    bloque.querySelector('.tv-seccion-agregar').addEventListener('click', () => {
+      const contPasos = document.getElementById(`tv-seccion-${i}-pasos`);
+      if (!contPasos.querySelector('.tv-paso-fila')) contPasos.innerHTML = '';
+      contPasos.insertAdjacentHTML('beforeend',
+        filaPasoTv({ vista: (vistasDisponiblesTv[0] || {}).clave, segundos: 20 }));
+      marcarSeccionCambiada(i);
+    });
+    bloque.querySelector('.tv-seccion-guardar').addEventListener('click', () => guardarSeccionTv(i));
+    bloque.querySelector('.tv-seccion-transmitir').addEventListener('click', () => transmitirSeccionTv(i));
+  });
+}
+
+async function guardarSeccionTv(indice) {
+  const bloque = document.querySelector(`.tv-seccion[data-indice="${indice}"]`);
+  const estado = bloque.querySelector('.tv-seccion-estado');
+  const valores = valoresSeccionTv(indice);
+  try {
+    await pedirJSON(`/api/tv/secciones/${indice}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(valores),
+    });
+    seccionesOriginal[indice] = JSON.stringify(valores);
+    bloque.querySelector('.tv-seccion-guardar').disabled = true;
+    estado.textContent = 'Guardado.';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function transmitirSeccionTv(indice) {
+  const bloque = document.querySelector(`.tv-seccion[data-indice="${indice}"]`);
+  const estado = bloque.querySelector('.tv-seccion-estado');
+  const nombre = bloque.querySelector('.tv-seccion-nombre').value || `Sección ${indice + 1}`;
+  const pasos = pasosDeSeccionTv(indice);
+  if (!pasos.length) { estado.textContent = 'Agregá al menos un paso antes de transmitir.'; return; }
+  if (!castListo()) {
+    estado.textContent = 'El componente de Chromecast todavía no cargó, esperá un segundo y probá de nuevo.';
+    return;
+  }
+  estado.textContent = 'Buscando Chromecasts en la red…';
+  try {
+    await cast.framework.CastContext.getInstance().requestSession();
+    const sesion = cast.framework.CastContext.getInstance().getCurrentSession();
+    if (sesion) await sesion.sendMessage(CAST_NS, { pasos });
+    // Se recuerda el dispositivo SOLO como recordatorio en pantalla (ver el
+    // docstring de `pantalla_tv.guardar_dispositivo_seccion`) -- el selector
+    // nativo de Chrome sigue apareciendo igual la próxima vez, el SDK no deja
+    // saltearlo.
+    const dispositivo = sesion && sesion.getCastDevice ? sesion.getCastDevice().friendlyName : null;
+    estado.textContent = `✔ Transmitiendo: ${nombre}` + (dispositivo ? ` → ${dispositivo}.` : '.');
+    if (dispositivo) {
+      pedirJSON(`/api/tv/secciones/${indice}/dispositivo`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre: dispositivo }),
+      }).then(() => {
+        const spanDisp = document.getElementById(`tv-seccion-${indice}-dispositivo`);
+        if (spanDisp) spanDisp.textContent = `última vez: ${dispositivo}`;
+      }).catch(() => {});
+    }
+  } catch (e) {
     estado.textContent = e === 'cancel' ? ''
       : 'No se encontró ningún Chromecast en la red (¿está registrado en la consola de Google Cast?).';
   }

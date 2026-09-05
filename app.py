@@ -2926,6 +2926,7 @@ def api_tv_config():
         "vistas": [{"clave": c, "label": pantalla_tv.VISTAS_LABEL[c]}
                    for c in pantalla_tv.VISTAS],
         "cast_app_id": pantalla_tv.CAST_APP_ID,
+        "secciones": pantalla_tv.secciones(),
     })
 
 
@@ -2938,6 +2939,34 @@ def api_tv_config_guardar():
     try:
         pantalla_tv.guardar_preferencias(segundos=cuerpo.get("segundos"),
                                          vistas=cuerpo.get("vistas"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.post("/api/tv/secciones/<int:indice>")
+@auth.requiere_rol("admin")
+def api_tv_seccion_guardar(indice):
+    """Guarda el nombre y/o la ronda de UNA de las 5 secciones de Cast
+    (⚙ Configuración › Modo televisor). Ver `pantalla_tv.guardar_seccion`."""
+    cuerpo = request.json or {}
+    try:
+        pantalla_tv.guardar_seccion(indice, nombre=cuerpo.get("nombre"), pasos=cuerpo.get("pasos"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.post("/api/tv/secciones/<int:indice>/dispositivo")
+@auth.requiere_rol("admin")
+def api_tv_seccion_dispositivo(indice):
+    """El sender anota acá el nombre del Chromecast al que se conectó, para
+    recordárselo la próxima vez (ver el docstring de
+    `pantalla_tv.guardar_dispositivo_seccion` — no evita el selector nativo,
+    solo dice cuál tocar)."""
+    cuerpo = request.json or {}
+    try:
+        pantalla_tv.guardar_dispositivo_seccion(indice, cuerpo.get("nombre"))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True})
