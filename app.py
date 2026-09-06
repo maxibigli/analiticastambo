@@ -5294,7 +5294,18 @@ def _lineas_alertas_puntuales(tambo: str) -> list:
     rutina, incidencias de la rotativa) -- antes cada condición individual
     (cada carga, cada puesto) armaba su propio mensaje aparte; ahora se
     agrega en UNA línea por tipo, para que un día con varios problemas siga
-    siendo parte de un solo envío."""
+    siendo parte de un solo envío.
+
+    CADA CHEQUEO VA EN SU PROPIO try/except: son cuatro fuentes independientes
+    (dos de ellas, CICLA y La Serenísima, logins externos que expiran solos)
+    y antes bastaba con que UNA fallara -- típicamente CICLA con la sesión
+    vencida -- para que la excepción cortara la función entera y las otras
+    tres ni se calcularan. En el mensaje de prueba eso se veía como "No se
+    pudo armar el mensaje"; en el envío real (`_revisar_alertas_whatsapp`,
+    que traga la excepción para no tirar abajo el hilo de fondo) era peor:
+    NINGÚN aviso salía ese día, ni siquiera por algo que sí se pudo leer
+    (score de rutina, incidencias). Ahora una fuente caída se reporta como
+    una línea de advertencia más, y el resto sigue evaluándose igual."""
     lineas = []
 
     def _rango(valores, decimales=0):
@@ -5307,61 +5318,73 @@ def _lineas_alertas_puntuales(tambo: str) -> list:
 
     usuario, password = os.environ.get("CICLA_USUARIO"), os.environ.get("CICLA_PASSWORD")
     if usuario and password:
-        hoy = datetime.date.today()
-        cargas, _incompleto = cicla.obtener_cargas(hoy - datetime.timedelta(days=1), hoy, usuario, password)
-        altas = [c["temperatura"] for c in cargas
-                 if c["temperatura"] is not None and c["temperatura"] > ALERTA_TEMP_CICLA_C]
-        if altas:
-            lineas.append(f"🌡️ CICLA: {len(altas)} carga(s) hoy con temperatura sobre el umbral "
-                          f"({_rango(altas, 1)}°C, umbral {ALERTA_TEMP_CICLA_C}°C).")
+        try:
+            hoy = datetime.date.today()
+            cargas, _incompleto = cicla.obtener_cargas(hoy - datetime.timedelta(days=1), hoy, usuario, password)
+            altas = [c["temperatura"] for c in cargas
+                     if c["temperatura"] is not None and c["temperatura"] > ALERTA_TEMP_CICLA_C]
+            if altas:
+                lineas.append(f"🌡️ CICLA: {len(altas)} carga(s) hoy con temperatura sobre el umbral "
+                              f"({_rango(altas, 1)}°C, umbral {ALERTA_TEMP_CICLA_C}°C).")
+        except Exception as exc:  # noqa: BLE001
+            lineas.append(f"⚠️ CICLA: no se pudo revisar ({exc}).")
 
     usuario, password = os.environ.get("LASER_USUARIO"), os.environ.get("LASER_PASSWORD")
     if usuario and password:
-        entregas = laserenisima.obtener_entregas(usuario, password)
-        altas = [e["ufc"] for e in entregas if e["ufc"] is not None and e["ufc"] > ALERTA_UFC_LASER]
-        if altas:
-            lineas.append(f"🧪 La Serenísima: {len(altas)} entrega(s) con U.F.C. sobre el umbral "
-                          f"({_rango(altas)}, umbral {round(ALERTA_UFC_LASER)}).")
+        try:
+            entregas = laserenisima.obtener_entregas(usuario, password)
+            altas = [e["ufc"] for e in entregas if e["ufc"] is not None and e["ufc"] > ALERTA_UFC_LASER]
+            if altas:
+                lineas.append(f"🧪 La Serenísima: {len(altas)} entrega(s) con U.F.C. sobre el umbral "
+                              f"({_rango(altas)}, umbral {round(ALERTA_UFC_LASER)}).")
+        except Exception as exc:  # noqa: BLE001
+            lineas.append(f"⚠️ La Serenísima: no se pudo revisar ({exc}).")
 
-    hoy_str = datetime.date.today().strftime("%Y-%m-%d")
-    data, _fresh = _cache_get(_clave(tambo, f"rutina:{hoy_str}"), allow_stale=True)
-    if data is None:
-        _refresh_rutina_async(tambo, hoy_str)
-    else:
-        grupos = _grupos_ordene(tambo)
-        resultado = salas.de(tambo).analizar_dia(tambo, data["columns"], data["rows"], hoy_str, grupos,
-                                                 max_sesiones=_max_sesiones(tambo),
-                                                 nombres=_nombres_grupos(tambo),
-                                                 identificacion_pct=_identificacion_pct_de(tambo, hoy_str, hoy_str, hoy_str))
-        bajas = [s["score"] for s in resultado["sesiones"] if s["score"] < ALERTA_RUTINA_SCORE_MIN]
-        if bajas:
-            lineas.append(f"⏱️ Rutina de ordeño: {len(bajas)} sesión(es) hoy con score bajo "
-                          f"({_rango(bajas)}%, umbral {ALERTA_RUTINA_SCORE_MIN}%).")
+    try:
+        hoy_str = datetime.date.today().strftime("%Y-%m-%d")
+        data, _fresh = _cache_get(_clave(tambo, f"rutina:{hoy_str}"), allow_stale=True)
+        if data is None:
+            _refresh_rutina_async(tambo, hoy_str)
+        else:
+            grupos = _grupos_ordene(tambo)
+            resultado = salas.de(tambo).analizar_dia(tambo, data["columns"], data["rows"], hoy_str, grupos,
+                                                     max_sesiones=_max_sesiones(tambo),
+                                                     nombres=_nombres_grupos(tambo),
+                                                     identificacion_pct=_identificacion_pct_de(tambo, hoy_str, hoy_str, hoy_str))
+            bajas = [s["score"] for s in resultado["sesiones"] if s["score"] < ALERTA_RUTINA_SCORE_MIN]
+            if bajas:
+                lineas.append(f"⏱️ Rutina de ordeño: {len(bajas)} sesión(es) hoy con score bajo "
+                              f"({_rango(bajas)}%, umbral {ALERTA_RUTINA_SCORE_MIN}%).")
+    except Exception as exc:  # noqa: BLE001
+        lineas.append(f"⚠️ Rutina de ordeño: no se pudo evaluar ({exc}).")
 
-    data, _fresh = _cache_get(_clave(tambo, "ordeno_inc"), allow_stale=True)
-    if data and data.get("rows"):
-        idx = {c: i for i, c in enumerate(data["columns"])}
-        totales = [
-            (r[idx["posicion"]], (r[idx["desliz"]] or 0) + (r[idx["patadas"]] or 0)
-             + (r[idx["bloqueos"]] or 0) + (r[idx["recoloc"]] or 0))
-            for r in data["rows"]
-        ]
-        if totales:
-            mediana = statistics.median(t for _p, t in totales)
-            umbral_rojo = max(round(mediana * 2.5), 4)
-            problemas = sorted([(p, t) for p, t in totales if t >= umbral_rojo], key=lambda x: -x[1])
-            if problemas:
-                # Si ya hay un registro abierto en la Bitácora para ese puesto, se
-                # aclara en vez de repetir el mismo aviso como si fuera nuevo cada
-                # vez que se dispara la alerta (ver bitacora.abiertos_por_puesto).
-                reportados = bitacora.abiertos_por_puesto(tambo)
-                partes = []
-                for p, t in problemas:
-                    fecha_rep = reportados.get(int(p)) if p is not None else None
-                    extra = f", ya reportado el {fecha_rep}" if fecha_rep else ""
-                    partes.append(f"puesto {p} ({t}{extra})")
-                lineas.append(f"🔧 Incidencias: {len(problemas)} puesto(s) muy por encima de la mediana "
-                              f"({mediana:.0f}) hoy — {', '.join(partes)}. Posible unidad fallada.")
+    try:
+        data, _fresh = _cache_get(_clave(tambo, "ordeno_inc"), allow_stale=True)
+        if data and data.get("rows"):
+            idx = {c: i for i, c in enumerate(data["columns"])}
+            totales = [
+                (r[idx["posicion"]], (r[idx["desliz"]] or 0) + (r[idx["patadas"]] or 0)
+                 + (r[idx["bloqueos"]] or 0) + (r[idx["recoloc"]] or 0))
+                for r in data["rows"]
+            ]
+            if totales:
+                mediana = statistics.median(t for _p, t in totales)
+                umbral_rojo = max(round(mediana * 2.5), 4)
+                problemas = sorted([(p, t) for p, t in totales if t >= umbral_rojo], key=lambda x: -x[1])
+                if problemas:
+                    # Si ya hay un registro abierto en la Bitácora para ese puesto, se
+                    # aclara en vez de repetir el mismo aviso como si fuera nuevo cada
+                    # vez que se dispara la alerta (ver bitacora.abiertos_por_puesto).
+                    reportados = bitacora.abiertos_por_puesto(tambo)
+                    partes = []
+                    for p, t in problemas:
+                        fecha_rep = reportados.get(int(p)) if p is not None else None
+                        extra = f", ya reportado el {fecha_rep}" if fecha_rep else ""
+                        partes.append(f"puesto {p} ({t}{extra})")
+                    lineas.append(f"🔧 Incidencias: {len(problemas)} puesto(s) muy por encima de la mediana "
+                                  f"({mediana:.0f}) hoy — {', '.join(partes)}. Posible unidad fallada.")
+    except Exception as exc:  # noqa: BLE001
+        lineas.append(f"⚠️ Incidencias: no se pudo evaluar ({exc}).")
 
     return lineas
 
@@ -5390,28 +5413,43 @@ def _construir_mensaje_alertas(tambo: str):
     por el usuario: Tablero de Diagnóstico, alertas puntuales (CICLA/La
     Serenísima/rutina/incidencias), Check-list. No dispara consultas
     pesadas nuevas -- todo sale de caché. Devuelve (texto, html), o
-    (None, None) si no hay nada que contar."""
+    (None, None) si no hay nada que contar.
+
+    Cada una de las tres SECCIONES va en su propio try/except, por la misma
+    razón que _lineas_alertas_puntuales aísla sus cuatro chequeos: que el
+    Tablero no se pueda armar (o el check-list falle al leer su base) no
+    tiene por qué tapar las otras dos secciones, que pueden estar perfectas.
+    Antes una sola sección rota tiraba abajo TODO el mensaje -- en el botón
+    "Probar" se veía como "No se pudo armar el mensaje", y en el envío real
+    programado (que atrapa la excepción para no matar el hilo de fondo) el
+    tambo directamente no recibía nada ese día, de ninguna sección."""
     partes_texto = []
     secciones_html = []
 
-    valores = _valores_tablero(tambo)
-    armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
-    texto_tablero = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
-    if texto_tablero:
-        partes_texto.append(texto_tablero)
-        secciones_html.append(tablero.html_resumen(armado, nombre_tambo=tambos.nombre_de(tambo)))
+    try:
+        valores = _valores_tablero(tambo)
+        armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
+        texto_tablero = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
+        if texto_tablero:
+            partes_texto.append(texto_tablero)
+            secciones_html.append(tablero.html_resumen(armado, nombre_tambo=tambos.nombre_de(tambo)))
+    except Exception as exc:  # noqa: BLE001
+        partes_texto.append(f"⚠️ Tablero de Diagnóstico: no se pudo armar ({exc}).")
 
-    lineas = _lineas_alertas_puntuales(tambo)
+    lineas = _lineas_alertas_puntuales(tambo)   # ya resiliente por fuente, ver ahí
     if lineas:
         partes_texto.append("\n".join(lineas))
         secciones_html.append(_html_alertas_puntuales(lineas))
 
     if config_alertas.checklist_resumen_activo():
-        datos_cl = checklist.novedades(tambo)
-        texto_cl = checklist.texto_novedades(datos_cl, nombre_tambo=tambos.nombre_de(tambo))
-        if texto_cl:
-            partes_texto.append(texto_cl)
-            secciones_html.append(checklist.html_novedades(datos_cl, nombre_tambo=tambos.nombre_de(tambo)))
+        try:
+            datos_cl = checklist.novedades(tambo)
+            texto_cl = checklist.texto_novedades(datos_cl, nombre_tambo=tambos.nombre_de(tambo))
+            if texto_cl:
+                partes_texto.append(texto_cl)
+                secciones_html.append(checklist.html_novedades(datos_cl, nombre_tambo=tambos.nombre_de(tambo)))
+        except Exception as exc:  # noqa: BLE001
+            partes_texto.append(f"⚠️ Check-list de control: no se pudo revisar ({exc}).")
 
     if not partes_texto:
         return None, None
