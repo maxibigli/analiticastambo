@@ -116,6 +116,16 @@ _CAMPOS_ENUM = {
 _CAMPOS_INT = ("puerto", "personas", "arreo_min", "umbral_prep_s", "top_atencion",
                "ordenos_dia")
 
+# Cámaras del NVR para revisar en video lo que marcó "Rutina de ordeño" (hasta
+# MAX_CAMARAS, un NVR de 16 canales es lo típico). Cada una es solo
+# {nombre, url}: el nombre es el sector que cubre y la url es la plantilla de
+# link que el propio tambo ya usa para ver esa cámara, con placeholders que
+# el frontend reemplaza por la fecha/hora del punto donde se hizo click (ver
+# construirLinkCamara en index.html) — no se valida el formato de la URL ni
+# se asume ningún NVR/marca en particular, cada tambo la arma con lo que a
+# ÉL le funcione.
+MAX_CAMARAS = 16
+
 DEFAULT = {
     "nombre": None, "ip": None, "puerto": None, "usuario": None, "contrasena": None,
     "tiene_bcs": False, "tiene_podal": False,
@@ -137,6 +147,7 @@ DEFAULT = {
     # la contraseña NO se guardan acá: van por variable de entorno
     # (`SENSEHUB_USER_<TAMBO>` / `SENSEHUB_PWD_<TAMBO>`).
     "sensehub_ip": None,
+    "camaras": [],
 }
 
 # Nombres que se buscan cuando la ruta configurada es una CARPETA. Los de toros
@@ -254,6 +265,20 @@ def guardar(tambo_id: str, datos: dict) -> dict:
             if valor not in opciones and not (valor is None and clave in ("sistema_alimentacion", "sala")):
                 raise ValueError(f"Valor inválido para {clave}: {valor!r} (opciones: {opciones})")
             entrantes[clave] = valor
+        elif clave == "camaras":
+            if not isinstance(valor, list):
+                raise ValueError(f"Valor inválido para camaras: {valor!r} (se espera una lista)")
+            if len(valor) > MAX_CAMARAS:
+                raise ValueError(f"Máximo {MAX_CAMARAS} cámaras (llegaron {len(valor)})")
+            limpias = []
+            for cam in valor:
+                if not isinstance(cam, dict):
+                    raise ValueError(f"Cámara inválida: {cam!r} (se espera {{nombre, url}})")
+                nombre = str(cam.get("nombre") or "").strip()
+                url = str(cam.get("url") or "").strip()
+                if nombre or url:   # una fila vacía de la UI no se guarda
+                    limpias.append({"nombre": nombre, "url": url})
+            entrantes[clave] = limpias
         # claves desconocidas: se ignoran (URL manual mal armada no rompe nada)
 
     nueva = {**actual, **entrantes}

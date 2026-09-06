@@ -3535,6 +3535,18 @@ def _umbral_prep_de_request(tambo: str | None = None):
         return None
 
 
+@app.get("/api/rutina/camaras")
+def api_rutina_camaras():
+    """Cámaras configuradas (nombre de sector + plantilla de link), para el
+    popover de "elegí una cámara" al hacer click en la línea de tiempo de una
+    sesión. A propósito NO pasa por /api/configuracion (admin-only): un
+    operario ve "rutina" pero no "configuracion" (ver auth.PAGINAS_POR_ROL) y
+    tiene que poder abrir la cámara igual, sin el rol admin."""
+    tambo = _tambo_del_request()
+    camaras = configuracion_tambo.config_de(tambo).get("camaras") or []
+    return jsonify({"camaras": camaras})
+
+
 @app.get("/api/rutina/grupos")
 def api_rutina_grupos():
     """Grupos activos hoy (con cantidad de animales), para el selector de

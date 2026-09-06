@@ -692,6 +692,21 @@
     border-radius: 8px; padding: 7px 10px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.18);
     z-index: 50; display: none; max-width: 240px;
   }
+  /* Popover "elegí una cámara" al hacer click en la línea de tiempo de rutina */
+  .cam-popover {
+    position: fixed; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 9px; padding: 8px; font-size: 12.5px; box-shadow: 0 6px 18px rgba(0,0,0,.24);
+    z-index: 51; min-width: 190px; max-width: 260px;
+  }
+  .cam-popover .cam-pop-titulo { font-weight: 650; margin-bottom: 6px; color: var(--text-secondary); }
+  .cam-popover button.cam-pop-item {
+    display: block; width: 100%; text-align: left; background: transparent; border: none;
+    border-radius: 6px; padding: 7px 8px; color: var(--text-primary); cursor: pointer; font: inherit;
+  }
+  .cam-popover button.cam-pop-item:hover { background: var(--page); }
+  /* Editor de cámaras, en ⚙ Configuración */
+  .cam-fila { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .cam-fila input[type=text] { padding: 6px 8px; }
   /* Sistema: shell + sidebar + topbar */
   .app-shell { display: flex; min-height: 100vh; align-items: stretch; }
   .sidebar {
@@ -2017,6 +2032,7 @@
     <div class="rutina-layout" id="rutina-cuerpo"></div>
   </section>
   <div class="rutina-tooltip" id="rutina-tooltip"></div>
+  <div class="cam-popover" id="cam-popover" hidden></div>
 
   {% if 'rendimiento' in paginas_visibles %}
   {# --- Pestana "Rendimiento Sala" (antes era la pagina #page-rendimiento).
@@ -2974,6 +2990,7 @@
     <button class="lac-segment__item" data-tab="iot_canales" aria-pressed="false">🔌 Entradas/Salidas</button>
     <button class="lac-segment__item" data-tab="lavado_auto" aria-pressed="false">🧼 Lavado Automático</button>
     <button class="lac-segment__item" data-tab="tv" aria-pressed="false">📺 Modo televisor</button>
+    <button class="lac-segment__item" data-tab="camaras" aria-pressed="false">🎥 Cámaras</button>
   </div>
 
   <section class="card" id="config-general-card">
@@ -3435,6 +3452,33 @@
       <button class="secundario" id="tv-rotar">Generar dirección nueva</button>
     </div>
     <div class="aviso" id="tv-estado" style="margin-top:8px"></div>
+  </section>
+
+  <section class="card" id="config-camaras-card" hidden>
+    <h2 style="margin:0">🎥 Cámaras</h2>
+    <span class="aviso">Hasta 16 cámaras del NVR, cada una con el sector que cubre. En
+      "Rutina de ordeño" alcanza con hacer click en un punto de la línea de tiempo de una
+      sesión para elegir una de estas cámaras y abrir su grabación en esa fecha y hora.</span>
+
+    <div class="aviso" style="margin-top:14px">
+      La <b>plantilla de link</b> es la URL que usás hoy para ver esa cámara, con estos
+      textos en el lugar de la fecha/hora (se reemplazan solos al hacer click en la línea
+      de tiempo):
+      <code>{FECHA}</code> (2026-08-24), <code>{HORA}</code> (15:21:04),
+      <code>{FECHA_HORA}</code> (los dos juntos) y <code>{TIMESTAMP}</code> (segundos desde
+      1970, por si tu NVR pide eso en vez de una fecha). Si tu NVR no soporta ir a una hora
+      exacta por link, dejá la URL sin esos textos: igual va a abrir la cámara correcta.
+    </div>
+
+    <div id="cam-lista" style="margin-top:14px"></div>
+    <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <button type="button" class="secundario" id="cam-agregar">+ Agregar cámara</button>
+      <span class="aviso" id="cam-cupo"></span>
+    </div>
+    <div style="margin-top:14px">
+      <button id="cam-guardar" disabled>Guardar</button>
+    </div>
+    <div class="aviso" id="cam-estado" style="margin-top:8px"></div>
   </section>
   </div>
     </main>
@@ -9330,6 +9374,7 @@ document.getElementById('rutina-config-reset').addEventListener('click', () => {
 
 async function cargarRutina(fecha) {
   const info = document.getElementById('rutina-info');
+  cargarRutinaCamaras();   // en paralelo: no bloquea el gráfico si tarda o falla
   try {
     let url = '/api/rutina?tambo=' + encodeURIComponent(tamboActual) + paramsRutinaConfig();
     if (fecha) url += '&fecha=' + encodeURIComponent(fecha);
@@ -9495,6 +9540,113 @@ function pintarRutinaSesion() {
   renderRutinaChart(s);
 }
 
+// ---------------------------------------------------------------------------
+// Cámaras: click en la línea de tiempo de una sesión -> elegís una cámara
+// configurada (⚙ Configuración → 🎥 Cámaras) -> se abre su grabación en la
+// fecha/hora de ese punto. Lee `/api/rutina/camaras`, un endpoint APARTE del
+// admin-only `/api/configuracion` (ver auth.PAGINAS_POR_ROL: "operario" ve
+// "rutina" pero no "configuracion") — el operario que mira la rutina tiene
+// que poder abrir la cámara igual, sin necesitar el rol admin.
+let rutinaCamaras = [];
+
+async function cargarRutinaCamaras() {
+  try {
+    const d = await pedirJSON('/api/rutina/camaras?tambo=' + encodeURIComponent(tamboActual));
+    rutinaCamaras = d.camaras || [];
+  } catch (e) { rutinaCamaras = []; }
+}
+
+// Misma escala que arma renderRutinaChart (margenIzq/anchoPx/pxPerMin
+// calculados IGUAL, ver ahí) pero en el sentido inverso: de un click en
+// pantalla a la hora que representa ese punto del eje. Se recalcula en cada
+// click en vez de guardarse en un cierre: así nunca queda desalineada con
+// un cambio de zoom entre que se dibujó el gráfico y que se hizo click.
+function rutinaEscalaTiempo(s) {
+  const inicio = new Date(s.inicio).getTime(), fin = new Date(s.fin).getTime();
+  const dur = Math.max(fin - inicio, 1000);
+  const durMin = dur / 60000;
+  const pxPerMin = (durMin > 240 ? 9 : 14) * rutinaZoom;
+  const margenIzq = 30;
+  const anchoPx = Math.max(700, margenIzq + 24 + durMin * pxPerMin);
+  return {
+    tDeX: (offsetX) => {
+      const frac = Math.max(0, Math.min(1, (offsetX - margenIzq) / (anchoPx - margenIzq - 14)));
+      return new Date(inicio + frac * dur).toISOString();
+    },
+  };
+}
+
+function construirLinkCamara(plantilla, iso) {
+  const d = new Date(iso);
+  const pad = n => String(n).padStart(2, '0');
+  const fecha = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const hora = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const reemplazos = {
+    '{FECHA_HORA}': `${fecha} ${hora}`,   // antes que {FECHA}/{HORA}: si no, ya reemplazadas por separado no queda nada para este combinado
+    '{FECHA}': fecha, '{HORA}': hora,
+    '{TIMESTAMP}': String(Math.floor(d.getTime() / 1000)),
+  };
+  let out = plantilla;
+  for (const [clave, valor] of Object.entries(reemplazos)) out = out.split(clave).join(encodeURIComponent(valor));
+  return out;
+}
+
+function ocultarPopoverCamaras() {
+  document.getElementById('cam-popover').hidden = true;
+}
+
+function mostrarPopoverCamaras(clientX, clientY, iso) {
+  const pop = document.getElementById('cam-popover');
+  // Con opciones explícitas: toLocaleString('es-AR') sin ellas arma el reloj
+  // en 12 horas pero SIN el "a. m./p. m." en este runtime, y una medianoche
+  // ("00:00:35") se leía como si fuera mediodía ("12:00:35", sin aclarar cuál).
+  const horaTxt = new Date(iso).toLocaleString('es-AR', {
+    day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
+  });
+  pop.innerHTML = rutinaCamaras.length
+    ? `<div class="cam-pop-titulo">${horaTxt}</div>` + rutinaCamaras.map((c, i) =>
+        `<button type="button" class="cam-pop-item" data-i="${i}">📹 ${escHtml(c.nombre || 'Cámara ' + (i + 1))}</button>`).join('')
+    : `<div class="cam-pop-titulo">${horaTxt}</div>
+       <div class="aviso">Sin cámaras configuradas — se cargan en ⚙ Configuración → 🎥 Cámaras.</div>`;
+  pop.querySelectorAll('.cam-pop-item').forEach(b => b.addEventListener('click', () => {
+    const cam = rutinaCamaras[Number(b.dataset.i)];
+    if (cam && cam.url) window.open(construirLinkCamara(cam.url, iso), '_blank');
+    ocultarPopoverCamaras();
+  }));
+  pop.hidden = false;
+  // El ancho/alto reales solo se conocen una vez visible (arriba); recién
+  // ahí se puede evitar que el popover se dibuje afuera de la pantalla.
+  const w = pop.offsetWidth, h = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(clientX + 10, window.innerWidth - w - 10)) + 'px';
+  pop.style.top = Math.max(8, Math.min(clientY + 10, window.innerHeight - h - 10)) + 'px';
+}
+
+document.addEventListener('click', (e) => {
+  const pop = document.getElementById('cam-popover');
+  if (pop.contains(e.target)) return;   // los botones del popover se manejan solos, arriba
+  if (!rutinaData || !rutinaData.sesiones.length) { pop.hidden = true; return; }
+  const s = rutinaData.sesiones[rutinaSesionIdx];
+  const marca = e.target.closest && e.target.closest('.rt-pt');
+  if (marca) {
+    const v = s.visitas[Number(marca.dataset.i)];
+    const iso = { id: v.hora_id, coloc: v.hora_coloc, retiro: v.hora_fin }[marca.dataset.tipo] || v.hora_id;
+    mostrarPopoverCamaras(e.clientX, e.clientY, iso);
+    return;
+  }
+  const svg = e.target.closest && e.target.closest('#rutina-chart-svg');
+  if (svg) {
+    const rect = svg.getBoundingClientRect();
+    // El SVG no tiene escalado CSS (width/height = mismas unidades que el
+    // viewBox, ver renderRutinaChart): un pixel de pantalla es una unidad
+    // del gráfico, así que basta restar la posición del propio elemento.
+    const iso = rutinaEscalaTiempo(s).tDeX(e.clientX - rect.left);
+    mostrarPopoverCamaras(e.clientX, e.clientY, iso);
+    return;
+  }
+  pop.hidden = true;
+});
+
 function renderRutinaChart(s) {
   const cont = document.getElementById('rutina-chart');
   const inicio = new Date(s.inicio).getTime(), fin = new Date(s.fin).getTime();
@@ -9529,13 +9681,13 @@ function renderRutinaChart(s) {
     const xf = v.hora_fin ? x(new Date(v.hora_fin).getTime()) : xi;
     const yy = y(v.puesto).toFixed(1);
     filas += `<line x1="${xi.toFixed(1)}" y1="${yy}" x2="${xf.toFixed(1)}" y2="${yy}" stroke="var(--violeta)" stroke-width="2.6" opacity=".65"/>`;
-    filas += `<path class="rt-pt" data-i="${i}" d="M ${xi.toFixed(1)},${(yy - 4).toFixed(1)} L ${(xi + 4).toFixed(1)},${yy} L ${xi.toFixed(1)},${(+yy + 4).toFixed(1)} L ${(xi - 4).toFixed(1)},${yy} Z" fill="${v.color}"/>`;
+    filas += `<path class="rt-pt" data-i="${i}" data-tipo="id" d="M ${xi.toFixed(1)},${(yy - 4).toFixed(1)} L ${(xi + 4).toFixed(1)},${yy} L ${xi.toFixed(1)},${(+yy + 4).toFixed(1)} L ${(xi - 4).toFixed(1)},${yy} Z" fill="${v.color}" style="cursor:pointer"/>`;
     if (v.hora_coloc) {
       const xc = x(new Date(v.hora_coloc).getTime());
-      filas += `<rect class="rt-pt" data-i="${i}" x="${(xc - 3.2).toFixed(1)}" y="${(+yy - 3.2).toFixed(1)}" width="6.4" height="6.4" fill="${v.color}"${v.cumple_90 ? '' : ' stroke="var(--critical)" stroke-width="1.6"'}/>`;
+      filas += `<rect class="rt-pt" data-i="${i}" data-tipo="coloc" x="${(xc - 3.2).toFixed(1)}" y="${(+yy - 3.2).toFixed(1)}" width="6.4" height="6.4" fill="${v.color}"${v.cumple_90 ? '' : ' stroke="var(--critical)" stroke-width="1.6"'} style="cursor:pointer"/>`;
     }
     if (v.hora_fin) {
-      filas += `<path class="rt-pt" data-i="${i}" d="M ${(xf - 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${(xf + 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${xf.toFixed(1)},${(+yy - 4.4).toFixed(1)} Z" fill="${v.color}"${v.lerda ? ' stroke="var(--critical)" stroke-width="1.6"' : ''}/>`;
+      filas += `<path class="rt-pt" data-i="${i}" data-tipo="retiro" d="M ${(xf - 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${(xf + 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${xf.toFixed(1)},${(+yy - 4.4).toFixed(1)} Z" fill="${v.color}"${v.lerda ? ' stroke="var(--critical)" stroke-width="1.6"' : ''} style="cursor:pointer"/>`;
     }
   });
 
@@ -9543,7 +9695,7 @@ function renderRutinaChart(s) {
     .map(g => `<span><span class="pt" style="background:${g.color}"></span>${g.nombre || 'Grupo ' + (g.grupo ?? '—')}</span>`).join('');
 
   cont.innerHTML = `
-    <svg viewBox="0 0 ${anchoPx.toFixed(0)} ${alto.toFixed(0)}" width="${anchoPx.toFixed(0)}" height="${alto.toFixed(0)}">
+    <svg id="rutina-chart-svg" viewBox="0 0 ${anchoPx.toFixed(0)} ${alto.toFixed(0)}" width="${anchoPx.toFixed(0)}" height="${alto.toFixed(0)}" style="cursor:crosshair">
       ${grid}${ejey}${filas}
     </svg>
     <div class="rutina-leyenda">
@@ -11317,6 +11469,7 @@ async function cargarConfiguracion() {
     cargarCanalesGateway();
     cargarConfigTv();
     cargarLavadoAuto();
+    cargarConfigCamaras();
     estado.textContent = '';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
@@ -11342,6 +11495,7 @@ document.getElementById('config-tabs').addEventListener('click', ev => {
   document.getElementById('config-iot-canales-card').hidden = tab !== 'iot_canales';
   document.getElementById('config-lavado-auto-card').hidden = tab !== 'lavado_auto';
   document.getElementById('config-tv-card').hidden = tab !== 'tv';
+  document.getElementById('config-camaras-card').hidden = tab !== 'camaras';
 });
 
 // --- Editor de la plantilla del check-list ---------------------------------
@@ -11989,6 +12143,104 @@ document.getElementById('config-iot-canales-guardar').addEventListener('click', 
     estado.textContent = '✔ Guardado.';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
+  }
+});
+
+// --- Cámaras (hasta MAX_CAMARAS, cada una nombre de sector + plantilla de
+// link) — mismo patrón de "lista con filas que se agregan/sacan" que ya usa
+// el editor de pasos de Modo televisor (filaPasoTv/pintarPasosTv), pero acá
+// es UNA sola lista con UN solo botón "Guardar" (no hay nada por sección que
+// justifique guardarlas una por una). Se guarda en configuracion_tambo.py
+// (clave "camaras" del mismo JSON que usa toda ⚙ Configuración), vía el
+// endpoint /api/configuracion que ya existe — no hace falta uno nuevo acá.
+const MAX_CAMARAS = 16;
+let camarasOriginal = null;
+
+function filaCamara(cam) {
+  return `<div class="cam-fila">
+    <input type="text" class="cam-nombre" placeholder="Sector (ej: Sala de espera)"
+           value="${escHtml(cam.nombre || '')}" style="flex:1 1 180px">
+    <input type="text" class="cam-url" placeholder="https://.../play?fecha={FECHA}&hora={HORA}"
+           value="${escHtml(cam.url || '')}" style="flex:2 1 320px">
+    <button type="button" class="secundario cam-quitar" title="Quitar esta cámara">✕</button>
+  </div>`;
+}
+
+function camarasValores() {
+  return [...document.querySelectorAll('#cam-lista .cam-fila')].map(f => ({
+    nombre: f.querySelector('.cam-nombre').value.trim(),
+    url: f.querySelector('.cam-url').value.trim(),
+  })).filter(c => c.nombre || c.url);   // una fila totalmente vacía no cuenta como cámara
+}
+
+function marcarCamarasCambiadas() {
+  document.getElementById('cam-guardar').disabled =
+    camarasOriginal === null || JSON.stringify(camarasValores()) === camarasOriginal;
+}
+
+function actualizarCupoCamaras() {
+  const cant = document.querySelectorAll('#cam-lista .cam-fila').length;
+  document.getElementById('cam-agregar').disabled = cant >= MAX_CAMARAS;
+  document.getElementById('cam-cupo').textContent = `${cant}/${MAX_CAMARAS} cámaras`;
+}
+
+function ligarFilaCamara(fila) {
+  fila.querySelector('.cam-quitar').addEventListener('click', () => {
+    fila.remove();
+    if (!document.querySelector('#cam-lista .cam-fila')) {
+      document.getElementById('cam-lista').innerHTML =
+        '<span class="aviso">Sin cámaras configuradas todavía.</span>';
+    }
+    actualizarCupoCamaras();
+    marcarCamarasCambiadas();
+  });
+  fila.querySelectorAll('.cam-nombre, .cam-url').forEach(inp =>
+    inp.addEventListener('input', marcarCamarasCambiadas));
+}
+
+function pintarCamaras(camaras) {
+  const cont = document.getElementById('cam-lista');
+  cont.innerHTML = camaras.length ? camaras.map(filaCamara).join('')
+    : '<span class="aviso">Sin cámaras configuradas todavía.</span>';
+  cont.querySelectorAll('.cam-fila').forEach(ligarFilaCamara);
+  actualizarCupoCamaras();
+}
+
+document.getElementById('cam-agregar').addEventListener('click', () => {
+  const cont = document.getElementById('cam-lista');
+  if (!cont.querySelector('.cam-fila')) cont.innerHTML = '';
+  cont.insertAdjacentHTML('beforeend', filaCamara({ nombre: '', url: '' }));
+  ligarFilaCamara(cont.querySelector('.cam-fila:last-child'));
+  actualizarCupoCamaras();
+  marcarCamarasCambiadas();
+});
+
+async function cargarConfigCamaras() {
+  const estado = document.getElementById('cam-estado');
+  try {
+    const d = await pedirJSON('/api/configuracion?tambo=' + encodeURIComponent(tamboActual));
+    pintarCamaras(d.config.camaras || []);
+    camarasOriginal = JSON.stringify(camarasValores());
+    document.getElementById('cam-guardar').disabled = true;
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('cam-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('cam-estado');
+  estado.textContent = 'Guardando…';
+  try {
+    await pedirJSON('/api/configuracion?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ camaras: camarasValores() }),
+    });
+    camarasOriginal = JSON.stringify(camarasValores());
+    document.getElementById('cam-guardar').disabled = true;
+    estado.textContent = '✔ Guardado.';
+  } catch (e) {
+    estado.textContent = 'Error al guardar: ' + e.message;
   }
 });
 

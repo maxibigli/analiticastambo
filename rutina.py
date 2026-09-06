@@ -1839,6 +1839,15 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
             "hora_fin": v["hora_fin"].isoformat() if v["hora_fin"] else None,
             "prep_seg": round(v["prep_seg"]) if v["prep_seg"] is not None else None,
             "ordeño_seg": round(v["ordeño_seg"]) if v["ordeño_seg"] is not None else None,
+            # Puntaje 0-100 de ESA colocación puntual, misma curva de crédito
+            # gradual que arma el componente "prep_90s" (ver _credito_prep):
+            # no es solo cumple_90/no cumple, pasarse por poco pesa poco y
+            # recién se derrumba pasada la tolerancia. None solo cuando ni
+            # siquiera se puede medir (sin_id, ver más abajo) -- con dato
+            # faltante pero medible (sin hora_coloc) SÍ da un puntaje
+            # (CREDITO_SIN_COLOCAR), igual que en el score de la sesión.
+            "prep_score": (None if v["sin_id"]
+                           else round(100 * _credito_prep(v["prep_seg"], umbral_prep_s))),
             "cumple_90": v["cumple_90"], "lerda": v["lerda"], "mezclada": v["mezclada"],
             # Para que el gráfico pueda DECIR por qué esa visita no tiene tramo,
             # en vez de mostrar un "—" mudo. `sin_id` = no se leyó el collar;
