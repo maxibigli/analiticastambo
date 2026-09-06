@@ -1571,6 +1571,7 @@ def api_configuracion():
     tambo = _tambo_del_request()
     cfg = configuracion_tambo.config_de(tambo)
     cfg["contrasena_configurada"] = bool(cfg.pop("contrasena"))
+    cfg["nvr_contrasena_configurada"] = bool(cfg.pop("nvr_contrasena"))
     cfg["tambo"] = tambo
     cfg["sala_efectiva"] = tambos.tipo_sala(tambo)
     return jsonify({"config": cfg, "catalogos": CATALOGOS_CONFIGURACION,
@@ -1587,11 +1588,14 @@ def api_guardar_configuracion():
     # no hay que pisar la que ya estaba guardada con un vacío.
     if not datos.get("contrasena"):
         datos.pop("contrasena", None)
+    if not datos.get("nvr_contrasena"):
+        datos.pop("nvr_contrasena", None)
     try:
         cfg = configuracion_tambo.guardar(tambo, datos)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     cfg["contrasena_configurada"] = bool(cfg.pop("contrasena"))
+    cfg["nvr_contrasena_configurada"] = bool(cfg.pop("nvr_contrasena"))
     cfg["tambo"] = tambo
     cfg["sala_efectiva"] = tambos.tipo_sala(tambo)
     return jsonify({"config": cfg, "catalogos": CATALOGOS_CONFIGURACION,
@@ -3537,14 +3541,26 @@ def _umbral_prep_de_request(tambo: str | None = None):
 
 @app.get("/api/rutina/camaras")
 def api_rutina_camaras():
-    """Cámaras configuradas (nombre de sector + plantilla de link), para el
+    """Cámaras configuradas (nombre de sector + plantilla de link YA armada
+    con los datos del NVR, ver configuracion_tambo.plantilla_camara), para el
     popover de "elegí una cámara" al hacer click en la línea de tiempo de una
     sesión. A propósito NO pasa por /api/configuracion (admin-only): un
     operario ve "rutina" pero no "configuracion" (ver auth.PAGINAS_POR_ROL) y
-    tiene que poder abrir la cámara igual, sin el rol admin."""
+    tiene que poder abrir la cámara igual, sin el rol admin.
+
+    OJO DE SEGURIDAD: la plantilla devuelta trae el usuario/contraseña del
+    NVR ya insertados (sin ellos el link no sirve para nada) -- cualquiera con
+    acceso a "Rutina de ordeño", incluido el operario, puede verlos. Mismo
+    criterio ya aceptado por el tambo para la contraseña general de
+    configuracion_tambo.py (ver el docstring del módulo): la comodidad de un
+    click pesa más que ocultar una credencial que de todos modos hace falta
+    para mirar la cámara."""
     tambo = _tambo_del_request()
     camaras = configuracion_tambo.config_de(tambo).get("camaras") or []
-    return jsonify({"camaras": camaras})
+    salida = [{"nombre": c.get("nombre"),
+               "url": configuracion_tambo.plantilla_camara(tambo, c.get("canal"))}
+              for c in camaras]
+    return jsonify({"camaras": salida})
 
 
 @app.get("/api/rutina/grupos")

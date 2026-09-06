@@ -23,6 +23,7 @@ fuentes de verdad para lo mismo.
 import json
 import os
 import threading
+import urllib.parse
 
 _RUTA = os.path.join(os.path.dirname(__file__), "configuracion_tambos.json")
 _lock = threading.Lock()
@@ -68,7 +69,7 @@ SALAS_LABEL = {"rotativa": "Rotativa", "convencional": "Convencional (espina de 
 # antes de copiar el archivo, y bloquear el guardado por eso sería molesto sin
 # necesidad — la pantalla informa el estado con `estado_rutas()`.
 _CAMPOS_TEXTO = ("nombre", "ip", "usuario", "contrasena", "ruta_toros", "ruta_precios",
-                 "sensehub_ip")
+                 "sensehub_ip", "nvr_ip", "nvr_usuario", "nvr_contrasena", "nvr_plantilla")
 _CAMPOS_BOOL = ("tiene_bcs", "tiene_podal")
 _CAMPOS_ENUM = {
     "sistema_actividad": SISTEMAS_ACTIVIDAD,
@@ -114,17 +115,29 @@ _CAMPOS_ENUM = {
 #              el tambo, que es quien sabe su rutina. Vacio = no se filtra
 #              nada (mismo comportamiento que antes de que esto existiera).
 _CAMPOS_INT = ("puerto", "personas", "arreo_min", "umbral_prep_s", "top_atencion",
-               "ordenos_dia")
+               "ordenos_dia", "nvr_puerto")
 
 # Cámaras del NVR para revisar en video lo que marcó "Rutina de ordeño" (hasta
-# MAX_CAMARAS, un NVR de 16 canales es lo típico). Cada una es solo
-# {nombre, url}: el nombre es el sector que cubre y la url es la plantilla de
-# link que el propio tambo ya usa para ver esa cámara, con placeholders que
-# el frontend reemplaza por la fecha/hora del punto donde se hizo click (ver
-# construirLinkCamara en index.html) — no se valida el formato de la URL ni
-# se asume ningún NVR/marca en particular, cada tambo la arma con lo que a
-# ÉL le funcione.
+# MAX_CAMARAS, un NVR de 16 canales es lo típico). UN SOLO grabador para todas
+# (confirmado con el tambo, 2026-09-06): la conexión (ip/puerto/usuario/
+# contraseña) se carga UNA vez en `nvr_*`, y cada cámara de la lista es sólo
+# {nombre, canal} -- el sector que cubre y el número de canal en el NVR. Antes
+# cada cámara guardaba su propia URL completa; con un solo grabador eso era
+# repetir las mismas credenciales 16 veces (cambiar la contraseña del NVR
+# implicaba editar 16 filas). Ver `plantilla_camara`.
 MAX_CAMARAS = 16
+
+# Formato RTSP estándar de los NVR Dahua (y muchos compatibles/OEM) para pedir
+# la grabación de un canal en un rango de fecha/hora. {INICIO}/{FIN} los pone
+# el frontend al hacer click (ver construirLinkCamara en index.html, formato
+# AAAA_MM_DD_HH_MM_SS que exige Dahua). NO ESTÁ VALIDADO CONTRA HARDWARE REAL
+# todavía (el tambo no tenía el NVR instalado al escribir esto) -- es el punto
+# de partida documentado, editable por el tambo en `nvr_plantilla` si su
+# modelo/firmware exacto necesita otra sintaxis.
+NVR_PLANTILLA_DEFECTO = (
+    "rtsp://{USUARIO}:{CONTRASENA}@{IP}:{PUERTO}/cam/playback?"
+    "channel={CANAL}&subtype=0&starttime={INICIO}&endtime={FIN}"
+)
 
 DEFAULT = {
     "nombre": None, "ip": None, "puerto": None, "usuario": None, "contrasena": None,
@@ -147,6 +160,10 @@ DEFAULT = {
     # la contraseña NO se guardan acá: van por variable de entorno
     # (`SENSEHUB_USER_<TAMBO>` / `SENSEHUB_PWD_<TAMBO>`).
     "sensehub_ip": None,
+    # Conexión al NVR de cámaras (ver el comentario de MAX_CAMARAS arriba).
+    # `nvr_plantilla` vacío = usar NVR_PLANTILLA_DEFECTO.
+    "nvr_ip": None, "nvr_puerto": None, "nvr_usuario": None, "nvr_contrasena": None,
+    "nvr_plantilla": None,
     "camaras": [],
 }
 
@@ -170,6 +187,34 @@ def config_de(tambo_id: str) -> dict:
     Todo en None/False = "no hay override", el llamador cae a tambos.py."""
     guardado = _leer().get(tambo_id) or {}
     return {**DEFAULT, **guardado}
+
+
+def plantilla_camara(tambo_id: str, canal) -> str | None:
+    """Plantilla de link de la cámara de UN canal, con {IP}/{PUERTO}/
+    {USUARIO}/{CONTRASENA}/{CANAL} ya reemplazados por los datos del NVR y
+    {INICIO}/{FIN} todavía literales -- esos los pone el frontend con la
+    fecha/hora del punto donde se hizo click (ver construirLinkCamara en
+    index.html). None si el tambo todavía no cargó los datos del NVR, o si
+    esta cámara no tiene canal asignado (fila a medio cargar).
+
+    Usuario/contraseña se url-encodean: van dentro de un `rtsp://usuario:
+    contraseña@...` y un `@` o `:` sueltos en la contraseña romperían la URL."""
+    if canal is None:
+        return None
+    cfg = config_de(tambo_id)
+    if not cfg.get("nvr_ip"):
+        return None
+    plantilla = cfg.get("nvr_plantilla") or NVR_PLANTILLA_DEFECTO
+    reemplazos = {
+        "{IP}": cfg["nvr_ip"],
+        "{PUERTO}": str(cfg.get("nvr_puerto") or 554),
+        "{USUARIO}": urllib.parse.quote(cfg.get("nvr_usuario") or "", safe=""),
+        "{CONTRASENA}": urllib.parse.quote(cfg.get("nvr_contrasena") or "", safe=""),
+        "{CANAL}": str(canal),
+    }
+    for clave, valor in reemplazos.items():
+        plantilla = plantilla.replace(clave, valor)
+    return plantilla
 
 
 def _resolver(ruta, nombres, dir_defecto) -> list:
@@ -273,11 +318,15 @@ def guardar(tambo_id: str, datos: dict) -> dict:
             limpias = []
             for cam in valor:
                 if not isinstance(cam, dict):
-                    raise ValueError(f"Cámara inválida: {cam!r} (se espera {{nombre, url}})")
+                    raise ValueError(f"Cámara inválida: {cam!r} (se espera {{nombre, canal}})")
                 nombre = str(cam.get("nombre") or "").strip()
-                url = str(cam.get("url") or "").strip()
-                if nombre or url:   # una fila vacía de la UI no se guarda
-                    limpias.append({"nombre": nombre, "url": url})
+                canal_crudo = cam.get("canal")
+                try:
+                    canal = int(canal_crudo) if canal_crudo not in (None, "") else None
+                except (TypeError, ValueError):
+                    raise ValueError(f"Canal inválido para la cámara {nombre!r}: {canal_crudo!r}")
+                if nombre or canal is not None:   # una fila vacía de la UI no se guarda
+                    limpias.append({"nombre": nombre, "canal": canal})
             entrantes[clave] = limpias
         # claves desconocidas: se ignoran (URL manual mal armada no rompe nada)
 

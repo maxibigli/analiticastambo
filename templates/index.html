@@ -3456,21 +3456,44 @@
 
   <section class="card" id="config-camaras-card" hidden>
     <h2 style="margin:0">🎥 Cámaras</h2>
-    <span class="aviso">Hasta 16 cámaras del NVR, cada una con el sector que cubre. En
+    <span class="aviso">Un solo NVR para hasta 16 cámaras. Cargá la conexión al grabador una
+      sola vez acá abajo; cada cámara de la lista es solo su sector y su número de canal. En
       "Rutina de ordeño" alcanza con hacer click en un punto de la línea de tiempo de una
       sesión para elegir una de estas cámaras y abrir su grabación en esa fecha y hora.</span>
 
-    <div class="aviso" style="margin-top:14px">
-      La <b>plantilla de link</b> es la URL que usás hoy para ver esa cámara, con estos
-      textos en el lugar de la fecha/hora (se reemplazan solos al hacer click en la línea
-      de tiempo):
-      <code>{FECHA}</code> (2026-08-24), <code>{HORA}</code> (15:21:04),
-      <code>{FECHA_HORA}</code> (los dos juntos) y <code>{TIMESTAMP}</code> (segundos desde
-      1970, por si tu NVR pide eso en vez de una fecha). Si tu NVR no soporta ir a una hora
-      exacta por link, dejá la URL sin esos textos: igual va a abrir la cámara correcta.
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Datos del grabador (NVR)</div>
+    <div class="controls" style="flex-wrap:wrap;gap:14px">
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Dirección IP
+        <input type="text" id="cam-nvr-ip" placeholder="192.168.1.50" style="width:160px;padding:7px 8px">
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Puerto
+        <input type="number" id="cam-nvr-puerto" placeholder="554" style="width:100px;padding:7px 8px">
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Usuario
+        <input type="text" id="cam-nvr-usuario" style="width:160px;padding:7px 8px">
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Contraseña
+        <input type="password" id="cam-nvr-contrasena" placeholder="(sin cambios)" style="width:160px;padding:7px 8px">
+      </label>
+    </div>
+    <div class="aviso" id="cam-nvr-contrasena-nota" style="margin-top:6px"></div>
+
+    <div class="aviso" style="margin-top:14px;display:flex;flex-direction:column;gap:3px">
+      Plantilla de link (avanzado — dejar como está salvo que tu NVR necesite otro formato)
+      <textarea id="cam-nvr-plantilla" rows="2" style="padding:7px 8px;font-family:monospace;font-size:12px;width:100%;max-width:640px"></textarea>
+    </div>
+    <div class="aviso" style="margin-top:4px">
+      <code>{IP}</code>, <code>{PUERTO}</code>, <code>{USUARIO}</code>, <code>{CONTRASENA}</code> y
+      <code>{CANAL}</code> se completan con los datos de arriba y el canal de cada cámara.
+      <code>{INICIO}</code>/<code>{FIN}</code> los pone la app con la fecha/hora del punto donde
+      hiciste click en la línea de tiempo (un margen de unos segundos antes y unos minutos
+      después, para tener contexto del momento). Formato de fábrica: RTSP estándar de
+      grabadores Dahua — si el tuyo es de otra marca o pide otra sintaxis, editalo acá;
+      probalo primero pegándolo en el navegador o en VLC contra tu NVR ya instalado.
     </div>
 
-    <div id="cam-lista" style="margin-top:14px"></div>
+    <div class="aviso" style="margin-top:18px;font-weight:600">Cámaras</div>
+    <div id="cam-lista" style="margin-top:8px"></div>
     <div style="margin-top:8px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
       <button type="button" class="secundario" id="cam-agregar">+ Agregar cámara</button>
       <span class="aviso" id="cam-cupo"></span>
@@ -9576,18 +9599,30 @@ function rutinaEscalaTiempo(s) {
   };
 }
 
+// Ventana alrededor del punto donde se hizo click, no un instante seco: el
+// NVR pide un rango (starttime/endtime), y ver solo el frame exacto no sirve
+// para entender qué pasó. Elegidos a ojo (sin poder probarlos contra un NVR
+// real todavía, ver el comentario de NVR_PLANTILLA_DEFECTO en
+// configuracion_tambo.py) -- ajustables si en la práctica quedan cortos/largos.
+const CAMARA_VENTANA_ANTES_SEG = 10;
+const CAMARA_VENTANA_DESPUES_SEG = 300;
+
 function construirLinkCamara(plantilla, iso) {
-  const d = new Date(iso);
-  const pad = n => String(n).padStart(2, '0');
-  const fecha = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-  const hora = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const centro = new Date(iso).getTime();
+  // Formato AAAA_MM_DD_HH_MM_SS que exige Dahua para starttime/endtime (con
+  // guiones bajos, no ":"/"-" -- esos rompen la query string de un RTSP).
+  const fmtDahua = (ms) => {
+    const d = new Date(ms);
+    const pad = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}_${pad(d.getMonth() + 1)}_${pad(d.getDate())}_` +
+           `${pad(d.getHours())}_${pad(d.getMinutes())}_${pad(d.getSeconds())}`;
+  };
   const reemplazos = {
-    '{FECHA_HORA}': `${fecha} ${hora}`,   // antes que {FECHA}/{HORA}: si no, ya reemplazadas por separado no queda nada para este combinado
-    '{FECHA}': fecha, '{HORA}': hora,
-    '{TIMESTAMP}': String(Math.floor(d.getTime() / 1000)),
+    '{INICIO}': fmtDahua(centro - CAMARA_VENTANA_ANTES_SEG * 1000),
+    '{FIN}': fmtDahua(centro + CAMARA_VENTANA_DESPUES_SEG * 1000),
   };
   let out = plantilla;
-  for (const [clave, valor] of Object.entries(reemplazos)) out = out.split(clave).join(encodeURIComponent(valor));
+  for (const [clave, valor] of Object.entries(reemplazos)) out = out.split(clave).join(valor);
   return out;
 }
 
@@ -9605,8 +9640,13 @@ function mostrarPopoverCamaras(clientX, clientY, iso) {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true,
   });
   pop.innerHTML = rutinaCamaras.length
-    ? `<div class="cam-pop-titulo">${horaTxt}</div>` + rutinaCamaras.map((c, i) =>
-        `<button type="button" class="cam-pop-item" data-i="${i}">📹 ${escHtml(c.nombre || 'Cámara ' + (i + 1))}</button>`).join('')
+    ? `<div class="cam-pop-titulo">${horaTxt}</div>` + rutinaCamaras.map((c, i) => c.url
+        ? `<button type="button" class="cam-pop-item" data-i="${i}">📹 ${escHtml(c.nombre || 'Cámara ' + (i + 1))}</button>`
+        // Sin url: faltan los datos del NVR o el canal de ESTA cámara (ver
+        // configuracion_tambo.plantilla_camara) -- se muestra igual, apagada,
+        // para que no parezca que la cámara desapareció de la lista.
+        : `<div class="aviso" style="padding:7px 8px;opacity:.6">📹 ${escHtml(c.nombre || 'Cámara ' + (i + 1))} — sin configurar</div>`
+      ).join('')
     : `<div class="cam-pop-titulo">${horaTxt}</div>
        <div class="aviso">Sin cámaras configuradas — se cargan en ⚙ Configuración → 🎥 Cámaras.</div>`;
   pop.querySelectorAll('.cam-pop-item').forEach(b => b.addEventListener('click', () => {
@@ -12146,22 +12186,32 @@ document.getElementById('config-iot-canales-guardar').addEventListener('click', 
   }
 });
 
-// --- Cámaras (hasta MAX_CAMARAS, cada una nombre de sector + plantilla de
-// link) — mismo patrón de "lista con filas que se agregan/sacan" que ya usa
-// el editor de pasos de Modo televisor (filaPasoTv/pintarPasosTv), pero acá
-// es UNA sola lista con UN solo botón "Guardar" (no hay nada por sección que
-// justifique guardarlas una por una). Se guarda en configuracion_tambo.py
-// (clave "camaras" del mismo JSON que usa toda ⚙ Configuración), vía el
-// endpoint /api/configuracion que ya existe — no hace falta uno nuevo acá.
+// --- Cámaras: UN grabador (NVR) para hasta MAX_CAMARAS canales -------------
+// Confirmado con el tambo (2026-09-06): un solo NVR para todas, no una URL
+// completa por cámara -- la conexión (ip/puerto/usuario/contraseña +
+// plantilla de link) se carga UNA vez, y cada cámara de la lista es sólo
+// {nombre, canal}. El backend arma el link final por canal
+// (configuracion_tambo.plantilla_camara) y a /api/rutina/camaras ya le llega
+// listo para que el frontend solo le sume fecha/hora (ver construirLinkCamara
+// más abajo, junto al resto de "Rutina de ordeño").
+// Mismo patrón de "lista con filas que se agregan/sacan" que ya usa el editor
+// de pasos de Modo televisor, pero UNA sola lista con UN solo "Guardar" (no
+// hay nada por cámara que justifique guardarlas una por una). Todo vive en
+// configuracion_tambo.py, vía el /api/configuracion que ya existe.
 const MAX_CAMARAS = 16;
+// Mismo texto que configuracion_tambo.NVR_PLANTILLA_DEFECTO -- se muestra acá
+// como punto de partida editable cuando el tambo no puso una propia (ver
+// cargarConfigCamaras). Si el default del backend cambia, actualizar acá.
+const NVR_PLANTILLA_DEFECTO_FRONT =
+  'rtsp://{USUARIO}:{CONTRASENA}@{IP}:{PUERTO}/cam/playback?channel={CANAL}&subtype=0&starttime={INICIO}&endtime={FIN}';
 let camarasOriginal = null;
 
 function filaCamara(cam) {
   return `<div class="cam-fila">
     <input type="text" class="cam-nombre" placeholder="Sector (ej: Sala de espera)"
-           value="${escHtml(cam.nombre || '')}" style="flex:1 1 180px">
-    <input type="text" class="cam-url" placeholder="https://.../play?fecha={FECHA}&hora={HORA}"
-           value="${escHtml(cam.url || '')}" style="flex:2 1 320px">
+           value="${escHtml(cam.nombre || '')}" style="flex:1 1 220px">
+    <input type="number" class="cam-canal" placeholder="Canal" min="1" max="${MAX_CAMARAS}"
+           value="${cam.canal ?? ''}" style="flex:0 0 90px">
     <button type="button" class="secundario cam-quitar" title="Quitar esta cámara">✕</button>
   </div>`;
 }
@@ -12169,13 +12219,34 @@ function filaCamara(cam) {
 function camarasValores() {
   return [...document.querySelectorAll('#cam-lista .cam-fila')].map(f => ({
     nombre: f.querySelector('.cam-nombre').value.trim(),
-    url: f.querySelector('.cam-url').value.trim(),
-  })).filter(c => c.nombre || c.url);   // una fila totalmente vacía no cuenta como cámara
+    canal: f.querySelector('.cam-canal').value === '' ? null : Number(f.querySelector('.cam-canal').value),
+  })).filter(c => c.nombre || c.canal !== null);   // una fila totalmente vacía no cuenta como cámara
+}
+
+// Los datos del NVR entran en la misma comparación de "¿cambió algo?" que las
+// cámaras: un solo botón "Guardar" para todo el bloque. La contraseña no se
+// recarga nunca (mismo criterio que cfg-contrasena), así que lo que importa
+// para detectar cambios es si el campo TIENE algo tipeado, no su valor.
+function nvrCamposCamaras() {
+  return {
+    nvr_ip: document.getElementById('cam-nvr-ip').value.trim(),
+    nvr_puerto: document.getElementById('cam-nvr-puerto').value,
+    nvr_usuario: document.getElementById('cam-nvr-usuario').value.trim(),
+    nvr_plantilla: document.getElementById('cam-nvr-plantilla').value.trim(),
+  };
+}
+
+function snapshotCamaras() {
+  return JSON.stringify({
+    ...nvrCamposCamaras(),
+    nvr_contrasena_tocada: !!document.getElementById('cam-nvr-contrasena').value,
+    camaras: camarasValores(),
+  });
 }
 
 function marcarCamarasCambiadas() {
   document.getElementById('cam-guardar').disabled =
-    camarasOriginal === null || JSON.stringify(camarasValores()) === camarasOriginal;
+    camarasOriginal === null || snapshotCamaras() === camarasOriginal;
 }
 
 function actualizarCupoCamaras() {
@@ -12194,8 +12265,9 @@ function ligarFilaCamara(fila) {
     actualizarCupoCamaras();
     marcarCamarasCambiadas();
   });
-  fila.querySelectorAll('.cam-nombre, .cam-url').forEach(inp =>
-    inp.addEventListener('input', marcarCamarasCambiadas));
+  // El resto de los inputs (nombre/canal) se detectan por delegación, ver el
+  // listener 'input' de #config-camaras-card más abajo -- no hace falta
+  // ligarlos acá uno por uno.
 }
 
 function pintarCamaras(camaras) {
@@ -12209,18 +12281,29 @@ function pintarCamaras(camaras) {
 document.getElementById('cam-agregar').addEventListener('click', () => {
   const cont = document.getElementById('cam-lista');
   if (!cont.querySelector('.cam-fila')) cont.innerHTML = '';
-  cont.insertAdjacentHTML('beforeend', filaCamara({ nombre: '', url: '' }));
+  cont.insertAdjacentHTML('beforeend', filaCamara({ nombre: '', canal: null }));
   ligarFilaCamara(cont.querySelector('.cam-fila:last-child'));
   actualizarCupoCamaras();
   marcarCamarasCambiadas();
 });
 
+document.getElementById('config-camaras-card').addEventListener('input', marcarCamarasCambiadas);
+
 async function cargarConfigCamaras() {
   const estado = document.getElementById('cam-estado');
   try {
     const d = await pedirJSON('/api/configuracion?tambo=' + encodeURIComponent(tamboActual));
-    pintarCamaras(d.config.camaras || []);
-    camarasOriginal = JSON.stringify(camarasValores());
+    const cfg = d.config;
+    document.getElementById('cam-nvr-ip').value = cfg.nvr_ip || '';
+    document.getElementById('cam-nvr-puerto').value = cfg.nvr_puerto || '';
+    document.getElementById('cam-nvr-usuario').value = cfg.nvr_usuario || '';
+    document.getElementById('cam-nvr-contrasena').value = '';
+    document.getElementById('cam-nvr-contrasena-nota').textContent = cfg.nvr_contrasena_configurada
+      ? 'Ya hay una contraseña guardada — dejá el campo vacío para conservarla.'
+      : 'Sin contraseña guardada todavía.';
+    document.getElementById('cam-nvr-plantilla').value = cfg.nvr_plantilla || NVR_PLANTILLA_DEFECTO_FRONT;
+    pintarCamaras(cfg.camaras || []);
+    camarasOriginal = snapshotCamaras();
     document.getElementById('cam-guardar').disabled = true;
     estado.textContent = '';
   } catch (e) {
@@ -12231,13 +12314,15 @@ async function cargarConfigCamaras() {
 document.getElementById('cam-guardar').addEventListener('click', async () => {
   const estado = document.getElementById('cam-estado');
   estado.textContent = 'Guardando…';
+  const datos = { ...nvrCamposCamaras(), camaras: camarasValores() };
+  const contrasena = document.getElementById('cam-nvr-contrasena').value;
+  if (contrasena) datos.nvr_contrasena = contrasena;
   try {
     await pedirJSON('/api/configuracion?tambo=' + encodeURIComponent(tamboActual), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ camaras: camarasValores() }),
+      body: JSON.stringify(datos),
     });
-    camarasOriginal = JSON.stringify(camarasValores());
-    document.getElementById('cam-guardar').disabled = true;
+    await cargarConfigCamaras();   // recarga: refleja contrasena_configurada y la plantilla efectiva
     estado.textContent = '✔ Guardado.';
   } catch (e) {
     estado.textContent = 'Error al guardar: ' + e.message;
