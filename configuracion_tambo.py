@@ -115,7 +115,7 @@ _CAMPOS_ENUM = {
 #              el tambo, que es quien sabe su rutina. Vacio = no se filtra
 #              nada (mismo comportamiento que antes de que esto existiera).
 _CAMPOS_INT = ("puerto", "personas", "arreo_min", "umbral_prep_s", "top_atencion",
-               "ordenos_dia", "nvr_puerto")
+               "ordenos_dia", "nvr_puerto", "camara_seg_antes", "camara_seg_despues")
 
 # Cámaras del NVR para revisar en video lo que marcó "Rutina de ordeño" (hasta
 # MAX_CAMARAS, un NVR de 16 canales es lo típico). UN SOLO grabador para todas
@@ -138,6 +138,14 @@ NVR_PLANTILLA_DEFECTO = (
     "rtsp://{USUARIO}:{CONTRASENA}@{IP}:{PUERTO}/cam/playback?"
     "channel={CANAL}&subtype=0&starttime={INICIO}&endtime={FIN}"
 )
+
+# Ventana alrededor del click para pedirle al NVR (ver {INICIO}/{FIN} arriba):
+# cuántos segundos ANTES y DESPUÉS del momento exacto se trae. Editable por
+# tambo (⚙ Configuración → 🎥 Cámaras) porque es una cuestión de gusto/uso, no
+# algo que el código pueda saber de antemano -- "antes" para no arrancar
+# después de que ya pasó el evento, "después" para ver cómo sigue.
+CAMARA_SEG_ANTES_DEFECTO = 10
+CAMARA_SEG_DESPUES_DEFECTO = 300
 
 DEFAULT = {
     "nombre": None, "ip": None, "puerto": None, "usuario": None, "contrasena": None,
@@ -164,6 +172,7 @@ DEFAULT = {
     # `nvr_plantilla` vacío = usar NVR_PLANTILLA_DEFECTO.
     "nvr_ip": None, "nvr_puerto": None, "nvr_usuario": None, "nvr_contrasena": None,
     "nvr_plantilla": None,
+    "camara_seg_antes": None, "camara_seg_despues": None,
     "camaras": [],
 }
 

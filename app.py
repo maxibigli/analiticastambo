@@ -3556,11 +3556,22 @@ def api_rutina_camaras():
     click pesa más que ocultar una credencial que de todos modos hace falta
     para mirar la cámara."""
     tambo = _tambo_del_request()
-    camaras = configuracion_tambo.config_de(tambo).get("camaras") or []
+    cfg = configuracion_tambo.config_de(tambo)
+    camaras = cfg.get("camaras") or []
     salida = [{"nombre": c.get("nombre"),
                "url": configuracion_tambo.plantilla_camara(tambo, c.get("canal"))}
               for c in camaras]
-    return jsonify({"camaras": salida})
+    # Ventana alrededor del click (ver configuracion_tambo.CAMARA_SEG_*),
+    # editable por tambo -- el frontend arma {INICIO}/{FIN} con esto, no con
+    # un número fijo. `is None`, no `or`: 0 es un valor válido (sin margen)
+    # y "0 or DEFECTO" lo pisaría con el de fábrica por tratarlo como vacío.
+    seg_antes = cfg.get("camara_seg_antes")
+    seg_despues = cfg.get("camara_seg_despues")
+    return jsonify({
+        "camaras": salida,
+        "camara_seg_antes": seg_antes if seg_antes is not None else configuracion_tambo.CAMARA_SEG_ANTES_DEFECTO,
+        "camara_seg_despues": seg_despues if seg_despues is not None else configuracion_tambo.CAMARA_SEG_DESPUES_DEFECTO,
+    })
 
 
 @app.get("/api/rutina/grupos")

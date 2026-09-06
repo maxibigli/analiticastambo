@@ -3496,11 +3496,24 @@
       <code>{IP}</code>, <code>{PUERTO}</code>, <code>{USUARIO}</code>, <code>{CONTRASENA}</code> y
       <code>{CANAL}</code> se completan con los datos de arriba y el canal de cada cámara.
       <code>{INICIO}</code>/<code>{FIN}</code> los pone la app con la fecha/hora del punto donde
-      hiciste click en la línea de tiempo (un margen de unos segundos antes y unos minutos
-      después, para tener contexto del momento). Formato de fábrica: RTSP estándar de
-      grabadores Dahua — si el tuyo es de otra marca o pide otra sintaxis, editalo acá;
-      probalo primero pegándolo en el navegador o en VLC contra tu NVR ya instalado.
+      hiciste click en la línea de tiempo, más el margen que pongas acá abajo. Formato de
+      fábrica: RTSP estándar de grabadores Dahua — si el tuyo es de otra marca o pide otra
+      sintaxis, editalo acá; probalo primero pegándolo en el navegador o en VLC contra tu NVR
+      ya instalado.
     </div>
+
+    <div class="aviso" style="margin-top:14px">Margen alrededor del click</div>
+    <div class="controls" style="margin-top:4px">
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Segundos antes
+        <input type="number" id="cam-nvr-seg-antes" min="0" max="300" placeholder="10" style="width:100px;padding:7px 8px">
+      </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Segundos después
+        <input type="number" id="cam-nvr-seg-despues" min="0" max="1800" placeholder="300" style="width:100px;padding:7px 8px">
+      </label>
+    </div>
+    <div class="aviso" style="margin-top:4px">Cuánto antes y después del momento exacto se pide
+      al grabador — de fábrica 10s antes (para no arrancar cuando el evento ya pasó) y 5min
+      después (para ver cómo sigue). Ajustalo si en la práctica lo ves corto o largo.</div>
 
     <div class="aviso" style="margin-top:18px;font-weight:600">Cámaras</div>
     <div id="cam-lista" style="margin-top:8px"></div>
@@ -9601,11 +9614,18 @@ function pintarRutinaSesion() {
 // "rutina" pero no "configuracion") — el operario que mira la rutina tiene
 // que poder abrir la cámara igual, sin necesitar el rol admin.
 let rutinaCamaras = [];
+// Ventana alrededor del click (segundos antes/después) para pedirle al NVR --
+// editable por tambo en ⚙ Configuración → 🎥 Cámaras (configuracion_tambo.
+// CAMARA_SEG_ANTES_DEFECTO/CAMARA_SEG_DESPUES_DEFECTO son solo el valor de
+// fábrica; estos dos son los que de verdad se usan, ver construirLinkCamara).
+let camaraSegAntes = 10, camaraSegDespues = 300;
 
 async function cargarRutinaCamaras() {
   try {
     const d = await pedirJSON('/api/rutina/camaras?tambo=' + encodeURIComponent(tamboActual));
     rutinaCamaras = d.camaras || [];
+    camaraSegAntes = d.camara_seg_antes ?? camaraSegAntes;
+    camaraSegDespues = d.camara_seg_despues ?? camaraSegDespues;
   } catch (e) { rutinaCamaras = []; }
 }
 
@@ -9629,14 +9649,6 @@ function rutinaEscalaTiempo(s) {
   };
 }
 
-// Ventana alrededor del punto donde se hizo click, no un instante seco: el
-// NVR pide un rango (starttime/endtime), y ver solo el frame exacto no sirve
-// para entender qué pasó. Elegidos a ojo (sin poder probarlos contra un NVR
-// real todavía, ver el comentario de NVR_PLANTILLA_DEFECTO en
-// configuracion_tambo.py) -- ajustables si en la práctica quedan cortos/largos.
-const CAMARA_VENTANA_ANTES_SEG = 10;
-const CAMARA_VENTANA_DESPUES_SEG = 300;
-
 function construirLinkCamara(plantilla, iso) {
   const centro = new Date(iso).getTime();
   // Formato AAAA_MM_DD_HH_MM_SS que exige Dahua para starttime/endtime (con
@@ -9648,8 +9660,8 @@ function construirLinkCamara(plantilla, iso) {
            `${pad(d.getHours())}_${pad(d.getMinutes())}_${pad(d.getSeconds())}`;
   };
   const reemplazos = {
-    '{INICIO}': fmtDahua(centro - CAMARA_VENTANA_ANTES_SEG * 1000),
-    '{FIN}': fmtDahua(centro + CAMARA_VENTANA_DESPUES_SEG * 1000),
+    '{INICIO}': fmtDahua(centro - camaraSegAntes * 1000),
+    '{FIN}': fmtDahua(centro + camaraSegDespues * 1000),
   };
   let out = plantilla;
   for (const [clave, valor] of Object.entries(reemplazos)) out = out.split(clave).join(valor);
@@ -12288,6 +12300,8 @@ function nvrCamposCamaras() {
     nvr_puerto: document.getElementById('cam-nvr-puerto').value,
     nvr_usuario: document.getElementById('cam-nvr-usuario').value.trim(),
     nvr_plantilla: document.getElementById('cam-nvr-plantilla').value.trim(),
+    camara_seg_antes: document.getElementById('cam-nvr-seg-antes').value,
+    camara_seg_despues: document.getElementById('cam-nvr-seg-despues').value,
   };
 }
 
@@ -12357,6 +12371,8 @@ async function cargarConfigCamaras() {
       ? 'Ya hay una contraseña guardada — dejá el campo vacío para conservarla.'
       : 'Sin contraseña guardada todavía.';
     document.getElementById('cam-nvr-plantilla').value = cfg.nvr_plantilla || NVR_PLANTILLA_DEFECTO_FRONT;
+    document.getElementById('cam-nvr-seg-antes').value = cfg.camara_seg_antes ?? '';
+    document.getElementById('cam-nvr-seg-despues').value = cfg.camara_seg_despues ?? '';
     pintarCamaras(cfg.camaras || []);
     camarasOriginal = snapshotCamaras();
     document.getElementById('cam-guardar').disabled = true;
