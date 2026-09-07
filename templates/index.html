@@ -2222,7 +2222,7 @@
         <b>Para qué sirve.</b> Cuando las retiradas suben en varios rodeos <b>el mismo día</b>,
         la causa no puede ser el rodeo: es algo de esa jornada —la máquina, la gente, el turno—.
         Este gráfico pone las retiradas de todo el tambo contra los dos indicadores que miden
-        justamente eso: el <b>score de rutina</b> y el componente de <b>colocación ≤90s</b>.
+        justamente eso: el <b>score de rutina</b> y el componente de <b>colocación ~90s</b>.
         <br><b>Cómo leerlo.</b> Las barras son cantidad (eje izquierdo); las dos líneas son
         puntajes de 0 a 100 (eje derecho) donde <b>más alto es mejor</b>. Si un pico de barras
         cae junto con un bajón de la línea de colocación, el problema es de rutina y se ataca
@@ -4382,7 +4382,7 @@ let chartRendProd = null, chartRendThroughput = null, chartRendIdent = null,
     chartRendRfRutina = null, rendReintento = null;
 
 // Cruce de las retiradas forzadas del día contra los dos indicadores que miden
-// la rutina de esa jornada (score y colocación ≤90s). Sirve para separar "es
+// la rutina de esa jornada (score y colocación ~90s). Sirve para separar "es
 // del rodeo" de "es del día": si el pico de retiradas cae junto con un bajón de
 // colocación, el problema es de rutina.
 //
@@ -4416,7 +4416,7 @@ async function cargarRetiradasVsRutina(desde, hasta, retiradasDeFecha) {
           backgroundColor: SERIES[1], maxBarThickness: 34, borderRadius: 3, order: 2 },
         linea('Score de rutina', puntos.map(p => p.score), SERIES[4],
               { yAxisID: 'y1', type: 'line', order: 1 }),
-        linea('Colocación ≤90s', puntos.map(p => p.prep_90s), SERIES[3],
+        linea('Colocación ~90s', puntos.map(p => p.prep_90s), SERIES[3],
               { yAxisID: 'y1', type: 'line', order: 0 }),
       ] },
       options: o,
@@ -9294,7 +9294,7 @@ function colorScore(v) {
 const RUTINA_PESOS_DEFECTO = { prep_90s: 30, lerdas: 10, entre_grupos: 20,
   manejo_corral: 15, mezcla_rodeos: 10, ocupacion: 15 };
 const RUTINA_PESOS_LABELS = {
-  prep_90s: 'Colocación ≤90s', lerdas: 'Sin vacas lerdas',
+  prep_90s: 'Colocación ~90s', lerdas: 'Sin vacas lerdas',
   entre_grupos: 'Sin tiempos muertos entre grupos', manejo_corral: 'Manejo de corral',
   mezcla_rodeos: 'Sin mezcla de rodeos', ocupacion: 'Ocupación de la plataforma',
 };
@@ -9808,7 +9808,7 @@ function renderRutinaChart(s) {
     <div class="rutina-leyenda">
       ${leyendaGrupos}
       <span><span class="pt" style="background:var(--violeta);opacity:.6"></span>Tiempo total</span>
-      <span>◆ Identificación</span><span>■ Colocación (rojo = &gt;90s)</span><span>▲ Retiro (rojo = lerda)</span>
+      <span>◆ Identificación</span><span>■ Colocación (rojo = lejos del objetivo, antes o después)</span><span>▲ Retiro (rojo = lerda)</span>
     </div>`;
 }
 
@@ -9820,7 +9820,7 @@ document.addEventListener('mousemove', (e) => {
   const v = s.visitas[Number(el.dataset.i)];
   const hora = iso => iso ? new Date(iso).toLocaleTimeString('es-AR') : '—';
   const umbralPrep = leerConfigRutina().umbral_prep_s || UMBRAL_PREP_S_DEFECTO;
-  const prep = v.prep_seg == null ? '—' : `${v.prep_seg}s ${v.cumple_90 ? '✓' : `⚠ objetivo ≤${umbralPrep}s`}`;
+  const prep = v.prep_seg == null ? '—' : `${v.prep_seg}s ${v.cumple_90 ? '✓' : `⚠ objetivo ~${umbralPrep}s`}`;
   // Puntaje 0-100 de ESTA colocación puntual (misma curva de crédito gradual
   // que arma el score de la sesión, ver rutina._credito_prep) — no es solo
   // cumple/no cumple: pasarse por poco todavía puntúa alto.
@@ -9867,7 +9867,7 @@ document.getElementById('rutina-dia-sig').addEventListener('click', () => moverD
 let chartEvolucion = null, evolucionTimer = null;
 const EVOLUCION_SERIES = [
   { clave: 'score', label: 'Calidad de Rutina', ancho: 3 },
-  { clave: 'prep_90s', label: 'Colocación ≤90s' },
+  { clave: 'prep_90s', label: 'Colocación ~90s' },
   { clave: 'lerdas', label: 'Sin vacas lerdas' },
   { clave: 'entre_grupos', label: 'Sin tiempos muertos entre grupos' },
   { clave: 'manejo_corral', label: 'Manejo de corral' },

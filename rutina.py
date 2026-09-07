@@ -7,7 +7,9 @@ Mapeo de campos (verificado contra datos reales de La Ponderosa):
   Identificación (rombo)      = MilkingDeviceVisit.IDTime
   Colocación de pezonera (cuadrado) = CMSDeviceVisit.VerifiedTime (mismo OID que la visita)
   Retiro / fin (triángulo)    = CMSMilkYield.MilkConfirmTime (CMSMilkYield.MilkingDeviceVisit = visita.OID)
-El objetivo de DelPro es colocar la pezonera dentro de los 90s desde la ID.
+El objetivo de DelPro es colocar la pezonera a los 90s desde la ID -- ni
+antes ni después: es el instante pensado para el pico de oxitocina de la
+estimulación, no un simple "cuanto antes mejor" (ver `_credito_prep`).
 """
 import datetime
 import re
@@ -20,8 +22,19 @@ GAP_SESION_MIN = 90      # separación entre visitas para considerar sesiones di
                          # (hay pausas normales de hasta ~1h DENTRO de una sesión, p.ej.
                          # entre lotes grandes; los cortes reales de turno son de horas)
 UMBRAL_PREP_S = 90       # objetivo de colocación de pezonera (el que marca DelPro)
-TOLERANCIA_PREP_S = 90   # zona de gracia: pasado el objetivo, el crédito baja gradual
-                         # (no de un salto a 0) y llega a 0 recién a objetivo+tolerancia
+TOLERANCIA_PREP_S = 180  # zona de gracia: alejándose del objetivo PARA CUALQUIER LADO,
+                         # el crédito baja gradual (no de un salto a 0) y llega a 0 recién
+                         # a objetivo±tolerancia. Duplicado de 90 a 180 (07/09/2026, a
+                         # pedido del tambo): la primera versión simétrica penalizaba
+                         # "demasiado" -- la pendiente quedó a la mitad (~0,56%/s en vez de
+                         # ~1,1%/s), mismo criterio gradual, menos duro por segundo.
+MARGEN_CUMPLE_PREP_S = 15  # "cumple" el objetivo = colocación dentro de este margen del
+                           # objetivo, PARA CUALQUIER LADO (antes era "prep_seg <= umbral",
+                           # que daba por cumplida cualquier colocación temprana). Define
+                           # el ✓/⚠ del tooltip, el subrayado rojo del gráfico y qué entra
+                           # como hallazgo ("peores_prep" en _analizar_sesion). Number a
+                           # ojo -- 15s de margen antes de considerarlo una desviación real,
+                           # ajustable si en la práctica queda muy estricto/laxo.
 CREDITO_SIN_COLOCAR = 0.3  # sin dato de colocación: puede ser falla de lectura, no
                            # necesariamente mal manejo, así que no cuenta como fracaso total
 UMBRAL_SIN_DATOS_PREP = 0.8  # si esta fracción o más de la sesión no tiene colocación
@@ -1417,20 +1430,27 @@ def _credito_identificacion(pct_identificado: float) -> float:
 
 
 def _credito_prep(prep_seg, umbral_s=UMBRAL_PREP_S):
-    """Crédito 0-1 de una colocación: 100% hasta el objetivo, y de ahí baja
-    GRADUAL (no de un salto a 0) hasta agotarse en objetivo+tolerancia. Pasarse
-    por 30-40s no debe pesar igual que una falla real de varios minutos. Sin
-    dato de colocación (posible falla de lectura, no necesariamente de rutina)
-    se penaliza pero no se anula del todo.
+    """Crédito 0-1 de una colocación: 100% JUSTO en el objetivo (el instante
+    donde se espera la pezonera para aprovechar el pico de oxitocina de la
+    estimulación), y de ahí baja GRADUAL PARA LOS DOS LADOS -- llegar antes
+    no es gratis: la pezonera puesta antes de que baje la leche corta la
+    bajada (ver el componente "flujo"/bimodalidad, mismo fenómeno visto desde
+    la curva de leche en vez del tiempo). Antes esto daba 100% a cualquier
+    colocación temprana y solo penalizaba llegar tarde -- cambiado a pedido
+    del tambo (07/09/2026) al ver un caso real de 14s con 100/100, que no
+    tenía sentido: a los 14s la leche todavía no bajó.
+
+    Pasarse (para cualquier lado) por 30-40s no debe pesar igual que una
+    falla real de varios minutos: por eso gradual, no un salto a 0. Sin dato
+    de colocación (posible falla de lectura, no necesariamente de rutina) se
+    penaliza pero no se anula del todo.
 
     `umbral_s`: objetivo de colocación en segundos. Por defecto el de DelPro
     (90s, rotativa); configurable por tambo/sala porque una sala convencional
     de tandas no tiene por qué tener el mismo objetivo (ver `_analizar_sesion`)."""
     if prep_seg is None:
         return CREDITO_SIN_COLOCAR
-    if prep_seg <= umbral_s:
-        return 1.0
-    return max(0.0, 1.0 - (prep_seg - umbral_s) / TOLERANCIA_PREP_S)
+    return max(0.0, 1.0 - abs(prep_seg - umbral_s) / TOLERANCIA_PREP_S)
 
 
 def _ocupacion_rotativa(visitas: list, duracion_seg: float) -> dict:
@@ -1579,7 +1599,12 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                 and not 0 <= v["prep_seg"] <= prep_max_s):
             v["prep_seg"] = None
         v["ordeño_seg"] = _seg(v["hora_coloc"], v["hora_fin"])
-        v["cumple_90"] = v["prep_seg"] is not None and v["prep_seg"] <= umbral_prep_s
+        # "Cumple" = cerca del objetivo PARA CUALQUIER LADO (ver
+        # MARGEN_CUMPLE_PREP_S) -- antes era "prep_seg <= umbral_prep_s", que
+        # daba por buena cualquier colocación temprana, por más extrema que
+        # fuera.
+        v["cumple_90"] = (v["prep_seg"] is not None
+                           and abs(v["prep_seg"] - umbral_prep_s) <= MARGEN_CUMPLE_PREP_S)
 
     inicio, fin = visitas[0]["hora_id"], max((v["hora_fin"] or v["hora_id"]) for v in visitas)
     duracion_seg = max((fin - inicio).total_seconds(), 1)
@@ -1722,13 +1747,19 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
 
     # Hallazgos concretos: los peores casos, para poder ir directo al problema.
     hallazgos = []
-    peores_prep = sorted((v for v in visitas if v["prep_seg"] is not None and v["prep_seg"] > umbral_prep_s),
-                          key=lambda v: -v["prep_seg"])[:5]
+    # Ordenado por qué tan lejos del objetivo, no por qué tan tarde -- una
+    # colocación a los 10s (80s antes de tiempo) es tan hallazgo como una a
+    # los 170s (80s tarde).
+    peores_prep = sorted((v for v in visitas if v["prep_seg"] is not None
+                           and abs(v["prep_seg"] - umbral_prep_s) > MARGEN_CUMPLE_PREP_S),
+                          key=lambda v: -abs(v["prep_seg"] - umbral_prep_s))[:5]
     for v in peores_prep:
+        diferencia = v["prep_seg"] - umbral_prep_s
+        cuando = f"{round(diferencia)}s tarde" if diferencia > 0 else f"{round(-diferencia)}s antes de tiempo"
         hallazgos.append({
-            "tipo": "prep", "severidad": v["prep_seg"], "puesto": v["puesto"], "rp": v["rp"],
+            "tipo": "prep", "severidad": abs(diferencia), "puesto": v["puesto"], "rp": v["rp"],
             "texto": f"Puesto {v['puesto']} · RP {v['rp'] or '?'}: pezonera colocada a los "
-                     f"{round(v['prep_seg'])}s (objetivo ≤{umbral_prep_s}s).",
+                     f"{round(v['prep_seg'])}s, {cuando} (objetivo {umbral_prep_s}s).",
         })
     sin_colocar = [v for v in visitas if v["hora_coloc"] is None]
     if sin_colocar:
@@ -1760,15 +1791,17 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
         "incidentes": incidentes,
         "detalle": [
             # El umbral solo se nombra si de verdad se está midiendo contra él:
-            # con el componente apagado, un "≤90s" en la etiqueta se lee como el
+            # con el componente apagado, un "~90s" en la etiqueta se lee como el
             # objetivo de esta sala cuando en realidad es el de la rotativa.
             {"clave": "prep_90s",
-             "label": f"{prep_label} ≤{umbral_prep_s}s" if mide_colocacion else prep_label,
+             "label": f"{prep_label} ~{umbral_prep_s}s" if mide_colocacion else prep_label,
              "valor": round(s1) if s1 is not None else None,
              "peso": pesos["prep_90s"],
-             "info": (f"{cumplen}/{len(evaluables)} exactas dentro de los {umbral_prep_s}s (pasarse por "
-                      "poco no resta todo; recién pesa fuerte pasados los "
-                      f"{round((umbral_prep_s + TOLERANCIA_PREP_S) / 60, 1)} min).")
+             "info": (f"{cumplen}/{len(evaluables)} a ±{MARGEN_CUMPLE_PREP_S}s del objetivo "
+                      f"({umbral_prep_s}s) -- ni antes ni después: llegar antes de que baje la "
+                      "leche corta la bajada tanto como llegar tarde. Desviarse por unos segundos "
+                      f"no resta todo; recién pesa fuerte pasados los {round(TOLERANCIA_PREP_S / 60, 1)} "
+                      "min de diferencia, para cualquier lado.")
                      if s1 is not None else info_sin_prep},
             {"clave": "identificacion", "label": "Vacas identificadas", "valor": round(s8),
              "peso": pesos["identificacion"],
