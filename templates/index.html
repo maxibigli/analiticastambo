@@ -9784,22 +9784,29 @@ function renderRutinaChart(s) {
   let filas = '';
   s.visitas.forEach((v, i) => {
     if (!v.puesto) return;
+    // Sin dueño (comodín, RP=0 -- lo que DelPro cuenta como "sin identificar")
+    // se pinta ámbar en vez del color del rodeo: mismo criterio de color que
+    // ya usa el Dashboard para "sin identificar" (ver .tile-atencion), para
+    // que se pueda distinguir a simple vista en el gráfico, no solo al pasar
+    // el mouse por el tooltip.
+    const color = v.sin_duenio ? 'var(--warning)' : v.color;
     const xi = x(new Date(v.hora_id).getTime());
     const xf = v.hora_fin ? x(new Date(v.hora_fin).getTime()) : xi;
     const yy = y(v.puesto).toFixed(1);
     filas += `<line x1="${xi.toFixed(1)}" y1="${yy}" x2="${xf.toFixed(1)}" y2="${yy}" stroke="var(--violeta)" stroke-width="2.6" opacity=".65"/>`;
-    filas += `<path class="rt-pt" data-i="${i}" data-tipo="id" d="M ${xi.toFixed(1)},${(yy - 4).toFixed(1)} L ${(xi + 4).toFixed(1)},${yy} L ${xi.toFixed(1)},${(+yy + 4).toFixed(1)} L ${(xi - 4).toFixed(1)},${yy} Z" fill="${v.color}" style="cursor:pointer"/>`;
+    filas += `<path class="rt-pt" data-i="${i}" data-tipo="id" d="M ${xi.toFixed(1)},${(yy - 4).toFixed(1)} L ${(xi + 4).toFixed(1)},${yy} L ${xi.toFixed(1)},${(+yy + 4).toFixed(1)} L ${(xi - 4).toFixed(1)},${yy} Z" fill="${color}" style="cursor:pointer"/>`;
     if (v.hora_coloc) {
       const xc = x(new Date(v.hora_coloc).getTime());
-      filas += `<rect class="rt-pt" data-i="${i}" data-tipo="coloc" x="${(xc - 3.2).toFixed(1)}" y="${(+yy - 3.2).toFixed(1)}" width="6.4" height="6.4" fill="${v.color}"${v.cumple_90 ? '' : ' stroke="var(--critical)" stroke-width="1.6"'} style="cursor:pointer"/>`;
+      filas += `<rect class="rt-pt" data-i="${i}" data-tipo="coloc" x="${(xc - 3.2).toFixed(1)}" y="${(+yy - 3.2).toFixed(1)}" width="6.4" height="6.4" fill="${color}"${v.cumple_90 ? '' : ' stroke="var(--critical)" stroke-width="1.6"'} style="cursor:pointer"/>`;
     }
     if (v.hora_fin) {
-      filas += `<path class="rt-pt" data-i="${i}" data-tipo="retiro" d="M ${(xf - 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${(xf + 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${xf.toFixed(1)},${(+yy - 4.4).toFixed(1)} Z" fill="${v.color}"${v.lerda ? ' stroke="var(--critical)" stroke-width="1.6"' : ''} style="cursor:pointer"/>`;
+      filas += `<path class="rt-pt" data-i="${i}" data-tipo="retiro" d="M ${(xf - 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${(xf + 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${xf.toFixed(1)},${(+yy - 4.4).toFixed(1)} Z" fill="${color}"${v.lerda ? ' stroke="var(--critical)" stroke-width="1.6"' : ''} style="cursor:pointer"/>`;
     }
   });
 
   const leyendaGrupos = s.grupos.filter((g, i) => s.grupos.findIndex(g2 => g2.grupo === g.grupo) === i)
     .map(g => `<span><span class="pt" style="background:${g.color}"></span>${g.nombre || 'Grupo ' + (g.grupo ?? '—')}</span>`).join('');
+  const hayComodin = s.visitas.some(v => v.sin_duenio);
 
   cont.innerHTML = `
     <svg id="rutina-chart-svg" viewBox="0 0 ${anchoPx.toFixed(0)} ${alto.toFixed(0)}" width="${anchoPx.toFixed(0)}" height="${alto.toFixed(0)}" style="cursor:crosshair">
@@ -9807,6 +9814,7 @@ function renderRutinaChart(s) {
     </svg>
     <div class="rutina-leyenda">
       ${leyendaGrupos}
+      ${hayComodin ? '<span><span class="pt" style="background:var(--warning)"></span>Sin identificar</span>' : ''}
       <span><span class="pt" style="background:var(--violeta);opacity:.6"></span>Tiempo total</span>
       <span>◆ Identificación</span><span>■ Colocación (rojo = lejos del objetivo, antes o después)</span><span>▲ Retiro (rojo = lerda)</span>
     </div>`;
