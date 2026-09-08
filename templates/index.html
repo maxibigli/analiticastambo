@@ -9637,16 +9637,6 @@ function pintarRutinaSesion() {
     <div id="rutina-chart"></div>
     <div class="rutina-panel">
       <div>
-        <div class="aviso" style="margin-bottom:4px">Hallazgos</div>
-        ${hallazgos}
-      </div>
-      ${sinIdentificar.length ? `
-      <div style="border-top:1px solid var(--baseline);padding-top:12px">
-        <div class="aviso" style="margin-bottom:4px">Sin identificar (${sinIdentificar.length}) —
-          click en una fila para ver la cámara de ese momento</div>
-        <div class="rutina-sinid-lista">${listaSinId}</div>
-      </div>` : ''}
-      <div style="border-top:1px solid var(--baseline);padding-top:12px">
         <div class="aviso">Puntaje de la sesión</div>
         <div class="rutina-score-nota" style="color:${colorScore(s.score)}">${textoScore(s.score, true)}</div>
         <div class="aviso">${s.duracion_min} min · ${s.vacas} vacas</div>
@@ -9661,6 +9651,16 @@ function pintarRutinaSesion() {
         <div class="aviso">Lo que registra la máquina en cada ordeño, aparte del manejo del corral.</div>
       </div>
       <div class="rutina-medidor">${barrasIncidentes}</div>
+      ${sinIdentificar.length ? `
+      <div style="border-top:1px solid var(--baseline);padding-top:12px">
+        <div class="aviso" style="margin-bottom:4px">Sin identificar (${sinIdentificar.length}) —
+          click en una fila para ver la cámara de ese momento</div>
+        <div class="rutina-sinid-lista">${listaSinId}</div>
+      </div>` : ''}
+      <div style="border-top:1px solid var(--baseline);padding-top:12px">
+        <div class="aviso" style="margin-bottom:4px">Hallazgos</div>
+        ${hallazgos}
+      </div>
     </div>`;
   document.getElementById('rutina-zoom').addEventListener('input', (e) => {
     rutinaZoom = Number(e.target.value);
@@ -9898,18 +9898,34 @@ function renderRutinaChart(s) {
     }
   });
   // Ordeños sin NINGUNA lectura de collar (`s.sin_lectura`, ver
-  // rutina.sql_sin_id): no son una "visita" con tramo identificación→
-  // colocación, así que no tienen diamante/cuadrado/triángulo -- un círculo
-  // aparte, ubicado por MilkConfirmTime (la única hora que sí tienen), con
-  // data-hora directo en vez de data-i (no hay índice de `s.visitas` al que
-  // apuntar).
+  // rutina.sql_sin_id): no tienen diamante de identificación (no hay hora de
+  // ID), pero SÍ pueden tener colocación y/o retiro -- mismas formas que una
+  // visita normal (cuadrado/triángulo) y la misma línea de "tiempo total"
+  // entre las dos, todo en magenta en vez del color del rodeo. `data-hora`
+  // directo en los atributos (no `data-i`): no hay índice de `s.visitas` al
+  // que apuntar.
   (s.sin_lectura || []).forEach((r, j) => {
     if (!r.puesto) return;
-    const xr = x(new Date(r.hora).getTime());
     const yr = y(r.puesto).toFixed(1);
-    filas += `<circle class="rt-pt rt-parpadeo" data-j="${j}" data-tipo="sinlectura" data-hora="${r.hora}"
-      data-hora-coloc="${r.hora_coloc || ''}" data-hora-fin="${r.hora_fin || ''}" data-puesto="${r.puesto}"
-      cx="${xr.toFixed(1)}" cy="${yr}" r="4" fill="var(--sinid)" style="cursor:pointer"/>`;
+    const datos = `data-j="${j}" data-tipo="sinlectura" data-hora="${r.hora}"
+      data-hora-coloc="${r.hora_coloc || ''}" data-hora-fin="${r.hora_fin || ''}" data-puesto="${r.puesto}"`;
+    const xc = r.hora_coloc ? x(new Date(r.hora_coloc).getTime()) : null;
+    const xf2 = r.hora_fin ? x(new Date(r.hora_fin).getTime()) : null;
+    if (xc != null && xf2 != null) {
+      filas += `<line x1="${xc.toFixed(1)}" y1="${yr}" x2="${xf2.toFixed(1)}" y2="${yr}" stroke="var(--violeta)" stroke-width="2.6" opacity=".65"/>`;
+    }
+    if (xc != null) {
+      filas += `<rect class="rt-pt rt-parpadeo" ${datos} x="${(xc - 3.2).toFixed(1)}" y="${(+yr - 3.2).toFixed(1)}" width="6.4" height="6.4" fill="var(--sinid)" style="cursor:pointer"/>`;
+    }
+    if (xf2 != null) {
+      filas += `<path class="rt-pt rt-parpadeo" ${datos} d="M ${(xf2 - 4.2).toFixed(1)},${(+yr + 3.4).toFixed(1)} L ${(xf2 + 4.2).toFixed(1)},${(+yr + 3.4).toFixed(1)} L ${xf2.toFixed(1)},${(+yr - 4.4).toFixed(1)} Z" fill="var(--sinid)" style="cursor:pointer"/>`;
+    }
+    if (xc == null && xf2 == null) {
+      // Ni colocación ni retiro (raro, pero posible): último recurso, un
+      // punto en la única hora que sí hay (CreationTime, vía r.hora).
+      const xr = x(new Date(r.hora).getTime());
+      filas += `<circle class="rt-pt rt-parpadeo" ${datos} cx="${xr.toFixed(1)}" cy="${yr}" r="4" fill="var(--sinid)" style="cursor:pointer"/>`;
+    }
   });
 
   const leyendaGrupos = s.grupos.filter((g, i) => s.grupos.findIndex(g2 => g2.grupo === g.grupo) === i)
