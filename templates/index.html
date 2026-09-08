@@ -678,9 +678,15 @@
   }
   .rutina-score-nota { font-size: 40px; font-weight: 750; }
   .rutina-layout { display: flex; gap: 18px; flex-wrap: wrap; align-items: flex-start; margin-top: 14px; }
-  #rutina-chart { flex: 2 1 520px; min-width: 0; overflow-x: auto; }
+  /* Gráfico a todo el ancho arriba, panel de 4 columnas abajo (a pedido del
+     tambo, 09/09/2026) -- antes el panel quedaba angosto al costado, sin
+     aprovechar el ancho de la pantalla. `flex: 1 1 100%` fuerza a cada uno a
+     ocupar toda la fila, así el panel cae solo a la línea de abajo gracias
+     al `flex-wrap: wrap` de arriba, sin necesitar `flex-direction: column`. */
+  #rutina-chart { flex: 1 1 100%; min-width: 0; overflow-x: auto; }
   #rutina-chart svg { display: block; }
-  .rutina-panel { flex: 1 1 260px; min-width: 240px; max-width: 340px; display: flex; flex-direction: column; gap: 12px; }
+  .rutina-panel { flex: 1 1 100%; display: flex; flex-direction: row; flex-wrap: wrap; gap: 18px; }
+  .rutina-panel-col { flex: 1 1 220px; min-width: 200px; display: flex; flex-direction: column; gap: 12px; }
   .rutina-medidor { display: flex; flex-direction: column; gap: 8px; }
   .rm-fila { }
   .rm-cab { display: flex; justify-content: space-between; font-size: 12.5px; margin-bottom: 3px; }
@@ -9636,28 +9642,32 @@ function pintarRutinaSesion() {
     </div>
     <div id="rutina-chart"></div>
     <div class="rutina-panel">
-      <div>
-        <div class="aviso">Puntaje de la sesión</div>
-        <div class="rutina-score-nota" style="color:${colorScore(s.score)}">${textoScore(s.score, true)}</div>
-        <div class="aviso">${s.duracion_min} min · ${s.vacas} vacas</div>
-        ${s.score == null ? `<div class="aviso" style="margin-top:6px">Esta sala no registra
-          lo suficiente como para calificar la rutina: mirá el detalle de abajo para ver qué
-          componente no se pudo evaluar y por qué.</div>` : ''}
+      <div class="rutina-panel-col">
+        <div>
+          <div class="aviso">Puntaje de la sesión</div>
+          <div class="rutina-score-nota" style="color:${colorScore(s.score)}">${textoScore(s.score, true)}</div>
+          <div class="aviso">${s.duracion_min} min · ${s.vacas} vacas</div>
+          ${s.score == null ? `<div class="aviso" style="margin-top:6px">Esta sala no registra
+            lo suficiente como para calificar la rutina: mirá el detalle de abajo para ver qué
+            componente no se pudo evaluar y por qué.</div>` : ''}
+        </div>
+        <div class="rutina-medidor">${barras}</div>
       </div>
-      <div class="rutina-medidor">${barras}</div>
-      <div style="border-top:1px solid var(--baseline);padding-top:12px">
-        <div class="aviso">Evaluación de Incidentes</div>
-        <div class="rutina-score-nota" style="color:${colorScore(incidentes.score)}">${textoScore(incidentes.score, true)}</div>
-        <div class="aviso">Lo que registra la máquina en cada ordeño, aparte del manejo del corral.</div>
+      <div class="rutina-panel-col">
+        <div>
+          <div class="aviso">Evaluación de Incidentes</div>
+          <div class="rutina-score-nota" style="color:${colorScore(incidentes.score)}">${textoScore(incidentes.score, true)}</div>
+          <div class="aviso">Lo que registra la máquina en cada ordeño, aparte del manejo del corral.</div>
+        </div>
+        <div class="rutina-medidor">${barrasIncidentes}</div>
       </div>
-      <div class="rutina-medidor">${barrasIncidentes}</div>
       ${sinIdentificar.length ? `
-      <div style="border-top:1px solid var(--baseline);padding-top:12px">
+      <div class="rutina-panel-col">
         <div class="aviso" style="margin-bottom:4px">Sin identificar (${sinIdentificar.length}) —
           click en una fila para ver la cámara de ese momento</div>
         <div class="rutina-sinid-lista">${listaSinId}</div>
       </div>` : ''}
-      <div style="border-top:1px solid var(--baseline);padding-top:12px">
+      <div class="rutina-panel-col">
         <div class="aviso" style="margin-bottom:4px">Hallazgos</div>
         ${hallazgos}
       </div>
