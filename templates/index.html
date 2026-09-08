@@ -748,6 +748,11 @@
     position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 60;
     display: flex; align-items: center; justify-content: center; padding: 20px;
   }
+  /* El propio "display: flex" de arriba puede ganarle al [hidden] nativo del
+     navegador según el orden del cascade -- esta regla lo fuerza siempre,
+     para que cerrarVideoCamara() (que solo pone .hidden = true) no dependa
+     de esa sutileza. */
+  .cam-modal-fondo[hidden] { display: none !important; }
   .cam-modal {
     background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
     box-shadow: 0 12px 32px rgba(0,0,0,.4); width: min(720px, 100%); overflow: hidden;

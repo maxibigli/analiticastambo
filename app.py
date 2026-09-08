@@ -3,6 +3,7 @@
 hacer preguntas en lenguaje natural y generar gráficas y reportes."""
 import json
 import math
+import queue
 import shutil
 import statistics
 import subprocess
@@ -3619,11 +3620,13 @@ def api_rutina_camara_stream():
     mostrar sin plugins. Ningún navegador reproduce rtsp:// directo; ffmpeg
     hace la conversión al vuelo, sin guardar nada en disco.
 
-    NO SE PROBÓ TODAVÍA CONTRA UN ffmpeg REAL (no está instalado en la PC de
-    desarrollo, ver CLAUDE.md) -- el formato de salida (`-f mjpeg`, frames
-    JPEG crudos delimitados por sus propios marcadores FFD8/FFD9) y el
-    reempaquetado a multipart/x-mixed-replace acá abajo son el patrón
-    estándar para esto, pero falta la verificación con hardware real.
+    VERIFICADO 09/09/2026 contra el Dahua real de producción (instalando
+    ffmpeg 9.0.1 en la PC de desarrollo y probando el mismo pipeline
+    stdout→cola→recorte de frames de acá abajo, sin pasar por Flask): 5
+    frames JPEG reales de la cámara, con sus marcadores FFD8/FFD9 intactos.
+    Ahí se encontró que "-stimeout" (usado en un intento anterior) ya no
+    existe en ffmpeg moderno -- tira "Unrecognized option" y no arranca
+    nada; el nombre actual es "-timeout" (ver más abajo).
 
     Un proceso de ffmpeg por pedido, sin cola ni límite de concurrencia (a
     diferencia de las consultas a DDM): no pega contra la misma SQL Express
@@ -3643,6 +3646,11 @@ def api_rutina_camara_stream():
     proc = subprocess.Popen(
         [FFMPEG_PATH,
          "-rtsp_transport", "tcp",  # más confiable que UDP para esto -- menos frames rotos
+         # 5s de timeout de conexión RTSP (en microsegundos). "-stimeout" (el
+         # nombre viejo) YA NO EXISTE en ffmpeg moderno -- probado en la
+         # práctica (09/09/2026, build 9.0.1 de winget): tira "Unrecognized
+         # option" y no arranca nada. "-timeout" es el nombre actual.
+         "-timeout", "5000000",
          "-i", url,
          "-an",                      # sin audio: no hace falta para revisar rutina, y es más liviano
          "-f", "mjpeg", "-q:v", "6", "-r", "8",
@@ -3650,11 +3658,37 @@ def api_rutina_camara_stream():
         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
     )
 
+    # `proc.stdout.read()` bloquea sin límite si el NVR no contesta -- el
+    # "-timeout" de arriba debería cortarlo solo, pero no hay que confiar
+    # SOLO en que ffmpeg lo respete (varía según versión/build). Un hilo
+    # aparte hace la lectura bloqueante y la vuelca a una cola; el generador
+    # de abajo espera con un tope (`TIMEOUT_SIN_DATOS_S`) -- si no llega NADA
+    # en ese lapso, se da por muerta la conexión y se corta. Sin esto, un
+    # pedido colgado se queda ocupando un worker de Waitress para siempre, y
+    # con pocos workers eso frena el resto de la app entera, no solo la
+    # ventanita (bug real, reportado 09/09/2026: "queda pegado y bloquea todo").
+    TIMEOUT_SIN_DATOS_S = 8
+    cola: "queue.Queue[bytes]" = queue.Queue(maxsize=64)
+
+    def leer_ffmpeg():
+        try:
+            while True:
+                trozo = proc.stdout.read(4096)
+                cola.put(trozo)
+                if not trozo:
+                    break
+        except Exception:  # noqa: BLE001
+            cola.put(b"")
+    threading.Thread(target=leer_ffmpeg, daemon=True).start()
+
     def generar():
         buffer = b""
         try:
             while True:
-                trozo = proc.stdout.read(4096)
+                try:
+                    trozo = cola.get(timeout=TIMEOUT_SIN_DATOS_S)
+                except queue.Empty:
+                    break   # nada en 8s -- conexión muerta, se corta acá
                 if not trozo:
                     break
                 buffer += trozo
@@ -3676,9 +3710,10 @@ def api_rutina_camara_stream():
                            b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
                            + frame + b"\r\n")
         finally:
-            # Se ejecuta tanto al terminar solo como si el navegador cierra la
-            # conexión a mitad de camino (Werkzeug cierra el generador, lo que
-            # dispara este finally) -- ffmpeg no debe quedar corriendo de más.
+            # Se ejecuta al terminar solo, si el navegador cierra la conexión
+            # a mitad de camino (Werkzeug cierra el generador, lo que dispara
+            # este finally), o si se cortó por el timeout de arriba -- ffmpeg
+            # no debe quedar corriendo de más en ningún caso.
             proc.kill()
             proc.wait()
 
