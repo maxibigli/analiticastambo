@@ -685,6 +685,11 @@
   .rutina-hallazgos { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
   .rutina-hallazgos li { list-style: none; padding-left: 16px; position: relative; }
   .rutina-hallazgos li::before { content: '•'; position: absolute; left: 2px; color: var(--warning); }
+  /* Titila el marcador de "sin identificar" en el gráfico de rutina (mismo
+     @keyframes latido que ya usa el badge "vivo" de Ordeño en vivo) -- en un
+     gráfico denso, quieto se pierde entre los rojos de "lejos del objetivo". */
+  .rt-parpadeo { animation: latido 1.2s infinite; }
+  @media (prefers-reduced-motion: reduce) { .rt-parpadeo { animation: none; } }
   /* Listado completo de vacas sin identificar (puesto+hora), scrollable
      porque puede haber varias decenas por sesión -- a diferencia de
      .rutina-hallazgos, que solo muestra una muestra de 5. */
@@ -9464,6 +9469,19 @@ async function cargarRutina(fecha) {
   }
 }
 
+// Sin identificar de una sesión, de las DOS fuentes que existen (ver
+// app.py::api_rutina): el comodín normal (`v.sin_duenio`, tiene toda la
+// info de una visita) y los ordeños SIN NINGUNA lectura de collar
+// (`s.sin_lectura`, invisibles para `sql_rutina` a propósito -- ver
+// rutina.sql_sin_id). El tambo no distingue las dos al mirar la pantalla,
+// así que se muestran juntas, ordenadas por hora.
+function sinIdentificarDe(s) {
+  const deVisitas = s.visitas.filter(v => v.sin_duenio)
+    .map(v => ({ puesto: v.puesto, rp: v.rp, hora: v.hora_id }));
+  const deSinLectura = s.sin_lectura || [];
+  return [...deVisitas, ...deSinLectura].sort((a, b) => new Date(a.hora) - new Date(b.hora));
+}
+
 // Tira horizontal de una sesión: los mismos bloques de rodeo del gráfico de
 // detalle, más una marca por retiro lerdo — para leer de un vistazo cómo vino
 // la sesión sin tener que abrir el detalle primero.
@@ -9483,13 +9501,13 @@ function rutinaTiraSVG(s) {
       const xt = x(new Date(v.hora_fin).getTime());
       marcas += `<rect x="${(xt - 1.2).toFixed(1)}" y="3" width="2.4" height="${H - 6}" fill="var(--critical)"/>`;
     }
-    // Sin dueño (comodín, "sin identificar") en violeta, arriba de la tira
-    // (mitad superior) para no pisarse con la marca roja de retiro lerdo si
-    // caen en el mismo instante -- las dos son visibles por separado.
-    if (v.sin_duenio) {
-      const xt = x(new Date(v.hora_id).getTime());
-      marcas += `<rect x="${(xt - 1.2).toFixed(1)}" y="3" width="2.4" height="${H / 2 - 3}" fill="var(--violeta)"/>`;
-    }
+  });
+  // Sin identificar (las dos fuentes, ver sinIdentificarDe) en violeta, arriba
+  // de la tira (mitad superior) para no pisarse con la marca roja de retiro
+  // lerdo si caen en el mismo instante -- las dos son visibles por separado.
+  sinIdentificarDe(s).forEach(r => {
+    const xt = x(new Date(r.hora).getTime());
+    marcas += `<rect x="${(xt - 1.2).toFixed(1)}" y="3" width="2.4" height="${H / 2 - 3}" fill="var(--violeta)"/>`;
   });
   return `<svg class="rs-tira" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
     aria-label="Bloques de rodeo de la sesión, con marcas de retiro lerdo y de vacas sin identificar">${rects}${marcas}</svg>`;
@@ -9503,7 +9521,7 @@ function statsRutinaFila(s) {
   // tambo apagó a propósito, no se reintroduce acá.
   const ident = s.detalle.find(d => d.clave === 'identificacion' && d.peso > 0);
   const lerdas = s.visitas.filter(v => v.lerda).length;
-  const sinId = s.visitas.filter(v => v.sin_duenio).length;
+  const sinId = sinIdentificarDe(s).length;
   let html = '';
   if (prep && prep.valor != null) {
     html += `<div class="rs-stat"><b style="color:${colorScore(prep.valor)}">${prep.valor}%</b>colocación</div>`;
@@ -9598,11 +9616,10 @@ function pintarRutinaSesion() {
   // poder investigar de verdad qué está fallando -- puesto y hora exacta de
   // cada una, ordenadas por hora. Cada fila abre el popover de cámaras (ver
   // más abajo) en ese momento puntual, para cruzar contra la grabación.
-  const sinIdentificar = s.visitas.filter(v => v.sin_duenio)
-    .sort((a, b) => new Date(a.hora_id) - new Date(b.hora_id));
-  const listaSinId = sinIdentificar.map(v => `
-    <button type="button" class="rutina-sinid-fila" data-hora="${v.hora_id}">
-      <span>Puesto ${v.puesto}</span><span>${new Date(v.hora_id).toLocaleTimeString('es-AR')}</span>
+  const sinIdentificar = sinIdentificarDe(s);
+  const listaSinId = sinIdentificar.map(r => `
+    <button type="button" class="rutina-sinid-fila" data-hora="${r.hora}">
+      <span>Puesto ${r.puesto}</span><span>${new Date(r.hora).toLocaleTimeString('es-AR')}</span>
     </button>`).join('');
   cuerpo.innerHTML = `
     <div style="flex-basis:100%;display:flex;align-items:center;gap:8px;margin-bottom:2px">
@@ -9841,17 +9858,22 @@ function renderRutinaChart(s) {
     // gráfico y en la tira resumen de la sesión (ver rutinaTiraSVG), no
     // solo al pasar el mouse por el tooltip.
     const color = v.sin_duenio ? 'var(--violeta)' : v.color;
+    // Titila (ver @keyframes rt-parpadeo) solo la sin identificar: con tanto
+    // marcador rojo de "lejos del objetivo" en un gráfico denso, un violeta
+    // quieto se pierde a simple vista -- el movimiento es lo que lo separa
+    // del resto, no el color solo.
+    const parpadeo = v.sin_duenio ? ' rt-parpadeo' : '';
     const xi = x(new Date(v.hora_id).getTime());
     const xf = v.hora_fin ? x(new Date(v.hora_fin).getTime()) : xi;
     const yy = y(v.puesto).toFixed(1);
     filas += `<line x1="${xi.toFixed(1)}" y1="${yy}" x2="${xf.toFixed(1)}" y2="${yy}" stroke="var(--violeta)" stroke-width="2.6" opacity=".65"/>`;
-    filas += `<path class="rt-pt" data-i="${i}" data-tipo="id" d="M ${xi.toFixed(1)},${(yy - 4).toFixed(1)} L ${(xi + 4).toFixed(1)},${yy} L ${xi.toFixed(1)},${(+yy + 4).toFixed(1)} L ${(xi - 4).toFixed(1)},${yy} Z" fill="${color}" style="cursor:pointer"/>`;
+    filas += `<path class="rt-pt${parpadeo}" data-i="${i}" data-tipo="id" d="M ${xi.toFixed(1)},${(yy - 4).toFixed(1)} L ${(xi + 4).toFixed(1)},${yy} L ${xi.toFixed(1)},${(+yy + 4).toFixed(1)} L ${(xi - 4).toFixed(1)},${yy} Z" fill="${color}" style="cursor:pointer"/>`;
     if (v.hora_coloc) {
       const xc = x(new Date(v.hora_coloc).getTime());
-      filas += `<rect class="rt-pt" data-i="${i}" data-tipo="coloc" x="${(xc - 3.2).toFixed(1)}" y="${(+yy - 3.2).toFixed(1)}" width="6.4" height="6.4" fill="${color}"${v.cumple_90 ? '' : ' stroke="var(--critical)" stroke-width="1.6"'} style="cursor:pointer"/>`;
+      filas += `<rect class="rt-pt${parpadeo}" data-i="${i}" data-tipo="coloc" x="${(xc - 3.2).toFixed(1)}" y="${(+yy - 3.2).toFixed(1)}" width="6.4" height="6.4" fill="${color}"${v.cumple_90 ? '' : ' stroke="var(--critical)" stroke-width="1.6"'} style="cursor:pointer"/>`;
     }
     if (v.hora_fin) {
-      filas += `<path class="rt-pt" data-i="${i}" data-tipo="retiro" d="M ${(xf - 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${(xf + 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${xf.toFixed(1)},${(+yy - 4.4).toFixed(1)} Z" fill="${color}"${v.lerda ? ' stroke="var(--critical)" stroke-width="1.6"' : ''} style="cursor:pointer"/>`;
+      filas += `<path class="rt-pt${parpadeo}" data-i="${i}" data-tipo="retiro" d="M ${(xf - 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${(xf + 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${xf.toFixed(1)},${(+yy - 4.4).toFixed(1)} Z" fill="${color}"${v.lerda ? ' stroke="var(--critical)" stroke-width="1.6"' : ''} style="cursor:pointer"/>`;
     }
   });
 

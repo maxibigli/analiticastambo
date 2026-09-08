@@ -241,6 +241,40 @@ def sql_rutina(fecha: str) -> str:
     """
 
 
+def sql_sin_id(fecha: str) -> str:
+    """Ordeños donde el collar NO se leyó absolutamente nada (`IDTime` NULL) --
+    invisibles para `sql_rutina`, A PROPÓSITO (ver su docstring: sin ID no hay
+    tramo identificación→colocación que medir, así que el score de la sesión
+    correctamente los deja afuera). Pero "afuera del score" terminó siendo
+    "invisibles del todo", y el tambo necesita verlos para investigar POR QUÉ
+    no se identifican -- no alcanza con el % agregado (`sql_identificacion`).
+
+    Real, no un caso raro: medido en La Ponderosa (07/08/2026), 153 de ~6.011
+    visitas (~2,5%) un día cualquiera -- el orden de magnitud del "98% de
+    identificación" que reporta el tambo y que "Rutina de ordeño" no podía
+    mostrar. De esas 153, 131 son el comodín (`Number = 0`) y 22 son animales
+    reales con esa falla puntual.
+
+    Sin `IDTime`, el filtro de fecha usa `CreationTime` (mismo recurso que
+    `sql_rendimiento`, ver su docstring) y el ancla de hora para mostrarlas es
+    `MilkConfirmTime` (cuándo terminó el ordeño), con `CreationTime` de
+    respaldo cuando también falta (2 de 153 casos medidos)."""
+    fecha = validar_fecha(fecha)
+    return f"""
+        SELECT
+          m.Place AS puesto, b.Number AS rp,
+          COALESCE(y.MilkConfirmTime, m.CreationTime) AS hora
+        FROM MilkingDeviceVisit m
+        JOIN BasicAnimal b ON b.OID = m.Animal
+        LEFT JOIN CMSMilkYield y ON y.MilkingDeviceVisit = m.OID
+        WHERE m.GCRecord IS NULL AND m.IDTime IS NULL
+          AND m.CreationTime >= DATEADD(hour, -6, '{fecha}')
+          AND m.CreationTime < DATEADD(hour, 6, DATEADD(day, 1, '{fecha}'))
+        ORDER BY hora
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
+    """
+
+
 RANGO_RENDIMIENTO_MAX_DIAS = 31  # tope: consulta pesada, escanea todas las visitas del rango
 
 

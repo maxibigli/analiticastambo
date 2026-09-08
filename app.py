@@ -469,6 +469,32 @@ def _refresh_rutina_async(tambo: str, fecha: str):
     threading.Thread(target=worker, daemon=True).start()
 
 
+def _refresh_sin_id_async(tambo: str, fecha: str):
+    """Ordeños sin NINGUNA lectura de collar ese día (`rutina.sql_sin_id`) --
+    consulta aparte de la principal (`sql_rutina`), mismo patrón de caché
+    async. Solo aplica a la rotativa: es donde se confirmó y midió el
+    síntoma (ver `salas/rotativa.py::analizar_dia`); la convencional tiene su
+    propia causa sin confirmar para el mismo % de identificación faltante y
+    no se toca acá."""
+    key = _clave(tambo, f"sin_id:{fecha}")
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            _cache_set(key, db.run_query(rutina.sql_sin_id(fecha), tambo=tambo,
+                                          max_rows=rutina.MAX_FILAS_DIA))
+        except Exception:  # noqa: BLE001
+            pass
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def _refresh_identificacion_async(tambo: str, desde: str, hasta: str):
     """% real de identificación por día (`sql_identificacion`), en segundo
     plano. Hace falta en las dos salas: "Rutina de ordeño" calcula "Vacas
@@ -3621,6 +3647,25 @@ def api_rutina():
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 500
     resultado["incompleto"] = data.get("truncated", False)
+    # Ordeños sin NINGUNA lectura de collar (ver rutina.sql_sin_id): invisibles
+    # para `sql_rutina` a propósito (no hay tramo identificación→colocación
+    # que puntuar), pero el tambo necesita verlos para investigar la causa, no
+    # solo el % agregado. Solo rotativa (ver _refresh_sin_id_async); se asigna
+    # cada uno a SU sesión por ventana de horario, igual que ya se separan las
+    # sesiones del día en `_separar_sesiones`.
+    if tambos.tipo_sala(tambo) == "rotativa" and resultado.get("sesiones"):
+        sin_id_key = _clave(tambo, f"sin_id:{fecha}")
+        sin_id_data, _ = _cache_get(sin_id_key, allow_stale=True)
+        if sin_id_data is None:
+            _refresh_sin_id_async(tambo, fecha)
+        else:
+            # `db.run_query` ya devuelve las fechas como string ISO (ver
+            # db._to_jsonable), así que comparan cronológicamente con `<`/`<=`
+            # tal cual, sin volver a parsear -- mismo truco que ya usa
+            # `s["inicio"]`/`s["fin"]`, que salen igual de `_analizar_sesion`.
+            for s in resultado["sesiones"]:
+                s["sin_lectura"] = [{"puesto": r[0], "rp": r[1], "hora": r[2]}
+                                    for r in sin_id_data["rows"] if s["inicio"] <= r[2] < s["fin"]]
     return jsonify(resultado)
 
 
