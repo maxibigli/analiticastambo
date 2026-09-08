@@ -3658,6 +3658,15 @@ def api_rutina():
         sin_id_data, _ = _cache_get(sin_id_key, allow_stale=True)
         if sin_id_data is None:
             _refresh_sin_id_async(tambo, fecha)
+            # A diferencia de la consulta principal (que responde 202
+            # "calentando" y el frontend reintenta solo), esta va aparte y
+            # SÍ devuelve 200 con la sesión ya armada -- para no bloquear
+            # toda la pantalla por un dato secundario. Pero eso dejaba al
+            # frontend sin forma de saber que tenía que reintentar, y
+            # "sin identificar" quedaba pegado en 0 hasta que el usuario
+            # recargaba a mano (reportado 09/09/2026). Esta bandera es la
+            # señal para que reintente solo, ver cargarRutina en index.html.
+            resultado["sin_id_pendiente"] = True
         else:
             # `db.run_query` ya devuelve las fechas como string ISO (ver
             # db._to_jsonable), así que comparan cronológicamente con `<`/`<=`

@@ -65,7 +65,11 @@ MAX_FILAS_DIA = 20000
 # "identificacion" pasa a pesar 30 (antes 0): el tambo decidió que SÍ entre
 # al score acá, no solo mostrarse aparte en Rendimiento Sala.
 PESOS = {
-    "prep_90s": 30,        # errores de rutina: pezonera colocada a tiempo
+    # 30 + 7 = 37: los 7 puntos que "paradas_rotativa" perdió más abajo se
+    # suman acá (09/09/2026, a pedido del tambo) -- es la señal más directa y
+    # mejor medida de las dos, tiene sentido que absorba el peso de una que
+    # mide algo mucho más angosto y raro.
+    "prep_90s": 37,        # errores de rutina: pezonera colocada a tiempo
     "lerdas": 5,           # atrasos por vacas lerdas
     "entre_grupos": 10,    # tiempos muertos entre distintos grupos
     "manejo_corral": 0,    # fuera de Manejo en el rediseño (ver arriba)
@@ -77,13 +81,16 @@ PESOS = {
     # registran ese instante — ver `salas.convencional.PESOS`.
     "flujo": 0,
     "identificacion": 30,  # ordeños que quedaron a nombre del comodín
-    # "Paradas de la rotativa" del diseño del tambo. DDM no guarda un conteo
-    # de la plataforma parándose (se investigó a fondo, ver CLAUDE.md); el
-    # proxy que sí hay es el control manual del enganche (`ManualMode`, ver
-    # el docstring de `sql_rutina`). Sin clave equivalente en
+    # "Enganche manual de pezonera" (antes "Paradas de la rotativa", nombre
+    # engañoso -- ver el docstring de sql_rutina y CLAUDE.md, 09/09/2026: no
+    # es un conteo de paradas de la plataforma NI lo mismo que una
+    # recolocación, DDM no guarda un conteo real de paradas). Bajado de 10 a
+    # 3 a pedido del tambo: es un evento genuinamente raro (~0,7% de los
+    # ordeños medido en La Ponderosa) que aportaba poca información día a día
+    # para el peso que tenía. Sin clave equivalente en
     # `salas.convencional.PESOS` -- esa sala no tiene brazo automático que
     # reemplazar por la mano del operario.
-    "paradas_rotativa": 10,
+    "paradas_rotativa": 3,
 }
 
 # Bimodalidad: la vaca arranca a dar leche, la bajada se corta y vuelve. Es el
@@ -1845,6 +1852,12 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
         "vacas": len(visitas),
         "score": max(0, min(100, score)) if score is not None else None,
         "retiradas_forzadas": retiradas_forzadas,
+        # Duración típica de ESTA sesión (mediana real, ya calculada arriba
+        # para "lerdas"). Se reexpone para que el frontend arme una línea
+        # corta APROXIMADA en las visitas de `s.sin_lectura` que solo tienen
+        # colocación O retiro, no las dos (ver rutina.sql_sin_id) -- mejor
+        # estimación que un número fijo, sin pagar ninguna consulta nueva.
+        "mediana_ordeño_seg": round(mediana_ordeño) if mediana_ordeño else None,
         "incidentes": incidentes,
         "detalle": [
             # El umbral solo se nombra si de verdad se está midiendo contra él:
@@ -1903,11 +1916,12 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
             # Sin clave en los PESOS de la convencional (peso 0 vía .get): no
             # hay brazo automático que reemplazar por la mano del operario en
             # una sala de tandas. Ver el docstring de sql_rutina.
-            {"clave": "paradas_rotativa", "label": "Paradas de la rotativa (control manual)",
+            {"clave": "paradas_rotativa", "label": "Enganche manual de pezonera",
              "valor": round(s9), "peso": pesos.get("paradas_rotativa", 0),
              "info": (f"{controles_manuales}/{len(visitas)} ordeños con enganche manual de la pezonera "
-                      "(el brazo automático no pudo). Proxy de paradas: DDM no guarda un conteo de la "
-                      "plataforma parándose, esto es la intervención manual más cercana que sí registra.")},
+                      "(el brazo automático no pudo). NO es un conteo de paradas de la plataforma -- DDM "
+                      "no guarda eso (se investigó a fondo, ver CLAUDE.md), y esto tampoco es lo mismo que "
+                      "una recolocación: son eventos distintos, casi no se superponen.")},
             {"clave": "flujo", "label": "Estímulo (sin bimodalidad)",
              "valor": round(s7) if s7 is not None else None, "peso": pesos["flujo"],
              "info": (f"{bimodales}/{con_curva} ordeños con la bajada cortada y vuelta a "

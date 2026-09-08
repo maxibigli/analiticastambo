@@ -9474,6 +9474,13 @@ async function cargarRutina(fecha) {
       ? `${d.sesiones.length} sesión(es) el ${d.fecha}`
       : `Sin ordeños registrados el ${d.fecha}.`)
       + (d.incompleto ? ' ⚠ Día con muchísimo movimiento: el análisis puede estar incompleto.' : '');
+    // "Sin identificar" sale de una consulta aparte que se calienta en
+    // segundo plano (ver api_rutina en app.py): a diferencia de la consulta
+    // principal, esta NO frena la pantalla con un 202 "calentando" -- llega
+    // ya con las sesiones armadas, solo que sin ese dato todavía. Sin este
+    // reintento quedaba pegado en 0 hasta que alguien recargaba a mano
+    // (reportado 09/09/2026).
+    if (d.sin_id_pendiente) setTimeout(() => cargarRutina(fecha), 3000);
   } catch (e) {
     if (e.calentando) { info.textContent = e.message; setTimeout(() => cargarRutina(fecha), 3000); }
     else { info.textContent = 'Error: ' + e.message; document.getElementById('rutina-cuerpo').innerHTML = ''; }
@@ -9923,6 +9930,19 @@ function renderRutinaChart(s) {
     const xf2 = r.hora_fin ? x(new Date(r.hora_fin).getTime()) : null;
     if (xc != null && xf2 != null) {
       filas += `<line x1="${xc.toFixed(1)}" y1="${yr}" x2="${xf2.toFixed(1)}" y2="${yr}" stroke="var(--violeta)" stroke-width="2.6" opacity=".65"/>`;
+    } else if (xc != null || xf2 != null) {
+      // Falta uno de los dos puntos reales -- una línea corta APROXIMADA
+      // (punteada, para no confundirla con una medida real) usando la
+      // duración típica de ESTA sesión (mediana de ordeños reales, ver
+      // rutina._analizar_sesion) como estimación del extremo que falta.
+      // Pedido del tambo (09/09/2026): mejor una referencia visual aunque
+      // sea aproximada, que un punto suelto sin contexto de duración.
+      const duracionTipicaMs = (s.mediana_ordeño_seg || 317) * 1000;
+      const xEstimado = xc != null
+        ? x(new Date(r.hora_coloc).getTime() + duracionTipicaMs)
+        : x(new Date(r.hora_fin).getTime() - duracionTipicaMs);
+      const [xa, xb] = xc != null ? [xc, xEstimado] : [xEstimado, xf2];
+      filas += `<line x1="${xa.toFixed(1)}" y1="${yr}" x2="${xb.toFixed(1)}" y2="${yr}" stroke="var(--violeta)" stroke-width="2" opacity=".45" stroke-dasharray="2,2"/>`;
     }
     if (xc != null) {
       filas += `<rect class="rt-pt rt-parpadeo" ${datos} x="${(xc - 3.2).toFixed(1)}" y="${(+yr - 3.2).toFixed(1)}" width="6.4" height="6.4" fill="var(--sinid)" style="cursor:pointer"/>`;
