@@ -9191,17 +9191,30 @@ function aplicarCandadoProduccion() {
   }
 }
 
+// Último tambo elegido, para no volver a pagar el "en frío" de SQL Express de
+// un tambo que ni se quería mirar: sin esto, cada apertura de la app arranca
+// en el tambo por defecto del backend y hay que cambiarlo a mano, calentando
+// el caché de un tambo (el default) y después el que realmente se quería ver.
+const ULTIMO_TAMBO_KEY = 'delpro_ultimo_tambo';
+
 async function cargarTambos() {
   const sel = document.getElementById('sel-tambo');
   try {
     const d = await pedirJSON('/api/tambos');
     tambosInfo = Object.fromEntries(d.tambos.map(t => [t.id, t]));
-    tamboActual = d.default || (d.tambos[0] && d.tambos[0].id) || '';
+    let ultimo = null;
+    try { ultimo = localStorage.getItem(ULTIMO_TAMBO_KEY); } catch (e) { /* modo privado, etc. */ }
+    // Solo se respeta si sigue siendo una opción válida para este usuario --
+    // un tambo dado de baja, o que el rol actual ya no ve, no debe dejar el
+    // selector en blanco.
+    tamboActual = (ultimo && d.tambos.some(t => t.id === ultimo)) ? ultimo
+      : d.default || (d.tambos[0] && d.tambos[0].id) || '';
     sel.innerHTML = d.tambos.map(t =>
       `<option value="${t.id}"${t.id === tamboActual ? ' selected' : ''}>${t.nombre}${t.produccion ? ' (producción)' : ''}</option>`).join('');
     aplicarCandadoProduccion();
     sel.addEventListener('change', () => {
       tamboActual = sel.value;
+      try { localStorage.setItem(ULTIMO_TAMBO_KEY, tamboActual); } catch (e) { /* modo privado, etc. */ }
       document.getElementById('resultado').hidden = true;  // el resultado era de otro tambo
       ultimoResultado = null;
       tareaAbierta = null;
@@ -9460,9 +9473,16 @@ function rutinaTiraSVG(s) {
       const xt = x(new Date(v.hora_fin).getTime());
       marcas += `<rect x="${(xt - 1.2).toFixed(1)}" y="3" width="2.4" height="${H - 6}" fill="var(--critical)"/>`;
     }
+    // Sin dueño (comodín, "sin identificar") en violeta, arriba de la tira
+    // (mitad superior) para no pisarse con la marca roja de retiro lerdo si
+    // caen en el mismo instante -- las dos son visibles por separado.
+    if (v.sin_duenio) {
+      const xt = x(new Date(v.hora_id).getTime());
+      marcas += `<rect x="${(xt - 1.2).toFixed(1)}" y="3" width="2.4" height="${H / 2 - 3}" fill="var(--violeta)"/>`;
+    }
   });
   return `<svg class="rs-tira" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
-    aria-label="Bloques de rodeo de la sesión, con una marca por retiro lerdo">${rects}${marcas}</svg>`;
+    aria-label="Bloques de rodeo de la sesión, con marcas de retiro lerdo y de vacas sin identificar">${rects}${marcas}</svg>`;
 }
 
 // Estadísticas rápidas de una sesión, leídas de lo que YA calculó el backend
@@ -9473,6 +9493,7 @@ function statsRutinaFila(s) {
   // tambo apagó a propósito, no se reintroduce acá.
   const ident = s.detalle.find(d => d.clave === 'identificacion' && d.peso > 0);
   const lerdas = s.visitas.filter(v => v.lerda).length;
+  const sinId = s.visitas.filter(v => v.sin_duenio).length;
   let html = '';
   if (prep && prep.valor != null) {
     html += `<div class="rs-stat"><b style="color:${colorScore(prep.valor)}">${prep.valor}%</b>colocación</div>`;
@@ -9481,6 +9502,7 @@ function statsRutinaFila(s) {
     html += `<div class="rs-stat"><b style="color:${colorScore(ident.valor)}">${ident.valor}%</b>identificación</div>`;
   }
   html += `<div class="rs-stat"><b style="color:${lerdas ? 'var(--critical)' : 'var(--good)'}">${lerdas}</b>retiro(s) lento(s)</div>`;
+  html += `<div class="rs-stat"><b style="color:${sinId ? 'var(--violeta)' : 'var(--good)'}">${sinId}</b>sin identificar</div>`;
   return html;
 }
 
@@ -9785,11 +9807,11 @@ function renderRutinaChart(s) {
   s.visitas.forEach((v, i) => {
     if (!v.puesto) return;
     // Sin dueño (comodín, RP=0 -- lo que DelPro cuenta como "sin identificar")
-    // se pinta ámbar en vez del color del rodeo: mismo criterio de color que
-    // ya usa el Dashboard para "sin identificar" (ver .tile-atencion), para
-    // que se pueda distinguir a simple vista en el gráfico, no solo al pasar
-    // el mouse por el tooltip.
-    const color = v.sin_duenio ? 'var(--warning)' : v.color;
+    // se pinta violeta en vez del color del rodeo (a pedido del tambo,
+    // 07/09/2026), para que se pueda distinguir a simple vista en el
+    // gráfico y en la tira resumen de la sesión (ver rutinaTiraSVG), no
+    // solo al pasar el mouse por el tooltip.
+    const color = v.sin_duenio ? 'var(--violeta)' : v.color;
     const xi = x(new Date(v.hora_id).getTime());
     const xf = v.hora_fin ? x(new Date(v.hora_fin).getTime()) : xi;
     const yy = y(v.puesto).toFixed(1);
@@ -9814,7 +9836,7 @@ function renderRutinaChart(s) {
     </svg>
     <div class="rutina-leyenda">
       ${leyendaGrupos}
-      ${hayComodin ? '<span><span class="pt" style="background:var(--warning)"></span>Sin identificar</span>' : ''}
+      ${hayComodin ? '<span><span class="pt" style="background:var(--violeta)"></span>Sin identificar</span>' : ''}
       <span><span class="pt" style="background:var(--violeta);opacity:.6"></span>Tiempo total</span>
       <span>◆ Identificación</span><span>■ Colocación (rojo = lejos del objetivo, antes o después)</span><span>▲ Retiro (rojo = lerda)</span>
     </div>`;
