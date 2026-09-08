@@ -3655,22 +3655,23 @@ def api_rutina_camara_stream():
          "-an",                      # sin audio: no hace falta para revisar rutina, y es más liviano
          "-f", "mjpeg", "-q:v", "6", "-r", "8",
          "-"],
-        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
 
     # `proc.stdout.read()` bloquea sin límite si el NVR no contesta -- el
     # "-timeout" de arriba debería cortarlo solo, pero no hay que confiar
     # SOLO en que ffmpeg lo respete (varía según versión/build). Un hilo
-    # aparte hace la lectura bloqueante y la vuelca a una cola; el generador
-    # de abajo espera con un tope (`TIMEOUT_SIN_DATOS_S`) -- si no llega NADA
-    # en ese lapso, se da por muerta la conexión y se corta. Sin esto, un
-    # pedido colgado se queda ocupando un worker de Waitress para siempre, y
-    # con pocos workers eso frena el resto de la app entera, no solo la
-    # ventanita (bug real, reportado 09/09/2026: "queda pegado y bloquea todo").
+    # aparte hace la lectura bloqueante y la vuelca a una cola; `_proximo_frame`
+    # espera con un tope (`TIMEOUT_SIN_DATOS_S`) -- si no llega NADA en ese
+    # lapso, se da por muerta la conexión y se corta. Sin esto, un pedido
+    # colgado se queda ocupando un worker de Waitress para siempre, y con
+    # pocos workers eso frena el resto de la app entera, no solo la ventanita
+    # (bug real, reportado 09/09/2026: "queda pegado y bloquea todo").
     TIMEOUT_SIN_DATOS_S = 8
     cola: "queue.Queue[bytes]" = queue.Queue(maxsize=64)
+    stderr_lineas: list[str] = []
 
-    def leer_ffmpeg():
+    def leer_stdout():
         try:
             while True:
                 trozo = proc.stdout.read(4096)
@@ -3679,36 +3680,76 @@ def api_rutina_camara_stream():
                     break
         except Exception:  # noqa: BLE001
             cola.put(b"")
-    threading.Thread(target=leer_ffmpeg, daemon=True).start()
+
+    def leer_stderr():
+        # Para poder devolver el motivo REAL cuando ffmpeg no da ningún frame
+        # (antes se descartaba con DEVNULL y solo quedaba adivinar entre "no
+        # está instalado" / "no llega a la red" / nada más específico).
+        # 60 líneas alcanzan de sobra: el cartel de versión son ~15 y el
+        # error real aparece enseguida después.
+        try:
+            for _ in range(60):
+                linea = proc.stderr.readline()
+                if not linea:
+                    break
+                stderr_lineas.append(linea.decode("utf-8", "replace"))
+        except Exception:  # noqa: BLE001
+            pass
+
+    threading.Thread(target=leer_stdout, daemon=True).start()
+    threading.Thread(target=leer_stderr, daemon=True).start()
+
+    buffer = b""
+
+    def proximo_frame():
+        """Un frame JPEG completo (bytes, con sus propios FFD8/FFD9 -- ver
+        más abajo por qué), o None si se agotó el tiempo sin datos o ffmpeg
+        cerró sin dar nada más. Se llama tanto ANTES de decidir la respuesta
+        (para no mandar un 200 vacío si en realidad falló) como DESPUÉS, ya
+        en el generador, para cada frame siguiente."""
+        nonlocal buffer
+        while True:
+            # ffmpeg con "-f mjpeg" larga frames JPEG crudos, sin envolver --
+            # cada uno se reconoce por sus propios marcadores FFD8 (inicio) /
+            # FFD9 (fin).
+            inicio = buffer.find(b"\xff\xd8")
+            fin = buffer.find(b"\xff\xd9", inicio + 2) if inicio != -1 else -1
+            if inicio != -1 and fin != -1:
+                frame = buffer[inicio:fin + 2]
+                buffer = buffer[fin + 2:]
+                return frame
+            try:
+                trozo = cola.get(timeout=TIMEOUT_SIN_DATOS_S)
+            except queue.Empty:
+                return None
+            if not trozo:
+                return None
+            buffer += trozo
+
+    # Se espera el PRIMER frame antes de devolver nada: si no llega, se puede
+    # todavía contestar un error de verdad (con el motivo real de ffmpeg) en
+    # vez de un 200 "exitoso" con el cuerpo vacío -- una vez que arranca la
+    # respuesta multipart no se puede cambiar de código de estado.
+    primer_frame = proximo_frame()
+    if primer_frame is None:
+        proc.kill()
+        proc.wait()
+        detalle = "".join(stderr_lineas).strip()
+        mensaje = (f"No se pudo obtener video de la cámara. ffmpeg dijo: "
+                   f"{detalle[-500:]}" if detalle else
+                   "No se pudo obtener video de la cámara, y ffmpeg no dio ningún "
+                   "detalle -- puede ser que este servidor no tenga acceso de red al NVR.")
+        return jsonify({"error": mensaje}), 502
 
     def generar():
-        buffer = b""
         try:
-            while True:
-                try:
-                    trozo = cola.get(timeout=TIMEOUT_SIN_DATOS_S)
-                except queue.Empty:
-                    break   # nada en 8s -- conexión muerta, se corta acá
-                if not trozo:
-                    break
-                buffer += trozo
-                # ffmpeg con "-f mjpeg" larga frames JPEG crudos, sin envolver
-                # -- cada uno se reconoce por sus propios marcadores FFD8
-                # (inicio) / FFD9 (fin). Acá se recortan y se envuelven en el
-                # multipart que un <img> de HTML sabe interpretar solo.
-                while True:
-                    inicio = buffer.find(b"\xff\xd8")
-                    if inicio == -1:
-                        break
-                    fin = buffer.find(b"\xff\xd9", inicio + 2)
-                    if fin == -1:
-                        break
-                    frame = buffer[inicio:fin + 2]
-                    buffer = buffer[fin + 2:]
-                    yield (b"--" + _FFMPEG_BOUNDARY + b"\r\n"
-                           b"Content-Type: image/jpeg\r\n"
-                           b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
-                           + frame + b"\r\n")
+            frame = primer_frame
+            while frame is not None:
+                yield (b"--" + _FFMPEG_BOUNDARY + b"\r\n"
+                       b"Content-Type: image/jpeg\r\n"
+                       b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
+                       + frame + b"\r\n")
+                frame = proximo_frame()
         finally:
             # Se ejecuta al terminar solo, si el navegador cierra la conexión
             # a mitad de camino (Werkzeug cierra el generador, lo que dispara

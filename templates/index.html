@@ -9809,19 +9809,33 @@ function mostrarVideoCamara(nombre, plantillaUrl, iso) {
   const link = construirLinkCamara(plantillaUrl, iso);
   const img = document.getElementById('cam-modal-img');
   const estado = document.getElementById('cam-modal-estado');
+  const streamUrl = '/api/rutina/camara_stream?url=' + encodeURIComponent(link);
   document.getElementById('cam-modal-titulo').textContent = `📹 ${nombre}`;
   estado.textContent = 'Conectando…';
   estado.hidden = false;
   img.removeAttribute('src');   // corta cualquier stream anterior antes de arrancar uno nuevo
   img.onerror = () => {
-    estado.textContent = 'No se pudo conectar. Puede ser que falte ffmpeg en el '
-      + 'servidor, o que el NVR no esté accesible en la red — probá el 📋 (copiar '
-      + 'link) del menú de cámaras y pegalo en VLC para confirmar cuál es.';
+    // Un <img> no deja leer el cuerpo de la respuesta que falló -- por eso
+    // se repite el pedido con fetch, SOLO para leer el error real (si el
+    // servidor devolvió JSON con detalle, ver api_rutina_camara_stream) en
+    // vez de tener que adivinar entre tres motivos posibles.
+    estado.textContent = 'No se pudo conectar. Buscando el motivo exacto…';
+    fetch(streamUrl).then(async r => {
+      let detalle = null;
+      try { detalle = (await r.json()).error; } catch (e) { /* no era JSON: el stream sí abrió y se cortó después */ }
+      estado.textContent = detalle
+        ? `No se pudo conectar: ${detalle}`
+        : 'No se pudo conectar (el servidor no dio más detalle). Probá el 📋 '
+          + '(copiar link) del menú de cámaras y pegalo en VLC para comparar.';
+    }).catch(() => {
+      estado.textContent = 'No se pudo conectar, y tampoco se pudo pedir el motivo. '
+        + 'Probá el 📋 (copiar link) del menú de cámaras y pegalo en VLC para comparar.';
+    });
     estado.hidden = false;
   };
   img.onload = () => { estado.hidden = true; };
   document.getElementById('cam-modal-fondo').hidden = false;
-  img.src = '/api/rutina/camara_stream?url=' + encodeURIComponent(link);
+  img.src = streamUrl;
 }
 
 function cerrarVideoCamara() {
