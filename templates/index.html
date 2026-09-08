@@ -9900,7 +9900,9 @@ function renderRutinaChart(s) {
     if (!r.puesto) return;
     const xr = x(new Date(r.hora).getTime());
     const yr = y(r.puesto).toFixed(1);
-    filas += `<circle class="rt-pt rt-parpadeo" data-j="${j}" data-tipo="sinlectura" data-hora="${r.hora}" data-puesto="${r.puesto}" cx="${xr.toFixed(1)}" cy="${yr}" r="4" fill="var(--sinid)" style="cursor:pointer"/>`;
+    filas += `<circle class="rt-pt rt-parpadeo" data-j="${j}" data-tipo="sinlectura" data-hora="${r.hora}"
+      data-hora-coloc="${r.hora_coloc || ''}" data-hora-fin="${r.hora_fin || ''}" data-puesto="${r.puesto}"
+      cx="${xr.toFixed(1)}" cy="${yr}" r="4" fill="var(--sinid)" style="cursor:pointer"/>`;
   });
 
   const leyendaGrupos = s.grupos.filter((g, i) => s.grupos.findIndex(g2 => g2.grupo === g.grupo) === i)
@@ -9927,10 +9929,14 @@ document.addEventListener('mousemove', (e) => {
   const hora = iso => iso ? new Date(iso).toLocaleTimeString('es-AR') : '—';
   if (el.dataset.tipo === 'sinlectura') {
     // Sin índice de s.visitas: no hay tramo identificación→colocación que
-    // mostrar, solo el hecho de que el ordeño existió y no se leyó el collar.
-    tip.innerHTML = `<b>Puesto ${el.dataset.puesto}</b> · <span style="color:var(--sinid);font-weight:700">SIN NINGUNA LECTURA DE COLLAR</span><br>
-      Hora: ${hora(el.dataset.hora)}<br>
-      No hay ID ni colocación que medir: el collar no se leyó en absoluto.`;
+    // PUNTUAR (no hay hora de ID desde la cual medirlo), pero la colocación
+    // en sí puede existir igual -- es un sensor distinto de la máquina, no
+    // depende de que el collar se haya leído (corregido 09/09/2026, DelPro
+    // la muestra así: sin número de vaca, pero con ordeño).
+    tip.innerHTML = `<b>Puesto ${el.dataset.puesto}</b> · <span style="color:var(--sinid);font-weight:700">SIN IDENTIFICAR</span> (no se leyó el collar)<br>
+      Coloc. ${el.dataset.horaColoc ? hora(el.dataset.horaColoc) : '— (tampoco se registró)'}
+      · Fin ${el.dataset.horaFin ? hora(el.dataset.horaFin) : '—'}<br>
+      Sin hora de identificación no hay tramo que puntuar, aunque el ordeño sí ocurrió.`;
     tip.style.display = 'block';
     tip.style.left = (e.clientX + 14) + 'px';
     tip.style.top = (e.clientY + 14) + 'px';

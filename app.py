@@ -3664,8 +3664,9 @@ def api_rutina():
             # tal cual, sin volver a parsear -- mismo truco que ya usa
             # `s["inicio"]`/`s["fin"]`, que salen igual de `_analizar_sesion`.
             for s in resultado["sesiones"]:
-                s["sin_lectura"] = [{"puesto": r[0], "rp": r[1], "hora": r[2]}
-                                    for r in sin_id_data["rows"] if s["inicio"] <= r[2] < s["fin"]]
+                s["sin_lectura"] = [
+                    {"puesto": r[0], "rp": r[1], "hora_coloc": r[2], "hora_fin": r[3], "hora": r[4]}
+                    for r in sin_id_data["rows"] if s["inicio"] <= r[4] < s["fin"]]
     return jsonify(resultado)
 
 

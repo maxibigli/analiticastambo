@@ -255,17 +255,24 @@ def sql_sin_id(fecha: str) -> str:
     mostrar. De esas 153, 131 son el comodín (`Number = 0`) y 22 son animales
     reales con esa falla puntual.
 
-    Sin `IDTime`, el filtro de fecha usa `CreationTime` (mismo recurso que
-    `sql_rendimiento`, ver su docstring) y el ancla de hora para mostrarlas es
-    `MilkConfirmTime` (cuándo terminó el ordeño), con `CreationTime` de
-    respaldo cuando también falta (2 de 153 casos medidos)."""
+    La colocación de la pezonera SÍ puede existir sin identificación: son dos
+    sensores distintos de la máquina, uno no depende del otro (igual que
+    DelPro la muestra sin RP, ver el reporte). Medido: 21 de 153 SÍ tienen
+    `VerifiedTime` (colocación) real -- corregido acá después de asumir mal
+    que no había ninguna. Por eso se trae también `hora_coloc`, y el ancla
+    para ubicarlas en el tiempo (`hora`) usa colocación cuando existe. Sin
+    `IDTime`, el filtro de fecha usa `CreationTime` (mismo recurso que
+    `sql_rendimiento`, ver su docstring); sin colocación TAMPOCO, se cae a
+    `MilkConfirmTime` (fin de ordeño) y por último a `CreationTime`."""
     fecha = validar_fecha(fecha)
     return f"""
         SELECT
           m.Place AS puesto, b.Number AS rp,
-          COALESCE(y.MilkConfirmTime, m.CreationTime) AS hora
+          c.VerifiedTime AS hora_coloc, y.MilkConfirmTime AS hora_fin,
+          COALESCE(c.VerifiedTime, y.MilkConfirmTime, m.CreationTime) AS hora
         FROM MilkingDeviceVisit m
         JOIN BasicAnimal b ON b.OID = m.Animal
+        LEFT JOIN CMSDeviceVisit c ON c.OID = m.OID
         LEFT JOIN CMSMilkYield y ON y.MilkingDeviceVisit = m.OID
         WHERE m.GCRecord IS NULL AND m.IDTime IS NULL
           AND m.CreationTime >= DATEADD(hour, -6, '{fecha}')
