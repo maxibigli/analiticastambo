@@ -685,6 +685,16 @@
   .rutina-hallazgos { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; color: var(--text-secondary); }
   .rutina-hallazgos li { list-style: none; padding-left: 16px; position: relative; }
   .rutina-hallazgos li::before { content: '•'; position: absolute; left: 2px; color: var(--warning); }
+  /* Listado completo de vacas sin identificar (puesto+hora), scrollable
+     porque puede haber varias decenas por sesión -- a diferencia de
+     .rutina-hallazgos, que solo muestra una muestra de 5. */
+  .rutina-sinid-lista { max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+  .rutina-sinid-fila {
+    display: flex; justify-content: space-between; gap: 10px; width: 100%;
+    background: transparent; border: none; border-radius: 6px; padding: 5px 6px;
+    font: inherit; font-size: 12px; color: var(--text-secondary); text-align: left; cursor: pointer;
+  }
+  .rutina-sinid-fila:hover { background: var(--page); color: var(--text-primary); }
   .rutina-leyenda { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--text-secondary); margin-top: 8px; }
   .rutina-leyenda span.pt { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
   .rutina-tooltip {
@@ -9584,6 +9594,16 @@ function pintarRutinaSesion() {
   const hallazgos = s.hallazgos.length
     ? '<ul class="rutina-hallazgos">' + s.hallazgos.map(h => `<li>${h.texto}</li>`).join('') + '</ul>'
     : '<div class="aviso">Sin hallazgos relevantes en esta sesión.</div>';
+  // Listado COMPLETO (no los 5 de hallazgos) de vacas sin identificar, para
+  // poder investigar de verdad qué está fallando -- puesto y hora exacta de
+  // cada una, ordenadas por hora. Cada fila abre el popover de cámaras (ver
+  // más abajo) en ese momento puntual, para cruzar contra la grabación.
+  const sinIdentificar = s.visitas.filter(v => v.sin_duenio)
+    .sort((a, b) => new Date(a.hora_id) - new Date(b.hora_id));
+  const listaSinId = sinIdentificar.map(v => `
+    <button type="button" class="rutina-sinid-fila" data-hora="${v.hora_id}">
+      <span>Puesto ${v.puesto}</span><span>${new Date(v.hora_id).toLocaleTimeString('es-AR')}</span>
+    </button>`).join('');
   cuerpo.innerHTML = `
     <div style="flex-basis:100%;display:flex;align-items:center;gap:8px;margin-bottom:2px">
       <label class="aviso" style="display:flex;align-items:center;gap:8px">🔍 Zoom
@@ -9607,6 +9627,12 @@ function pintarRutinaSesion() {
         <div class="aviso" style="margin-bottom:4px">Hallazgos</div>
         ${hallazgos}
       </div>
+      ${sinIdentificar.length ? `
+      <div style="border-top:1px solid var(--baseline);padding-top:12px">
+        <div class="aviso" style="margin-bottom:4px">Sin identificar (${sinIdentificar.length}) —
+          click en una fila para ver la cámara de ese momento</div>
+        <div class="rutina-sinid-lista">${listaSinId}</div>
+      </div>` : ''}
       <div style="border-top:1px solid var(--baseline);padding-top:12px">
         <div class="aviso">Evaluación de Incidentes</div>
         <div class="rutina-score-nota" style="color:${colorScore(incidentes.score)}">${textoScore(incidentes.score, true)}</div>
@@ -9624,6 +9650,9 @@ function pintarRutinaSesion() {
     document.getElementById('rutina-zoom').value = 1;
     document.getElementById('rutina-zoom-val').textContent = '1×';
     renderRutinaChart(rutinaData.sesiones[rutinaSesionIdx]);
+  });
+  cuerpo.querySelectorAll('.rutina-sinid-fila').forEach(b => {
+    b.addEventListener('click', (e) => mostrarPopoverCamaras(e.clientX, e.clientY, b.dataset.hora));
   });
   renderRutinaChart(s);
 }

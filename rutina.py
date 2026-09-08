@@ -1768,6 +1768,22 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
             "texto": f"{len(sin_colocar)} identificación(es) sin colocación registrada "
                      "(posible falla de lectura o animal que se retiró).",
         })
+    # "Cuáles son" las vacas sin identificar de la sesión (RP=0, comodín): el
+    # violeta del gráfico y el conteo de la fila de sesión dicen CUÁNTAS son,
+    # pero no CUÁLES puestos/horas -- eso obligaba a pasar el mouse una por
+    # una sobre 80 puestos. Listadas por puesto/hora, no por RP (no tienen).
+    sin_duenio_lista = sorted((v for v in visitas if v["rp"] == 0 and v["puesto"]), key=lambda v: v["hora_id"])
+    for v in sin_duenio_lista[:5]:
+        hallazgos.append({
+            "tipo": "sin_duenio", "severidad": 1, "puesto": v["puesto"], "rp": None,
+            "texto": f"Puesto {v['puesto']}: ordeño sin identificar a las "
+                     f"{v['hora_id'].strftime('%H:%M')} (collar sin leer o RP desconocido).",
+        })
+    if len(sin_duenio_lista) > 5:
+        hallazgos.append({
+            "tipo": "sin_duenio", "severidad": 0, "puesto": None, "rp": None,
+            "texto": f"...y {len(sin_duenio_lista) - 5} sin identificar más en esta sesión.",
+        })
     hallazgos.extend(huecos["hallazgos"])
     for g, cant in sorted(mezcladas_por_grupo.items(), key=lambda kv: -kv[1])[:3]:
         hallazgos.append({
@@ -1777,7 +1793,7 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     hallazgos.extend(ocupacion["hallazgos"])
     # Los huecos entre grupos son la señal más accionable (mal manejo de corral
     # entre lotes); dentro de cada tipo, el hallazgo más severo primero.
-    orden_tipo = {"hueco_grupo": 0, "vacio": 1, "mezcla": 2, "prep": 3, "sin_colocar": 4}
+    orden_tipo = {"hueco_grupo": 0, "vacio": 1, "mezcla": 2, "prep": 3, "sin_colocar": 4, "sin_duenio": 5}
     hallazgos.sort(key=lambda h: (orden_tipo[h["tipo"]], -h["severidad"]))
     for h in hallazgos:
         del h["severidad"]
