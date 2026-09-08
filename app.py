@@ -3,7 +3,9 @@
 hacer preguntas en lenguaje natural y generar gráficas y reportes."""
 import json
 import math
+import shutil
 import statistics
+import subprocess
 import threading
 import time
 
@@ -3598,6 +3600,90 @@ def api_rutina_camaras():
         "camara_seg_antes": seg_antes if seg_antes is not None else configuracion_tambo.CAMARA_SEG_ANTES_DEFECTO,
         "camara_seg_despues": seg_despues if seg_despues is not None else configuracion_tambo.CAMARA_SEG_DESPUES_DEFECTO,
     })
+
+
+# Ruta al binario de ffmpeg -- no se asume que está en el PATH del sistema
+# (verificado en la PC de desarrollo: no lo está). FFMPEG_PATH permite
+# apuntar al .exe directo sin tener que tocar el PATH de Windows en
+# SERVER-DELPRO. Mismo criterio que el resto de la app para todo lo que
+# depende de la instalación de CADA máquina: variable de entorno, no una
+# ruta hardcodeada (ver CLAUDE.md, sección Credenciales).
+FFMPEG_PATH = os.environ.get("FFMPEG_PATH", "ffmpeg")
+_FFMPEG_BOUNDARY = b"lactiaframe"
+
+
+@app.get("/api/rutina/camara_stream")
+def api_rutina_camara_stream():
+    """Reemite un link RTSP (armado por /api/rutina/camaras, ver
+    plantilla_camara) como MJPEG por HTTP -- lo único que un navegador puede
+    mostrar sin plugins. Ningún navegador reproduce rtsp:// directo; ffmpeg
+    hace la conversión al vuelo, sin guardar nada en disco.
+
+    NO SE PROBÓ TODAVÍA CONTRA UN ffmpeg REAL (no está instalado en la PC de
+    desarrollo, ver CLAUDE.md) -- el formato de salida (`-f mjpeg`, frames
+    JPEG crudos delimitados por sus propios marcadores FFD8/FFD9) y el
+    reempaquetado a multipart/x-mixed-replace acá abajo son el patrón
+    estándar para esto, pero falta la verificación con hardware real.
+
+    Un proceso de ffmpeg por pedido, sin cola ni límite de concurrencia (a
+    diferencia de las consultas a DDM): no pega contra la misma SQL Express
+    frágil, y el uso esperado es un operario mirando una cámara a la vez, no
+    tráfico concurrente. Se mata el proceso apenas el navegador cierra la
+    conexión (al cerrar la ventanita, ver el generador más abajo) para no
+    dejar ffmpeg corriendo de fondo en una máquina que ya anda justa de
+    recursos."""
+    url = request.args.get("url")
+    if not url:
+        return jsonify({"error": "Falta el parámetro url"}), 400
+    if not shutil.which(FFMPEG_PATH) and not os.path.isfile(FFMPEG_PATH):
+        return jsonify({"error": f"No se encontró ffmpeg ({FFMPEG_PATH!r}). "
+                                  "Instalalo y, si no queda en el PATH del sistema, "
+                                  "seteá la variable de entorno FFMPEG_PATH con la ruta al .exe."}), 500
+
+    proc = subprocess.Popen(
+        [FFMPEG_PATH,
+         "-rtsp_transport", "tcp",  # más confiable que UDP para esto -- menos frames rotos
+         "-i", url,
+         "-an",                      # sin audio: no hace falta para revisar rutina, y es más liviano
+         "-f", "mjpeg", "-q:v", "6", "-r", "8",
+         "-"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    )
+
+    def generar():
+        buffer = b""
+        try:
+            while True:
+                trozo = proc.stdout.read(4096)
+                if not trozo:
+                    break
+                buffer += trozo
+                # ffmpeg con "-f mjpeg" larga frames JPEG crudos, sin envolver
+                # -- cada uno se reconoce por sus propios marcadores FFD8
+                # (inicio) / FFD9 (fin). Acá se recortan y se envuelven en el
+                # multipart que un <img> de HTML sabe interpretar solo.
+                while True:
+                    inicio = buffer.find(b"\xff\xd8")
+                    if inicio == -1:
+                        break
+                    fin = buffer.find(b"\xff\xd9", inicio + 2)
+                    if fin == -1:
+                        break
+                    frame = buffer[inicio:fin + 2]
+                    buffer = buffer[fin + 2:]
+                    yield (b"--" + _FFMPEG_BOUNDARY + b"\r\n"
+                           b"Content-Type: image/jpeg\r\n"
+                           b"Content-Length: " + str(len(frame)).encode() + b"\r\n\r\n"
+                           + frame + b"\r\n")
+        finally:
+            # Se ejecuta tanto al terminar solo como si el navegador cierra la
+            # conexión a mitad de camino (Werkzeug cierra el generador, lo que
+            # dispara este finally) -- ffmpeg no debe quedar corriendo de más.
+            proc.kill()
+            proc.wait()
+
+    return Response(generar(),
+                     mimetype=f"multipart/x-mixed-replace; boundary={_FFMPEG_BOUNDARY.decode()}")
 
 
 @app.get("/api/rutina/grupos")

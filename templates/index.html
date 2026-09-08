@@ -743,6 +743,26 @@
   /* Editor de cámaras, en ⚙ Configuración */
   .cam-fila { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
   .cam-fila input[type=text] { padding: 6px 8px; }
+  /* Ventanita de video (MJPEG vía /api/rutina/camara_stream) */
+  .cam-modal-fondo {
+    position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 60;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  .cam-modal {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 12px 32px rgba(0,0,0,.4); width: min(720px, 100%); overflow: hidden;
+  }
+  .cam-modal-cab {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 12px; border-bottom: 1px solid var(--border); font-weight: 650; font-size: 13px;
+  }
+  .cam-modal-cab button { padding: 4px 10px; }
+  .cam-modal-cuerpo { position: relative; background: #000; min-height: 200px; }
+  .cam-modal-cuerpo img { display: block; width: 100%; height: auto; }
+  .cam-modal-cuerpo .aviso {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 16px; color: var(--text-secondary);
+  }
   /* Sistema: shell + sidebar + topbar */
   .app-shell { display: flex; min-height: 100vh; align-items: stretch; }
   .sidebar {
@@ -2069,6 +2089,22 @@
   </section>
   <div class="rutina-tooltip" id="rutina-tooltip"></div>
   <div class="cam-popover" id="cam-popover" hidden></div>
+
+  {# Ventanita de video en vivo: /api/rutina/camara_stream reemite el RTSP
+     como MJPEG, y esta <img> lo muestra directo -- sin abrir VLC ni una
+     pestaña nueva. Ver mostrarVideoCamara en index.html. #}
+  <div class="cam-modal-fondo" id="cam-modal-fondo" hidden>
+    <div class="cam-modal">
+      <div class="cam-modal-cab">
+        <span id="cam-modal-titulo"></span>
+        <button type="button" class="secundario" id="cam-modal-cerrar" title="Cerrar">✕</button>
+      </div>
+      <div class="cam-modal-cuerpo">
+        <img id="cam-modal-img" alt="Video de la cámara">
+        <div class="aviso" id="cam-modal-estado"></div>
+      </div>
+    </div>
+  </div>
 
   {% if 'rendimiento' in paginas_visibles %}
   {# --- Pestana "Rendimiento Sala" (antes era la pagina #page-rendimiento).
@@ -9759,6 +9795,40 @@ function ocultarPopoverCamaras() {
   document.getElementById('cam-popover').hidden = true;
 }
 
+// Ventanita de video: /api/rutina/camara_stream reemite el RTSP como MJPEG y
+// esta <img> lo consume directo, sin VLC ni pestaña nueva (ver el endpoint
+// en app.py). Cortar el <img src> al cerrar es lo que hace que el navegador
+// cierre la conexión HTTP -- eso dispara el `finally` del lado del servidor
+// que mata el proceso de ffmpeg, así no queda ninguno corriendo de más.
+function mostrarVideoCamara(nombre, plantillaUrl, iso) {
+  const link = construirLinkCamara(plantillaUrl, iso);
+  const img = document.getElementById('cam-modal-img');
+  const estado = document.getElementById('cam-modal-estado');
+  document.getElementById('cam-modal-titulo').textContent = `📹 ${nombre}`;
+  estado.textContent = 'Conectando…';
+  estado.hidden = false;
+  img.removeAttribute('src');   // corta cualquier stream anterior antes de arrancar uno nuevo
+  img.onerror = () => {
+    estado.textContent = 'No se pudo conectar. Puede ser que falte ffmpeg en el '
+      + 'servidor, o que el NVR no esté accesible en la red — probá el 📋 (copiar '
+      + 'link) del menú de cámaras y pegalo en VLC para confirmar cuál es.';
+    estado.hidden = false;
+  };
+  img.onload = () => { estado.hidden = true; };
+  document.getElementById('cam-modal-fondo').hidden = false;
+  img.src = '/api/rutina/camara_stream?url=' + encodeURIComponent(link);
+}
+
+function cerrarVideoCamara() {
+  document.getElementById('cam-modal-fondo').hidden = true;
+  document.getElementById('cam-modal-img').removeAttribute('src');
+}
+
+document.getElementById('cam-modal-cerrar').addEventListener('click', cerrarVideoCamara);
+document.getElementById('cam-modal-fondo').addEventListener('click', (e) => {
+  if (e.target.id === 'cam-modal-fondo') cerrarVideoCamara();   // click en el fondo, no en la ventanita
+});
+
 function mostrarPopoverCamaras(clientX, clientY, iso) {
   const pop = document.getElementById('cam-popover');
   // Con opciones explícitas: toLocaleString('es-AR') sin ellas arma el reloj
@@ -9770,11 +9840,10 @@ function mostrarPopoverCamaras(clientX, clientY, iso) {
   });
   pop.innerHTML = rutinaCamaras.length
     ? `<div class="cam-pop-titulo">${horaTxt}</div>` + rutinaCamaras.map((c, i) => c.url
-        // Dos botones: el nombre intenta abrirlo directo (funciona si el
-        // navegador/SO ya tiene un reproductor asociado a rtsp://); "📋" copia
-        // el link para pegarlo a mano en VLC (Reproducir > Abrir volcado de
-        // red) -- la asociación automática es rara en Windows aunque VLC ya
-        // esté instalado, así que esta es la vía que SIEMPRE funciona.
+        // Dos botones: el nombre abre la ventanita de video DENTRO de la app
+        // (/api/rutina/camara_stream, ver mostrarVideoCamara); "📋" copia el
+        // link para pegarlo a mano en VLC -- queda como respaldo por si
+        // ffmpeg no está instalado o falla la conexión al NVR.
         ? `<div class="cam-pop-fila">
              <button type="button" class="cam-pop-item" data-i="${i}">📹 ${escHtml(c.nombre || 'Cámara ' + (i + 1))}</button>
              <button type="button" class="cam-pop-copiar" data-i="${i}" title="Copiar link (para pegar en VLC)">📋</button>
@@ -9783,13 +9852,13 @@ function mostrarPopoverCamaras(clientX, clientY, iso) {
         // configuracion_tambo.plantilla_camara) -- se muestra igual, apagada,
         // para que no parezca que la cámara desapareció de la lista.
         : `<div class="aviso" style="padding:7px 8px;opacity:.6">📹 ${escHtml(c.nombre || 'Cámara ' + (i + 1))} — sin configurar</div>`
-      ).join('') + `<div class="cam-pop-ayuda">¿No pasa nada al tocar el nombre? Copiá el link
-        con 📋 y pegalo en VLC: Reproducir → Abrir volcado de red.</div>`
+      ).join('') + `<div class="cam-pop-ayuda">¿No carga el video? Copiá el link con 📋 y
+        pegalo en VLC (Reproducir → Abrir volcado de red) para probar directo contra el NVR.</div>`
     : `<div class="cam-pop-titulo">${horaTxt}</div>
        <div class="aviso">Sin cámaras configuradas — se cargan en ⚙ Configuración → 🎥 Cámaras.</div>`;
   pop.querySelectorAll('.cam-pop-item').forEach(b => b.addEventListener('click', () => {
     const cam = rutinaCamaras[Number(b.dataset.i)];
-    if (cam && cam.url) window.open(construirLinkCamara(cam.url, iso), '_blank');
+    if (cam && cam.url) mostrarVideoCamara(cam.nombre || 'Cámara', cam.url, iso);
     ocultarPopoverCamaras();
   }));
   pop.querySelectorAll('.cam-pop-copiar').forEach(b => b.addEventListener('click', (e) => {
