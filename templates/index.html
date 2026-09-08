@@ -55,6 +55,11 @@
     --grid: var(--lac-border); --baseline: var(--lac-border-strong); --border: var(--lac-border);
     --accent: var(--lac-accent); --good: var(--lac-ok); --critical: var(--lac-danger);
     --warning: var(--lac-warn); --violeta: #4a3aa7;
+    /* Magenta puro: no se usa en ningún otro lado de la app (ni los colores
+       de rodeo de PALETA en rutina.py, ni los semánticos good/warning/
+       critical) -- a propósito, para que "sin identificar" no se pierda
+       entre tantos otros colores en un gráfico denso. */
+    --sinid: #ff33cc;
     /* Paleta de marca: navy para la barra lateral/tarjetas de marca (siempre oscuro, como los paneles de instrumento). */
     --brand-navy: var(--lac-inst-bg); --brand-navy-2: var(--lac-blue-700); --brand-ink: #ffffff;
   }
@@ -9507,7 +9512,7 @@ function rutinaTiraSVG(s) {
   // lerdo si caen en el mismo instante -- las dos son visibles por separado.
   sinIdentificarDe(s).forEach(r => {
     const xt = x(new Date(r.hora).getTime());
-    marcas += `<rect x="${(xt - 1.2).toFixed(1)}" y="3" width="2.4" height="${H / 2 - 3}" fill="var(--violeta)"/>`;
+    marcas += `<rect x="${(xt - 1.2).toFixed(1)}" y="3" width="2.4" height="${H / 2 - 3}" fill="var(--sinid)"/>`;
   });
   return `<svg class="rs-tira" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img"
     aria-label="Bloques de rodeo de la sesión, con marcas de retiro lerdo y de vacas sin identificar">${rects}${marcas}</svg>`;
@@ -9530,7 +9535,7 @@ function statsRutinaFila(s) {
     html += `<div class="rs-stat"><b style="color:${colorScore(ident.valor)}">${ident.valor}%</b>identificación</div>`;
   }
   html += `<div class="rs-stat"><b style="color:${lerdas ? 'var(--critical)' : 'var(--good)'}">${lerdas}</b>retiro(s) lento(s)</div>`;
-  html += `<div class="rs-stat"><b style="color:${sinId ? 'var(--violeta)' : 'var(--good)'}">${sinId}</b>sin identificar</div>`;
+  html += `<div class="rs-stat"><b style="color:${sinId ? 'var(--sinid)' : 'var(--good)'}">${sinId}</b>sin identificar</div>`;
   return html;
 }
 
@@ -9804,8 +9809,15 @@ document.addEventListener('click', (e) => {
   const s = rutinaData.sesiones[rutinaSesionIdx];
   const marca = e.target.closest && e.target.closest('.rt-pt');
   if (marca) {
-    const v = s.visitas[Number(marca.dataset.i)];
-    const iso = { id: v.hora_id, coloc: v.hora_coloc, retiro: v.hora_fin }[marca.dataset.tipo] || v.hora_id;
+    let iso;
+    if (marca.dataset.tipo === 'sinlectura') {
+      // "sinlectura" (ver renderRutinaChart) no tiene índice en s.visitas --
+      // la hora viaja directo en el propio marcador.
+      iso = marca.dataset.hora;
+    } else {
+      const v = s.visitas[Number(marca.dataset.i)];
+      iso = { id: v.hora_id, coloc: v.hora_coloc, retiro: v.hora_fin }[marca.dataset.tipo] || v.hora_id;
+    }
     mostrarPopoverCamaras(e.clientX, e.clientY, iso);
     return;
   }
@@ -9853,11 +9865,13 @@ function renderRutinaChart(s) {
   s.visitas.forEach((v, i) => {
     if (!v.puesto) return;
     // Sin dueño (comodín, RP=0 -- lo que DelPro cuenta como "sin identificar")
-    // se pinta violeta en vez del color del rodeo (a pedido del tambo,
-    // 07/09/2026), para que se pueda distinguir a simple vista en el
-    // gráfico y en la tira resumen de la sesión (ver rutinaTiraSVG), no
-    // solo al pasar el mouse por el tooltip.
-    const color = v.sin_duenio ? 'var(--violeta)' : v.color;
+    // se pinta magenta en vez del color del rodeo (color exclusivo para esto,
+    // no lo usa ningún rodeo ni ningún otro estado -- pedido del tambo,
+    // 08/09/2026, porque violeta se perdía entre tanto rojo de "lejos del
+    // objetivo"), para que se pueda distinguir a simple vista en el gráfico y
+    // en la tira resumen de la sesión (ver rutinaTiraSVG), no solo al pasar
+    // el mouse por el tooltip.
+    const color = v.sin_duenio ? 'var(--sinid)' : v.color;
     // Titila (ver @keyframes rt-parpadeo) solo la sin identificar: con tanto
     // marcador rojo de "lejos del objetivo" en un gráfico denso, un violeta
     // quieto se pierde a simple vista -- el movimiento es lo que lo separa
@@ -9876,10 +9890,22 @@ function renderRutinaChart(s) {
       filas += `<path class="rt-pt${parpadeo}" data-i="${i}" data-tipo="retiro" d="M ${(xf - 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${(xf + 4.2).toFixed(1)},${(+yy + 3.4).toFixed(1)} L ${xf.toFixed(1)},${(+yy - 4.4).toFixed(1)} Z" fill="${color}"${v.lerda ? ' stroke="var(--critical)" stroke-width="1.6"' : ''} style="cursor:pointer"/>`;
     }
   });
+  // Ordeños sin NINGUNA lectura de collar (`s.sin_lectura`, ver
+  // rutina.sql_sin_id): no son una "visita" con tramo identificación→
+  // colocación, así que no tienen diamante/cuadrado/triángulo -- un círculo
+  // aparte, ubicado por MilkConfirmTime (la única hora que sí tienen), con
+  // data-hora directo en vez de data-i (no hay índice de `s.visitas` al que
+  // apuntar).
+  (s.sin_lectura || []).forEach((r, j) => {
+    if (!r.puesto) return;
+    const xr = x(new Date(r.hora).getTime());
+    const yr = y(r.puesto).toFixed(1);
+    filas += `<circle class="rt-pt rt-parpadeo" data-j="${j}" data-tipo="sinlectura" data-hora="${r.hora}" data-puesto="${r.puesto}" cx="${xr.toFixed(1)}" cy="${yr}" r="4" fill="var(--sinid)" style="cursor:pointer"/>`;
+  });
 
   const leyendaGrupos = s.grupos.filter((g, i) => s.grupos.findIndex(g2 => g2.grupo === g.grupo) === i)
     .map(g => `<span><span class="pt" style="background:${g.color}"></span>${g.nombre || 'Grupo ' + (g.grupo ?? '—')}</span>`).join('');
-  const hayComodin = s.visitas.some(v => v.sin_duenio);
+  const haySinId = sinIdentificarDe(s).length > 0;
 
   cont.innerHTML = `
     <svg id="rutina-chart-svg" viewBox="0 0 ${anchoPx.toFixed(0)} ${alto.toFixed(0)}" width="${anchoPx.toFixed(0)}" height="${alto.toFixed(0)}" style="cursor:crosshair">
@@ -9887,7 +9913,7 @@ function renderRutinaChart(s) {
     </svg>
     <div class="rutina-leyenda">
       ${leyendaGrupos}
-      ${hayComodin ? '<span><span class="pt" style="background:var(--violeta)"></span>Sin identificar</span>' : ''}
+      ${haySinId ? '<span><span class="pt" style="background:var(--sinid)"></span>Sin identificar</span>' : ''}
       <span><span class="pt" style="background:var(--violeta);opacity:.6"></span>Tiempo total</span>
       <span>◆ Identificación</span><span>■ Colocación (rojo = lejos del objetivo, antes o después)</span><span>▲ Retiro (rojo = lerda)</span>
     </div>`;
@@ -9898,8 +9924,19 @@ document.addEventListener('mousemove', (e) => {
   const el = e.target.closest && e.target.closest('.rt-pt');
   if (!el || !rutinaData) { tip.style.display = 'none'; return; }
   const s = rutinaData.sesiones[rutinaSesionIdx];
-  const v = s.visitas[Number(el.dataset.i)];
   const hora = iso => iso ? new Date(iso).toLocaleTimeString('es-AR') : '—';
+  if (el.dataset.tipo === 'sinlectura') {
+    // Sin índice de s.visitas: no hay tramo identificación→colocación que
+    // mostrar, solo el hecho de que el ordeño existió y no se leyó el collar.
+    tip.innerHTML = `<b>Puesto ${el.dataset.puesto}</b> · <span style="color:var(--sinid);font-weight:700">SIN NINGUNA LECTURA DE COLLAR</span><br>
+      Hora: ${hora(el.dataset.hora)}<br>
+      No hay ID ni colocación que medir: el collar no se leyó en absoluto.`;
+    tip.style.display = 'block';
+    tip.style.left = (e.clientX + 14) + 'px';
+    tip.style.top = (e.clientY + 14) + 'px';
+    return;
+  }
+  const v = s.visitas[Number(el.dataset.i)];
   const umbralPrep = leerConfigRutina().umbral_prep_s || UMBRAL_PREP_S_DEFECTO;
   const prep = v.prep_seg == null ? '—' : `${v.prep_seg}s ${v.cumple_90 ? '✓' : `⚠ objetivo ~${umbralPrep}s`}`;
   // Puntaje 0-100 de ESTA colocación puntual (misma curva de crédito gradual
