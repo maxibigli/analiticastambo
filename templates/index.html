@@ -764,6 +764,11 @@
   .cam-modal-cab button { padding: 4px 10px; }
   .cam-modal-cuerpo { position: relative; background: #000; min-height: 200px; }
   .cam-modal-cuerpo img { display: block; width: 100%; height: auto; }
+  .cam-modal-cuerpo canvas { display: block; width: 100%; height: auto; }
+  /* Aprendida arriba: el [hidden] nativo pierde contra una regla de clase
+     más específica -- acá también (img se oculta al pausar, canvas al
+     reanudar), así que el mismo refuerzo de una vez para las dos. */
+  .cam-modal-cuerpo img[hidden], .cam-modal-cuerpo canvas[hidden] { display: none !important; }
   .cam-modal-cuerpo .aviso {
     position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     text-align: center; padding: 16px; color: var(--text-secondary);
@@ -784,6 +789,7 @@
     font-size: 12px; color: var(--text-secondary); font-variant-numeric: tabular-nums;
     min-width: 118px; text-align: center;
   }
+  .cam-modal-jog { width: 200px; max-width: 50vw; }
   /* Sistema: shell + sidebar + topbar */
   .app-shell { display: flex; min-height: 100vh; align-items: stretch; }
   .sidebar {
@@ -2122,18 +2128,32 @@
       </div>
       <div class="cam-modal-cuerpo">
         <img id="cam-modal-img" alt="Video de la cámara">
+        <canvas id="cam-modal-canvas" hidden></canvas>
         <div class="aviso" id="cam-modal-estado"></div>
       </div>
       {# Busqueda dentro del repaso: no hay barra de progreso real posible (es
          un stream en vivo re-emitido, no un archivo con seek) -- "adelantar"
          acá es pedirle al NVR una ventana distinta y reconectar el stream ahí.
-         Ver moverVideoCamara en index.html. #}
+         "Pausar" congela el último frame en un <canvas> y corta el stream
+         (ahorra el ffmpeg de más); "Reanudar" vuelve a pedir desde donde
+         quedó. Ver alternarPausaCamara/moverVideoCamara en index.html. #}
       <div class="cam-modal-controles">
+        <button type="button" class="secundario" id="cam-modal-playpausa" onclick="alternarPausaCamara()" title="Pausar">⏸</button>
         <button type="button" class="secundario" onclick="moverVideoCamara(-60)" title="Retroceder 1 minuto">⏪ 1 min</button>
         <button type="button" class="secundario" onclick="moverVideoCamara(-10)" title="Retroceder 10 segundos">⏪ 10 s</button>
         <span class="cam-modal-hora" id="cam-modal-hora"></span>
         <button type="button" class="secundario" onclick="moverVideoCamara(10)" title="Adelantar 10 segundos">10 s ⏩</button>
         <button type="button" class="secundario" onclick="moverVideoCamara(60)" title="Adelantar 1 minuto">1 min ⏩</button>
+      </div>
+      {# No es una barra de PROGRESO real (no hay "duración total" -- es un
+         repaso abierto, no un archivo) sino de SALTO relativo: se suelta y
+         vuelve al centro, como la ruedita de un jog shuttle. #}
+      <div class="cam-modal-controles">
+        <span class="cam-modal-hora">⏪</span>
+        <input type="range" class="cam-modal-jog" id="cam-modal-jog" min="-300" max="300" value="0" step="5"
+               oninput="_jogCamaraMovido(this.value)" onchange="_jogCamaraSoltado(this.value)">
+        <span class="cam-modal-hora">⏩</span>
+        <span class="cam-modal-hora" id="cam-modal-jog-label">salto: 0 s</span>
       </div>
     </div>
   </div>
@@ -9837,27 +9857,110 @@ function ocultarPopoverCamaras() {
 // está mirando -- moverVideoCamara() lo corre y reconecta desde ahí. No hay
 // forma de "adelantar" un stream en vivo como si fuera un archivo con seek:
 // lo único que se puede hacer es pedirle al NVR una ventana ID_INICIO/FIN
-// distinta y arrancar un ffmpeg nuevo apuntando ahí.
+// distinta y arrancar un ffmpeg nuevo apuntando ahí. Tampoco hay velocidad
+// 2x/4x real: el RTSP de reproducción de Dahua (verificado, no hay parámetro
+// documentado de velocidad para "cam/playback") entrega a ritmo real: 1
+// segundo de metraje tarda 1 segundo en llegar. Por eso "avance rápido" acá
+// es saltar en bloques más grandes, no ver el video más rápido.
 let camModalPlantilla = null;
 let camModalNombre = null;
 let camModalCentroMs = null;
+// Para poder saltar/pausar relativo a lo que se está viendo AHORA (no al
+// punto del click original): se asume que el NVR reproduce a velocidad real,
+// así que la posición actual = dónde arrancó esta conexión + lo que pasó de
+// reloj desde que arrancó. Es una ESTIMACIÓN (no hay forma de leer la
+// posición real del frame sin OCR sobre el sello de hora que graba la
+// cámara), pero alcanza para que "pausar" y "saltar" no salten al lugar
+// equivocado después de haber estado un rato mirando.
+let camModalPosInicioMs = null;    // instante del video en el que arrancó la conexión actual
+let camModalDesdeWallMs = null;    // Date.now() de cuando arrancó esa conexión
+let camModalPausado = false;
+let camModalPosCongeladaMs = null; // posición estimada al momento de pausar
 
 function mostrarVideoCamara(nombre, plantillaUrl, iso) {
   camModalPlantilla = plantillaUrl;
   camModalNombre = nombre;
   camModalCentroMs = new Date(iso).getTime();
+  camModalPausado = false;
   document.getElementById('cam-modal-titulo').textContent = `📹 ${nombre}`;
   document.getElementById('cam-modal-fondo').hidden = false;
   _conectarStreamCamara();
 }
 
-// Retrocede/adelanta la ventana de repaso `segundos` (negativo = atrás) y
-// reconecta -- reusa el mismo ancho antes/después de la config del tambo,
-// solo corre el centro.
+// Posición estimada (epoch ms) del instante que se está mirando AHORA MISMO.
+function _posicionEstimadaCamaraMs() {
+  if (camModalPausado) return camModalPosCongeladaMs;
+  if (camModalDesdeWallMs == null) return camModalCentroMs;
+  return camModalPosInicioMs + (Date.now() - camModalDesdeWallMs);
+}
+
+// Retrocede/adelanta `segundos` (negativo = atrás) DESDE LA POSICIÓN ACTUAL
+// (no desde el centro de la última ventana pedida) y reconecta -- reusa el
+// mismo ancho antes/después de la config del tambo.
 function moverVideoCamara(segundos) {
   if (camModalCentroMs == null) return;
-  camModalCentroMs += segundos * 1000;
+  const posActual = _posicionEstimadaCamaraMs();
+  _salirDePausaCamara();
+  camModalCentroMs = posActual + segundos * 1000 + camaraSegAntes * 1000;
   _conectarStreamCamara();
+}
+
+function _salirDePausaCamara() {
+  if (!camModalPausado) return;
+  document.getElementById('cam-modal-canvas').hidden = true;
+  document.getElementById('cam-modal-img').hidden = false;
+  camModalPausado = false;
+  const boton = document.getElementById('cam-modal-playpausa');
+  boton.textContent = '⏸';
+  boton.title = 'Pausar';
+}
+
+// Pausa: congela el último frame en un <canvas> (un <img> no tiene forma de
+// "detenerse" a mitad de un multipart/x-mixed-replace) y corta el <img src>
+// -- eso mata el ffmpeg de este pedido en el servidor, así no queda
+// transcodificando de más mientras el operario mira la imagen quieta.
+// Reanudar vuelve a pedir la ventana desde donde quedó congelado.
+function alternarPausaCamara() {
+  const img = document.getElementById('cam-modal-img');
+  const canvas = document.getElementById('cam-modal-canvas');
+  const boton = document.getElementById('cam-modal-playpausa');
+  if (camModalPausado) {
+    camModalCentroMs = camModalPosCongeladaMs + camaraSegAntes * 1000;
+    canvas.hidden = true;
+    img.hidden = false;
+    camModalPausado = false;
+    boton.textContent = '⏸';
+    boton.title = 'Pausar';
+    _conectarStreamCamara();
+    return;
+  }
+  if (!img.naturalWidth) return;   // todavía no llegó ni un frame -- nada que congelar
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext('2d').drawImage(img, 0, 0);
+  camModalPosCongeladaMs = _posicionEstimadaCamaraMs();
+  img.hidden = true;
+  canvas.hidden = false;
+  img.removeAttribute('src');
+  camModalPausado = true;
+  boton.textContent = '▶';
+  boton.title = 'Reanudar';
+}
+
+// "Jog" de salto rápido: NO es una barra de progreso real (no hay una
+// "duración total" -- esto es un repaso abierto, no un archivo), es una
+// ruedita que se suelta y vuelve al centro, como el shuttle de un editor.
+function _jogCamaraMovido(valor) {
+  const seg = parseInt(valor, 10);
+  document.getElementById('cam-modal-jog-label').textContent =
+    `salto: ${seg > 0 ? '+' : ''}${seg} s`;
+}
+function _jogCamaraSoltado(valor) {
+  const seg = parseInt(valor, 10);
+  const jog = document.getElementById('cam-modal-jog');
+  jog.value = 0;
+  _jogCamaraMovido(0);
+  if (seg !== 0) moverVideoCamara(seg);
 }
 
 function _conectarStreamCamara() {
@@ -9865,6 +9968,8 @@ function _conectarStreamCamara() {
   const img = document.getElementById('cam-modal-img');
   const estado = document.getElementById('cam-modal-estado');
   const streamUrl = '/api/rutina/camara_stream?url=' + encodeURIComponent(link);
+  camModalPosInicioMs = camModalCentroMs - camaraSegAntes * 1000;
+  camModalDesdeWallMs = Date.now();
   document.getElementById('cam-modal-hora').textContent =
     new Date(camModalCentroMs).toLocaleString('es-AR', { day: '2-digit', month: '2-digit',
       hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -9897,9 +10002,21 @@ function _conectarStreamCamara() {
 function cerrarVideoCamara() {
   document.getElementById('cam-modal-fondo').hidden = true;
   document.getElementById('cam-modal-img').removeAttribute('src');
+  document.getElementById('cam-modal-img').hidden = false;
+  document.getElementById('cam-modal-canvas').hidden = true;
+  const boton = document.getElementById('cam-modal-playpausa');
+  boton.textContent = '⏸';
+  boton.title = 'Pausar';
+  const jog = document.getElementById('cam-modal-jog');
+  jog.value = 0;
+  _jogCamaraMovido(0);
   camModalPlantilla = null;
   camModalNombre = null;
   camModalCentroMs = null;
+  camModalPosInicioMs = null;
+  camModalDesdeWallMs = null;
+  camModalPausado = false;
+  camModalPosCongeladaMs = null;
 }
 
 document.getElementById('cam-modal-cerrar').addEventListener('click', cerrarVideoCamara);
