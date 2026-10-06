@@ -2625,6 +2625,13 @@
       <div class="aviso" id="salud-estado" style="margin-top:8px"></div>
     </section>
 
+    {# Mismo patrón que #rutina-tabs / #repro-tabs. Los indicadores de arriba
+       quedan fijos en las dos pestañas. #}
+    <div class="lac-segment" id="salud-tabs" role="group" aria-label="Sección" style="margin-bottom:14px">
+      <button class="lac-segment__item" data-tab="resumen" aria-pressed="true">🩺 Resumen</button>
+      <button class="lac-segment__item" data-tab="rcs" aria-pressed="false">🧫 Análisis de RCS</button>
+    </div>
+
     {# El anillo de "Composición del rodeo" vivía en el Dashboard; se sacó de
        ahí (lo reemplazó el ranking por grupo) y se movió acá, que es donde
        encaja: es composición del rodeo, no producción. #}
@@ -2788,6 +2795,47 @@
       <div class="chart-box" id="podal-chart-box" style="height:220px;margin-top:10px" hidden>
         <canvas id="chart-podal"></canvas>
       </div>
+    </section>
+
+    {# Pestaña "Análisis de RCS": el RCS de los controles lecheros en el tiempo,
+       por rodeo, con un rango de fechas elegible y comparación contra otro
+       período. Ver cargarSaludRcsHist / pintarRcsHist. #}
+    <section class="card" id="salud-rcs-analisis-card" hidden>
+      <h2 style="margin:0">Análisis de RCS por rodeo</h2>
+      <span class="aviso">Células somáticas de los controles lecheros, por rodeo, en el rango de fechas que
+        elijas, y comparado contra otro período. El rodeo es <b>el del día del control</b>, no el actual.</span>
+      <div class="controls" style="margin-top:12px;gap:12px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">Período
+          <input type="date" id="rcsh-a-desde" style="padding:6px 8px"> a
+          <input type="date" id="rcsh-a-hasta" style="padding:6px 8px"></label>
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">Comparar con
+          <select id="rcsh-modo" style="padding:6px 8px">
+            <option value="anterior">el período anterior (misma duración)</option>
+            <option value="otro">otro rango…</option>
+            <option value="ninguno">nada (solo este período)</option>
+          </select></label>
+        <span id="rcsh-b-rango" class="aviso" style="display:none;align-items:center;gap:6px" hidden>
+          <input type="date" id="rcsh-b-desde" style="padding:6px 8px"> a
+          <input type="date" id="rcsh-b-hasta" style="padding:6px 8px"></span>
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">Gráfico
+          <select id="rcsh-metrica" style="padding:6px 8px">
+            <option value="prom">RCS promedio (cél/ml)</option>
+            <option value="altas">% de vacas &gt; 300.000</option>
+          </select></label>
+      </div>
+      <div id="rcsh-estado" class="aviso" style="margin-top:8px"></div>
+      <div id="rcsh-rodeos" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div>
+      <div class="chart-box" style="height:340px;margin-top:10px"><canvas id="chart-rcs-hist"></canvas></div>
+      <div class="aviso" id="rcsh-leyenda" style="margin-top:6px"></div>
+      <div id="rcsh-tabla" style="margin-top:12px"></div>
+      <p class="explica" style="margin-top:10px">
+        <b>Cómo leerlo.</b> Cada punto es un control lechero (suelen ser mensuales). El promedio es el
+        <b>aritmético de las muestras</b> del período, igual que el reporte Chi: unas pocas vacas con valores
+        muy altos lo suben bastante, por eso conviene mirarlo junto con el <b>% de vacas &gt; 300.000</b>, que
+        es más estable. Un rodeo con pocas muestras (&lt; 30) se marca con ⚠ y su promedio es poco confiable.
+        Bajar el RCS es mejorar: en la comparación, <span style="color:var(--good)">verde</span> es que bajó y
+        <span style="color:var(--critical)">rojo</span> que subió (se ignoran cambios menores al 5%).
+      </p>
     </section>
   </div>
 
@@ -8734,7 +8782,7 @@ function pintarSaludProduccion(d) {
 // grande), nada de SVG ni de reconstrucción por refresco.
 function vumetroHTML(key, { valor, unidad, label, sub, target, disabled }) {
   const click = (!disabled && target)
-    ? ` onclick="document.getElementById('${target}').scrollIntoView({behavior:'smooth',block:'start'})" style="cursor:pointer"`
+    ? ` onclick="irASeccionSalud('${target}')" style="cursor:pointer"`
     : '';
   return `<div class="lac-metric" style="min-width:160px"${click}>
     <div class="lac-metric__label">${label}</div>
@@ -8965,8 +9013,255 @@ async function cargarComposicionRodeo() {
 // realidad eran los mismos números viejos todavía pegados en pantalla.
 // El reintento SÍ pasa `false`: ahí no hay que borrar lo que ya cargó bien
 // solo porque una sección lenta todavía no terminó.
+// --- Pestañas de "Salud del rodeo" -----------------------------------------
+// Los indicadores de arriba (#salud-kpis-card) quedan en las dos. Cada pestaña
+// es la lista de tarjetas que muestra; las demás se ocultan.
+const SALUD_TABS = {
+  resumen: ['salud-composicion-card', 'salud-atencion-card', 'salud-atencion2-card',
+            'salud-bcs-card', 'salud-rcs-grupo-card', 'salud-rcs-vacas-card',
+            'salud-cond-card', 'salud-prod-card', 'salud-podal-card'],
+  rcs: ['salud-rcs-analisis-card'],
+};
+let saludTabActual = 'resumen';
+
+function activarTabSalud(tab) {
+  if (!SALUD_TABS[tab]) tab = 'resumen';
+  saludTabActual = tab;
+  document.querySelectorAll('#salud-tabs [data-tab]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.tab === tab)));
+  Object.entries(SALUD_TABS).forEach(([clave, ids]) => ids.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.hidden = clave !== tab;
+  }));
+  if (tab === 'rcs') cargarSaludRcsHist();
+}
+
+document.getElementById('salud-tabs')?.addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-tab]');
+  if (btn) activarTabSalud(btn.dataset.tab);
+});
+
+// Los indicadores de arriba saltan a una tarjeta del Resumen: si se está en
+// otra pestaña, primero hay que volver a esa, o el destino está oculto.
+function irASeccionSalud(id) {
+  if (saludTabActual !== 'resumen') activarTabSalud('resumen');
+  document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// --- Análisis de RCS: el RCS en el tiempo, por rodeo -----------------------
+// El backend manda un renglón por (control lechero, rodeo del día) con la
+// cantidad de muestras y la SUMA de RCS, no el promedio: todo lo de acá
+// (cualquier rango de fechas, comparación, "todo el rodeo") se arma sumando,
+// sin volver a la base. Un promedio de período es suma/cantidad, no un
+// promedio de promedios.
+let saludRcsHist = null, chartSaludRcsHist = null, saludRcsHistReintento = null;
+const rcshOcultos = new Set();
+const RCSH_COLORES = ['#38bdf8', '#22c55e', '#f59e0b', '#a78bfa', '#f472b6', '#2dd4bf', '#fb7185', '#84cc16', '#e879f9'];
+const RCSH_MIN_MUESTRAS = 30;
+// En el GRÁFICO no se dibuja el promedio de un control con menos vacas que esto
+// en un rodeo: con 1 o 2 vacas el "promedio" es esa vaca (en La Ponderosa,
+// Rodeo 5 dio 495.000 y 5.000 en dos controles seguidos) y estira el eje.
+// La tabla sí las cuenta: ahí las muestras suman al período.
+const RCSH_MIN_PUNTO = 10;
+
+async function cargarSaludRcsHist() {
+  clearTimeout(saludRcsHistReintento);
+  if (saludRcsHist) { pintarRcsHist(); return; }
+  document.getElementById('rcsh-estado').textContent = 'Cargando…';
+  const listo = await seccionSalud('/api/salud/rcs_historico', 'rcsh-estado', d => {
+    saludRcsHist = d;
+    iniciarRcsHist();
+  });
+  // Base lenta: el endpoint contesta 202 mientras calcula. Se reintenta solo,
+  // pero solo si el usuario sigue mirando esta pestaña.
+  if (!listo) saludRcsHistReintento = setTimeout(() => {
+    if (saludTabActual === 'rcs') cargarSaludRcsHist();
+  }, 8000);
+}
+
+const rcshSumarDias = (iso, n) => {
+  const d = new Date(iso + 'T00:00:00Z');
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+};
+const rcshDiasEntre = (a, b) => Math.round((new Date(b + 'T00:00:00Z') - new Date(a + 'T00:00:00Z')) / 86400000);
+
+function iniciarRcsHist() {
+  const filas = saludRcsHist.filas || [];
+  document.getElementById('rcsh-estado').textContent = '';
+  if (!filas.length) {
+    document.getElementById('rcsh-estado').textContent = 'Sin controles lecheros con RCS registrados.';
+    return;
+  }
+  const fechas = [...new Set(filas.map(f => f.fecha))].sort();
+  const hasta = fechas[fechas.length - 1];
+  // Por defecto: los últimos 6 controles contra los 6 anteriores. Con un solo
+  // control por mes son 6 meses contra 6 meses, pero se cuenta en CONTROLES y
+  // no en meses por si el tambo controla con otra frecuencia.
+  const desde = fechas[Math.max(0, fechas.length - 6)];
+  for (const [id, v] of [['rcsh-a-desde', desde], ['rcsh-a-hasta', hasta]]) {
+    const el = document.getElementById(id);
+    el.value = v; el.min = fechas[0]; el.max = hasta;
+  }
+  for (const id of ['rcsh-b-desde', 'rcsh-b-hasta']) {
+    const el = document.getElementById(id);
+    el.min = fechas[0]; el.max = hasta;
+  }
+  pintarRcsHist();
+}
+
+for (const id of ['rcsh-a-desde', 'rcsh-a-hasta', 'rcsh-b-desde', 'rcsh-b-hasta', 'rcsh-modo', 'rcsh-metrica']) {
+  document.getElementById(id)?.addEventListener('change', () => { if (saludRcsHist) pintarRcsHist(); });
+}
+document.getElementById('rcsh-rodeos')?.addEventListener('click', ev => {
+  const chip = ev.target.closest('[data-rodeo]');
+  if (!chip) return;
+  const r = chip.dataset.rodeo;
+  if (rcshOcultos.has(r)) rcshOcultos.delete(r); else rcshOcultos.add(r);
+  pintarRcsHist();
+});
+
+// {n, prom, pct} de un rodeo (o de todos, con rodeo=null) en [desde, hasta].
+function rcshAgregar(filas, desde, hasta, rodeo) {
+  let n = 0, suma = 0, altas = 0;
+  for (const f of filas) {
+    if (f.fecha < desde || f.fecha > hasta) continue;
+    if (rodeo != null && f.grupo !== rodeo) continue;
+    n += f.vacas; suma += f.suma_scc; altas += f.altas;
+  }
+  return n ? { n, prom: suma / n, pct: 100 * altas / n } : null;
+}
+
+function pintarRcsHist() {
+  const filas = saludRcsHist.filas || [];
+  const estado = document.getElementById('rcsh-estado');
+  const modo = document.getElementById('rcsh-modo').value;
+  const metrica = document.getElementById('rcsh-metrica').value;
+  const aD = document.getElementById('rcsh-a-desde').value, aH = document.getElementById('rcsh-a-hasta').value;
+  document.getElementById('rcsh-b-rango').style.display = modo === 'otro' ? 'flex' : 'none';
+  if (!aD || !aH || aD > aH) { estado.textContent = 'Elegí un período válido (desde no puede ser posterior a hasta).'; return; }
+
+  let bD = null, bH = null;
+  if (modo === 'anterior') {
+    bH = rcshSumarDias(aD, -1);
+    bD = rcshSumarDias(bH, -rcshDiasEntre(aD, aH));
+    document.getElementById('rcsh-b-desde').value = bD;
+    document.getElementById('rcsh-b-hasta').value = bH;
+  } else if (modo === 'otro') {
+    bD = document.getElementById('rcsh-b-desde').value; bH = document.getElementById('rcsh-b-hasta').value;
+    if (!bD || !bH || bD > bH) { estado.textContent = 'Elegí un rango válido para comparar.'; return; }
+  }
+  const hayB = bD != null;
+
+  // Rodeos que aparecen en alguno de los períodos, en orden de número.
+  const enRango = f => (f.fecha >= aD && f.fecha <= aH) || (hayB && f.fecha >= bD && f.fecha <= bH);
+  const rodeos = [];
+  for (const f of filas.filter(enRango).sort((x, y) => x.numero - y.numero)) {
+    if (!rodeos.includes(f.grupo)) rodeos.push(f.grupo);
+  }
+  const colorDe = r => RCSH_COLORES[rodeos.indexOf(r) % RCSH_COLORES.length];
+  const todoA = rcshAgregar(filas, aD, aH, null);
+  if (!rodeos.length) {
+    estado.textContent = 'No hay controles lecheros en ese rango de fechas.';
+    document.getElementById('rcsh-tabla').innerHTML = '';
+    document.getElementById('rcsh-rodeos').innerHTML = '';
+    if (chartSaludRcsHist) { chartSaludRcsHist.destroy(); chartSaludRcsHist = null; }
+    return;
+  }
+  estado.textContent = '';
+
+  // Chips para mostrar/ocultar rodeos en el gráfico.
+  document.getElementById('rcsh-rodeos').innerHTML = rodeos.map(r => {
+    const off = rcshOcultos.has(r);
+    return `<button type="button" class="secundario" data-rodeo="${escHtml(r)}"
+      style="padding:3px 10px;font-size:12px;${off ? 'opacity:.45' : ''}" aria-pressed="${!off}"
+      title="${off ? 'Mostrar' : 'Ocultar'} en el gráfico">
+      <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${colorDe(r)};margin-right:6px"></span>${escHtml(r)}</button>`;
+  }).join('');
+
+  // --- Gráfico: una línea por rodeo + "Todo el rodeo", todos los controles
+  // de los dos períodos. Punto lleno = período elegido, hueco = el comparado.
+  const fechas = [...new Set(filas.filter(enRango).map(f => f.fecha))].sort();
+  const enA = f => f >= aD && f <= aH;
+  let rcshPuntosOmitidos = 0;
+  const valor = (a) => a == null ? null : (metrica === 'prom' ? Math.round(a.prom) : Math.round(a.pct * 10) / 10);
+  const serie = (rodeo, color, nombre, grueso) => {
+    const aggs = fechas.map(f => rcshAgregar(filas, f, f, rodeo));
+    const pocos = aggs.filter(a => a && rodeo != null && a.n < RCSH_MIN_PUNTO).length;
+    if (pocos) rcshPuntosOmitidos += pocos;
+    return {
+      label: nombre,
+      data: aggs.map(a => (a && rodeo != null && a.n < RCSH_MIN_PUNTO) ? null : valor(a)),
+      _n: aggs.map(a => a ? a.n : 0),
+      borderColor: color, backgroundColor: color, borderWidth: grueso ? 3.5 : 2,
+      pointRadius: grueso ? 5 : 4,
+      pointBackgroundColor: fechas.map(f => enA(f) ? color : 'transparent'),
+      pointBorderColor: color, tension: 0.2, spanGaps: true,
+    };
+  };
+  const datasets = [serie(null, css('--text-primary') || '#e6edf3', 'Todo el rodeo', true)]
+    .concat(rodeos.filter(r => !rcshOcultos.has(r)).map(r => serie(r, colorDe(r), r, false)));
+  const unidad = metrica === 'prom' ? ' cél/ml' : '%';
+  const opts = baseOpts(true);
+  opts.interaction = { mode: 'index', intersect: false };
+  opts.plugins.tooltip = { callbacks: { label: c => {
+    if (c.parsed.y == null) return null;
+    const n = c.dataset._n[c.dataIndex];
+    return `${c.dataset.label}: ${c.parsed.y.toLocaleString('es-AR')}${unidad}  (${n} vacas)`;
+  } } };
+  opts.scales.y.title = { display: true, text: metrica === 'prom' ? 'RCS promedio (cél/ml)' : '% de vacas con RCS > 300.000' };
+  if (chartSaludRcsHist) chartSaludRcsHist.destroy();
+  chartSaludRcsHist = new Chart(document.getElementById('chart-rcs-hist'), {
+    type: 'line', data: { labels: fechas, datasets }, options: opts,
+  });
+  document.getElementById('rcsh-leyenda').textContent = [
+    hayB ? `● punto lleno: período elegido (${aD} a ${aH}) · ○ punto hueco: período comparado (${bD} a ${bH}).` : '',
+    rcshPuntosOmitidos ? `No se grafican ${rcshPuntosOmitidos} punto(s) de rodeos con menos de ${RCSH_MIN_PUNTO} vacas en ese control (siguen sumando en la tabla).` : '',
+  ].filter(Boolean).join(' ');
+
+  // --- Tabla: un renglón por rodeo, período contra período.
+  const celda = a => a == null
+    ? '<td colspan="3" class="aviso">sin muestras</td>'
+    : `<td>${fmt(a.n)}${a.n < RCSH_MIN_MUESTRAS ? ' <span title="Pocas muestras: el promedio es poco confiable" style="cursor:help">⚠</span>' : ''}</td>
+       <td>${milesRCS(a.prom)}</td><td>${fmt(Math.round(a.pct * 10) / 10)}%</td>`;
+  const delta = (a, b, campo, esPct) => {
+    if (!a || !b) return '<td>—</td>';
+    const d = a[campo] - b[campo];
+    const rel = b[campo] ? 100 * d / b[campo] : 0;
+    const color = Math.abs(rel) < 5 ? '' : (d < 0 ? 'color:var(--good);font-weight:600' : 'color:var(--critical);font-weight:600');
+    const flecha = d < 0 ? '▼' : d > 0 ? '▲' : '=';
+    const txt = esPct ? `${d > 0 ? '+' : ''}${(Math.round(d * 10) / 10).toLocaleString('es-AR')} pts`
+                      : `${d > 0 ? '+' : ''}${Math.round(d).toLocaleString('es-AR')}`;
+    return `<td style="${color}">${flecha} ${txt}<span class="aviso"> (${rel > 0 ? '+' : ''}${Math.round(rel)}%)</span></td>`;
+  };
+  const filaHTML = (nombre, rodeo, color) => {
+    const a = rcshAgregar(filas, aD, aH, rodeo);
+    const b = hayB ? rcshAgregar(filas, bD, bH, rodeo) : null;
+    const punto = color ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};margin-right:6px"></span>` : '';
+    return `<tr><td style="white-space:nowrap">${punto}<b>${escHtml(nombre)}</b></td>${celda(a)}`
+      + (hayB ? celda(b) + delta(a, b, 'prom', false) + delta(a, b, 'pct', true) : '') + `</tr>`;
+  };
+  document.getElementById('rcsh-tabla').innerHTML = `<div class="tabla-scroll"><table>
+    <thead>
+      <tr><th rowspan="2">Rodeo</th><th colspan="3">Período elegido<br><span class="aviso">${aD} a ${aH}</span></th>
+        ${hayB ? `<th colspan="3">Período comparado<br><span class="aviso">${bD} a ${bH}</span></th>
+                  <th colspan="2">Cambio (elegido − comparado)</th>` : ''}</tr>
+      <tr><th>Muestras</th><th>RCS prom.</th><th>% &gt; 300.000</th>
+        ${hayB ? `<th>Muestras</th><th>RCS prom.</th><th>% &gt; 300.000</th><th>RCS prom.</th><th>% &gt; 300.000</th>` : ''}</tr>
+    </thead><tbody>
+      ${filaHTML('Todo el rodeo', null, null)}
+      ${rodeos.map(r => filaHTML(r, r, colorDe(r))).join('')}
+    </tbody></table></div>`;
+}
+
 async function cargarSalud(limpiar = true) {
   clearTimeout(saludReintento);
+  if (limpiar) {
+    // Cambio de tambo o "Actualizar": el RCS histórico del tambo anterior no sirve.
+    saludRcsHist = null;
+    rcshOcultos.clear();
+    if (saludTabActual === 'rcs') cargarSaludRcsHist();
+  }
   const estado = document.getElementById('salud-estado');
   estado.textContent = 'Cargando…';
   let atencionD = null, atencion2D = null, rcsGrupoD = null, bcsD = null,

@@ -754,6 +754,45 @@ rodeo → "Vacas a mostrar en Atención", 5-300, vacío = 15). `calcular_atencio
 filas evaluadas: el recorte a "las peores N" pasa después de leer el caché, así
 que cambiar el tope no dispara ningún recálculo de la base.
 
+## Salud del rodeo: pestaña "Análisis de RCS" (06/10/2026)
+
+"Salud del rodeo" ahora tiene dos pestañas (`#salud-tabs`, mismo patrón que
+`#rutina-tabs`): **Resumen** (todo lo de siempre) y **Análisis de RCS**, el RCS
+de los controles lecheros en el tiempo, por rodeo, con rango de fechas elegible
+y comparación contra otro período (el anterior de igual duración, otro rango, o
+ninguno). Los indicadores de arriba quedan fijos en las dos.
+
+**EL RODEO ES EL DEL DÍA DEL CONTROL, no el de hoy.** Medido en La Ponderosa:
+los 10.840 controles tienen su `AnimalDaily` enlazado, y **solo el 20% de las
+vacas sigue hoy en el rodeo donde estaba cuando se controló**. Agrupar por
+`BasicAnimal.[Group]` —lo correcto para "último control", que mira el estado de
+hoy— movería el 80% de las muestras a un rodeo equivocado y haría pasar un
+cambio de rodeo por un cambio de RCS. El rodeo del día sale de
+`MilkTest → AnimalHistoricalData.AnimalDaily → AnimalDaily.AnimalGroup`
+(`salud.sql_rcs_historico`). Es el mismo criterio de "rodeo del día" ya
+documentado para la rutina de ordeño.
+
+**El backend manda agregados, no promedios**: un renglón por (control, rodeo)
+con cantidad de vacas y SUMA de RCS. El frontend promedia cualquier rango
+sumando (promedio de un período = suma/cantidad, no promedio de promedios), así
+que cambiar fechas o comparar no vuelve a la base. Una sola consulta cacheada
+(36 meses, ~45 renglones).
+
+**FORCE ORDER no es decorativo.** La primera versión (joins directos) tardó
+159 s en SQL Express: el optimizador cruzaba la subconsulta de rodeos —que
+cuenta animales— contra los 10.840 controles. Agregando primero en una CTE
+(0,3 s por sí sola) y forzando el orden, baja a 0,6 s en frío liviano; bajo
+carga del propio warmup de la app midió 47 s. Sigue siendo el patrón de
+caché asíncrono (202 y reintento), como el resto de Salud.
+
+Dos cosas de lectura, deliberadas: en el gráfico **no se dibuja el promedio de
+un rodeo en un control con menos de 10 vacas** (con 1-2 vacas "el promedio" es
+esa vaca: Rodeo 5 dio 495.000 y 5.000 en controles seguidos y estiraba el eje;
+la tabla sí las suma y lo avisa en la leyenda), y en la tabla un período con
+menos de 30 muestras lleva ⚠. Los datos de RCS arrancan en noviembre de 2025
+(un control por mes), así que el "período anterior" por defecto cae en parte
+vacío si se mira hacia atrás de eso.
+
 ## Agente de IA: preguntas del tambo en lenguaje natural (14/08/2026)
 
 `agente.py` + `POST /api/agente/preguntar` (gateado admin). Responde

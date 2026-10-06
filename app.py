@@ -2345,6 +2345,29 @@ def api_salud_rcs_vacas():
     })
 
 
+@app.get("/api/salud/rcs_historico")
+@auth.requiere_rol("admin")
+def api_salud_rcs_historico():
+    """RCS por control lechero y rodeo, últimos 36 meses (pestaña "Análisis de
+    RCS"). Devuelve AGREGADOS (cantidad y suma), no promedios: el frontend
+    promedia el rango de fechas que el usuario elija sin volver a la base, y
+    un promedio de período es suma/cantidad, no un promedio de promedios. El
+    rodeo es el del DÍA del control (ver salud.sql_rcs_historico)."""
+    tambo = _tambo_del_request()
+    sql = salud.sql_rcs_historico(salas.de(tambo).sql_grupos())
+    data, espera = _servir_cacheado(tambo, "salud_rcs_historico", "Calculando RCS histórico…", sql)
+    if espera:
+        return espera
+    filas = []
+    for r in data["rows"]:
+        f = dict(zip(data["columns"], r))
+        # la base guarda el RCS en miles de células/ml
+        f["suma_scc"] = round(f["suma_scc"] * salud.RCS_A_CELULAS)
+        f["maximo"] = round(f["maximo"] * salud.RCS_A_CELULAS) if f["maximo"] is not None else None
+        filas.append(f)
+    return jsonify({"filas": filas, "umbral": salud.UMBRAL_RCS})
+
+
 @app.get("/api/salud/conductividad")
 @auth.requiere_rol("admin")
 def api_salud_conductividad():

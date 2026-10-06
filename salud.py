@@ -144,6 +144,59 @@ def sql_rcs_vacas(grupos_sql: str) -> str:
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
 
+# --- Análisis de RCS en el tiempo: un renglón por (control, rodeo) ----------
+# Alimenta la pestaña "Análisis de RCS". Devuelve AGREGADOS por control lechero
+# y rodeo (suma y cantidad, no el promedio ya hecho) para que el frontend pueda
+# promediar cualquier rango de fechas sin volver a la base: el promedio de un
+# período es sum(suma_scc)/sum(vacas), no un promedio de promedios.
+#
+# EL RODEO ES EL DEL DÍA DEL CONTROL, no el de hoy. Medido en La Ponderosa
+# (10.840 controles, todos con AnimalDaily enlazado): solo el 20% de las vacas
+# sigue hoy en el rodeo donde estaba cuando se controló. Agrupar por
+# `BasicAnimal.[Group]` (como hacen las consultas de "último control" de arriba,
+# donde sí corresponde: miran el estado de HOY) movería el 80% de las muestras
+# a un rodeo equivocado y haría pasar un cambio de rodeo por un cambio de RCS.
+# El rodeo del día sale de `AnimalHistoricalData.AnimalDaily → AnimalDaily.AnimalGroup`.
+#
+# No se filtra `ExitDate`: una vaca vendida después del control sigue
+# contando en el control en que estaba. Sí `Number > 0` (el comodín no es
+# una vaca).
+MESES_RCS_HISTORICO = 36   # tope de la ventana que se manda al frontend
+
+
+def sql_rcs_historico(grupos_sql: str) -> str:
+    # Se agrega PRIMERO por (control, rodeo del día) y recién después se cruza
+    # con "qué rodeos ordeñan" + el nombre. FORCE ORDER es necesario, no
+    # decorativo: medido en SQL Express, sin él el optimizador cruzaba la
+    # subconsulta de rodeos (que cuenta animales) contra los 10.840 controles
+    # y la consulta tardaba 159 s; con el orden forzado, 0,6 s. El agregado
+    # solo (la CTE) tarda 0,3 s por sí misma.
+    return f"""
+        WITH t AS (
+          SELECT CAST(h.DateAndTime AS date) AS fecha, ad.AnimalGroup AS grp,
+                 COUNT(*) AS vacas,
+                 SUM(CAST(mt.SCC AS float)) AS suma_scc,
+                 SUM(CASE WHEN mt.SCC > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END) AS altas,
+                 MAX(mt.SCC) AS maximo
+          FROM MilkTest mt
+          JOIN AnimalHistoricalData h ON h.OID = mt.OID
+          JOIN AnimalDaily ad ON ad.OID = h.AnimalDaily AND ad.GCRecord IS NULL
+          JOIN BasicAnimal b ON b.OID = h.BasicAnimal AND b.GCRecord IS NULL AND b.Number > 0
+          WHERE h.GCRecord IS NULL AND mt.SCC IS NOT NULL
+            AND h.DateAndTime >= DATEADD(month, -{MESES_RCS_HISTORICO}, GETDATE())
+          GROUP BY CAST(h.DateAndTime AS date), ad.AnimalGroup
+        )
+        SELECT CONVERT(varchar(10), t.fecha, 120) AS fecha,
+               g.Name AS grupo, g.Number AS numero,
+               t.vacas, t.suma_scc, t.altas, t.maximo
+        FROM t
+        JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = t.grp
+        JOIN AbstractGroup g ON g.OID = t.grp AND g.GCRecord IS NULL
+        ORDER BY t.fecha, g.Number
+        OPTION (MAXDOP 1, FORCE ORDER, MAX_GRANT_PERCENT = 20)
+    """
+
+
 # --- Condición corporal (BCS) por vaca --------------------------------------
 # Réplica del gráfico de DelPro "Score corporal" (cámara BCS): un punto por
 # vaca (su ÚLTIMA lectura), DEL en el eje X y score 1-5 en el eje Y. Escala
