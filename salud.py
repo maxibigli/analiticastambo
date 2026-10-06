@@ -164,16 +164,28 @@ def sql_rcs_vacas(grupos_sql: str) -> str:
 MESES_RCS_HISTORICO = 36   # tope de la ventana que se manda al frontend
 
 
+# Tramos de días en leche (DEL) del desglose. Los extremos importan: el RCS
+# sube con los DEL y es mucho más alto en las vacas recién paridas, así que un
+# rodeo "malo" muchas veces es un rodeo con más vacas de fin de lactancia.
+# 1: 0-30 (frescas) · 2: 31-100 · 3: 101-200 · 4: 201-305 · 5: más de 305.
+BANDAS_DEL = {1: "0-30", 2: "31-100", 3: "101-200", 4: "201-305", 5: "más de 305"}
+
+
 def sql_rcs_historico(grupos_sql: str) -> str:
-    # Se agrega PRIMERO por (control, rodeo del día) y recién después se cruza
-    # con "qué rodeos ordeñan" + el nombre. FORCE ORDER es necesario, no
-    # decorativo: medido en SQL Express, sin él el optimizador cruzaba la
-    # subconsulta de rodeos (que cuenta animales) contra los 10.840 controles
-    # y la consulta tardaba 159 s; con el orden forzado, 0,6 s. El agregado
-    # solo (la CTE) tarda 0,3 s por sí misma.
+    # Un renglón por (control, rodeo del día, lactancia, tramo de DEL). La
+    # lactancia se junta en 1, 2 y 3 (= 3 o más): con 4+ quedan muestras
+    # sueltas. Se agrega PRIMERO y recién después se cruza con "qué rodeos
+    # ordeñan" + el nombre. FORCE ORDER es necesario, no decorativo: medido en
+    # SQL Express, sin él el optimizador cruzaba la subconsulta de rodeos (que
+    # cuenta animales) contra los 10.840 controles y la consulta tardaba 159 s;
+    # con el orden forzado, 0,6 s. El agregado solo (la CTE) tarda 0,3 s.
     return f"""
         WITH t AS (
           SELECT CAST(h.DateAndTime AS date) AS fecha, ad.AnimalGroup AS grp,
+                 CASE WHEN ad.LactationNumber >= 3 THEN 3
+                      WHEN ad.LactationNumber IN (1, 2) THEN ad.LactationNumber ELSE 0 END AS lact,
+                 CASE WHEN ad.DIM IS NULL THEN 0 WHEN ad.DIM <= 30 THEN 1 WHEN ad.DIM <= 100 THEN 2
+                      WHEN ad.DIM <= 200 THEN 3 WHEN ad.DIM <= 305 THEN 4 ELSE 5 END AS banda,
                  COUNT(*) AS vacas,
                  SUM(CAST(mt.SCC AS float)) AS suma_scc,
                  SUM(CASE WHEN mt.SCC > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END) AS altas,
@@ -184,15 +196,87 @@ def sql_rcs_historico(grupos_sql: str) -> str:
           JOIN BasicAnimal b ON b.OID = h.BasicAnimal AND b.GCRecord IS NULL AND b.Number > 0
           WHERE h.GCRecord IS NULL AND mt.SCC IS NOT NULL
             AND h.DateAndTime >= DATEADD(month, -{MESES_RCS_HISTORICO}, GETDATE())
-          GROUP BY CAST(h.DateAndTime AS date), ad.AnimalGroup
+          GROUP BY CAST(h.DateAndTime AS date), ad.AnimalGroup,
+                   CASE WHEN ad.LactationNumber >= 3 THEN 3
+                        WHEN ad.LactationNumber IN (1, 2) THEN ad.LactationNumber ELSE 0 END,
+                   CASE WHEN ad.DIM IS NULL THEN 0 WHEN ad.DIM <= 30 THEN 1 WHEN ad.DIM <= 100 THEN 2
+                        WHEN ad.DIM <= 200 THEN 3 WHEN ad.DIM <= 305 THEN 4 ELSE 5 END
         )
         SELECT CONVERT(varchar(10), t.fecha, 120) AS fecha,
-               g.Name AS grupo, g.Number AS numero,
+               g.Name AS grupo, g.Number AS numero, t.lact, t.banda,
                t.vacas, t.suma_scc, t.altas, t.maximo
         FROM t
         JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = t.grp
         JOIN AbstractGroup g ON g.OID = t.grp AND g.GCRecord IS NULL
-        ORDER BY t.fecha, g.Number
+        ORDER BY t.fecha, g.Number, t.lact, t.banda
+        OPTION (MAXDOP 1, FORCE ORDER, MAX_GRANT_PERCENT = 20)
+    """
+
+
+# --- Dinámica del RCS entre controles consecutivos --------------------------
+# Para cada vaca se compara cada control con SU control anterior y se cuenta en
+# cuál de cuatro casos cayó (umbral = el mismo 300.000 del resto del módulo):
+#   sana → sana    sana → alta (INFECCIÓN NUEVA)
+#   alta → sana (CURADA)    alta → alta (CRÓNICA)
+# Y se separan DOS situaciones que no se pueden mezclar:
+#   'intra' = los dos controles son de la MISMA lactancia (gap típico ~31 días).
+#   'seco'  = la lactancia SUBIÓ entre los dos controles, o sea la vaca pasó por
+#             el período seco y parió (gap típico ~86 días). Ahí "curada" es la
+#             curación durante el seco y "alta" a continuación es una infección
+#             que arrastró o agarró al parir: la métrica clásica para decidir
+#             la terapia de secado. Es otra pregunta, con otro intervalo.
+# Los pares 'intra' con más de MAX_GAP_INTRA_DIAS entre controles se descartan
+# (se salteó un control: ya no es "el control anterior" y un mes sin medir se
+# leería como curación). El rodeo es el del control ACTUAL (el del día).
+MAX_GAP_INTRA_DIAS = 60
+MAX_GAP_SECO_DIAS = 400
+
+
+def sql_rcs_dinamica(grupos_sql: str) -> str:
+    return f"""
+        WITH t AS (
+          SELECT h.BasicAnimal AS animal, CAST(h.DateAndTime AS date) AS fecha,
+                 MAX(mt.SCC) AS scc, MAX(ad.LactationNumber) AS lact,
+                 MAX(ad.AnimalGroup) AS grp
+          FROM MilkTest mt
+          JOIN AnimalHistoricalData h ON h.OID = mt.OID
+          JOIN AnimalDaily ad ON ad.OID = h.AnimalDaily AND ad.GCRecord IS NULL
+          JOIN BasicAnimal b ON b.OID = h.BasicAnimal AND b.GCRecord IS NULL AND b.Number > 0
+          WHERE h.GCRecord IS NULL AND mt.SCC IS NOT NULL
+            AND h.DateAndTime >= DATEADD(month, -{MESES_RCS_HISTORICO}, GETDATE())
+          GROUP BY h.BasicAnimal, CAST(h.DateAndTime AS date)
+        ),
+        par AS (
+          SELECT fecha, grp, scc, lact,
+                 LAG(fecha) OVER (PARTITION BY animal ORDER BY fecha) AS f_prev,
+                 LAG(scc)   OVER (PARTITION BY animal ORDER BY fecha) AS scc_prev,
+                 LAG(lact)  OVER (PARTITION BY animal ORDER BY fecha) AS lact_prev
+          FROM t
+        ),
+        agg AS (
+          SELECT fecha, grp,
+                 CASE WHEN lact = lact_prev AND DATEDIFF(day, f_prev, fecha) <= {MAX_GAP_INTRA_DIAS} THEN 'intra'
+                      WHEN lact > lact_prev AND DATEDIFF(day, f_prev, fecha) <= {MAX_GAP_SECO_DIAS} THEN 'seco'
+                      ELSE NULL END AS tipo,
+                 CASE WHEN scc_prev > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END AS prev_alta,
+                 CASE WHEN scc > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END AS curr_alta,
+                 COUNT(*) AS vacas
+          FROM par
+          WHERE f_prev IS NOT NULL
+          GROUP BY fecha, grp,
+                 CASE WHEN lact = lact_prev AND DATEDIFF(day, f_prev, fecha) <= {MAX_GAP_INTRA_DIAS} THEN 'intra'
+                      WHEN lact > lact_prev AND DATEDIFF(day, f_prev, fecha) <= {MAX_GAP_SECO_DIAS} THEN 'seco'
+                      ELSE NULL END,
+                 CASE WHEN scc_prev > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END,
+                 CASE WHEN scc > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END
+        )
+        SELECT CONVERT(varchar(10), a.fecha, 120) AS fecha, g.Name AS grupo, g.Number AS numero,
+               a.tipo, a.prev_alta, a.curr_alta, a.vacas
+        FROM agg a
+        JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = a.grp
+        JOIN AbstractGroup g ON g.OID = a.grp AND g.GCRecord IS NULL
+        WHERE a.tipo IS NOT NULL
+        ORDER BY a.fecha, g.Number, a.tipo
         OPTION (MAXDOP 1, FORCE ORDER, MAX_GRANT_PERCENT = 20)
     """
 

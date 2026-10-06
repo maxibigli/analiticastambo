@@ -832,6 +832,47 @@ menos de 30 muestras lleva ⚠. Los datos de RCS arrancan en noviembre de 2025
 (un control por mes), así que el "período anterior" por defecto cae en parte
 vacío si se mira hacia atrás de eso.
 
+### Análisis de RCS: lactancia, DEL y dinámica entre controles (06/10/2026)
+
+**Agrupar por lactancia o por días en leche, y la matriz rodeo × lactancia.**
+Es el cruce que más cambia la lectura: el RCS sube con la edad de la vaca y con
+los DEL, y los rodeos de este tambo se arman justamente por eso. Medido en la
+copia local (7.000 muestras, 6 controles): **0-30 DEL da 229.887 y 18,9% de
+vacas altas, contra 97.496 y 6,7% en 201-305 DEL**; Rodeo 1 en 1ª lactancia da
+210.498 contra 112.341 en 2ª. Un rodeo que "se ve peor" muchas veces solo tiene
+más vacas frescas o de fin de lactancia. `sql_rcs_historico` ahora devuelve un
+renglón por (control, rodeo del día, lactancia 1/2/3+, tramo de DEL); los
+tramos son 0-30, 31-100, 101-200, 201-305 y más de 305 (`salud.BANDAS_DEL`).
+Todo sigue siendo sumable: cambiar la agrupación no vuelve a la base.
+
+**Dinámica entre controles consecutivos (`salud.sql_rcs_dinamica`).** Cada vaca
+contra SU control anterior, con el mismo 300.000: sana→alta es infección nueva,
+alta→sana curación, alta→alta crónica. Dos situaciones que NO se mezclan:
+`intra` (misma lactancia, ~31 días entre controles) y `seco` (la lactancia
+subió: pasó por el seco y parió, ~86 días). Medido en la copia local:
+
+    intra   infecciones nuevas 7,0% por control (527 de 7.540 sanas)
+            curación 70% (544 de 777 altas)  ·  crónicas 233
+    seco    curación durante el seco 80% (44 de 55 altas)
+            infecciones nuevas al parir 13,5% (63 de 468 sanas)
+
+Los pares `intra` con más de 60 días entre sí se descartan
+(`MAX_GAP_INTRA_DIAS`): se salteó un control y un mes sin medir se leería como
+curación. El rodeo es el del control ACTUAL. Las tasas de un período salen de
+SUMAR los pares de sus controles, no de promediar tasas.
+
+Reglas de lectura, deliberadas: una tasa lleva ⚠ si su base (el denominador)
+tiene menos de 30 vacas; **no se muestra "cambio" si alguno de los dos lados
+tiene menos de 30** (con 2 vacas, 0% contra 13% no es un cambio, es ruido); y
+solo se colorea un cambio de al menos 1 punto Y 10% relativo, porque estas tasas
+son más ruidosas que un promedio. En el gráfico no se dibujan puntos con menos
+de 10 vacas en la base. Para infecciones nuevas y crónicas "mejor" es bajar;
+para curación, subir.
+
+OJO al agregar SQL con `{{` o `{%` dentro de un template literal de JS en
+`index.html`: Jinja lo lee como sintaxis propia y la página entera devuelve
+500 (`${{a: 1}[k]}` rompió el render). Poner un espacio o usar un ternario.
+
 ## Agente de IA: preguntas del tambo en lenguaje natural (14/08/2026)
 
 `agente.py` + `POST /api/agente/preguntar` (gateado admin). Responde

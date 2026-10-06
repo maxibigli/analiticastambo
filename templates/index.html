@@ -2849,12 +2849,19 @@
             <option value="prom">RCS promedio (cél/ml)</option>
             <option value="altas">% de vacas &gt; 300.000</option>
           </select></label>
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">Agrupar por
+          <select id="rcsh-grupo" style="padding:6px 8px">
+            <option value="rodeo">Rodeo</option>
+            <option value="lact">Lactancia</option>
+            <option value="del">Días en leche (DEL)</option>
+          </select></label>
       </div>
       <div id="rcsh-estado" class="aviso" style="margin-top:8px"></div>
       <div id="rcsh-rodeos" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div>
       <div class="chart-box" style="height:340px;margin-top:10px"><canvas id="chart-rcs-hist"></canvas></div>
       <div class="aviso" id="rcsh-leyenda" style="margin-top:6px"></div>
       <div id="rcsh-tabla" style="margin-top:12px"></div>
+      <div id="rcsh-matriz" style="margin-top:18px"></div>
       <p class="explica" style="margin-top:10px">
         <b>Cómo leerlo.</b> Cada punto es un control lechero (suelen ser mensuales). El promedio es el
         <b>aritmético de las muestras</b> del período, igual que el reporte Chi: unas pocas vacas con valores
@@ -2862,6 +2869,45 @@
         es más estable. Un rodeo con pocas muestras (&lt; 30) se marca con ⚠ y su promedio es poco confiable.
         Bajar el RCS es mejorar: en la comparación, <span style="color:var(--good)">verde</span> es que bajó y
         <span style="color:var(--critical)">rojo</span> que subió (se ignoran cambios menores al 5%).
+        <b>Agrupar por</b> abre el mismo análisis por lactancia o por días en leche, que es lo que más
+        mueve el RCS de una vaca: así se separa un rodeo que está peor de un rodeo que tiene vacas más
+        grandes o más avanzadas en la lactancia.
+      </p>
+    </section>
+
+    {# Dinámica entre controles: infecciones nuevas, curación y crónicas. Usa el
+       mismo período elegido arriba. Ver pintarRcsDin. #}
+    <section class="card" id="salud-rcs-dinamica-card">
+      <h2 style="margin:0">Infecciones nuevas y curación entre controles</h2>
+      <span class="aviso">Cada vaca contra <b>su</b> control anterior, en el período elegido arriba. De sana a alta
+        es una infección nueva, de alta a sana es una curación, alta en los dos controles es crónica.
+        "Alta" es RCS &gt; 300.000.</span>
+      <div class="controls" style="margin-top:12px;gap:12px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">Gráfico
+          <select id="rcsd-metrica" style="padding:6px 8px">
+            <option value="nueva">Infecciones nuevas (% de vacas sanas que pasan a alta)</option>
+            <option value="cura">Curación (% de vacas altas que pasan a sanas)</option>
+            <option value="cronica">Crónicas (% de vacas altas en los dos controles)</option>
+          </select></label>
+      </div>
+      <div id="rcsd-estado" class="aviso" style="margin-top:8px"></div>
+      <div class="chart-box" style="height:300px;margin-top:10px"><canvas id="chart-rcs-din"></canvas></div>
+      <div class="aviso" id="rcsd-leyenda" style="margin-top:6px"></div>
+      <h3 style="margin:16px 0 4px">Dentro de la lactancia</h3>
+      <span class="aviso">Dos controles consecutivos de la misma lactancia (se descartan los pares con más de 60 días entre sí:
+        se salteó un control y un mes sin medir se leería como curación).</span>
+      <div id="rcsd-tabla-intra" style="margin-top:8px"></div>
+      <h3 style="margin:16px 0 4px">Alrededor del período seco</h3>
+      <span class="aviso">El último control de una lactancia contra el primero de la siguiente: la vaca pasó por el seco y parió.
+        <b>Curación durante el seco</b> es el indicador clásico para decidir la terapia de secado; las
+        <b>infecciones nuevas al parir</b> son las que agarró en el seco o en el parto.</span>
+      <div id="rcsd-tabla-seco" style="margin-top:8px"></div>
+      <p class="explica" style="margin-top:10px">
+        <b>Cómo leerlo.</b> Entre paréntesis va la cantidad de vacas sobre la que se calcula cada tasa (la base):
+        con menos de 30 lleva ⚠ y es poco confiable. En la comparación, <span style="color:var(--good)">verde</span>
+        es que mejoró y <span style="color:var(--critical)">rojo</span> que empeoró (para infecciones nuevas y crónicas
+        mejorar es bajar; para curación, subir); solo se colorea un cambio de al menos 1 punto y 10%, porque
+        estas tasas son más ruidosas que un promedio.
       </p>
     </section>
   </div>
@@ -9148,7 +9194,7 @@ const SALUD_TABS = {
   atencion2: ['salud-atencion2-card'],
   // Todo lo de células somáticas junto: el último control por rodeo, las vacas
   // con RCS alto, y el análisis en el tiempo.
-  rcs: ['salud-rcs-grupo-card', 'salud-rcs-vacas-card', 'salud-rcs-analisis-card'],
+  rcs: ['salud-rcs-grupo-card', 'salud-rcs-vacas-card', 'salud-rcs-analisis-card', 'salud-rcs-dinamica-card'],
   bcs: ['salud-bcs-card'],
   cond: ['salud-cond-card'],
   prod: ['salud-prod-card'],
@@ -9206,15 +9252,27 @@ const RCSH_MIN_PUNTO = 10;
 
 async function cargarSaludRcsHist() {
   clearTimeout(saludRcsHistReintento);
-  if (saludRcsHist) { pintarRcsHist(); return; }
-  document.getElementById('rcsh-estado').textContent = 'Cargando…';
-  const listo = await seccionSalud('/api/salud/rcs_historico', 'rcsh-estado', d => {
-    saludRcsHist = d;
-    iniciarRcsHist();
-  });
-  // Base lenta: el endpoint contesta 202 mientras calcula. Se reintenta solo,
-  // pero solo si el usuario sigue mirando esta pestaña.
-  if (!listo) saludRcsHistReintento = setTimeout(() => {
+  if (saludRcsHist && saludRcsDin) { pintarRcsHist(); return; }
+  let falta = false;
+  if (!saludRcsHist) {
+    document.getElementById('rcsh-estado').textContent = 'Cargando…';
+    const ok = await seccionSalud('/api/salud/rcs_historico', 'rcsh-estado', d => {
+      saludRcsHist = d;
+      iniciarRcsHist();
+    });
+    if (!ok) falta = true;
+  }
+  if (!saludRcsDin) {
+    const ok = await seccionSalud('/api/salud/rcs_dinamica', 'rcsd-estado', d => {
+      saludRcsDin = d;
+      document.getElementById('rcsd-estado').textContent = '';
+      if (saludRcsHist) pintarRcsHist();
+    });
+    if (!ok) falta = true;
+  }
+  // Base lenta: los endpoints contestan 202 mientras calculan. Se reintenta
+  // solo, pero solo si el usuario sigue mirando esta pestaña.
+  if (falta) saludRcsHistReintento = setTimeout(() => {
     if (saludTabActual === 'rcs') cargarSaludRcsHist();
   }, 8000);
 }
@@ -9250,9 +9308,14 @@ function iniciarRcsHist() {
   pintarRcsHist();
 }
 
-for (const id of ['rcsh-a-desde', 'rcsh-a-hasta', 'rcsh-b-desde', 'rcsh-b-hasta', 'rcsh-modo', 'rcsh-metrica']) {
+for (const id of ['rcsh-a-desde', 'rcsh-a-hasta', 'rcsh-b-desde', 'rcsh-b-hasta', 'rcsh-modo', 'rcsh-metrica', 'rcsd-metrica']) {
   document.getElementById(id)?.addEventListener('change', () => { if (saludRcsHist) pintarRcsHist(); });
 }
+// Cambiar la agrupación cambia QUÉ SON las series: lo que se ocultó con los chips ya no aplica.
+document.getElementById('rcsh-grupo')?.addEventListener('change', () => {
+  rcshOcultos.clear();
+  if (saludRcsHist) pintarRcsHist();
+});
 document.getElementById('rcsh-rodeos')?.addEventListener('click', ev => {
   const chip = ev.target.closest('[data-rodeo]');
   if (!chip) return;
@@ -9261,12 +9324,26 @@ document.getElementById('rcsh-rodeos')?.addEventListener('click', ev => {
   pintarRcsHist();
 });
 
-// {n, prom, pct} de un rodeo (o de todos, con rodeo=null) en [desde, hasta].
+// Cómo se agrupan las series: por rodeo (el del día del control), por lactancia
+// o por tramo de días en leche. `rcshModoG` lo fija pintarRcsHist() al empezar.
+let rcshModoG = 'rodeo';
+const RCSH_LACT = { 1: '1ª lactancia', 2: '2ª lactancia', 3: '3ª o más', 0: 'Sin dato' };
+function rcshClave(f) {
+  if (rcshModoG === 'lact') return RCSH_LACT[f.lact] || 'Sin dato';
+  if (rcshModoG === 'del') return f.banda ? `${(saludRcsHist.bandas_del || {})[f.banda] || f.banda} DEL` : 'Sin dato';
+  return f.grupo;
+}
+// Orden de las series: por número de rodeo, de lactancia o de tramo.
+function rcshOrden(f) {
+  return rcshModoG === 'lact' ? (f.lact || 99) : rcshModoG === 'del' ? (f.banda || 99) : f.numero;
+}
+
+// {n, prom, pct} de una serie (o de todas, con rodeo=null) en [desde, hasta].
 function rcshAgregar(filas, desde, hasta, rodeo) {
   let n = 0, suma = 0, altas = 0;
   for (const f of filas) {
     if (f.fecha < desde || f.fecha > hasta) continue;
-    if (rodeo != null && f.grupo !== rodeo) continue;
+    if (rodeo != null && rcshClave(f) !== rodeo) continue;
     n += f.vacas; suma += f.suma_scc; altas += f.altas;
   }
   return n ? { n, prom: suma / n, pct: 100 * altas / n } : null;
@@ -9275,6 +9352,7 @@ function rcshAgregar(filas, desde, hasta, rodeo) {
 function pintarRcsHist() {
   const filas = saludRcsHist.filas || [];
   const estado = document.getElementById('rcsh-estado');
+  rcshModoG = document.getElementById('rcsh-grupo').value;
   const modo = document.getElementById('rcsh-modo').value;
   const metrica = document.getElementById('rcsh-metrica').value;
   const aD = document.getElementById('rcsh-a-desde').value, aH = document.getElementById('rcsh-a-hasta').value;
@@ -9296,11 +9374,11 @@ function pintarRcsHist() {
   // Rodeos que aparecen en alguno de los períodos, en orden de número.
   const enRango = f => (f.fecha >= aD && f.fecha <= aH) || (hayB && f.fecha >= bD && f.fecha <= bH);
   const rodeos = [];
-  for (const f of filas.filter(enRango).sort((x, y) => x.numero - y.numero)) {
-    if (!rodeos.includes(f.grupo)) rodeos.push(f.grupo);
+  for (const f of filas.filter(enRango).sort((x, y) => rcshOrden(x) - rcshOrden(y))) {
+    const k = rcshClave(f);
+    if (!rodeos.includes(k)) rodeos.push(k);
   }
   const colorDe = r => RCSH_COLORES[rodeos.indexOf(r) % RCSH_COLORES.length];
-  const todoA = rcshAgregar(filas, aD, aH, null);
   if (!rodeos.length) {
     estado.textContent = 'No hay controles lecheros en ese rango de fechas.';
     document.getElementById('rcsh-tabla').innerHTML = '';
@@ -9383,15 +9461,173 @@ function pintarRcsHist() {
   };
   document.getElementById('rcsh-tabla').innerHTML = `<div class="tabla-scroll"><table>
     <thead>
-      <tr><th rowspan="2">Rodeo</th><th colspan="3">Período elegido<br><span class="aviso">${aD} a ${aH}</span></th>
+      <tr><th rowspan="2">${rcshModoG === 'lact' ? 'Lactancia' : rcshModoG === 'del' ? 'Días en leche' : 'Rodeo'}</th><th colspan="3">Período elegido<br><span class="aviso">${aD} a ${aH}</span></th>
         ${hayB ? `<th colspan="3">Período comparado<br><span class="aviso">${bD} a ${bH}</span></th>
                   <th colspan="2">Cambio (elegido − comparado)</th>` : ''}</tr>
       <tr><th>Muestras</th><th>RCS prom.</th><th>% &gt; 300.000</th>
         ${hayB ? `<th>Muestras</th><th>RCS prom.</th><th>% &gt; 300.000</th><th>RCS prom.</th><th>% &gt; 300.000</th>` : ''}</tr>
     </thead><tbody>
-      ${filaHTML('Todo el rodeo', null, null)}
+      ${filaHTML(rcshModoG === 'rodeo' ? 'Todo el rodeo' : 'Todas', null, null)}
       ${rodeos.map(r => filaHTML(r, r, colorDe(r))).join('')}
     </tbody></table></div>`;
+  pintarRcsMatriz(filas, aD, aH);
+  pintarRcsDin(aD, aH, bD, bH, hayB);
+}
+
+// --- Rodeo × lactancia: ¿el rodeo es "malo" o tiene vacas de otra edad? ----
+// El RCS sube con la edad de la vaca y con los días en leche, y los rodeos de
+// este tambo se arman justamente por eso (Hospital, Vaquillonas...). Esta
+// tabla abre cada rodeo por lactancia en el período elegido: si la diferencia
+// entre rodeos desaparece dentro de cada columna, era composición, no manejo.
+function pintarRcsMatriz(filas, aD, aH) {
+  const cont = document.getElementById('rcsh-matriz');
+  const LACTS = [[1, '1ª lactancia'], [2, '2ª lactancia'], [3, '3ª o más']];
+  const por = {};   // rodeo -> lact -> {n, suma}
+  const orden = {};
+  for (const f of filas) {
+    if (f.fecha < aD || f.fecha > aH) continue;
+    orden[f.grupo] = f.numero;
+    const r = (por[f.grupo] = por[f.grupo] || {});
+    const c = (r[f.lact] = r[f.lact] || { n: 0, suma: 0 });
+    c.n += f.vacas; c.suma += f.suma_scc;
+  }
+  const rodeos = Object.keys(por).sort((a, b) => orden[a] - orden[b]);
+  if (!rodeos.length) { cont.innerHTML = ''; return; }
+  const tot = {};   // todo el tambo
+  for (const r of rodeos) for (const [l, c] of Object.entries(por[r])) {
+    const t = (tot[l] = tot[l] || { n: 0, suma: 0 }); t.n += c.n; t.suma += c.suma;
+  }
+  const celda = (c, totalRodeo, de = 'del rodeo') => {
+    if (!c || !c.n) return '<td class="aviso">—</td>';
+    const aviso = c.n < RCSH_MIN_MUESTRAS ? ' <span title="Pocas muestras: el promedio es poco confiable" style="cursor:help">⚠</span>' : '';
+    return `<td><b>${milesRCS(c.suma / c.n)}</b>${aviso}<br><span class="aviso">${fmt(c.n)} vacas · ${Math.round(100 * c.n / totalRodeo)}% ${de}</span></td>`;
+  };
+  const totalDe = o => Object.values(o).reduce((a, c) => a + c.n, 0);
+  const fila = (nombre, o, color, de) => {
+    const punto = color ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${color};margin-right:6px"></span>` : '';
+    const t = totalDe(o);
+    const todas = Object.values(o).reduce((a, c) => ({ n: a.n + c.n, suma: a.suma + c.suma }), { n: 0, suma: 0 });
+    return `<tr><td style="white-space:nowrap">${punto}<b>${escHtml(nombre)}</b></td>`
+      + LACTS.map(([l]) => celda(o[l], t, de)).join('')
+      + `<td><b>${milesRCS(todas.suma / todas.n)}</b><br><span class="aviso">${fmt(todas.n)} vacas</span></td></tr>`;
+  };
+  cont.innerHTML = `<h3 style="margin:0 0 4px">Rodeo × lactancia <span class="aviso">· período elegido (${aD} a ${aH})</span></h3>
+    <span class="aviso">RCS promedio de cada rodeo, abierto por la lactancia de la vaca. Si un rodeo se ve peor
+    pero dentro de cada columna se parece al resto, la diferencia es de composición (edad), no de manejo.</span>
+    <div class="tabla-scroll" style="margin-top:8px"><table>
+    <thead><tr><th>Rodeo</th>${LACTS.map(([, t]) => `<th>${t}</th>`).join('')}<th>Todas</th></tr></thead>
+    <tbody>${fila('Todo el tambo', tot, null, 'del tambo')}
+      ${rodeos.map(r => fila(r, por[r], null)).join('')}</tbody></table></div>`;
+}
+
+// --- Dinámica: infecciones nuevas, curación y crónicas ----------------------
+// Cada vaca contra SU control anterior (ver salud.sql_rcs_dinamica): de
+// sana a alta es una infección nueva, de alta a sana es una curación, alta en
+// los dos es crónica. Las tasas de un período salen de SUMAR los pares de sus
+// controles, no de promediar tasas.
+let saludRcsDin = null, chartRcsDin = null;
+
+function rcsdContar(filas, desde, hasta, rodeo, tipo) {
+  const c = { ss: 0, nueva: 0, curada: 0, cronica: 0 };
+  for (const f of filas) {
+    if (f.tipo !== tipo || f.fecha < desde || f.fecha > hasta) continue;
+    if (rodeo != null && f.grupo !== rodeo) continue;
+    if (!f.prev_alta && !f.curr_alta) c.ss += f.vacas;
+    else if (!f.prev_alta && f.curr_alta) c.nueva += f.vacas;
+    else if (f.prev_alta && !f.curr_alta) c.curada += f.vacas;
+    else c.cronica += f.vacas;
+  }
+  const sanas = c.ss + c.nueva, altas = c.curada + c.cronica, tot = sanas + altas;
+  return { ...c, sanas, altas, tot,
+    nueva_pct: sanas ? 100 * c.nueva / sanas : null,
+    cura_pct: altas ? 100 * c.curada / altas : null,
+    cron_pct: tot ? 100 * c.cronica / tot : null };
+}
+
+// Qué métrica, cuál es su base (el denominador) y para qué lado es "mejor".
+const RCSD_METRICAS = {
+  nueva:   { pct: 'nueva_pct', base: 'sanas', mejor: -1, titulo: 'Infecciones nuevas', unidad: '% de vacas sanas en el control anterior que pasaron a alta' },
+  cura:    { pct: 'cura_pct',  base: 'altas', mejor: +1, titulo: 'Curación',           unidad: '% de vacas altas en el control anterior que pasaron a sanas' },
+  cronica: { pct: 'cron_pct',  base: 'tot',   mejor: -1, titulo: 'Crónicas',           unidad: '% de las vacas controladas que estaban altas en los dos controles' },
+};
+
+function pintarRcsDin(aD, aH, bD, bH, hayB) {
+  const filas = saludRcsDin ? saludRcsDin.filas : null;
+  const tablaIntra = document.getElementById('rcsd-tabla-intra'), tablaSeco = document.getElementById('rcsd-tabla-seco');
+  if (!filas) { tablaIntra.innerHTML = ''; tablaSeco.innerHTML = ''; return; }
+  const enRango = f => (f.fecha >= aD && f.fecha <= aH) || (hayB && f.fecha >= bD && f.fecha <= bH);
+  const rodeos = [];
+  for (const f of filas.filter(enRango).sort((x, y) => x.numero - y.numero)) if (!rodeos.includes(f.grupo)) rodeos.push(f.grupo);
+  const colorDe = r => RCSH_COLORES[rodeos.indexOf(r) % RCSH_COLORES.length];
+  if (!rodeos.length) {
+    tablaIntra.innerHTML = '<div class="aviso">No hay pares de controles consecutivos en ese rango de fechas.</div>';
+    tablaSeco.innerHTML = '';
+    if (chartRcsDin) { chartRcsDin.destroy(); chartRcsDin = null; }
+    return;
+  }
+
+  // Celda "12,3% (n)" con aviso si la base es chica, y celda de cambio en
+  // PUNTOS, coloreada según el lado "mejor" de esa métrica. Solo se colorea
+  // un cambio de al menos 1 punto Y 10% relativo: estas tasas son más ruidosas
+  // que un promedio (se cuentan unas pocas decenas de vacas por rodeo).
+  const celdaPct = (c, m) => c[RCSD_METRICAS[m].pct] == null ? '<td class="aviso">—</td>'
+    : `<td>${fmt(Math.round(c[RCSD_METRICAS[m].pct] * 10) / 10)}% <span class="aviso">(${fmt(c[RCSD_METRICAS[m].base])})</span>${c[RCSD_METRICAS[m].base] < RCSH_MIN_MUESTRAS ? ' <span title="Pocas vacas: la tasa es poco confiable" style="cursor:help">⚠</span>' : ''}</td>`;
+  const celdaDelta = (a, b, m) => {
+    const k = RCSD_METRICAS[m];
+    // Sin cambio si alguno de los dos lados tiene pocas vacas: con 2 vacas una
+    // tasa de 0% o 100% contra una de 13% no es un "cambio", es ruido.
+    if (a[k.pct] == null || b[k.pct] == null || a[k.base] < RCSH_MIN_MUESTRAS || b[k.base] < RCSH_MIN_MUESTRAS) return '<td class="aviso">—</td>';
+    const d = a[k.pct] - b[k.pct], rel = b[k.pct] ? 100 * d / b[k.pct] : 0;
+    const peor = d * k.mejor < 0, mejora = d * k.mejor > 0;
+    const color = (Math.abs(d) >= 1 && Math.abs(rel) >= 10) ? (mejora ? 'color:var(--good);font-weight:600' : peor ? 'color:var(--critical);font-weight:600' : '') : '';
+    return `<td style="${color}">${d < 0 ? '▼' : d > 0 ? '▲' : '='} ${d > 0 ? '+' : ''}${fmt(Math.round(d * 10) / 10)} pts</td>`;
+  };
+  const punto = c => c ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${c};margin-right:6px"></span>` : '';
+  const armar = (tipo, metricas, titulos) => {
+    const filaDe = (nombre, rodeo, color) => {
+      const a = rcsdContar(filas, aD, aH, rodeo, tipo), b = hayB ? rcsdContar(filas, bD, bH, rodeo, tipo) : null;
+      return `<tr><td style="white-space:nowrap">${punto(color)}<b>${escHtml(nombre)}</b></td>`
+        + metricas.map(m => celdaPct(a, m) + (hayB ? celdaPct(b, m) + celdaDelta(a, b, m) : '')).join('') + '</tr>';
+    };
+    const span = hayB ? 3 : 1;
+    return `<div class="tabla-scroll"><table><thead>
+      <tr><th rowspan="${hayB ? 2 : 1}">Rodeo</th>${metricas.map((m, i) => `<th colspan="${span}" title="${escHtml(RCSD_METRICAS[m].unidad)}">${titulos[i]}</th>`).join('')}</tr>
+      ${hayB ? `<tr>${metricas.map(() => '<th>Elegido</th><th>Comparado</th><th>Cambio</th>').join('')}</tr>` : ''}
+      </thead><tbody>${filaDe('Todo el tambo', null, null)}${rodeos.map(r => filaDe(r, r, colorDe(r))).join('')}</tbody></table></div>`;
+  };
+  tablaIntra.innerHTML = armar('intra', ['nueva', 'cura', 'cronica'], ['Infecciones nuevas', 'Curación', 'Crónicas']);
+  tablaSeco.innerHTML = armar('seco', ['cura', 'nueva'], ['Curación durante el seco', 'Infecciones nuevas al parir']);
+
+  // --- Gráfico por control (dentro de la lactancia), una línea por rodeo.
+  const m = document.getElementById('rcsd-metrica').value, k = RCSD_METRICAS[m];
+  const fechas = [...new Set(filas.filter(f => f.tipo === 'intra' && enRango(f)).map(f => f.fecha))].sort();
+  const enA = f => f >= aD && f <= aH;
+  let omitidos = 0;
+  const serie = (rodeo, color, nombre, grueso) => {
+    const cs = fechas.map(f => rcsdContar(filas, f, f, rodeo, 'intra'));
+    omitidos += cs.filter(c => rodeo != null && c[k.base] > 0 && c[k.base] < RCSH_MIN_PUNTO).length;
+    return {
+      label: nombre,
+      data: cs.map(c => (c[k.pct] == null || (rodeo != null && c[k.base] < RCSH_MIN_PUNTO)) ? null : Math.round(c[k.pct] * 10) / 10),
+      _n: cs.map(c => c[k.base]),
+      borderColor: color, backgroundColor: color, borderWidth: grueso ? 3.5 : 2, pointRadius: grueso ? 5 : 4,
+      pointBackgroundColor: fechas.map(f => enA(f) ? color : 'transparent'), pointBorderColor: color,
+      tension: 0.2, spanGaps: true,
+    };
+  };
+  const datasets = [serie(null, css('--text-primary') || '#e6edf3', 'Todo el tambo', true)]
+    .concat(rodeos.filter(r => !rcshOcultos.has(r)).map(r => serie(r, colorDe(r), r, false)));
+  const opts = baseOpts(true);
+  opts.interaction = { mode: 'index', intersect: false };
+  opts.plugins.tooltip = { callbacks: { label: c => c.parsed.y == null ? null
+    : `${c.dataset.label}: ${c.parsed.y.toLocaleString('es-AR')}%  (sobre ${c.dataset._n[c.dataIndex]} vacas)` } };
+  opts.scales.y.title = { display: true, text: `${k.titulo} (%)` };
+  if (chartRcsDin) chartRcsDin.destroy();
+  chartRcsDin = new Chart(document.getElementById('chart-rcs-din'), { type: 'line', data: { labels: fechas, datasets }, options: opts });
+  document.getElementById('rcsd-leyenda').textContent = [
+    hayB ? `● punto lleno: período elegido · ○ punto hueco: período comparado.` : '',
+    omitidos ? `No se grafican ${omitidos} punto(s) de rodeos con menos de ${RCSH_MIN_PUNTO} vacas en la base de esa tasa.` : '',
+  ].filter(Boolean).join(' ');
 }
 
 async function cargarSalud(limpiar = true) {
@@ -9399,6 +9635,7 @@ async function cargarSalud(limpiar = true) {
   if (limpiar) {
     // Cambio de tambo o "Actualizar": el RCS histórico del tambo anterior no sirve.
     saludRcsHist = null;
+    saludRcsDin = null;
     rcshOcultos.clear();
     if (saludTabActual === 'rcs') cargarSaludRcsHist();
   }

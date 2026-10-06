@@ -2365,7 +2365,26 @@ def api_salud_rcs_historico():
         f["suma_scc"] = round(f["suma_scc"] * salud.RCS_A_CELULAS)
         f["maximo"] = round(f["maximo"] * salud.RCS_A_CELULAS) if f["maximo"] is not None else None
         filas.append(f)
-    return jsonify({"filas": filas, "umbral": salud.UMBRAL_RCS})
+    return jsonify({"filas": filas, "umbral": salud.UMBRAL_RCS,
+                    "bandas_del": {str(k): v for k, v in salud.BANDAS_DEL.items()}})
+
+
+@app.get("/api/salud/rcs_dinamica")
+@auth.requiere_rol("admin")
+def api_salud_rcs_dinamica():
+    """Infecciones nuevas, curación y crónicas entre controles lecheros
+    consecutivos, por rodeo (pestaña "Análisis de RCS"). Un renglón por
+    (control, rodeo, tipo de par, estado anterior, estado actual) con la
+    cantidad de vacas: el frontend arma las tasas de cualquier período sumando.
+    Ver salud.sql_rcs_dinamica para qué es un par 'intra' y uno 'seco'."""
+    tambo = _tambo_del_request()
+    sql = salud.sql_rcs_dinamica(salas.de(tambo).sql_grupos())
+    data, espera = _servir_cacheado(tambo, "salud_rcs_dinamica", "Calculando dinámica del RCS…", sql)
+    if espera:
+        return espera
+    filas = [dict(zip(data["columns"], r)) for r in data["rows"]]
+    return jsonify({"filas": filas, "umbral": salud.UMBRAL_RCS,
+                    "max_gap_intra_dias": salud.MAX_GAP_INTRA_DIAS})
 
 
 @app.get("/api/salud/conductividad")
