@@ -756,11 +756,50 @@ que cambiar el tope no dispara ningún recálculo de la base.
 
 ## Salud del rodeo: pestaña "Análisis de RCS" (06/10/2026)
 
-"Salud del rodeo" ahora tiene dos pestañas (`#salud-tabs`, mismo patrón que
-`#rutina-tabs`): **Resumen** (todo lo de siempre) y **Análisis de RCS**, el RCS
-de los controles lecheros en el tiempo, por rodeo, con rango de fechas elegible
-y comparación contra otro período (el anterior de igual duración, otro rango, o
-ninguno). Los indicadores de arriba quedan fijos en las dos.
+"Salud del rodeo" tiene una pestaña por sección (`#salud-tabs`, mismo patrón
+que `#rutina-tabs`; el mapa pestaña → tarjetas es `SALUD_TABS` en index.html):
+Resumen (composición del rodeo), Atención vacas, Atención (experimental),
+**Células somáticas (RCS)**, Condición corporal, Conductividad, Producción de
+leche y Problemas podales.
+
+**El Resumen son tarjetas, una por sección, con SU porcentaje, y cada una abre
+la pestaña de esa sección** (`pintarSaludResumen`). Qué mide cada porcentaje:
+atención (clásico y experimental) = vacas que entran en la lista / vacas
+evaluadas; células somáticas = vacas con RCS > 300.000 en su último control;
+condición corporal = vacas fuera de su rango para su DEL; conductividad =
+ordeños con conductividad relativa > 115 del último día COMPLETO (se descarta un
+último día a medio cargar, con el mismo criterio del 60% que usa la estadística
+de producción); producción = variación del kg por ordeño del tambo contra el
+día anterior (ponderada por ordeños de cada rodeo). **Problemas podales va con
+la cantidad y no con un porcentaje**: la cámara solo lista las vacas con alerta
+y no informa cuántas evaluó, así que cualquier % sería inventado.
+
+**Sin colores de semáforo en esas tarjetas, a propósito**: ninguno de esos
+porcentajes tiene un umbral confirmado por el tambo, y pintar verde/rojo un
+número sin umbral es inventarlo (misma regla que los umbrales de retirada).
+La barra solo muestra la proporción.
+
+Para el porcentaje de atención, `/api/salud/atencion` y `/atencion_v2` ahora
+devuelven además `evaluadas` y `con_alerta`: la lista que se muestra está
+recortada al tope de pantalla (15 por defecto, ⚙ Configuración), y ese tope es
+un techo, no una medida: el viejo indicador "15 vacas a revisar" era siempre 15.
+OJO al leer el experimental en la copia local de desarrollo: dio 77%
+(1.282 de 1.656) contra 11% del clásico; con los datos de esa copia (cortan el
+30/07) no se pudo confirmar si es un artefacto de la foto o el comportamiento
+real del índice. Mirarlo en producción antes de interpretarlo.
+
+Tres cosas que salen de tener las tarjetas en pestañas ocultas: (1) **un
+gráfico que se dibuja con su tarjeta oculta queda de 0x0** (medido), así que
+al cambiar de pestaña se le pide `resize()` a todos; (2) **las cámaras de
+Problemas podales refrescan cada 4 s solo mientras se mira SU pestaña**, no
+mientras se mira cualquier cosa de Salud; (3) los datos de todas las secciones
+se siguen cargando juntos (los indicadores de arriba los necesitan), solo cambia
+qué se ve.
+
+La pestaña de **Células somáticas** junta el último control por rodeo, las
+vacas con RCS > 300.000 y el **Análisis de RCS**: el RCS de los controles
+lecheros en el tiempo, por rodeo, con rango de fechas elegible y comparación
+contra otro período (el anterior de igual duración, otro rango, o ninguno).
 
 **EL RODEO ES EL DEL DÍA DEL CONTROL, no el de hoy.** Medido en La Ponderosa:
 los 10.840 controles tienen su `AnimalDaily` enlazado, y **solo el 20% de las

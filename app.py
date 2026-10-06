@@ -2420,8 +2420,14 @@ def api_salud_atencion():
     data, espera = _servir_cacheado(tambo, "salud_atencion", "Calculando índice de atención…", sql)
     if espera:
         return espera
-    fichas = salud.calcular_atencion(data["columns"], data["rows"], top=_top_atencion_de(tambo))
-    return jsonify({"vacas": fichas, "estimacion_propia": True})
+    # Se calcula la lista COMPLETA y recién después se recorta al tope de
+    # pantalla: el Resumen necesita "cuántas vacas tienen alguna señal" sobre
+    # "cuántas se evaluaron" (un porcentaje real), y el tope solo dice cuántas
+    # entran en pantalla -- 15 es un techo, no una medida.
+    todas = salud.calcular_atencion(data["columns"], data["rows"], top=len(data["rows"]) or 1)
+    return jsonify({"vacas": todas[:_top_atencion_de(tambo)],
+                    "evaluadas": len(data["rows"]), "con_alerta": len(todas),
+                    "estimacion_propia": True})
 
 
 @app.get("/api/salud/atencion_v2")
@@ -2454,11 +2460,13 @@ def api_salud_atencion_v2():
     madres = _historia_madres(tambo)
     rutas_gen = configuracion_tambo.rutas_toros(tambo)
     buscar_toro = genetica.buscador(rutas_gen)
-    fichas = salud.calcular_atencion_v2(
-        data["columns"], data["rows"], top=_top_atencion_de(tambo),
+    todas = salud.calcular_atencion_v2(
+        data["columns"], data["rows"], top=len(data["rows"]) or 1,
         genetica_fn=lambda p, m: herencia.de(buscar_toro, madres, p, m))
+    fichas = todas[:_top_atencion_de(tambo)]   # tope de pantalla; el total va aparte (ver arriba)
     gen = genetica.resumen(rutas_gen)
-    return jsonify({"vacas": fichas, "experimental": True,
+    return jsonify({"vacas": fichas, "evaluadas": len(data["rows"]), "con_alerta": len(todas),
+                    "experimental": True,
                     "incluye_alarmas_equipo": con_alarmas,
                     "genetica": {
                         "toros": gen["toros"], "con_riesgo": gen["con_riesgo"],

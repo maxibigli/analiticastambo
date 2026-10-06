@@ -790,6 +790,24 @@
     min-width: 118px; text-align: center;
   }
   .cam-modal-jog { width: 200px; max-width: 50vw; }
+  /* Salud del rodeo > Resumen: una tarjeta por sección, que abre su pestaña */
+  .salud-res-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .salud-res-card {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: left;
+    padding: 14px 16px; background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 12px; color: var(--text-primary); font: inherit; cursor: pointer;
+    transition: border-color .15s, transform .15s;
+  }
+  .salud-res-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .salud-res-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .salud-res-card.nd { cursor: default; opacity: .55; }
+  .salud-res-card.nd:hover { border-color: var(--border); transform: none; }
+  .salud-res-titulo { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--text-secondary); }
+  .salud-res-valor { font-family: var(--lac-font-display); font-size: 34px; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .salud-res-barra { display: block; width: 100%; height: 6px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+  .salud-res-barra > i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+  .salud-res-sub { font-size: 12.5px; color: var(--text-secondary); line-height: 1.35; }
+  .salud-res-ver { margin-top: auto; font-size: 12.5px; color: var(--accent); font-weight: 600; }
   /* Sistema: shell + sidebar + topbar */
   .app-shell { display: flex; min-height: 100vh; align-items: stretch; }
   .sidebar {
@@ -2621,20 +2639,29 @@
         <span class="aviso">Réplica del reporte Chi con los datos de la base.</span>
         <button class="secundario" id="salud-refrescar" style="margin-left:auto">Actualizar</button>
       </div>
-      <div class="gauge-row" id="salud-kpis" style="margin-top:12px"></div>
       <div class="aviso" id="salud-estado" style="margin-top:8px"></div>
     </section>
 
-    {# Mismo patrón que #rutina-tabs / #repro-tabs. Los indicadores de arriba
-       quedan fijos en las dos pestañas. #}
-    <div class="lac-segment" id="salud-tabs" role="group" aria-label="Sección" style="margin-bottom:14px">
+    {# Mismo patrón que #rutina-tabs / #repro-tabs. #}
+    <div class="lac-segment" id="salud-tabs" role="group" aria-label="Sección"
+         style="margin-bottom:14px;flex-wrap:wrap;max-width:100%;border-radius:18px">
       <button class="lac-segment__item" data-tab="resumen" aria-pressed="true">🩺 Resumen</button>
-      <button class="lac-segment__item" data-tab="rcs" aria-pressed="false">🧫 Análisis de RCS</button>
+      <button class="lac-segment__item" data-tab="atencion" aria-pressed="false">🐄 Atención vacas</button>
+      <button class="lac-segment__item" data-tab="atencion2" aria-pressed="false">🧪 Atención (experimental)</button>
+      <button class="lac-segment__item" data-tab="rcs" aria-pressed="false">🧫 Células somáticas (RCS)</button>
+      <button class="lac-segment__item" data-tab="bcs" aria-pressed="false">⚖️ Condición corporal</button>
+      <button class="lac-segment__item" data-tab="cond" aria-pressed="false">⚡ Conductividad</button>
+      <button class="lac-segment__item" data-tab="prod" aria-pressed="false">🥛 Producción de leche</button>
+      <button class="lac-segment__item" data-tab="podal" aria-pressed="false">🦶 Problemas podales</button>
     </div>
 
     {# El anillo de "Composición del rodeo" vivía en el Dashboard; se sacó de
        ahí (lo reemplazó el ranking por grupo) y se movió acá, que es donde
        encaja: es composición del rodeo, no producción. #}
+    {# Resumen: una tarjeta por sección, con su porcentaje, que lleva a la
+       pestaña de esa sección. Ver pintarSaludResumen. #}
+    <div class="salud-res-grid" id="salud-resumen-card"></div>
+
     <section class="card" id="salud-composicion-card">
       <h2 style="margin:0">Composición del rodeo</h2>
       <div class="aviso" id="salud-composicion-info" style="margin-top:6px"></div>
@@ -8795,47 +8822,146 @@ function pintarVumetros(contId, specs) {
   document.getElementById(contId).innerHTML = specs.map(s => vumetroHTML(s.key, s)).join('');
 }
 
-function pintarSaludGauges(atencion, atencion2, rcsGrupo, bcs, podalEstado, podalVacas) {
-  const specs = [];
-  if (atencion) {
-    const n = (atencion.vacas || []).length;
-    specs.push({ key: 'salud-atencion', valor: n, min: 0, max: 15,
-      label: 'Atención (clásico)', sub: 'vacas a revisar', target: 'salud-atencion-card' });
+// Resumen de Salud: una tarjeta por sección con SU porcentaje, que abre la
+// pestaña de esa sección. `d` trae lo que ya cargó cada sección (null si no
+// llegó) y `listos[i]` dice si esa sección TERMINÓ (ver el orden de SECCIONES
+// en cargarSalud): terminada y sin datos = "no disponible" (p.ej. la sala no
+// tiene cámara BCS), no terminada = "calculando".
+//
+// A propósito NO hay colores de semáforo: ninguno de estos porcentajes tiene un
+// umbral confirmado por el tambo, y ponerle verde/rojo a un número sin umbral
+// es inventarlo. La barra solo muestra la proporción.
+function pintarSaludResumen(d, listos) {
+  const fmt1 = n => (Math.round(n * 10) / 10).toLocaleString('es-AR');
+  const pct = (a, b) => b ? 100 * a / b : null;
+  const cartas = [];
+  const base = (tab, titulo, i) => ({ tab, titulo, estado: listos[i] ? 'nd' : 'calc' });
+
+  // Atención (clásico y experimental): vacas con alguna señal / vacas evaluadas.
+  for (const [clave, tab, titulo, i, motivo] of [['atencion', 'atencion', 'Atención vacas', 0, 'con alguna señal'],
+                                                  ['atencion2', 'atencion2', 'Atención (experimental)', 1, 'con score ≥ 2 (experimental)']]) {
+    const c = base(tab, titulo, i), x = d[clave];
+    if (x) {
+      const n = x.con_alerta ?? (x.vacas || []).length, tot = x.evaluadas;
+      c.estado = 'ok';
+      if (tot) { c.pct = pct(n, tot); c.sub = `${n.toLocaleString('es-AR')} de ${tot.toLocaleString('es-AR')} vacas ${motivo}`; }
+      else { c.valorTxt = String(n); c.sub = 'vacas a revisar'; }
+    }
+    cartas.push(c);
   }
-  if (atencion2) {
-    const n = (atencion2.vacas || []).length;
-    specs.push({ key: 'salud-atencion2', valor: n, min: 0, max: 15,
-      label: 'Atención (experimental)', sub: 'en validación de campo', target: 'salud-atencion2-card' });
+
+  // Células somáticas: % de vacas con RCS > 300.000 en su último control.
+  {
+    const c = base('rcs', 'Células somáticas', 2), x = d.rcsGrupo;
+    if (x && x.filas) {
+      const tot = x.filas.reduce((a, f) => a + (f.vacas || 0), 0);
+      const altas = x.filas.reduce((a, f) => a + (f.altas_ultimo || 0), 0);
+      const nuevas = x.filas.reduce((a, f) => a + (f.nuevas || 0), 0);
+      c.estado = 'ok'; c.pct = pct(altas, tot);
+      c.sub = `${altas} de ${tot.toLocaleString('es-AR')} vacas con RCS > 300.000 · ${nuevas} casos nuevos`;
+    }
+    cartas.push(c);
   }
-  if (rcsGrupo && rcsGrupo.filas) {
-    const tot = rcsGrupo.filas.reduce((a, f) => a + (f.vacas || 0), 0);
-    const altas = rcsGrupo.filas.reduce((a, f) => a + (f.altas_ultimo || 0), 0);
-    const nuevas = rcsGrupo.filas.reduce((a, f) => a + (f.nuevas || 0), 0);
-    const pctAltas = tot ? Math.round(100 * altas / tot) : 0;
-    specs.push({ key: 'salud-rcs-pct', valor: pctAltas, min: 0, max: 100, unidad: '%',
-      label: 'RCS > 300.000', sub: `${altas} vacas`, target: 'salud-rcs-grupo-card' });
-    specs.push({ key: 'salud-rcs-nuevas', valor: nuevas, min: 0, max: 30,
-      label: 'Casos nuevos RCS', sub: 'vs. control anterior', target: 'salud-rcs-grupo-card' });
+
+  // Condición corporal: % de vacas fuera de su rango para el DEL (el backend
+  // ya compara contra la curva objetivo; sin DEL no hay con qué comparar).
+  {
+    const c = base('bcs', 'Condición corporal', 4), x = d.bcs;
+    if (x && x.vacas) {
+      const evaluables = x.vacas.filter(v => v.fuera_de_rango != null);
+      const fuera = evaluables.filter(v => v.fuera_de_rango).length;
+      c.estado = 'ok'; c.pct = pct(fuera, evaluables.length);
+      c.sub = `${fuera.toLocaleString('es-AR')} de ${evaluables.length.toLocaleString('es-AR')} vacas fuera de su rango para el DEL`;
+    } else if (listos[4]) c.sub = 'esta sala no tiene cámara BCS';
+    cartas.push(c);
   }
-  if (bcs && bcs.vacas) {
-    // `fuera_de_rango` ya viene calculado del backend contra la curva objetivo
-    // por DEL de cada vaca (ver salud.objetivo_bcs) — acá no se recalcula nada.
-    const n = bcs.vacas.filter(v => v.fuera_de_rango).length;
-    specs.push({ key: 'bcs', valor: n, min: 0, max: 30,
-      label: 'Fuera de score (BCS)', sub: 'para su DEL', target: 'salud-bcs-card' });
+
+  // Conductividad: % de ordeños con conductividad relativa > umbral, el último
+  // día COMPLETO (el último suele estar a medio cargar: se descarta con el
+  // mismo criterio que la estadística de producción, 60% de lo habitual).
+  {
+    const c = base('cond', 'Conductividad', 5), x = d.cond;
+    if (x && x.rows && x.rows.length) {
+      const ix = Object.fromEntries(x.columns.map((n, k) => [n, k]));
+      const dias = {};
+      for (const r of x.rows) {
+        const f = String(r[ix.fecha]).slice(0, 10);
+        dias[f] = dias[f] || { n: 0, altas: 0 };
+        dias[f].n += r[ix.ordenos] || 0; dias[f].altas += r[ix.vacas_altas] || 0;
+      }
+      const cuentas = Object.values(dias).map(v => v.n).sort((a, b) => a - b);
+      const tipico = cuentas[Math.floor(cuentas.length / 2)] || 0;
+      const fechas = Object.keys(dias).filter(f => dias[f].n >= tipico * 0.6).sort();
+      const f = fechas[fechas.length - 1];
+      if (f) {
+        c.estado = 'ok'; c.pct = pct(dias[f].altas, dias[f].n);
+        c.sub = `de los ordeños del ${f.split('-').reverse().join('/')} con conductividad > ${x.umbral ?? 115}`;
+      }
+    }
+    cartas.push(c);
   }
-  // Placeholders: sensores todavía no instalados/conectados en este tambo.
-  specs.push({ key: 'rumia', disabled: true, label: 'Rumia', sub: 'collar DeLaval (a conectar)' });
-  specs.push({ key: 'ingesta', disabled: true, label: 'Ingesta', sub: 'collar DeLaval (a conectar)' });
-  if (podalEstado && podalEstado.habilitado) {
-    const n = (podalVacas || []).length;
-    specs.push({ key: 'podal', valor: n, min: 0, max: 10,
-      label: 'Problemas podales', sub: 'vacas con alerta', target: 'salud-podal-card' });
-  } else {
-    specs.push({ key: 'podal', disabled: true, label: 'Problemas podales', sub: 'cámaras rotativa (a instalar)' });
+
+  // Producción: variación del kg por ordeño del tambo, último día completo
+  // contra el anterior (ponderada por ordeños de cada rodeo).
+  {
+    const c = base('prod', 'Producción de leche', 6), x = d.prod;
+    if (x && x.rodeos) {
+      const tot = periodo => {
+        let kg = 0, n = 0;
+        for (const r of x.rodeos) {
+          const f = (r.filas || []).find(f => f.periodo === periodo);
+          if (f && f.kg_por_ordeno != null && f.ordenos) { kg += f.kg_por_ordeno * f.ordenos; n += f.ordenos; }
+        }
+        return n ? kg / n : null;
+      };
+      const hoy = tot('Últimas 24 h'), ayer = tot('Ayer');
+      if (hoy != null && ayer) {
+        const v = 100 * (hoy - ayer) / ayer;
+        c.estado = 'ok'; c.valorTxt = `${v > 0 ? '+' : ''}${fmt1(v)}%`; c.sinBarra = true;
+        c.sub = `kg por ordeño del tambo (${fmt1(hoy)} kg) vs. el día anterior (${fmt1(ayer)} kg)`;
+      }
+    }
+    cartas.push(c);
   }
-  pintarVumetros('salud-kpis', specs);
+
+  // Problemas podales: sin denominador (la cámara solo lista las vacas con
+  // alerta), así que va la cantidad y no un porcentaje inventado.
+  {
+    const c = base('podal', 'Problemas podales', 7);
+    if (d.podalEstado && d.podalEstado.habilitado) {
+      const n = (d.podalVacas || []).length;
+      c.estado = 'ok'; c.valorTxt = String(n); c.sinBarra = true; c.sub = 'vacas con alerta (la cámara no informa el total evaluado)';
+    } else if (d.podalEstado) { c.estado = 'nd'; c.sub = 'cámaras de la rotativa (a instalar)'; }
+    cartas.push(c);
+  }
+  // Placeholders: sensores todavía no conectados en este tambo.
+  cartas.push({ tab: null, titulo: 'Rumia', estado: 'nd', sub: 'collar DeLaval (a conectar)' });
+  cartas.push({ tab: null, titulo: 'Ingesta', estado: 'nd', sub: 'collar DeLaval (a conectar)' });
+
+  document.getElementById('salud-resumen-card').innerHTML = cartas.map(c => {
+    const nd = c.estado === 'nd' || !c.tab;
+    const valor = c.estado === 'ok' ? (c.valorTxt ?? (c.pct == null ? '—' : fmt1(c.pct) + '%'))
+                : c.estado === 'calc' ? '…' : '—';
+    const sub = c.estado === 'calc' ? 'calculando…' : (c.sub || 'sin datos');
+    const barra = (c.estado === 'ok' && c.pct != null && !c.sinBarra)
+      ? `<span class="salud-res-barra"><i style="width:${Math.min(100, Math.max(0, c.pct))}%"></i></span>` : '';
+    const ver = nd ? '' : '<span class="salud-res-ver">Ver detalle ›</span>';
+    const attrs = nd ? '' : ` data-tab="${c.tab}"`;
+    return `<${nd ? 'div' : 'button type="button"'} class="salud-res-card${nd ? ' nd' : ''}"${attrs}>
+      <span class="salud-res-titulo">${escHtml(c.titulo)}</span>
+      <span class="salud-res-valor">${valor}</span>${barra}
+      <span class="salud-res-sub">${escHtml(sub)}</span>${ver}
+    </${nd ? 'div' : 'button'}>`;
+  }).join('');
 }
+
+document.getElementById('salud-resumen-card')?.addEventListener('click', ev => {
+  const card = ev.target.closest('[data-tab]');
+  if (!card) return;
+  activarTabSalud(card.dataset.tab);
+  document.getElementById('salud-tabs')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+});
+
 
 function pintarPodalCamaras(estado) {
   const cont = document.getElementById('podal-camaras');
@@ -9014,13 +9140,19 @@ async function cargarComposicionRodeo() {
 // El reintento SÍ pasa `false`: ahí no hay que borrar lo que ya cargó bien
 // solo porque una sección lenta todavía no terminó.
 // --- Pestañas de "Salud del rodeo" -----------------------------------------
-// Los indicadores de arriba (#salud-kpis-card) quedan en las dos. Cada pestaña
-// es la lista de tarjetas que muestra; las demás se ocultan.
+// Cada pestaña es la lista de tarjetas que muestra; las demás se ocultan. El
+// encabezado (título, Actualizar, estado) queda fijo en todas.
 const SALUD_TABS = {
-  resumen: ['salud-composicion-card', 'salud-atencion-card', 'salud-atencion2-card',
-            'salud-bcs-card', 'salud-rcs-grupo-card', 'salud-rcs-vacas-card',
-            'salud-cond-card', 'salud-prod-card', 'salud-podal-card'],
-  rcs: ['salud-rcs-analisis-card'],
+  resumen: ['salud-resumen-card', 'salud-composicion-card'],
+  atencion: ['salud-atencion-card'],
+  atencion2: ['salud-atencion2-card'],
+  // Todo lo de células somáticas junto: el último control por rodeo, las vacas
+  // con RCS alto, y el análisis en el tiempo.
+  rcs: ['salud-rcs-grupo-card', 'salud-rcs-vacas-card', 'salud-rcs-analisis-card'],
+  bcs: ['salud-bcs-card'],
+  cond: ['salud-cond-card'],
+  prod: ['salud-prod-card'],
+  podal: ['salud-podal-card'],
 };
 let saludTabActual = 'resumen';
 
@@ -9034,17 +9166,25 @@ function activarTabSalud(tab) {
     if (el) el.hidden = clave !== tab;
   }));
   if (tab === 'rcs') cargarSaludRcsHist();
+  // Las cámaras de "Problemas podales" refrescan cada pocos segundos: solo
+  // mientras esa pestaña se está mirando.
+  if (tab === 'podal' && paginaActual === 'salud') iniciarPodalVivo(); else detenerPodalVivo();
+  // Un gráfico que se dibujó con su tarjeta oculta quedó con tamaño 0:
+  // al mostrarla hay que pedirle que se mida de nuevo.
+  requestAnimationFrame(() => Object.values(Chart.instances).forEach(c => c.resize()));
 }
 
 document.getElementById('salud-tabs')?.addEventListener('click', ev => {
   const btn = ev.target.closest('[data-tab]');
   if (btn) activarTabSalud(btn.dataset.tab);
 });
+activarTabSalud('resumen');   // el HTML trae todas las tarjetas visibles: dejar solo las de esta pestaña
 
-// Los indicadores de arriba saltan a una tarjeta del Resumen: si se está en
-// otra pestaña, primero hay que volver a esa, o el destino está oculto.
+// Los indicadores de arriba saltan a una tarjeta: si está en otra pestaña,
+// primero hay que ir a esa, o el destino está oculto.
 function irASeccionSalud(id) {
-  if (saludTabActual !== 'resumen') activarTabSalud('resumen');
+  const tab = Object.keys(SALUD_TABS).find(t => SALUD_TABS[t].includes(id));
+  if (tab && tab !== saludTabActual) activarTabSalud(tab);
   document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -9265,7 +9405,7 @@ async function cargarSalud(limpiar = true) {
   const estado = document.getElementById('salud-estado');
   estado.textContent = 'Cargando…';
   let atencionD = null, atencion2D = null, rcsGrupoD = null, bcsD = null,
-      podalEstadoD = null, podalVacasD = null;
+      podalEstadoD = null, podalVacasD = null, condD = null, prodD = null;
   const SECCIONES = [
     { url: '/api/salud/atencion', destino: 'salud-atencion-cuerpo', pintar: d => {
       atencionD = d; pintarSaludAtencion(d);
@@ -9280,8 +9420,12 @@ async function cargarSalud(limpiar = true) {
     { url: '/api/salud/bcs_vacas', destino: 'bcs-fuera-cuerpo', pintar: d => {
       bcsD = d; pintarSaludBcs(d);
     } },
-    { url: '/api/salud/conductividad', destino: null, pintar: pintarSaludConductividad },
-    { url: '/api/salud/produccion_rodeo', destino: 'salud-prod-cuerpo', pintar: pintarSaludProduccion },
+    { url: '/api/salud/conductividad', destino: null, pintar: d => {
+      condD = d; pintarSaludConductividad(d);
+    } },
+    { url: '/api/salud/produccion_rodeo', destino: 'salud-prod-cuerpo', pintar: d => {
+      prodD = d; pintarSaludProduccion(d);
+    } },
     { url: '/api/podal/estado', destino: 'podal-camaras', pintar: d => {
       podalEstadoD = d; pintarPodalCamaras(d);
     } },
@@ -9290,13 +9434,14 @@ async function cargarSalud(limpiar = true) {
     } },
   ];
   if (limpiar) {
-    document.getElementById('salud-kpis').innerHTML = '';
+    pintarSaludResumen({}, SECCIONES.map(() => false));   // todas "calculando" hasta que lleguen
     for (const s of SECCIONES) {
       if (s.destino) document.getElementById(s.destino).innerHTML = '<div class="aviso">Cargando…</div>';
     }
   }
   const listos = await Promise.all(SECCIONES.map(s => seccionSalud(s.url, s.destino, s.pintar)));
-  pintarSaludGauges(atencionD, atencion2D, rcsGrupoD, bcsD, podalEstadoD, podalVacasD);
+  pintarSaludResumen({ atencion: atencionD, atencion2: atencion2D, rcsGrupo: rcsGrupoD, bcs: bcsD,
+                       cond: condD, prod: prodD, podalEstado: podalEstadoD, podalVacas: podalVacasD }, listos);
   const faltan = listos.filter(x => !x).length;
   estado.textContent = faltan
     ? `Calculando ${faltan} sección(es)… (la base de esta PC es lenta, se reintenta sola)`
@@ -12248,7 +12393,7 @@ function irAPagina(id) {
   if (id !== 'repro') clearTimeout(reproReintento);
   if (id !== 'tablero') clearTimeout(tabReintento);
   // Cámaras y actividad en vivo de "Problemas podales": solo mientras se ve la página.
-  if (id === 'salud') iniciarPodalVivo(); else detenerPodalVivo();
+  if (id === 'salud' && saludTabActual === 'podal') iniciarPodalVivo(); else detenerPodalVivo();
   // Estado en vivo de Monitoreo IoT: solo mientras se ve esa página.
   if (id === 'iot') iniciarIotVivo(); else detenerIotVivo();
 }
