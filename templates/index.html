@@ -800,6 +800,8 @@
   }
   .salud-res-card:hover { border-color: var(--accent); transform: translateY(-1px); }
   .salud-res-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .salud-res-card.fijo { cursor: default; }
+  .salud-res-card.fijo:hover { border-color: var(--border); transform: none; }
   .salud-res-card.nd { cursor: default; opacity: .55; }
   .salud-res-card.nd:hover { border-color: var(--border); transform: none; }
   .salud-res-titulo { font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--text-secondary); }
@@ -2908,6 +2910,43 @@
         es que mejoró y <span style="color:var(--critical)">rojo</span> que empeoró (para infecciones nuevas y crónicas
         mejorar es bajar; para curación, subir); solo se colorea un cambio de al menos 1 punto y 10%, porque
         estas tasas son más ruidosas que un promedio.
+      </p>
+    </section>
+
+    {# RCS y producción: cuánta leche cuesta el RCS alto. Ver pintarRcsProd. #}
+    <section class="card" id="salud-rcs-prod-card">
+      <h2 style="margin:0">RCS y producción de leche</h2>
+      <span class="aviso">¿Cuánta leche cuesta el RCS alto? Se usa la producción del día del control (kg/día) de cada vaca,
+        en el período elegido arriba. No incluye precio: el valor de la leche y la bonificación por calidad los conoce el tambo.</span>
+      <div class="controls" style="margin-top:12px;gap:12px;flex-wrap:wrap;align-items:center">
+        <label class="aviso" style="display:flex;align-items:center;gap:6px">Comparar contra vacas con RCS de hasta
+          <select id="rcsp-ref" style="padding:6px 8px">
+            <option value="1">100.000</option>
+            <option value="2" selected>200.000</option>
+          </select></label>
+      </div>
+      <div id="rcsp-resumen" style="margin-top:12px"></div>
+      <h3 style="margin:16px 0 4px">Producción según el RCS de la vaca</h3>
+      <span class="aviso">Cada vaca contra el promedio de las vacas sanas de <b>su mismo rodeo, lactancia y tramo de días en leche</b>:
+        sin esa comparación el RCS se mezcla con la etapa de la lactancia (las vacas frescas dan más RCS y más leche a la vez)
+        y con el nivel del rodeo (hay rodeos que se arman por baja producción).</span>
+      <div class="chart-box" style="height:280px;margin-top:10px"><canvas id="chart-rcs-prod"></canvas></div>
+      <div id="rcsp-tabla-banda" style="margin-top:10px"></div>
+      <h3 style="margin:16px 0 4px">Leche que se pierde, por rodeo</h3>
+      <span class="aviso">Solo de las vacas con RCS &gt; 300.000, contra vacas sanas comparables. La pérdida del rodeo es un promedio por
+        control; se calcula sobre las vacas controladas (alrededor del 93% del rodeo en ordeñe).</span>
+      <div id="rcsp-tabla-rodeo" style="margin-top:8px"></div>
+      <h3 style="margin:16px 0 4px">Lo que cuesta una infección nueva, comparada con la misma vaca</h3>
+      <span class="aviso">Cuánto cambia la producción de una vaca de un control al siguiente cuando pasa de sana a alta, contra las que
+        siguen sanas, a igual tramo de días en leche. Entre paréntesis, la cantidad de casos. Es una medida más confiable que la
+        comparación entre vacas, pero con menos casos.</span>
+      <div id="rcsp-tabla-infeccion" style="margin-top:8px"></div>
+      <p class="explica" style="margin-top:10px">
+        <b>Cómo leerlo.</b> Las dos miradas no tienen por qué dar lo mismo: <b>entre vacas</b> mezcla el efecto del RCS con
+        diferencias que la vaca ya tenía (una vaca que viene produciendo menos por otra razón también tiende a tener más RCS),
+        mientras que <b>dentro de la misma vaca</b> solo cuenta el cambio. La segunda es la mejor estimación de lo que cuesta
+        una infección nueva; la primera, de cuánta leche falta hoy en las vacas altas. La referencia (vacas sanas) es el RCS
+        que elegís arriba: con 100.000 se mide contra vacas casi sin infección, con 200.000 es más conservador.
       </p>
     </section>
   </div>
@@ -9194,7 +9233,7 @@ const SALUD_TABS = {
   atencion2: ['salud-atencion2-card'],
   // Todo lo de células somáticas junto: el último control por rodeo, las vacas
   // con RCS alto, y el análisis en el tiempo.
-  rcs: ['salud-rcs-grupo-card', 'salud-rcs-vacas-card', 'salud-rcs-analisis-card', 'salud-rcs-dinamica-card'],
+  rcs: ['salud-rcs-grupo-card', 'salud-rcs-vacas-card', 'salud-rcs-analisis-card', 'salud-rcs-dinamica-card', 'salud-rcs-prod-card'],
   bcs: ['salud-bcs-card'],
   cond: ['salud-cond-card'],
   prod: ['salud-prod-card'],
@@ -9308,7 +9347,7 @@ function iniciarRcsHist() {
   pintarRcsHist();
 }
 
-for (const id of ['rcsh-a-desde', 'rcsh-a-hasta', 'rcsh-b-desde', 'rcsh-b-hasta', 'rcsh-modo', 'rcsh-metrica', 'rcsd-metrica']) {
+for (const id of ['rcsh-a-desde', 'rcsh-a-hasta', 'rcsh-b-desde', 'rcsh-b-hasta', 'rcsh-modo', 'rcsh-metrica', 'rcsd-metrica', 'rcsp-ref']) {
   document.getElementById(id)?.addEventListener('change', () => { if (saludRcsHist) pintarRcsHist(); });
 }
 // Cambiar la agrupación cambia QUÉ SON las series: lo que se ocultó con los chips ya no aplica.
@@ -9472,6 +9511,7 @@ function pintarRcsHist() {
     </tbody></table></div>`;
   pintarRcsMatriz(filas, aD, aH);
   pintarRcsDin(aD, aH, bD, bH, hayB);
+  pintarRcsProd(aD, aH, bD, bH, hayB);
 }
 
 // --- Rodeo × lactancia: ¿el rodeo es "malo" o tiene vacas de otra edad? ----
@@ -9628,6 +9668,208 @@ function pintarRcsDin(aD, aH, bD, bH, hayB) {
     hayB ? `● punto lleno: período elegido · ○ punto hueco: período comparado.` : '',
     omitidos ? `No se grafican ${omitidos} punto(s) de rodeos con menos de ${RCSH_MIN_PUNTO} vacas en la base de esa tasa.` : '',
   ].filter(Boolean).join(' ');
+}
+
+// --- RCS y producción de leche ---------------------------------------------
+// ¿Cuánta leche cuesta el RCS alto? Se usa la producción del DÍA DEL CONTROL
+// (MilkTest.Yield, kg/día; está en el 99,7% de los controles, contra el 67% de
+// AnimalDaily.TotalYield válido). Dos miradas distintas, y conviene mirar las dos:
+//  1) Entre vacas: cada vaca contra el promedio de vacas SANAS de su misma
+//     lactancia y tramo de DEL. Sin esa comparación el RCS y la producción se
+//     mezclan con la etapa de la lactancia (las frescas dan más RCS y más
+//     leche a la vez). Es una asociación: puede haber vacas que ya venían
+//     produciendo menos por otra razón.
+//  2) Dentro de la misma vaca: cuánto cambia su producción de un control al
+//     siguiente cuando pasa de sana a alta, contra las que siguen sanas, a
+//     igual tramo de DEL. Es más confiable, pero con menos casos.
+let chartRcsProd = null;
+
+// kg medio de las vacas "sanas" (RCS hasta la banda `refMax`) de cada
+// (rodeo, lactancia, tramo de DEL) del período, y el mismo promedio sin separar
+// por rodeo. A cada vaca se la compara con las sanas DE SU PROPIO RODEO: los
+// rodeos de este tambo se arman por nivel de producción (Rodeo 4 - Baja, o el
+// Hospital), y contra el promedio de todo el tambo un rodeo de baja producción
+// "perdía" 15 kg por vaca alta sin que el RCS tuviera nada que ver. Si en una
+// celda no hay al menos RCSP_MIN_REF vacas sanas, se cae al promedio del tambo
+// para esa lactancia y tramo de DEL.
+const RCSP_MIN_REF = 10;
+function rcspReferencia(filas, desde, hasta, refMax) {
+  const porRodeo = {}, global = {};
+  const sumar = (o, k, f) => { const a = (o[k] = o[k] || { n: 0, kg: 0 }); a.n += f.n_kg; a.kg += f.suma_kg; };
+  for (const f of filas) {
+    if (f.fecha < desde || f.fecha > hasta || f.bscc > refMax || !f.n_kg) continue;
+    sumar(porRodeo, f.grupo + '|' + f.lact + '|' + f.banda, f);
+    sumar(global, f.lact + '|' + f.banda, f);
+  }
+  return { porRodeo, global };
+}
+// kg esperados de una fila (vacas sanas comparables), o null si no hay con qué comparar.
+function rcspEsperado(ref, f) {
+  const r = ref.porRodeo[f.grupo + '|' + f.lact + '|' + f.banda];
+  if (r && r.n >= RCSP_MIN_REF) return r.kg / r.n;
+  const g = ref.global[f.lact + '|' + f.banda];
+  return g && g.n >= RCSP_MIN_REF ? g.kg / g.n : null;
+}
+
+// Todo lo que se muestra del período, para el tambo entero (rodeo=null) o un rodeo.
+function rcspAnalizar(filas, desde, hasta, refMax, ref, rodeo) {
+  const porBanda = {};
+  let nTot = 0, kgTot = 0, nAltas = 0, perdAltas = 0;
+  const fechas = new Set();
+  for (const f of filas) {
+    if (f.fecha < desde || f.fecha > hasta || !f.n_kg) continue;
+    if (rodeo != null && f.grupo !== rodeo) continue;
+    fechas.add(f.fecha);
+    const esperado = rcspEsperado(ref, f);
+    if (esperado == null) continue;   // sin vacas sanas comparables: no se puede estimar
+    const b = (porBanda[f.bscc] = porBanda[f.bscc] || { n: 0, kg: 0, esp: 0 });
+    b.n += f.n_kg; b.kg += f.suma_kg; b.esp += f.n_kg * esperado;
+    nTot += f.n_kg; kgTot += f.suma_kg;
+    if (f.bscc >= 4) { nAltas += f.n_kg; perdAltas += f.n_kg * esperado - f.suma_kg; }
+  }
+  return { porBanda, nTot, kgTot, nAltas, perdAltas, controles: fechas.size };
+}
+
+// Efecto de pasar de sana a alta (y de curarse) comparado con los que no
+// cambiaron de estado, a igual tramo de DEL, en kg/día por vaca.
+function rcspEfectoDentro(dinFilas, desde, hasta, rodeo) {
+  const ss = {}, nu = {}, cu = {}, cr = {};
+  const suma = (o, b, f) => { const a = (o[b] = o[b] || { n: 0, d: 0 }); a.n += f.n_dkg; a.d += f.dkg; };
+  for (const f of dinFilas) {
+    if (f.tipo !== 'intra' || f.fecha < desde || f.fecha > hasta || !f.n_dkg) continue;
+    if (rodeo != null && f.grupo !== rodeo) continue;
+    suma(!f.prev_alta ? (!f.curr_alta ? ss : nu) : (!f.curr_alta ? cu : cr), f.banda, f);
+  }
+  // diferencia de medias por tramo de DEL, ponderada por los casos del grupo de interés
+  const efecto = (caso, ref) => {
+    let num = 0, den = 0;
+    for (const [b, c] of Object.entries(caso)) {
+      const r = ref[b];
+      if (c.n && r && r.n) { num += c.n * (c.d / c.n - r.d / r.n); den += c.n; }
+    }
+    return den ? { kg: num / den, n: den } : null;
+  };
+  return { nueva: efecto(nu, ss), curada: efecto(cu, cr) };
+}
+
+function pintarRcsProd(aD, aH, bD, bH, hayB) {
+  const cont = document.getElementById('rcsp-resumen');
+  const filas = saludRcsHist.filas || [];
+  if (!filas.some(f => f.n_kg)) {
+    cont.innerHTML = '<div class="aviso">Los controles de este tambo no traen producción del día.</div>';
+    for (const id of ['rcsp-tabla-banda', 'rcsp-tabla-rodeo', 'rcsp-tabla-infeccion']) document.getElementById(id).innerHTML = '';
+    return;
+  }
+  const refMax = Number(document.getElementById('rcsp-ref').value);
+  const bandas = saludRcsHist.bandas_scc || {};
+  const fmt1 = n => (Math.round(n * 10) / 10).toLocaleString('es-AR');
+  const signo = n => (n > 0 ? '+' : '') + fmt1(n);
+  const refA = rcspReferencia(filas, aD, aH, refMax), refB = hayB ? rcspReferencia(filas, bD, bH, refMax) : null;
+  const A = rcspAnalizar(filas, aD, aH, refMax, refA, null);
+  const B = hayB ? rcspAnalizar(filas, bD, bH, refMax, refB, null) : null;
+  if (!A.nTot) {
+    cont.innerHTML = '<div class="aviso">No hay controles con producción en ese rango de fechas.</div>';
+    for (const id of ['rcsp-tabla-banda', 'rcsp-tabla-rodeo', 'rcsp-tabla-infeccion']) document.getElementById(id).innerHTML = '';
+    if (chartRcsProd) { chartRcsProd.destroy(); chartRcsProd = null; }
+    return;
+  }
+
+  // --- Cifras principales (período elegido; entre paréntesis, el comparado)
+  const perdPorVaca = x => x && x.nAltas ? x.perdAltas / x.nAltas : null;
+  const perdDia = x => x && x.controles ? x.perdAltas / x.controles : null;
+  const pctProd = x => x && x.kgTot ? 100 * x.perdAltas / x.kgTot : null;
+  const antes = (b, txt) => (hayB && b != null) ? ` <span class="aviso">(comparado: ${txt(b)})</span>` : '';
+  const dentro = rcspEfectoDentro((saludRcsDin && saludRcsDin.filas) || [], aD, aH, null);
+  const dentroB = hayB ? rcspEfectoDentro((saludRcsDin && saludRcsDin.filas) || [], bD, bH, null) : null;
+  const carta = (titulo, valor, sub) => `<div class="salud-res-card fijo"><span class="salud-res-titulo">${titulo}</span>
+      <span class="salud-res-valor">${valor}</span><span class="salud-res-sub">${sub}</span></div>`;
+  cont.className = 'salud-res-grid';
+  const kgAltasReal = Object.entries(A.porBanda).filter(([b]) => b >= 4).reduce((s, [, v]) => s + v.kg, 0);
+  const kgAltasEsp = Object.entries(A.porBanda).filter(([b]) => b >= 4).reduce((s, [, v]) => s + v.esp, 0);
+  const pctAltas = kgAltasEsp ? 100 * (kgAltasReal - kgAltasEsp) / kgAltasEsp : null;
+  cont.innerHTML =
+    carta('Vacas con RCS > 300.000', fmt1(100 * A.nAltas / A.nTot) + '%',
+          `${A.nAltas.toLocaleString('es-AR')} de ${A.nTot.toLocaleString('es-AR')} vacas controladas` + antes(B, x => fmt1(100 * x.nAltas / x.nTot) + '%')) +
+    carta('Producen de menos', `${fmt1(perdPorVaca(A) ?? 0)} kg/día`,
+          `por vaca, contra vacas sanas comparables (${pctAltas == null ? '—' : signo(pctAltas) + '%'})` + antes(B, x => fmt1(perdPorVaca(x) ?? 0) + ' kg/día')) +
+    carta('Leche que se pierde en el tambo', `${Math.round(perdDia(A) ?? 0).toLocaleString('es-AR')} kg/día`,
+          `${fmt1(pctProd(A) ?? 0)}% de la producción controlada, promedio por control` + antes(B, x => Math.round(perdDia(x) ?? 0).toLocaleString('es-AR') + ' kg/día')) +
+    carta('Una infección nueva cuesta',
+          dentro.nueva ? `${fmt1(-dentro.nueva.kg)} kg/día` : '—',
+          dentro.nueva ? `por vaca, comparada con sí misma (sobre ${dentro.nueva.n.toLocaleString('es-AR')} casos)` + antes(dentroB && dentroB.nueva, x => fmt1(-x.kg) + ' kg/día')
+                       : 'sin casos suficientes en el período');
+
+  // --- Producción según el RCS de la vaca (gráfico + tabla)
+  const claves = [1, 2, 3, 4, 5, 6];
+  const difDe = (x, b) => { const v = x && x.porBanda[b]; return v && v.n ? v.kg / v.n - v.esp / v.n : null; };
+  const colorBarra = css('--accent') || '#38bdf8';
+  const datasets = [{ label: 'Período elegido', data: claves.map(b => { const d = difDe(A, b); return d == null ? null : Math.round(d * 10) / 10; }),
+                      backgroundColor: colorBarra }];
+  if (hayB) datasets.push({ label: 'Período comparado', data: claves.map(b => { const d = difDe(B, b); return d == null ? null : Math.round(d * 10) / 10; }),
+                            backgroundColor: 'rgba(148,163,184,.55)' });
+  const opts = baseOpts(hayB);
+  opts.plugins.tooltip = { callbacks: { label: c => c.parsed.y == null ? null
+    : `${c.dataset.label}: ${c.parsed.y > 0 ? '+' : ''}${c.parsed.y.toLocaleString('es-AR')} kg/día` } };
+  opts.scales.y.title = { display: true, text: 'kg/día contra vacas sanas comparables' };
+  opts.scales.y.beginAtZero = false;
+  if (chartRcsProd) chartRcsProd.destroy();
+  chartRcsProd = new Chart(document.getElementById('chart-rcs-prod'), {
+    type: 'bar', data: { labels: claves.map(b => bandas[b] || b), datasets }, options: opts });
+
+  const celdaBanda = (x, b) => {
+    const v = x && x.porBanda[b];
+    if (!v || !v.n) return '<td colspan="3" class="aviso">sin vacas</td>';
+    const dif = (v.kg - v.esp) / v.n, pct = v.esp ? 100 * (v.kg - v.esp) / v.esp : 0;
+    const aviso = v.n < RCSH_MIN_MUESTRAS ? ' <span title="Pocas vacas: poco confiable" style="cursor:help">⚠</span>' : '';
+    const color = b <= refMax ? '' : (dif < 0 ? 'color:var(--critical);font-weight:600' : '');
+    return `<td>${v.n.toLocaleString('es-AR')}${aviso}<br><span class="aviso">${fmt1(100 * v.n / x.nTot)}% de las vacas</span></td>
+      <td>${fmt1(v.kg / v.n)} kg<br><span class="aviso">esperado ${fmt1(v.esp / v.n)} kg</span></td>
+      <td style="${color}">${signo(dif)} kg<br><span class="aviso">${signo(pct)}%</span></td>`;
+  };
+  document.getElementById('rcsp-tabla-banda').innerHTML = `<div class="tabla-scroll"><table><thead>
+      <tr><th rowspan="2">RCS de la vaca</th><th colspan="3">Período elegido</th>${hayB ? '<th colspan="3">Período comparado</th>' : ''}</tr>
+      <tr><th>Vacas</th><th>Producción</th><th>Diferencia</th>${hayB ? '<th>Vacas</th><th>Producción</th><th>Diferencia</th>' : ''}</tr>
+      </thead><tbody>${claves.map(b => `<tr><td style="white-space:nowrap"><b>${escHtml(bandas[b] || String(b))}</b>${b <= refMax ? ' <span class="aviso">(referencia)</span>' : ''}</td>${celdaBanda(A, b)}${hayB ? celdaBanda(B, b) : ''}</tr>`).join('')}
+      </tbody></table></div>`;
+
+  // --- Leche que se pierde, por rodeo
+  const rodeos = [];
+  for (const f of filas.filter(f => (f.fecha >= aD && f.fecha <= aH) || (hayB && f.fecha >= bD && f.fecha <= bH)).sort((x, y) => x.numero - y.numero)) {
+    if (!rodeos.includes(f.grupo)) rodeos.push(f.grupo);
+  }
+  const celdaRodeo = x => {
+    if (!x || !x.nTot) return '<td colspan="4" class="aviso">sin controles</td>';
+    const aviso = x.nAltas < RCSH_MIN_MUESTRAS ? ' <span title="Pocas vacas altas: el promedio es poco confiable" style="cursor:help">⚠</span>' : '';
+    return `<td>${fmt1(100 * x.nAltas / x.nTot)}%<br><span class="aviso">${x.nAltas.toLocaleString('es-AR')} de ${x.nTot.toLocaleString('es-AR')}</span></td>
+      <td>${x.nAltas ? fmt1(x.perdAltas / x.nAltas) + ' kg' : '—'}${aviso}</td>
+      <td><b>${Math.round(perdDia(x) ?? 0).toLocaleString('es-AR')} kg/día</b></td>
+      <td>${fmt1(pctProd(x) ?? 0)}%</td>`;
+  };
+  // La pérdida "por control" de cada rodeo se divide por los controles del PERÍODO
+  // (no por los que tuvo ese rodeo): así la suma de los rodeos da la del tambo.
+  const deRodeo = (total, d, h, ref, r) => { const x = rcspAnalizar(filas, d, h, refMax, ref, r); x.controles = total.controles; return x; };
+  const filaRodeo = (nombre, a, b) => `<tr><td style="white-space:nowrap"><b>${escHtml(nombre)}</b></td>${celdaRodeo(a)}${hayB ? celdaRodeo(b) : ''}</tr>`;
+  document.getElementById('rcsp-tabla-rodeo').innerHTML = `<div class="tabla-scroll"><table><thead>
+      <tr><th rowspan="2">Rodeo</th><th colspan="4">Período elegido</th>${hayB ? '<th colspan="4">Período comparado</th>' : ''}</tr>
+      <tr>${(hayB ? [0, 1] : [0]).map(() => '<th>Vacas &gt; 300.000</th><th>Por vaca alta</th><th>Pérdida del rodeo</th><th>% de su producción</th>').join('')}</tr>
+      </thead><tbody>${filaRodeo('Todo el tambo', A, B)}
+      ${rodeos.map(r => filaRodeo(r, deRodeo(A, aD, aH, refA, r), hayB ? deRodeo(B, bD, bH, refB, r) : null)).join('')}
+      </tbody></table></div>`;
+
+  // --- Costo de una infección nueva, dentro de la misma vaca
+  const dinFilas = (saludRcsDin && saludRcsDin.filas) || null;
+  const tInf = document.getElementById('rcsp-tabla-infeccion');
+  if (!dinFilas) { tInf.innerHTML = '<div class="aviso">Calculando…</div>'; return; }
+  const celdaEf = e => !e ? '<td class="aviso">—</td>'
+    : `<td>${signo(e.kg)} kg/día <span class="aviso">(${e.n.toLocaleString('es-AR')})</span>${e.n < RCSH_MIN_MUESTRAS ? ' <span title="Pocos casos: poco confiable" style="cursor:help">⚠</span>' : ''}</td>`;
+  const filaEf = (nombre, rodeo) => {
+    const a = rcspEfectoDentro(dinFilas, aD, aH, rodeo), b = hayB ? rcspEfectoDentro(dinFilas, bD, bH, rodeo) : null;
+    return `<tr><td style="white-space:nowrap"><b>${escHtml(nombre)}</b></td>${celdaEf(a.nueva)}${hayB ? celdaEf(b.nueva) : ''}${celdaEf(a.curada)}${hayB ? celdaEf(b.curada) : ''}</tr>`;
+  };
+  tInf.innerHTML = `<div class="tabla-scroll"><table><thead>
+      <tr><th rowspan="${hayB ? 2 : 1}">Rodeo</th><th colspan="${hayB ? 2 : 1}">Vaca que pasa de sana a alta</th><th colspan="${hayB ? 2 : 1}">Vaca que pasa de alta a sana</th></tr>
+      ${hayB ? '<tr><th>Elegido</th><th>Comparado</th><th>Elegido</th><th>Comparado</th></tr>' : ''}
+      </thead><tbody>${filaEf('Todo el tambo', null)}${rodeos.map(r => filaEf(r, r)).join('')}</tbody></table></div>`;
 }
 
 async function cargarSalud(limpiar = true) {

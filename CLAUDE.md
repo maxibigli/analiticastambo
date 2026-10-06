@@ -869,6 +869,41 @@ son más ruidosas que un promedio. En el gráfico no se dibujan puntos con menos
 de 10 vacas en la base. Para infecciones nuevas y crónicas "mejor" es bajar;
 para curación, subir.
 
+### Análisis de RCS: cruce con producción de leche (06/10/2026)
+
+Sección "RCS y producción de leche" en la misma pestaña: cuánta leche cuesta el
+RCS alto. **La producción es `MilkTest.Yield`** (kg/día del día del control):
+está en el 99,7% de los controles, contra el 67% de `AnimalDaily.TotalYield`
+válido, y promedia 40,5 kg. No hay precio: el valor de la leche y la
+bonificación por calidad (La Serenísima) no están en ningún sistema conectado,
+los carga el tambo.
+
+Dos miradas, y conviene leer las dos (no tienen por qué dar lo mismo):
+- **Entre vacas** (`rcspAnalizar`): cada vaca contra el promedio de vacas SANAS
+  de su mismo rodeo, lactancia y tramo de DEL. Medido en la copia local:
+  producción −2,4 kg/día en 101-200.000, −3,4 en 301-500.000 y −4,7 en más de
+  1.000.000; las vacas con RCS > 300.000 (10,2%) producen ~3,8 kg/día menos
+  (−9,9%), unos 454 kg/día en el tambo. Es una asociación: una vaca que ya venía
+  produciendo menos por otra razón también tiende a tener más RCS.
+- **Dentro de la misma vaca** (`rcspEfectoDentro`, usa `dkg`/`n_dkg` de
+  `sql_rcs_dinamica`): cuánto cambia su producción entre controles consecutivos
+  cuando pasa de sana a alta, contra las que siguen sanas, **estandarizado por
+  tramo de DEL**. Una infección nueva cuesta ~2,8 kg/día (368 casos). Sin
+  estandarizar por DEL se subestima: las infecciones nuevas se juntan en las
+  frescas, que todavía están subiendo su producción. Es la mejor estimación de
+  lo que cuesta una infección; la de arriba, de cuánta leche falta hoy.
+
+**La referencia tiene que ser del MISMO RODEO** (medido): la primera versión
+comparaba contra las vacas sanas de todo el tambo y "Rodeo 4 - Baja" salía
+perdiendo 15 kg por vaca alta, porque es un rodeo que se arma por baja
+producción y el RCS no tenía nada que ver. Con la referencia por (rodeo,
+lactancia, DEL) da 2 kg. Si en una celda hay menos de 10 vacas sanas
+(`RCSP_MIN_REF`) se cae al promedio del tambo para esa lactancia y DEL. El
+usuario elige si "sana" es RCS ≤ 100.000 o ≤ 200.000 (por defecto 200.000, el
+más conservador: con 100.000 la pérdida estimada sube de 454 a 525 kg/día). La
+pérdida por rodeo se divide por los controles del PERÍODO, no por los que tuvo
+ese rodeo, para que la suma de los rodeos dé la del tambo (verificado: 454 y 454).
+
 OJO al agregar SQL con `{{` o `{%` dentro de un template literal de JS en
 `index.html`: Jinja lo lee como sintaxis propia y la página entera devuelve
 500 (`${{a: 1}[k]}` rompió el render). Poner un espacio o usar un ternario.

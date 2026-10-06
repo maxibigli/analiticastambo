@@ -170,6 +170,18 @@ MESES_RCS_HISTORICO = 36   # tope de la ventana que se manda al frontend
 # 1: 0-30 (frescas) · 2: 31-100 · 3: 101-200 · 4: 201-305 · 5: más de 305.
 BANDAS_DEL = {1: "0-30", 2: "31-100", 3: "101-200", 4: "201-305", 5: "más de 305"}
 
+# Tramos de RCS (en las unidades de la base: miles de células/ml) para cruzar con
+# producción. Los cortes 300 es el mismo umbral del resto del módulo. La
+# referencia "sana" para medir cuánta leche se pierde es hasta BANDA_SANA_MAX
+# (200.000): por debajo de eso la ubre se considera no infectada.
+# 1: ≤100 · 2: 101-200 · 3: 201-300 · 4: 301-500 · 5: 501-1000 · 6: >1000.
+BANDAS_SCC = {1: "hasta 100.000", 2: "101.000 a 200.000", 3: "201.000 a 300.000",
+              4: "301.000 a 500.000", 5: "501.000 a 1.000.000", 6: "más de 1.000.000"}
+BANDA_SANA_MAX = 2
+_SQL_BANDA_SCC = (f"CASE WHEN mt.SCC <= 100 THEN 1 WHEN mt.SCC <= 200 THEN 2 "
+                  f"WHEN mt.SCC <= {UMBRAL_RCS_BASE} THEN 3 WHEN mt.SCC <= 500 THEN 4 "
+                  f"WHEN mt.SCC <= 1000 THEN 5 ELSE 6 END")
+
 
 def sql_rcs_historico(grupos_sql: str) -> str:
     # Un renglón por (control, rodeo del día, lactancia, tramo de DEL). La
@@ -186,10 +198,13 @@ def sql_rcs_historico(grupos_sql: str) -> str:
                       WHEN ad.LactationNumber IN (1, 2) THEN ad.LactationNumber ELSE 0 END AS lact,
                  CASE WHEN ad.DIM IS NULL THEN 0 WHEN ad.DIM <= 30 THEN 1 WHEN ad.DIM <= 100 THEN 2
                       WHEN ad.DIM <= 200 THEN 3 WHEN ad.DIM <= 305 THEN 4 ELSE 5 END AS banda,
+                 {_SQL_BANDA_SCC} AS bscc,
                  COUNT(*) AS vacas,
                  SUM(CAST(mt.SCC AS float)) AS suma_scc,
                  SUM(CASE WHEN mt.SCC > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END) AS altas,
-                 MAX(mt.SCC) AS maximo
+                 MAX(mt.SCC) AS maximo,
+                 SUM(CASE WHEN mt.Yield > 0 THEN 1 ELSE 0 END) AS n_kg,
+                 SUM(CASE WHEN mt.Yield > 0 THEN CAST(mt.Yield AS float) ELSE 0 END) AS suma_kg
           FROM MilkTest mt
           JOIN AnimalHistoricalData h ON h.OID = mt.OID
           JOIN AnimalDaily ad ON ad.OID = h.AnimalDaily AND ad.GCRecord IS NULL
@@ -200,15 +215,16 @@ def sql_rcs_historico(grupos_sql: str) -> str:
                    CASE WHEN ad.LactationNumber >= 3 THEN 3
                         WHEN ad.LactationNumber IN (1, 2) THEN ad.LactationNumber ELSE 0 END,
                    CASE WHEN ad.DIM IS NULL THEN 0 WHEN ad.DIM <= 30 THEN 1 WHEN ad.DIM <= 100 THEN 2
-                        WHEN ad.DIM <= 200 THEN 3 WHEN ad.DIM <= 305 THEN 4 ELSE 5 END
+                        WHEN ad.DIM <= 200 THEN 3 WHEN ad.DIM <= 305 THEN 4 ELSE 5 END,
+                   {_SQL_BANDA_SCC}
         )
         SELECT CONVERT(varchar(10), t.fecha, 120) AS fecha,
-               g.Name AS grupo, g.Number AS numero, t.lact, t.banda,
-               t.vacas, t.suma_scc, t.altas, t.maximo
+               g.Name AS grupo, g.Number AS numero, t.lact, t.banda, t.bscc,
+               t.vacas, t.suma_scc, t.altas, t.maximo, t.n_kg, t.suma_kg
         FROM t
         JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = t.grp
         JOIN AbstractGroup g ON g.OID = t.grp AND g.GCRecord IS NULL
-        ORDER BY t.fecha, g.Number, t.lact, t.banda
+        ORDER BY t.fecha, g.Number, t.lact, t.banda, t.bscc
         OPTION (MAXDOP 1, FORCE ORDER, MAX_GRANT_PERCENT = 20)
     """
 
@@ -225,6 +241,13 @@ def sql_rcs_historico(grupos_sql: str) -> str:
 #             curación durante el seco y "alta" a continuación es una infección
 #             que arrastró o agarró al parir: la métrica clásica para decidir
 #             la terapia de secado. Es otra pregunta, con otro intervalo.
+# Cada renglón también trae la SUMA del cambio de producción entre los dos
+# controles (`dkg`, en kg/día, y `n_dkg` pares con producción en los dos) y el
+# tramo de DEL del control actual (`banda`): sirve para medir cuánta leche
+# pierde una vaca que pasa de sana a alta COMPARADA CON SÍ MISMA, y
+# estandarizando por DEL (las infecciones nuevas se juntan en las vacas
+# frescas, que todavía están subiendo su producción: sin separar por DEL el
+# costo de una infección se subestimaría).
 # Los pares 'intra' con más de MAX_GAP_INTRA_DIAS entre controles se descartan
 # (se salteó un control: ya no es "el control anterior" y un mes sin medir se
 # leería como curación). El rodeo es el del control ACTUAL (el del día).
@@ -237,7 +260,8 @@ def sql_rcs_dinamica(grupos_sql: str) -> str:
         WITH t AS (
           SELECT h.BasicAnimal AS animal, CAST(h.DateAndTime AS date) AS fecha,
                  MAX(mt.SCC) AS scc, MAX(ad.LactationNumber) AS lact,
-                 MAX(ad.AnimalGroup) AS grp
+                 MAX(ad.AnimalGroup) AS grp, MAX(ad.DIM) AS dim,
+                 MAX(CASE WHEN mt.Yield > 0 THEN mt.Yield END) AS kg
           FROM MilkTest mt
           JOIN AnimalHistoricalData h ON h.OID = mt.OID
           JOIN AnimalDaily ad ON ad.OID = h.AnimalDaily AND ad.GCRecord IS NULL
@@ -247,7 +271,8 @@ def sql_rcs_dinamica(grupos_sql: str) -> str:
           GROUP BY h.BasicAnimal, CAST(h.DateAndTime AS date)
         ),
         par AS (
-          SELECT fecha, grp, scc, lact,
+          SELECT fecha, grp, scc, lact, dim, kg,
+                 LAG(kg)    OVER (PARTITION BY animal ORDER BY fecha) AS kg_prev,
                  LAG(fecha) OVER (PARTITION BY animal ORDER BY fecha) AS f_prev,
                  LAG(scc)   OVER (PARTITION BY animal ORDER BY fecha) AS scc_prev,
                  LAG(lact)  OVER (PARTITION BY animal ORDER BY fecha) AS lact_prev
@@ -260,7 +285,11 @@ def sql_rcs_dinamica(grupos_sql: str) -> str:
                       ELSE NULL END AS tipo,
                  CASE WHEN scc_prev > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END AS prev_alta,
                  CASE WHEN scc > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END AS curr_alta,
-                 COUNT(*) AS vacas
+                 CASE WHEN dim IS NULL THEN 0 WHEN dim <= 30 THEN 1 WHEN dim <= 100 THEN 2
+                      WHEN dim <= 200 THEN 3 WHEN dim <= 305 THEN 4 ELSE 5 END AS banda,
+                 COUNT(*) AS vacas,
+                 SUM(CASE WHEN kg IS NOT NULL AND kg_prev IS NOT NULL THEN kg - kg_prev ELSE 0 END) AS dkg,
+                 SUM(CASE WHEN kg IS NOT NULL AND kg_prev IS NOT NULL THEN 1 ELSE 0 END) AS n_dkg
           FROM par
           WHERE f_prev IS NOT NULL
           GROUP BY fecha, grp,
@@ -268,10 +297,12 @@ def sql_rcs_dinamica(grupos_sql: str) -> str:
                       WHEN lact > lact_prev AND DATEDIFF(day, f_prev, fecha) <= {MAX_GAP_SECO_DIAS} THEN 'seco'
                       ELSE NULL END,
                  CASE WHEN scc_prev > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END,
-                 CASE WHEN scc > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END
+                 CASE WHEN scc > {UMBRAL_RCS_BASE} THEN 1 ELSE 0 END,
+                 CASE WHEN dim IS NULL THEN 0 WHEN dim <= 30 THEN 1 WHEN dim <= 100 THEN 2
+                      WHEN dim <= 200 THEN 3 WHEN dim <= 305 THEN 4 ELSE 5 END
         )
         SELECT CONVERT(varchar(10), a.fecha, 120) AS fecha, g.Name AS grupo, g.Number AS numero,
-               a.tipo, a.prev_alta, a.curr_alta, a.vacas
+               a.tipo, a.prev_alta, a.curr_alta, a.banda, a.vacas, a.dkg, a.n_dkg
         FROM agg a
         JOIN ({_grupos_subquery(grupos_sql)}) gr ON gr.grupo = a.grp
         JOIN AbstractGroup g ON g.OID = a.grp AND g.GCRecord IS NULL

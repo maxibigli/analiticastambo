@@ -2366,7 +2366,8 @@ def api_salud_rcs_historico():
         f["maximo"] = round(f["maximo"] * salud.RCS_A_CELULAS) if f["maximo"] is not None else None
         filas.append(f)
     return jsonify({"filas": filas, "umbral": salud.UMBRAL_RCS,
-                    "bandas_del": {str(k): v for k, v in salud.BANDAS_DEL.items()}})
+                    "bandas_del": {str(k): v for k, v in salud.BANDAS_DEL.items()},
+                    "bandas_scc": {str(k): v for k, v in salud.BANDAS_SCC.items()}})
 
 
 @app.get("/api/salud/rcs_dinamica")
