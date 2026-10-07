@@ -2291,6 +2291,46 @@ que entre_grupos — por eso ese orden y no el alfabético). El editor de
 pesos (⚙ Configurar análisis) sigue leyendo la lista COMPLETA sin filtrar,
 así que un tambo puede reactivar cualquiera de estos sin tocar código.
 
+## Un puntaje por debajo de 100 nunca se muestra como 100 (06/10/2026)
+
+Reportado con San José (sala convencional): identificación, manejo de corral,
+entre grupos y mezcla de rodeos en 100%, y el tambo sabe que hay vacas sin
+identificar. Investigado contra la copia local de `SanJose` antes de tocar nada:
+
+**La identificación de San José es de verdad ~99,7-99,8%, no 100.** El comodín
+(`BasicAnimal.Number = 0`) tiene 153 ordeños en 30 días sobre 38.026 (0,4%; de 0
+a 7 por día sobre ~1.280). Se descartó que haya otra forma de guardar los sin
+identificar: `SessionMilkYield.BasicAnimal` nunca es NULL ni huérfano,
+`SessionMilkYieldEx.ManualID` es 0 en las 217.201 filas (la carga manual no se
+usa, o no queda registrada), los 79 animales con `Number = -1` son registros de
+"Nacida muerta" sin un solo ordeño, y `UnknownTransponderId` apunta a una vaca
+ficticia que no está en `BasicAnimal`. O sea que ~3 ordeños por día SÍ quedan a
+nombre del comodín, y se perdían de vista por el redondeo: la curva de
+identificación (100→100, 90→85) los lleva a 99,6 y `round()` mostraba "100%".
+
+**`rutina._redondear`**: igual que `round()` salvo que un valor menor que 100
+nunca da 100 (99,6 → 99). Se usa en los componentes del detalle, los
+incidentes y los puntajes de sesión y del día. Un 100 exacto sigue siendo 100.
+Verificado en tres tambos (La Ponderosa, La Martina, San José): de 321 valores
+cambiaron 22, todos de 100 a 99 en componentes que no estaban exactamente en
+100, y ningún puntaje de sesión se movió (La Ponderosa queda igual).
+
+**LO QUE NO SE ARREGLÓ, y necesita una decisión del tambo: "entre grupos" es
+casi imposible de bajar de 100 en San José.** El componente solo penaliza el
+exceso de los huecos que superan 3 veces la mediana de la PROPIA sesión, y en
+San José el cambio de rodeo tarda una mediana de 8 a 10 minutos (492-579 s,
+medido en 3 sesiones): hay que pasar de 30 minutos para que reste algo. Es
+calificar a la sala contra sí misma, lo mismo que se evitó con el objetivo de
+entrada→leche. "Vacas lerdas" tiene la misma forma (1,5× la mediana de la
+sesión: da 91-99 aunque toda la sesión sea lenta). La salida es la misma que
+`umbral_prep_s`: que el tambo cargue en ⚙ Configuración cuánto es un tiempo
+aceptable entre rodeos (y entre mangadas), sin inventar un número en el código.
+
+Cuando se mira una base local de una sala convencional: ni `delpro_lectura` ni
+la copia de San José estaban disponibles (4060 y `RECOVERY_PENDING`); se analizó
+con una conexión propia de solo lectura con autenticación de Windows, sin tocar
+la configuración del tambo.
+
 ## Días INCOMPLETOS fuera de los promedios por día (31/08/2026)
 
 Reportado por el tambo: "Horas/día en ordeño" daba un número imposible. Tuvo

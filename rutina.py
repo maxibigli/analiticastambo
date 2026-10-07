@@ -1373,9 +1373,9 @@ def componente_incidentes(visitas: list, pesos: dict | None = None) -> dict:
     conteos = {clave: sum(1 for v in visitas if v.get(_CAMPO_INCIDENTE[clave])) for clave in pesos}
     valores = {clave: 100.0 * (1 - conteos[clave] / n) for clave in pesos}
     peso_total = sum(pesos[c] for c in valores)
-    score = round(sum(pesos[c] * v for c, v in valores.items()) / peso_total) if peso_total else None
+    score = _redondear(sum(pesos[c] * v for c, v in valores.items()) / peso_total) if peso_total else None
     detalle = [
-        {"clave": clave, "label": _LABEL_INCIDENTE[clave], "valor": round(valores[clave]),
+        {"clave": clave, "label": _LABEL_INCIDENTE[clave], "valor": _redondear(valores[clave]),
          "peso": pesos[clave], "cantidad": conteos[clave],
          "info": f"{conteos[clave]} de {n} ordeños ({round(100 * conteos[clave] / n, 1)}%)."}
         for clave in pesos
@@ -1394,7 +1394,7 @@ def _score_ponderado(sesiones: list):
     vacas = sum(s["vacas"] for s in con_score)
     if not vacas:
         return None
-    return round(sum(s["score"] * s["vacas"] for s in con_score) / vacas)
+    return _redondear(sum(s["score"] * s["vacas"] for s in con_score) / vacas)
 
 
 def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = None,
@@ -1461,6 +1461,18 @@ def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = Non
 # ellos, constante fuera de rango):
 #     100% real -> 100     90% real -> 85     80% real -> 30     0% real -> 0
 _CREDITO_IDENTIFICACION_PUNTOS = [(0.0, 0.0), (80.0, 30.0), (90.0, 85.0), (100.0, 100.0)]
+
+
+def _redondear(valor):
+    """`round()` para un puntaje 0-100, con UNA diferencia: un valor por debajo
+    de 100 NUNCA se muestra como 100. Con `round()` a secas, 99,6 sale "100%", y
+    "100%" lee como "no hay nada que mejorar" cuando todavía hay vacas sin
+    identificar o alguna demora. Reportado con San José: identificación real del
+    día 99,7-99,8% (unos 3 ordeños del comodín por día sobre ~1.280) y la pantalla
+    decía 100%. Solo cambia lo que cae entre 99,5 y 100: un 100 exacto sigue
+    siendo 100."""
+    r = round(valor)
+    return 99 if r >= 100 and valor < 100 else r
 
 
 def _credito_identificacion(pct_identificado: float) -> float:
@@ -1778,7 +1790,7 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
     # saltaba de 37 a 93 — de acusar al tambo injustamente a felicitarlo
     # injustamente. Ninguna de las dos cosas es un dato. None = "no se puede
     # calificar con lo que registra esta sala".
-    score = (round(sum(pesos.get(c, 0) * v for c, v in disponibles.items()) / peso_total)
+    score = (_redondear(sum(pesos.get(c, 0) * v for c, v in disponibles.items()) / peso_total)
              if peso_total >= PESO_MINIMO_SCORE else None)
 
     # Colores por grupo, en orden de aparición.
@@ -1865,7 +1877,7 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
             # objetivo de esta sala cuando en realidad es el de la rotativa.
             {"clave": "prep_90s",
              "label": f"{prep_label} ~{umbral_prep_s}s" if mide_colocacion else prep_label,
-             "valor": round(s1) if s1 is not None else None,
+             "valor": _redondear(s1) if s1 is not None else None,
              "peso": pesos["prep_90s"],
              "info": (f"{cumplen}/{len(evaluables)} a ±{MARGEN_CUMPLE_PREP_S}s del objetivo "
                       f"({umbral_prep_s}s) -- ni antes ni después: llegar antes de que baje la "
@@ -1873,7 +1885,7 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                       f"no resta todo; recién pesa fuerte pasados los {round(TOLERANCIA_PREP_S / 60, 1)} "
                       "min de diferencia, para cualquier lado.")
                      if s1 is not None else info_sin_prep},
-            {"clave": "identificacion", "label": "Vacas identificadas", "valor": round(s8),
+            {"clave": "identificacion", "label": "Vacas identificadas", "valor": _redondear(s8),
              "peso": pesos["identificacion"],
              "info": (
                  (f"{round(pct_identificado, 1)}% identificado en todo el día "
@@ -1888,7 +1900,7 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                   "identificación el score cae fuerte a propósito — no es un error de cálculo.")
                  if (sin_identificar or (identificacion_pct is not None and identificacion_pct < 100))
                  else "Todos los ordeños quedaron a nombre de su vaca.")},
-            {"clave": "lerdas", "label": "Sin vacas lerdas", "valor": round(s2),
+            {"clave": "lerdas", "label": "Sin vacas lerdas", "valor": _redondear(s2),
              "peso": pesos["lerdas"],
              "info": (f"{lerdas} vaca(s) con ordeño 50%+ más largo que la mediana "
                       f"({round(mediana_ordeño)}s).") if mediana_ordeño else "Sin datos de duración."},
@@ -1901,29 +1913,29 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
             # `salas.convencional._huecos_por_rodeo`). Se excluyen del score
             # igual que "ocupación" y "colocación".
             {"clave": "manejo_corral", "label": "Manejo de corral (entrada fluida)",
-             "valor": round(s4) if s4 is not None else None,
+             "valor": _redondear(s4) if s4 is not None else None,
              "peso": pesos["manejo_corral"], "info": huecos["info4"]},
             {"clave": "entre_grupos", "label": "Sin tiempos muertos entre grupos",
-             "valor": round(s3) if s3 is not None else None,
+             "valor": _redondear(s3) if s3 is not None else None,
              "peso": pesos["entre_grupos"], "info": huecos["info3"]},
-            {"clave": "mezcla_rodeos", "label": "Sin mezcla de rodeos", "valor": round(s5),
+            {"clave": "mezcla_rodeos", "label": "Sin mezcla de rodeos", "valor": _redondear(s5),
              "peso": pesos["mezcla_rodeos"],
              "info": (f"{total_mezcladas}/{len(evaluables)} vacas sueltas coladas en el turno de otro grupo."
                       if total_mezcladas else "Ningún animal suelto se coló en otro turno.")},
             {"clave": "ocupacion", "label": ocupacion["label"],
-             "valor": round(s6) if s6 is not None else None,
+             "valor": _redondear(s6) if s6 is not None else None,
              "peso": pesos["ocupacion"], "info": ocupacion["info"]},
             # Sin clave en los PESOS de la convencional (peso 0 vía .get): no
             # hay brazo automático que reemplazar por la mano del operario en
             # una sala de tandas. Ver el docstring de sql_rutina.
             {"clave": "paradas_rotativa", "label": "Enganche manual de pezonera",
-             "valor": round(s9), "peso": pesos.get("paradas_rotativa", 0),
+             "valor": _redondear(s9), "peso": pesos.get("paradas_rotativa", 0),
              "info": (f"{controles_manuales}/{len(visitas)} ordeños con enganche manual de la pezonera "
                       "(el brazo automático no pudo). NO es un conteo de paradas de la plataforma -- DDM "
                       "no guarda eso (se investigó a fondo, ver CLAUDE.md), y esto tampoco es lo mismo que "
                       "una recolocación: son eventos distintos, casi no se superponen.")},
             {"clave": "flujo", "label": "Estímulo (sin bimodalidad)",
-             "valor": round(s7) if s7 is not None else None, "peso": pesos["flujo"],
+             "valor": _redondear(s7) if s7 is not None else None, "peso": pesos["flujo"],
              "info": (f"{bimodales}/{con_curva} ordeños con la bajada cortada y vuelta a "
                       f"arrancar ({round(100 * bimodales / con_curva, 1)}%), señal de pezonera "
                       f"colocada antes de que baje la leche. Sano hasta "
