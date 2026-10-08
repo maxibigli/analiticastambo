@@ -97,6 +97,12 @@ _CAMPOS_ENUM = {
 #              en La Martina). Por eso lo pone el tambo y no el codigo: elegirlo
 #              nosotros seria calificar a la sala contra si misma. Vacio = el
 #              componente no se puntua. Ver `salas.convencional.UMBRAL_PREP_S`.
+#   tol_cambio_rodeo_s / tol_mangada_s / tol_arranque_s  (sala convencional) cuantos
+#              segundos SIN NINGUNA vaca ordenandose se toleran al cambiar de rodeo, dentro
+#              de un rodeo (entre mangadas) y hasta tener 8 vacas ordenandose a la vez al
+#              arrancar. Lo que pasa de ahi es exceso y baja el puntaje de tiempos muertos.
+#              Vacio = los valores por defecto (180 / 120 / 180 s), que salen de los p75
+#              medidos en San Jose. Ver `salas.convencional._tolerancias`.
 #   top_atencion  cuantas vacas listar en las tarjetas "Atencion" (clasico y
 #              experimental) de Salud del rodeo. Vacio = 15 (salud.TOP_ATENCION).
 #              Es un techo de PANTALLA, no cambia el calculo: subirlo no hace
@@ -115,6 +121,7 @@ _CAMPOS_ENUM = {
 #              el tambo, que es quien sabe su rutina. Vacio = no se filtra
 #              nada (mismo comportamiento que antes de que esto existiera).
 _CAMPOS_INT = ("puerto", "personas", "arreo_min", "umbral_prep_s", "top_atencion",
+               "tol_cambio_rodeo_s", "tol_mangada_s", "tol_arranque_s",
                "ordenos_dia", "nvr_puerto", "camara_seg_antes", "camara_seg_despues")
 
 # Cámaras del NVR para revisar en video lo que marcó "Rutina de ordeño" (hasta
@@ -158,6 +165,9 @@ DEFAULT = {
     "personas": None,
     "arreo_min": None,
     "umbral_prep_s": None,
+    "tol_cambio_rodeo_s": None,
+    "tol_mangada_s": None,
+    "tol_arranque_s": None,
     "top_atencion": None,
     "ordenos_dia": None,
     "ruta_toros": None,

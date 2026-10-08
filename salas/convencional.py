@@ -392,119 +392,168 @@ def _bloques_de_rodeo(visitas: list) -> list:
     return bloques
 
 
-def _huecos_por_rodeo(visitas: list, duracion_seg: float, nombres: dict | None = None) -> dict:
-    """Los dos componentes de tiempo muerto, cortando POR RODEO.
+# --- Tiempo muerto de la sala: SALA PARADA --------------------------------
+# DEFINICIÓN (acordada con el tambo el 07/10/2026): un tiempo muerto es un
+# tramo en que NO HAY NINGUNA VACA ORDEÑÁNDOSE, en los dos lados a la vez,
+# entre el primer y el último ordeño de la sesión. La vaca "ordeña" de su
+# arranque de leche a su retiro (`hora_coloc` → `hora_fin`).
+#
+# POR QUÉ NO LA DEFINICIÓN ANTERIOR. Antes se medía el tiempo entre la
+# identificación de la última vaca de un rodeo y la primera del siguiente, y se
+# penalizaba solo lo que pasara 3 veces la MEDIANA DE LA PROPIA SESIÓN. En San
+# José esa mediana es de 8 a 10 minutos (el tramo incluye el ordeño en curso de
+# la otra mangada), así que hacían falta ~30 minutos de espera para perder un
+# punto: casi todas las sesiones daban 100% con la sala parada varios minutos
+# entre rodeos. Era calificar a la sala contra sí misma.
+#
+# Medido en San José, 42 sesiones de 14 días: la sala parada entre rodeos dura
+# una mediana de 2,4 min (p75 3,4, máx 11,9); dentro de un rodeo 1,0 min (p75
+# 1,7, máx 15,2); y en total 3,2% de la sesión (máx 11,1%). El arranque llega a
+# 8 vacas ordeñándose a la vez en 1,0 min de mediana (máx 1,8).
+#
+# TOLERANCIAS ABSOLUTAS, que fija el tambo (⚙ Configuración) y no la sesión:
+# lo que pasa de la tolerancia es EXCESO, y el puntaje baja hasta 0 cuando el
+# exceso acumulado de la sesión llega a EXCESO_CERO_S. Los valores por defecto
+# salen de los p75 medidos arriba, no de una regla genérica.
+TOL_CAMBIO_RODEO_S = 180     # sala parada aceptable al cambiar de rodeo
+TOL_MANGADA_S = 120          # sala parada aceptable dentro de un rodeo
+TOL_ARRANQUE_S = 180         # hasta ARRANQUE_VACAS ordeñando a la vez
+ARRANQUE_VACAS = 8
+EXCESO_CERO_S = 15 * 60      # exceso acumulado con el que el puntaje llega a 0
 
-    `s3` (entre rodeos) mide las pausas en el cambio de un rodeo al siguiente:
-    el corral vacío esperando que traigan la próxima tanda de animales. `s4`
-    (manejo de corral) mide las demoras trayendo animales DENTRO del turno de un
-    mismo rodeo.
 
-    Cada lado del corte usa SU PROPIA mediana, porque son cosas de escalas muy
-    distintas. Y HAY UN TERCER TIPO DE HUECO QUE NO ENTRA EN NINGUNO DE LOS DOS:
-    el cambio de mangada. Los huecos dentro de un mismo rodeo son bimodales —
-    medido el 11/08 en La Martina: mediana 5s (vaca tras vaca en la misma
-    mangada) con una cola de 78 huecos de 240 a 983s (la mangada que se vació y
-    todavía no volvió a llenarse)—. Metiendo los dos en la misma bolsa, la
-    mediana es la chica, la cola entera queda marcada como anormal y daba
-    13.911s "perdidos" en una sesión de 5,4 h: casi cuatro horas de pérdida
-    inventadas por la estructura de la sala. Por eso los huecos en que el lado
-    quedó VACÍO se sacan de acá — los mide `_vacio_entre_mangadas`, que es su
-    componente propio.
-
-    Reemplaza a un criterio anterior que cortaba por (lado, tanda) en vez de
-    por rodeo y quedó inservible: `BatchNo` no marca tandas de verdad (en La
-    Martina los números se cortan y reaparecen 112 veces sobre 143 cambios,
-    las vacas de una tanda no quedan juntas en el tiempo), así que lo que esa
-    métrica llamaba "cambio de tanda" eran en su mayoría reapariciones del
-    mismo número — daba entre_grupos=0 en las tres sesiones reales."""
-    bloques = _bloques_de_rodeo(visitas)
-    ocup = _OcupacionLado(visitas)
-
-    def es_demora_real(a, b) -> bool:
-        """¿Este hueco es una demora de manejo, o la sala haciendo lo suyo?
-
-        Cuenta SOLO si durante todo el hueco el lado tuvo un puesto libre Y al
-        menos una vaca puesta. Las dos condiciones son físicas, no umbrales
-        elegidos:
-
-          lado LLENO      no hay dónde poner una vaca, nadie está demorando nada
-          lado VACÍO      la mangada se está dando vuelta; eso lo mide
-                          `_vacio_entre_mangadas`, su componente propio
-
-        Sin esto, el componente daba 0 en las tres sesiones. Los 20 huecos
-        intra-rodeo de más de 60s del 11/08 tenían el lado lleno (15 a 29 de 30
-        puestos) o vaciándose (0 a 4): NINGUNO era manejo de corral, y sumaban
-        13.911s de pérdida inventada. Con la regla quedan 4.162s y el
-        componente pasa a 35 · 64 · 91, que sí distingue una sesión de otra."""
-        lado = a.get("lado")
-        cap = ocup.capacidad.get(lado)
-        if not cap:
-            return True          # sin dato de lado no se puede descartar: cuenta
-        mn, mx = ocup.rango(lado, a["hora_id"], b["hora_id"])
-        return mn is not None and mn > 0 and mx < cap
-
-    inter, intra = [], []
-    gaps = []
-    for i, (a, b) in enumerate(zip(visitas, visitas[1:])):
-        g = (b["hora_id"] - a["hora_id"]).total_seconds()
-        cambio = bloques[i] != bloques[i + 1]
-        gaps.append((g, cambio, a, b))
-        if cambio:
-            inter.append(g)
-        elif es_demora_real(a, b):
-            intra.append(g)
-    if not inter:
-        return {
-            "s3": None, "s4": _score_huecos(intra, duracion_seg) if intra else None,
-            "info3": "Esta sesión tuvo un solo rodeo, así que no hay cambio de rodeo que medir.",
-            "info4": _info_huecos(intra, duracion_seg, "demoras trayendo animales dentro del "
-                                                       "mismo rodeo") if intra else "Sin datos.",
-            "hallazgos": [],
-        }
-    mediana_inter = statistics.median(inter)
-    umbral_inter = max(mediana_inter * rutina.FACTOR_HUECO, rutina.UMBRAL_HUECO_MIN_S)
-    hallazgos = [{
-        "tipo": "hueco_grupo", "severidad": g, "puesto": None, "rp": None,
-        "texto": f"Hueco de {round(g / 60, 1)} min al cambiar de rodeo "
-                 f"({nombres.get(a['grupo'], a['grupo']) if nombres else a['grupo']} → "
-                 f"{nombres.get(b['grupo'], b['grupo']) if nombres else b['grupo']}) a las "
-                 f"{b['hora_id'].strftime('%H:%M')}, bastante más largo que el resto de los "
-                 "cambios de rodeo de esta sesión.",
-    } for g, cambio, a, b in gaps if cambio and g > umbral_inter]
-
+def _tolerancias(tambo) -> dict:
+    """Las tres tolerancias del tambo (⚙ Configuración), o las de arriba."""
+    cfg = {}
+    if tambo:
+        try:
+            import configuracion_tambo
+            cfg = configuracion_tambo.config_de(tambo) or {}
+        except Exception:  # noqa: BLE001 -- sin config, valen los defectos
+            cfg = {}
     return {
-        "s3": _score_huecos(inter, duracion_seg),
-        "s4": _score_huecos(intra, duracion_seg) if intra else None,
-        "info3": _info_huecos(inter, duracion_seg, "cambios de rodeo anormalmente largos"),
-        "info4": (_info_huecos(intra, duracion_seg, "demoras trayendo animales dentro del mismo "
-                                                    "rodeo") if intra else "Sin datos."),
-        "hallazgos": hallazgos,
+        "rodeo": cfg.get("tol_cambio_rodeo_s") or TOL_CAMBIO_RODEO_S,
+        "mangada": cfg.get("tol_mangada_s") or TOL_MANGADA_S,
+        "arranque": cfg.get("tol_arranque_s") or TOL_ARRANQUE_S,
     }
 
 
-def _score_huecos(gaps: list, duracion_seg: float) -> float:
-    """Penaliza SOLO el exceso sobre la mediana de los huecos que se pasaron del
-    umbral — mismo criterio que `rutina._huecos_rotativa`."""
-    mediana = statistics.median(gaps)
-    umbral = max(mediana * rutina.FACTOR_HUECO, rutina.UMBRAL_HUECO_MIN_S)
-    exceso = sum(g - mediana for g in gaps if g > umbral)
-    return 100.0 * max(0.0, 1 - rutina.K_PENALIZACION * exceso / duracion_seg)
+def _tramos_sala_parada(visitas: list) -> tuple:
+    """(huecos, arranque_s): los tramos en que ninguna vaca estuvo ordeñándose
+    y cuánto tardó la sala en llegar a `ARRANQUE_VACAS` vacas a la vez.
+
+    Cada hueco es (desde, hasta, indice de la última vaca que terminó antes,
+    indice de la primera que empezó después). Los índices sirven para saber si
+    el hueco cae en un cambio de rodeo."""
+    eventos = []
+    for i, v in enumerate(visitas):
+        ini, fin = v.get("hora_coloc"), v.get("hora_fin")
+        if ini and fin and fin > ini:
+            eventos.append((ini, 1, i))
+            eventos.append((fin, -1, i))
+    if not eventos:
+        return [], None
+    eventos.sort(key=lambda e: (e[0], e[1]))   # a igual instante, primero los retiros
+    huecos, n, desde, i_fin, arranque_s = [], 0, None, None, None
+    primero = eventos[0][0]
+    for t, delta, i in eventos:
+        if delta == -1:
+            n -= 1
+            if n == 0:
+                desde, i_fin = t, i
+        else:
+            if n == 0 and desde is not None and t > desde:
+                huecos.append((desde, t, i_fin, i))
+            n += 1
+            desde = None
+            if arranque_s is None and n >= ARRANQUE_VACAS:
+                arranque_s = (t - primero).total_seconds()
+    return huecos, arranque_s
 
 
-def _info_huecos(gaps: list, duracion_seg: float, que: str) -> str:
-    mediana = statistics.median(gaps)
-    umbral = max(mediana * rutina.FACTOR_HUECO, rutina.UMBRAL_HUECO_MIN_S)
-    exceso = sum(g - mediana for g in gaps if g > umbral)
-    return f"{round(exceso)}s perdidos en {que} (lo normal en esta sesión: {round(mediana)}s)."
+def _min(s: float) -> str:
+    return f"{round(s / 60, 1):g}".replace(".", ",")
 
 
-def _opciones_score(umbral_prep_s):
+def _huecos_por_rodeo(visitas: list, duracion_seg: float, nombres: dict | None = None,
+                      tol: dict | None = None) -> dict:
+    """Los dos componentes de tiempo muerto, sobre la SALA PARADA (ver arriba).
+
+    `s3` ("entre grupos") junta los huecos que caen en un cambio de rodeo y el
+    arranque tardío de la sesión. `s4` ("manejo de corral") los huecos DENTRO
+    del turno de un mismo rodeo. Los dos puntúan contra tolerancias absolutas.
+
+    El corte por rodeo usa `_bloques_de_rodeo`: una corrida corta de otro rodeo
+    (una vaca suelta) no cuenta como cambio, ya la mide `mezcla_rodeos`."""
+    tol = tol or _tolerancias(None)
+    bloques = _bloques_de_rodeo(visitas)
+    huecos, arranque_s = _tramos_sala_parada(visitas)
+    nombre = (lambda g: "sin grupo" if g is None else (nombres.get(g, g) if nombres else g))
+    cambia_rodeo = len(set(bloques)) > 1
+    # El rodeo de cada bloque = el primero que tuvo grupo. Se nombra por BLOQUE y
+    # no por la última vaca que terminó: esa puede ser una suelta de otro rodeo, y
+    # el texto decía "10 → 10" para el arranque de una sesión (6 vacas sueltas y
+    # 25 minutos de pausa antes del flujo real).
+    grupo_bloque = {}
+    for i, b in enumerate(bloques):
+        if grupo_bloque.get(b) is None:
+            grupo_bloque[b] = visitas[i].get("grupo")
+
+    inter, intra, hallazgos = [], [], []
+    for desde, hasta, i_a, i_b in huecos:
+        g = (hasta - desde).total_seconds()
+        if bloques[i_a] != bloques[i_b]:
+            inter.append(g)
+            tope, kind = tol["rodeo"], "hueco_grupo"
+            donde = (f"al cambiar de rodeo ({nombre(grupo_bloque[bloques[i_a]])} → "
+                     f"{nombre(grupo_bloque[bloques[i_b]])})")
+        else:
+            intra.append(g)
+            tope, kind = tol["mangada"], "vacio"
+            donde = "dentro del mismo rodeo"
+        if g > tope:
+            hallazgos.append({
+                "tipo": kind, "severidad": g - tope, "puesto": None, "rp": None,
+                "texto": f"Sala parada {_min(g)} min, sin ninguna vaca ordeñándose "
+                         f"({desde.strftime('%H:%M')}–{hasta.strftime('%H:%M')}) {donde}: "
+                         f"{_min(g - tope)} min más de lo aceptable ({_min(tope)} min)."})
+
+    exceso_arranque = max(0.0, (arranque_s or 0) - tol["arranque"])
+    if exceso_arranque > 0:
+        hallazgos.append({
+            "tipo": "hueco_grupo", "severidad": exceso_arranque, "puesto": None, "rp": None,
+            "texto": f"Arranque lento: tardó {_min(arranque_s)} min en tener {ARRANQUE_VACAS} vacas "
+                     f"ordeñándose a la vez ({_min(exceso_arranque)} min más de lo aceptable, "
+                     f"{_min(tol['arranque'])} min)."})
+
+    exceso_inter = sum(max(0.0, g - tol["rodeo"]) for g in inter) + exceso_arranque
+    exceso_intra = sum(max(0.0, g - tol["mangada"]) for g in intra)
+    puntaje = lambda exceso: 100.0 * max(0.0, 1 - exceso / EXCESO_CERO_S)  # noqa: E731
+    parada = sum((h - d).total_seconds() for d, h, _, _ in huecos)
+    resumen = (f" En total la sala estuvo parada {_min(parada)} min "
+               f"({round(100 * parada / duracion_seg) if duracion_seg else 0}% de la sesión).")
+
+    if not cambia_rodeo and exceso_arranque == 0:
+        s3, info3 = None, "Esta sesión tuvo un solo rodeo, así que no hay cambio de rodeo que medir."
+    else:
+        s3 = puntaje(exceso_inter)
+        info3 = (f"{_min(exceso_inter)} min de exceso sobre lo aceptable en {len(inter)} cambio(s) de "
+                 f"rodeo (hasta {_min(tol['rodeo'])} min cada uno) y en el arranque (hasta "
+                 f"{_min(tol['arranque'])} min con {ARRANQUE_VACAS} vacas).{resumen}")
+    s4 = puntaje(exceso_intra)
+    info4 = (f"{_min(exceso_intra)} min de exceso sobre lo aceptable en {len(intra)} hueco(s) dentro de un "
+             f"rodeo (hasta {_min(tol['mangada'])} min cada uno).")
+    return {"s3": s3, "s4": s4, "info3": info3, "info4": info4, "hallazgos": hallazgos}
+
+
+def _opciones_score(umbral_prep_s, tambo=None):
     """Los argumentos comunes de `analizar_dia`/`resumen_dia`. El objetivo de
     entrada→leche sale del tambo (`umbral_prep_s`, de ⚙ Configuración) y, si no
     lo definió, el componente no se puntúa: ver `UMBRAL_PREP_S`."""
     umbral = umbral_prep_s or UMBRAL_PREP_S
-    return {"ocupacion_fn": _vacio_entre_mangadas, "huecos_fn": _huecos_por_rodeo,
+    tol = _tolerancias(tambo)
+    return {"ocupacion_fn": _vacio_entre_mangadas,
+            "huecos_fn": lambda visitas, dur, nombres=None: _huecos_por_rodeo(visitas, dur, nombres, tol),
             "umbral_prep_s": umbral, "mide_colocacion": umbral is not None,
             "prep_max_s": PREP_MAX_S, "prep_label": PREP_LABEL,
             "sin_prep_info": PREP_SIN_UMBRAL, "incluir_sin_grupo": True}
@@ -522,7 +571,7 @@ def analizar_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                                nombres, identificacion_pct=identificacion_pct,
                                pesos_incidentes=pesos_incidentes or PESOS_INCIDENTES,
                                pesos_defecto=PESOS,
-                               **_opciones_score(umbral_prep_s))
+                               **_opciones_score(umbral_prep_s, tambo))
 
 
 def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
@@ -532,7 +581,7 @@ def resumen_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
                               nombres, identificacion_pct=identificacion_pct,
                               pesos_incidentes=pesos_incidentes or PESOS_INCIDENTES,
                               pesos_defecto=PESOS,
-                              **_opciones_score(umbral_prep_s))
+                              **_opciones_score(umbral_prep_s, tambo))
 
 
 # LOS CUATRO TRAMOS DE FLUJO DE ALPRO VIENEN ×100, y esto es una trampa cara.

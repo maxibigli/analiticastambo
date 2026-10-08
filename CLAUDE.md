@@ -2315,8 +2315,8 @@ Verificado en tres tambos (La Ponderosa, La Martina, San José): de 321 valores
 cambiaron 22, todos de 100 a 99 en componentes que no estaban exactamente en
 100, y ningún puntaje de sesión se movió (La Ponderosa queda igual).
 
-**LO QUE NO SE ARREGLÓ, y necesita una decisión del tambo: "entre grupos" es
-casi imposible de bajar de 100 en San José.** El componente solo penaliza el
+**LO QUE NO SE ARREGLÓ ESE DÍA, y se resolvió el 07/10 (ver la sección de abajo):
+"entre grupos" era casi imposible de bajar de 100 en San José.** El componente solo penaliza el
 exceso de los huecos que superan 3 veces la mediana de la PROPIA sesión, y en
 San José el cambio de rodeo tarda una mediana de 8 a 10 minutos (492-579 s,
 medido en 3 sesiones): hay que pasar de 30 minutos para que reste algo. Es
@@ -2330,6 +2330,63 @@ Cuando se mira una base local de una sala convencional: ni `delpro_lectura` ni
 la copia de San José estaban disponibles (4060 y `RECOVERY_PENDING`); se analizó
 con una conexión propia de solo lectura con autenticación de Windows, sin tocar
 la configuración del tambo.
+
+## Tiempos muertos de la sala convencional: SALA PARADA (07/10/2026)
+
+El tambo mostró el gráfico de una sesión de San José con minutos sin ordeñar al
+inicio y entre rodeos, y "Sin tiempos muertos entre grupos" en 100%. Se rehízo
+la medición de `entre_grupos` y `manejo_corral` en `salas/convencional.py`
+(`_huecos_por_rodeo`); la rotativa NO cambia (verificado: 0 de 6 sesiones de
+La Ponderosa con diferencias).
+
+**Definición, acordada con el tambo: tiempo muerto = ningún animal ordeñándose,
+en los dos lados a la vez**, entre el primer y el último ordeño de la sesión.
+La vaca ordeña de su arranque de leche a su retiro (`hora_coloc` → `hora_fin`).
+Se probó primero "de la identificación al retiro" y NO sirve: la sala casi
+nunca queda vacía así (2-4 minutos), porque la vaca se identifica al entrar y
+espera.
+
+**Por qué la medición anterior daba 100.** Medía el tramo entre la
+identificación de la última vaca de un rodeo y la de la primera del siguiente
+—que incluye el ordeño en curso de la otra mangada—, y solo penalizaba lo que
+pasara 3 veces la MEDIANA DE LA PROPIA SESIÓN. En San José esa mediana es de 8 a
+10 minutos: hacían falta ~30 de espera para perder un punto. Calificar a la sala
+contra sí misma, otra vez.
+
+**Medido en San José, 42 sesiones de 14 días** (sala parada, en minutos):
+
+    entre rodeos (64 huecos)      mediana 2,4   p75 3,4   máx 11,9
+    dentro de un rodeo (90)       mediana 1,0   p75 1,7   máx 15,2
+    % de la sesión parada         mediana 3,2%  p75 5,2%  máx 11,1%
+    arranque hasta 8 vacas a la vez   mediana 1,0   máx 1,8
+
+**Cómo puntúa ahora.** Tolerancias ABSOLUTAS por tambo (⚙ Configuración › Sala,
+`tol_cambio_rodeo_s` / `tol_mangada_s` / `tol_arranque_s`; por defecto
+**180 / 120 / 180 s**, los p75 de arriba). Lo que pasa de la tolerancia de cada
+hueco es EXCESO; el puntaje es `100 × (1 − exceso_total / 15 min)`, o sea que
+llega a 0 con 15 minutos de exceso acumulado en la sesión. El arranque lento
+(minutos hasta tener 8 vacas ordeñándose juntas) suma al exceso de "entre
+grupos": el peso no cambió (15% y 15%). Con un solo rodeo y arranque normal,
+"entre grupos" es "sin dato" (se excluye), no 100. El texto de cada hallazgo
+dice hora, duración y entre qué rodeos ("Sala parada 15,2 min, 04:21–04:37, al
+cambiar de rodeo (8 → 10)"); el rodeo se nombra por BLOQUE y no por la última
+vaca que terminó, porque esa puede ser una suelta ("10 → 10" confundía).
+
+**Resultado en San José (42 sesiones):** "entre grupos" baja de 100 en 14
+(mínimo 18) y "manejo de corral" en 17 (mínimo 14); los puntajes de sesión
+van de 67 a 84, mediana 79,5. Ninguno en 100. Un 100 sigue siendo posible y
+significa que no hubo exceso.
+
+**Los hallazgos de ocupación ya no se listan si el componente pesa 0**
+(`rutina._analizar_sesion`): la convencional lo sacó de Manejo y esos "el lado 2
+quedó 22,8 min sin ninguna vaca" —medidos contra la mediana de la propia sesión—
+repetían y contradecían a los de sala parada.
+
+**OJO con La Martina**: los defaults son de San José. Con ellos "manejo de
+corral" da mediana 59 y varias sesiones en 0 (el 09/08 01:58 da 18 de score):
+sus mangadas y rodeos son otros. Cada tambo tiene que cargar SUS tres números;
+es la misma regla que el objetivo de entrada→leche. Y cambió el score de La
+Martina respecto de los valores que figuran más arriba en este archivo.
 
 ## Días INCOMPLETOS fuera de los promedios por día (31/08/2026)
 

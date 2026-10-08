@@ -1850,7 +1850,11 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
             "tipo": "mezcla", "severidad": cant, "puesto": None, "rp": None,
             "texto": f"{cant} vaca(s) sueltas del {_grupo_txt(g, nombres)} se colaron en el turno de otro grupo.",
         })
-    hallazgos.extend(ocupacion["hallazgos"])
+    # Los hallazgos de ocupación solo cuentan si el componente puntúa: con peso 0
+    # (la convencional lo sacó de Manejo) listaban lados vacíos medidos contra la
+    # mediana de la propia sesión, que repetían -y contradecían- a los de tiempo muerto.
+    if pesos.get("ocupacion", 0) > 0:
+        hallazgos.extend(ocupacion["hallazgos"])
     # Los huecos entre grupos son la señal más accionable (mal manejo de corral
     # entre lotes); dentro de cada tipo, el hallazgo más severo primero.
     orden_tipo = {"hueco_grupo": 0, "vacio": 1, "mezcla": 2, "prep": 3, "sin_colocar": 4, "sin_duenio": 5}
