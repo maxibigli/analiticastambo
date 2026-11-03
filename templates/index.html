@@ -2101,6 +2101,7 @@
     <button class="lac-segment__item" data-tab="rutina" aria-pressed="true">⏱️ Análisis de Rutina</button>
     {% if 'rendimiento' in paginas_visibles %}<button class="lac-segment__item" data-tab="rendimiento" aria-pressed="false">⚡ Rendimiento Sala</button>{% endif %}
     {% if 'flujos' in paginas_visibles %}<button class="lac-segment__item" data-tab="flujos" aria-pressed="false">💧 Flujos de ordeño</button>{% endif %}
+    {% if 'flujos' in paginas_visibles %}<button class="lac-segment__item" data-tab="rodeos" aria-pressed="false">🐄 Rodeos por día</button>{% endif %}
     {% if 'evolucion' in paginas_visibles %}<button class="lac-segment__item" data-tab="evolucion" aria-pressed="false">📈 Evolución</button>{% endif %}
   </div>
   {% endif %}
@@ -2572,6 +2573,79 @@
         bimodalidad, y es el más accionable de los dos.
       </p>
       <div class="chart-box" style="height:300px"><canvas id="chart-flu-bimodal"></canvas></div>
+    </div>
+  </section>
+  </div>
+  {% endif %}
+
+  {% if 'flujos' in paginas_visibles %}
+  {# --- Pestaña "Rodeos por día": misma planilla por rodeo que el informe de grupos
+     de DelPro, pero día por día y comparable. Comparte permiso con "Flujos de
+     ordeño" (son los mismos datos de flujo). Todo lo que no es traer los datos se
+     arma en el navegador: cambiar de métrica, de rodeos o de día no vuelve a la base. #}
+  <div id="panel-rodeos" hidden>
+  <section class="card" id="rodeos-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">Rodeos por día</h2>
+      <span class="aviso">Cómo evoluciona cada rodeo, y un día contra otro.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Días
+          <select id="rod-dias" style="padding:6px 8px">
+            <option value="14">14</option><option value="30" selected>30</option>
+            <option value="60">60</option><option value="90">90</option>
+          </select>
+        </label>
+        <button class="secundario" id="rod-aplicar">Aplicar</button>
+      </div>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Qué muestra.</b> Para cada rodeo y cada día: ordeños, vacas, kg por vaca, la curva de flujo
+      por tramos, la retirada, el pico, el porcentaje de flujo bajo y la duración del ordeño.
+      <b>El rodeo es el que tenía la vaca ESE día</b>, no el de hoy: si se mueven vacas de rodeo, la
+      historia de cada rodeo no cambia sola. Las vacas sin identificar no entran.
+      <br><b>Hasta cuándo.</b> Los días se cuentan hacia atrás desde el último día que tiene la base,
+      no desde hoy. El total del tambo pondera cada rodeo por su cantidad de ordeños.
+    </p>
+    <div class="aviso" id="rod-info" style="margin-top:8px"></div>
+
+    <div id="rod-cuerpo" hidden>
+      <div style="margin-top:14px">
+        <h3 class="g-titulo">Evolución día a día</h3>
+        <div class="controls" style="align-items:center;margin-bottom:8px">
+          <label class="aviso" style="display:flex;align-items:center;gap:5px">Medida
+            <select id="rod-metrica" style="padding:6px 8px"></select>
+          </label>
+          <span class="aviso">Ver como</span>
+          <div class="lac-segment" id="rod-tipo" role="group" aria-label="Tipo de gráfico">
+            <button class="lac-segment__item" data-tipo="line" aria-pressed="true">Líneas</button>
+            <button class="lac-segment__item" data-tipo="bar" aria-pressed="false">Barras</button>
+            <button class="lac-segment__item" data-tipo="point" aria-pressed="false">Puntos</button>
+          </div>
+        </div>
+        <div id="rod-chips" class="controls" style="flex-wrap:wrap;gap:6px 14px;margin-bottom:8px"></div>
+        <div class="chart-box" style="height:340px"><canvas id="chart-rod-evolucion"></canvas></div>
+        <div class="aviso" id="rod-parciales" style="margin-top:6px"></div>
+      </div>
+
+      <div style="margin-top:22px">
+        <h3 class="g-titulo">Planilla del día y comparación</h3>
+        <p class="explica">
+          <b>Cómo leerla.</b> Cada fila es un rodeo y cada columna una medida, con los valores del
+          <b>día A</b>. Si elegís un <b>día B</b>, debajo de cada valor aparece la diferencia contra
+          ese día. Las flechas solo indican el sentido del cambio (▲ subió, ▼ bajó): no dicen si es
+          bueno o malo, porque eso depende de la medida y del rodeo. Un día parcial (la base cortó a
+          mitad de jornada) no es comparable en ordeños, vacas ni kg.
+        </p>
+        <div class="controls" style="align-items:center;margin-bottom:8px">
+          <label class="aviso" style="display:flex;align-items:center;gap:5px">Día A
+            <select id="rod-dia-a" style="padding:6px 8px"></select>
+          </label>
+          <label class="aviso" style="display:flex;align-items:center;gap:5px">Comparar con día B
+            <select id="rod-dia-b" style="padding:6px 8px"></select>
+          </label>
+        </div>
+        <div class="tabla-scroll" style="max-height:none;overflow-x:auto"><table id="rod-tabla"></table></div>
+      </div>
     </div>
   </section>
   </div>
@@ -5598,6 +5672,196 @@ document.getElementById('flu-aplicar').addEventListener('click', cargarFlujos);
 conectarSelectorTipo('flu-tipo', tipo => {
   fluTipo = tipo;
   if (fluDatos) pintarFlujos(fluDatos);   // redibuja, no vuelve a consultar
+});
+
+// --- Rodeos por día (pestaña de Rutina de ordeño) ---------------------------
+// El backend manda una fila por (día, rodeo del día). Acá se arma el total del
+// tambo, el gráfico de evolución y la planilla con comparación día A vs día B:
+// cambiar de medida, de rodeos o de día NO vuelve a consultar la base.
+let chartRodEvol = null, rodDatos = null, rodReintento = null, rodTipo = 'line', rodSel = null;
+
+const ROD_METRICAS = [
+  { k: 'kg_vaca', t: 'kg por vaca por día', col: 'kg/vaca', u: 'kg', dec: 1, cero: true },
+  { k: 'ordenos', t: 'Ordeños', col: 'Ordeños', u: '', dec: 0, cero: true },
+  { k: 'vacas', t: 'Vacas', col: 'Vacas', u: '', dec: 0, cero: true },
+  { k: 'kg', t: 'Producción total', col: 'kg', u: 'kg', dec: 0, cero: true },
+  { k: 'f_0_15', t: 'Flujo 0–15 s', col: '0–15 s', u: 'kg/min', dec: 2 },
+  { k: 'f_15_30', t: 'Flujo 15–30 s', col: '15–30 s', u: 'kg/min', dec: 2 },
+  { k: 'f_30_60', t: 'Flujo 30–60 s', col: '30–60 s', u: 'kg/min', dec: 2 },
+  { k: 'f_60_120', t: 'Flujo 60–120 s', col: '60–120 s', u: 'kg/min', dec: 2 },
+  { k: 'f_retirada', t: 'Flujo de retirada', col: 'Retirada', u: 'kg/min', dec: 2 },
+  { k: 'f_prom', t: 'Flujo promedio', col: 'Prom.', u: 'kg/min', dec: 2 },
+  { k: 'f_pico', t: 'Flujo pico', col: 'Pico', u: 'kg/min', dec: 2 },
+  { k: 'pct_bajo', t: '% de flujo bajo', col: '% bajo', u: '%', dec: 1 },
+  { k: 'dur_seg', t: 'Duración del ordeño', col: 'Duración', u: 'min:s', dec: 0, dur: true },
+  { k: 'pct_bimodal', t: 'Bimodalidad', col: 'Bimodal', u: '%', dec: 1 },
+  { k: 'pct_arranque_lento', t: 'Arranque lento', col: 'Arr. lento', u: '%', dec: 1 },
+];
+// Las que se SUMAN para armar el total del tambo; el resto se pondera por ordeños.
+const ROD_SUMAS = ['ordenos', 'vacas', 'kg'];
+// Columnas de la planilla (se omite `kg`: ya está dividido por vaca).
+const ROD_COLUMNAS = ROD_METRICAS.filter(m => m.k !== 'kg');
+
+const rodNum = (m, v) => v == null ? '—' : m.dur ? fmtMinSeg(v)
+  : Number(v).toLocaleString('es-AR', { minimumFractionDigits: m.dec, maximumFractionDigits: m.dec });
+
+function rodArmar(d) {
+  const filas = d.filas || [];
+  const dias = [...new Set(filas.map(f => f.fecha))].sort();
+  const nombres = new Map();
+  filas.forEach(f => nombres.set(String(f.numero), f.grupo));   // el último nombre pisa
+  const por = { total: {} };
+  filas.forEach(f => {
+    (por[String(f.numero)] ||= {})[f.fecha] =
+      Object.assign({}, f, { kg_vaca: f.vacas ? f.kg / f.vacas : null });
+  });
+  const ponderadas = ROD_METRICAS.map(m => m.k).filter(k => !ROD_SUMAS.includes(k) && k !== 'kg_vaca');
+  const ordenosDia = {};
+  dias.forEach(fecha => {
+    const items = filas.filter(f => f.fecha === fecha);
+    const t = { fecha, grupo: 'Todo el tambo' };
+    ROD_SUMAS.forEach(k => { t[k] = items.reduce((a, f) => a + (f[k] || 0), 0); });
+    t.kg_vaca = t.vacas ? t.kg / t.vacas : null;
+    ponderadas.forEach(k => {
+      let sw = 0, w = 0;
+      items.forEach(f => { if (f[k] != null) { sw += f[k] * f.ordenos; w += f.ordenos; } });
+      t[k] = w ? sw / w : null;
+    });
+    por.total[fecha] = t;
+    ordenosDia[fecha] = t.ordenos;
+  });
+  // Día parcial: la copia de la base corta a mitad de jornada y ese día tiene una fracción
+  // de los ordeños de uno normal (mismo problema que `_dias_completos` en Rendimiento Sala).
+  const orden = Object.values(ordenosDia).sort((a, b) => a - b);
+  const mediana = orden.length ? orden[Math.floor(orden.length / 2)] : 0;
+  const parciales = new Set(dias.filter(f => ordenosDia[f] < 0.6 * mediana));
+  const claves = [...nombres.keys()].sort((a, b) => Number(a) - Number(b));
+  return { desde: d.desde, hasta: d.hasta, dias, nombres, por, parciales, claves };
+}
+
+function rodColor(clave) {
+  if (clave === 'total') return css('--text-primary');
+  return SERIES[rodDatos.claves.indexOf(clave) % SERIES.length];
+}
+
+function rodDiaTexto(iso) {
+  const sem = new Date(iso + 'T00:00:00').toLocaleDateString('es-AR', { weekday: 'short' });
+  return `${sem} ${etiquetaDia(iso)}` + (rodDatos.parciales.has(iso) ? ' (parcial)' : '');
+}
+
+function pintarRodeos() {
+  const D = rodDatos, info = document.getElementById('rod-info');
+  if (!D.dias.length) {
+    info.textContent = 'No hay ordeños con rodeo asignado en este período.';
+    document.getElementById('rod-cuerpo').hidden = true;
+    return;
+  }
+  info.textContent = `Del ${etiquetaDia(D.desde)} al ${etiquetaDia(D.hasta)} · ${D.dias.length} días con ordeños · `
+    + `${D.claves.length} rodeos.`;
+  document.getElementById('rod-cuerpo').hidden = false;
+
+  const selM = document.getElementById('rod-metrica');
+  if (!selM.options.length) {
+    selM.innerHTML = ROD_METRICAS.map(m => `<option value="${m.k}">${m.t}</option>`).join('');
+  }
+  if (!rodSel) rodSel = new Set(['total', ...D.claves]);
+  document.getElementById('rod-chips').innerHTML = ['total', ...D.claves].map(c => `
+    <label class="aviso" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+      <input type="checkbox" data-rod="${c}"${rodSel.has(c) ? ' checked' : ''}>
+      <span style="width:10px;height:10px;border-radius:2px;background:${rodColor(c)}"></span>
+      ${escHtml(c === 'total' ? 'Todo el tambo' : D.nombres.get(c))}
+    </label>`).join('');
+
+  // Día A: el último día completo. Día B: el anterior a ese, o ninguno.
+  const completos = D.dias.filter(f => !D.parciales.has(f));
+  const a = (completos.length ? completos : D.dias).slice(-1)[0];
+  const opts = D.dias.slice().reverse().map(f => `<option value="${f}">${rodDiaTexto(f)}</option>`).join('');
+  const ia = D.dias.indexOf(a);
+  document.getElementById('rod-dia-a').innerHTML = opts;
+  document.getElementById('rod-dia-a').value = a;
+  document.getElementById('rod-dia-b').innerHTML = '<option value="">— sin comparar —</option>' + opts;
+  document.getElementById('rod-dia-b').value = ia > 0 ? D.dias[ia - 1] : '';
+
+  dibujarRodeos();
+  pintarRodeosTabla();
+}
+
+function dibujarRodeos() {
+  const D = rodDatos;
+  const m = ROD_METRICAS.find(x => x.k === document.getElementById('rod-metrica').value) || ROD_METRICAS[0];
+  const claves = ['total', ...D.claves].filter(c => rodSel.has(c));
+  const datasets = claves.map(c => linea(c === 'total' ? 'Todo el tambo' : D.nombres.get(c),
+    D.dias.map(f => (D.por[c][f] || {})[m.k] ?? null), rodColor(c),
+    c === 'total' ? { borderDash: [6, 4], borderWidth: 2.5, pointRadius: 0 } : {}));
+  const o = baseOpts(true);
+  o.interaction = { mode: 'index', intersect: false };
+  o.scales.y.beginAtZero = !!m.cero;
+  o.scales.y.title = { display: !!m.u, text: m.u };
+  if (m.dur) o.scales.y.ticks = { callback: v => fmtMinSeg(v) };
+  o.plugins.tooltip = { callbacks: { label: it => ` ${it.dataset.label}: ${rodNum(m, it.parsed.y)} ${m.dur ? '' : m.u}` } };
+  chartRodEvol = graficoTipado('chart-rod-evolucion', chartRodEvol,
+    D.dias.map(f => etiquetaDia(f) + (D.parciales.has(f) ? '*' : '')), datasets, o, rodTipo);
+  document.getElementById('rod-parciales').textContent = D.parciales.size
+    ? `* Día parcial (${[...D.parciales].map(etiquetaDia).join(', ')}): tiene muy pocos ordeños contra un día normal. `
+      + 'Los flujos y la duración son comparables; ordeños, vacas y kg no.'
+    : '';
+}
+
+function pintarRodeosTabla() {
+  const D = rodDatos;
+  const a = document.getElementById('rod-dia-a').value, b = document.getElementById('rod-dia-b').value;
+  const delta = (m, va, vb) => {
+    if (!b || va == null || vb == null) return '';
+    const dif = va - vb, redond = m.dur ? Math.round(dif) : Number(dif.toFixed(m.dec));
+    if (redond === 0) return '<div class="aviso" style="margin:0">= igual</div>';
+    const txt = m.dur ? fmtMinSeg(Math.abs(dif)) : Math.abs(dif).toLocaleString('es-AR',
+      { minimumFractionDigits: m.dec, maximumFractionDigits: m.dec });
+    return `<div class="aviso" style="margin:0">${dif > 0 ? '▲ +' : '▼ −'}${txt}</div>`;
+  };
+  const fila = c => {
+    const fa = D.por[c][a], fb = D.por[c][b];
+    const nombre = c === 'total' ? 'Todo el tambo' : D.nombres.get(c);
+    return `<tr${c === 'total' ? ' style="font-weight:600"' : ''}><td>${escHtml(nombre)}</td>`
+      + ROD_COLUMNAS.map(m => `<td style="text-align:right;white-space:nowrap">${rodNum(m, fa ? fa[m.k] : null)}`
+        + `${fa ? delta(m, fa[m.k], fb ? fb[m.k] : null) : ''}</td>`).join('') + '</tr>';
+  };
+  document.getElementById('rod-tabla').innerHTML = '<thead><tr><th>Rodeo</th>'
+    + ROD_COLUMNAS.map(m => `<th style="text-align:right" title="${m.t}${m.u && !m.dur ? ' (' + m.u + ')' : ''}">${m.col}</th>`).join('')
+    + '</tr></thead><tbody>' + [...D.claves, 'total'].map(fila).join('') + '</tbody>';
+}
+
+async function cargarRodeos() {
+  clearTimeout(rodReintento);
+  const info = document.getElementById('rod-info');
+  info.textContent = 'Analizando…';
+  try {
+    const d = await pedirJSON(`/api/rutina/rodeos_dia?dias=${document.getElementById('rod-dias').value}`
+      + `&tambo=${encodeURIComponent(tamboActual)}`);
+    if (d.no_disponible) {
+      info.textContent = d.mensaje;
+      document.getElementById('rod-cuerpo').hidden = true;
+      return;
+    }
+    rodDatos = rodArmar(d);
+    pintarRodeos();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; rodReintento = setTimeout(cargarRodeos, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+document.getElementById('rod-aplicar')?.addEventListener('click', cargarRodeos);
+document.getElementById('rod-metrica')?.addEventListener('change', () => rodDatos && dibujarRodeos());
+document.getElementById('rod-chips')?.addEventListener('change', ev => {
+  const c = ev.target.dataset.rod;
+  if (!c || !rodDatos) return;
+  if (ev.target.checked) rodSel.add(c); else rodSel.delete(c);
+  dibujarRodeos();
+});
+document.getElementById('rod-dia-a')?.addEventListener('change', () => rodDatos && pintarRodeosTabla());
+document.getElementById('rod-dia-b')?.addEventListener('change', () => rodDatos && pintarRodeosTabla());
+if (document.getElementById('rod-tipo')) conectarSelectorTipo('rod-tipo', tipo => {
+  rodTipo = tipo;
+  if (rodDatos) dibujarRodeos();
 });
 
 // --- Proyección de rebaños ---------------------------------------------------
@@ -10287,6 +10551,9 @@ async function cargarTambos() {
       // esté cargado es de OTRO tambo, así que hay que volver a ofrecer el
       // botón "▶ Calcular" la próxima vez que se abra cada una.
       RUTINA_TABS_PREPARADAS.clear();
+      // Lo cargado en "Rodeos por día" es del tambo anterior: se oculta hasta volver a pedirlo.
+      rodDatos = null; rodSel = null;
+      const rodCuerpo = document.getElementById('rod-cuerpo'); if (rodCuerpo) rodCuerpo.hidden = true;
       // La fila de tarjetas del Dashboard se arma con dos endpoints: si no se
       // limpian los dos, mientras carga el tambo nuevo se ve media fila con
       // números del anterior (el bug que ya pasó en Salud del rodeo).
@@ -12802,6 +13069,7 @@ const RUTINA_TABS = {
   rutina: ['rutina-card'],
   rendimiento: ['panel-rendimiento'],
   flujos: ['panel-flujos'],
+  rodeos: ['panel-rodeos'],
   evolucion: ['evolucion-card', 'rendimiento-card', 'rendimiento-linea-card'],
 };
 
@@ -12820,6 +13088,8 @@ function prepararTabRutina(tab) {
     activarAPedido('rend-info', cargarRendimiento, 'rendimiento de sala', DEMORA);
   } else if (tab === 'flujos') {
     activarAPedido('flu-info', cargarFlujos, 'flujos de ordeño', DEMORA);
+  } else if (tab === 'rodeos') {
+    activarAPedido('rod-info', cargarRodeos, 'los rodeos por día', DEMORA);
   }
   // 'evolucion' no se prepara: espera "Aplicar" / "Ver mes completo".
 }

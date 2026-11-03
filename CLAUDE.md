@@ -2736,6 +2736,28 @@ incógnito** (arranca sin ese caché). Si vuelve a pasar tras publicar o
 cambiar algo en la consola de Google Cast, probar incógnito ANTES de
 sospechar de la app o de la red — ese descarte largo ya se hizo una vez.
 
+## Rutina de ordeño: pestaña "Rodeos por día" (03/11/2026)
+
+Replica la planilla por grupo de DelPro (flujos 0-15/15-30/30-60/60-120, retirada, pico,
+% flujo bajo, duración, kg/vaca) pero DÍA POR DÍA y comparable. Solo sala convencional por
+ahora (`sql_flujos_rodeos_dia` está en `salas/convencional.py`; la rotativa contesta
+`no_disponible`). Comparte permiso con "Flujos de ordeño" (`'flujos'`, solo admin).
+
+- **El rodeo es el del DÍA** (`AnimalDaily.AnimalGroup`), no el actual. `MilkingGroup` viene
+  NULL en todas las filas de La Martina. Ver "Los DOS criterios de rodeo".
+- **Ventana desde el último día con datos de la base**, no desde hoy (`sql_ultimo_dia_ordeno`).
+- **El rango literal de `ad.[Date]` es obligatorio** en el JOIN a AnimalDaily: sin él el plan
+  deja de usar el índice por fecha (7 días: 0,1 s con rango, 38 s sin él). `FORCE ORDER` solo
+  no alcanza.
+- `SessionMilkYield.AnimalDaily` (FK directa) NO coincide con fecha+vaca en 1/3 de los
+  ordeños: se usa el JOIN por fecha+animal, que cubre el 100%.
+- Un endpoint, una consulta; el frontend arma el total del tambo (pondera por ordeños; suma
+  ordeños/vacas/kg), el gráfico y la planilla con día A vs día B (flechas neutras, sin
+  juzgar bueno/malo). Día con <60% de la mediana de ordeños = "parcial".
+- Los errores del refresco en segundo plano se guardan en `_rodeos_dia_error` (60 s) y salen
+  como 502, para no dejar la pantalla en "calentando" para siempre.
+- **Pendiente de verificar:** tiempos de la consulta completa con datos reales de 30-90 días.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

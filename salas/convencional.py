@@ -725,6 +725,65 @@ def sql_flujos_por_grupo(desde: str, hasta: str) -> str:
     """
 
 
+def sql_ultimo_dia_ordeno() -> str:
+    """Último día con ordeños de la base (`aaaa-mm-dd`). La pestaña "Rodeos por
+    día" arma su ventana hacia atrás desde ahí, no desde hoy: las copias suelen
+    venir con atraso (la de La Martina termina el 28/8) y una ventana que
+    termina en hoy saldría vacía."""
+    return "SELECT CONVERT(varchar(10), MAX(BeginTime), 120) AS ultimo FROM SessionMilkYield"
+
+
+def sql_flujos_rodeos_dia(desde: str, hasta: str) -> str:
+    """Un renglón por (día, rodeo DEL DÍA): ordeños, vacas, kg y los promedios de
+    flujo, duración y bimodalidad. Alimenta la pestaña "Rodeos por día" de
+    Rutina de ordeño (cómo evoluciona cada rodeo día a día).
+
+    EL RODEO ES EL DEL DÍA, no el actual: sale de `AnimalDaily.AnimalGroup` (la
+    misma fuente que el análisis de RCS). `SessionMilkYieldEx.MilkingGroup`
+    viene vacío en TODAS las filas de La Martina (medido: 19.658 de 19.658 en
+    NULL), así que no sirve. `AnimalDaily` cubre el 100% de los ordeños (35.975
+    de 35.975 en 14 días) y en el 8% el rodeo de ese día era OTRO que el de hoy:
+    con el rodeo actual, la historia de un rodeo cambiaría sola cada vez que se
+    mueven vacas (ver CLAUDE.md, "Los DOS criterios de rodeo").
+
+    Se devuelven `kg` (suma) y `vacas` (distintas ese día en ese rodeo) además de
+    los promedios, para que el frontend arme el total del tambo ponderando por
+    ordeños sin volver a la base.
+
+    EL RANGO DE `ad.[Date]` ES OBLIGATORIO aunque parezca redundante con la
+    igualdad contra `CAST(y.BeginTime AS date)`: sin él el optimizador no usa el
+    índice por fecha de AnimalDaily y la consulta pasa de 0,1 s a 38 s con solo 7
+    días (medido en La Martina, `y+ex+ad` con y sin el rango). Con la ventana
+    literal en ambos lados la consulta de 7 días (sin agregados) quedó en 0,1 s.
+    NO verificado: la consulta COMPLETA con 45-90 días contra datos reales (la PC de
+    desarrollo tiene SQL Express casi sin RAM y la caché fría la hace pasar de 40 s)."""
+    d, h = rutina.validar_fecha(desde), rutina.validar_fecha(hasta)
+    return f"""
+        SELECT CONVERT(varchar(10), CAST(y.BeginTime AS date), 120) AS fecha,
+               g.Name AS grupo, g.Number AS numero,
+               COUNT(*) AS ordenos,
+               COUNT(DISTINCT y.BasicAnimal) AS vacas,
+               SUM(y.TotalYield) AS kg,
+               {_FLUJOS_PROM_CONV},
+               AVG(ex.AverageFlow) AS f_prom,
+               AVG(ex.PeakFlow) AS f_pico,
+               AVG(ex.LowMilkFlowPercentage * 1.0) AS pct_bajo,
+               AVG({_DUR_SEG} * 1.0) AS dur_seg,
+               {_BIMODAL_CONV}
+        FROM SessionMilkYield y
+        JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
+        JOIN BasicAnimal b ON b.OID = y.BasicAnimal AND b.GCRecord IS NULL AND b.Number > 0
+        JOIN AnimalDaily ad ON ad.BasicAnimal = y.BasicAnimal
+                           AND ad.[Date] >= '{d}' AND ad.[Date] < DATEADD(day, 1, '{h}')
+                           AND ad.[Date] = CAST(y.BeginTime AS date) AND ad.GCRecord IS NULL
+        JOIN AbstractGroup g ON g.OID = ad.AnimalGroup AND g.GCRecord IS NULL
+        WHERE {_rango_conv(desde, hasta)} AND ex.FlowZerotoFifteen IS NOT NULL
+        GROUP BY CAST(y.BeginTime AS date), g.Name, g.Number
+        ORDER BY fecha, g.Number
+        OPTION (MAX_GRANT_PERCENT = 20)
+    """
+
+
 def sql_flujos_distribucion(desde: str, hasta: str) -> str:
     """Histograma conjunto de flujo promedio y pico, en cajones de 1 kg/min.
     `AverageFlow`/`PeakFlow` YA están en kg/min en esta sala (no se escalan:

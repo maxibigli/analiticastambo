@@ -4354,6 +4354,82 @@ def api_flujos_analisis():
     return jsonify(resultado)
 
 
+# --- Rutina de ordeño: rodeos por día ----------------------------------------
+# Pestaña "Rodeos por día": para cada rodeo, cómo evolucionan día a día los flujos,
+# la duración y la producción. Una sola consulta agrupa (día, rodeo del día) y el
+# frontend arma el total del tambo, el promedio móvil y la comparación día A vs B,
+# así que cambiar de métrica o de días no vuelve a la base.
+RODEOS_DIA_CACHE_TTL_S = 1800  # 30 min: los días cerrados no cambian
+RODEOS_DIA_MAX = 90
+_rodeos_dia_error: dict[str, tuple[float, str]] = {}
+
+
+def _refresh_rodeos_dia_async(tambo, dias):
+    key = f"{tambo}:rodeos_dia:{dias}"
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def worker():
+        try:
+            sala = salas.de(tambo)
+            ult = db.run_query(sala.sql_ultimo_dia_ordeno(), tambo=tambo, max_rows=1)["rows"]
+            if not ult or not ult[0][0]:
+                _cache_set(key, {"hasta": None, "desde": None, "filas": []})
+                return
+            hasta = datetime.date.fromisoformat(ult[0][0])
+            desde = hasta - datetime.timedelta(days=dias - 1)
+            # Hasta 90 días × ~8 rodeos: con margen sobre el tope de filas.
+            data = db.run_query(sala.sql_flujos_rodeos_dia(desde.isoformat(), hasta.isoformat()),
+                                tambo=tambo, max_rows=dias * 30)
+            cols = data["columns"]
+            _cache_set(key, {"hasta": hasta.isoformat(), "desde": desde.isoformat(),
+                             "filas": [dict(zip(cols, r)) for r in data["rows"]]})
+            _rodeos_dia_error.pop(key, None)
+        except Exception as exc:  # noqa: BLE001
+            # Sin esto el llamador queda en "calentando" para siempre (el
+            # refresco en segundo plano no tiene a quién devolverle el error).
+            _rodeos_dia_error[key] = (time.time(), str(exc)[:300])
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+@app.get("/api/rutina/rodeos_dia")
+@auth.requiere_rol("admin")
+def api_rutina_rodeos_dia():
+    """Una fila por (día, rodeo DEL DÍA) para los últimos `dias` días con datos de
+    la base (no de hoy: ver `sql_ultimo_dia_ordeno`). Solo las salas que definen
+    `sql_flujos_rodeos_dia` (hoy la convencional); en la rotativa contesta
+    `no_disponible` en vez de dar un error."""
+    tambo = _tambo_del_request()
+    sala = salas.de(tambo)
+    if not hasattr(sala, "sql_flujos_rodeos_dia"):
+        return jsonify({"no_disponible": True,
+                        "mensaje": "El análisis por rodeo y día todavía no está disponible para "
+                                   "la sala de este tambo (hoy solo la convencional)."})
+    try:
+        dias = int(request.args.get("dias", 30))
+    except ValueError:
+        return jsonify({"error": "`dias` debe ser un número."}), 400
+    dias = max(2, min(dias, RODEOS_DIA_MAX))
+
+    key = f"{tambo}:rodeos_dia:{dias}"
+    data, fresh = _cache_get(key, allow_stale=True, ttl=RODEOS_DIA_CACHE_TTL_S)
+    if data is None:
+        err = _rodeos_dia_error.get(key)
+        if err and time.time() - err[0] < 60:
+            return jsonify({"error": f"No se pudo leer la base: {err[1]}"}), 502
+        _refresh_rodeos_dia_async(tambo, dias)
+        return jsonify({"calentando": True, "mensaje": "Agrupando ordeños por rodeo y día…"}), 202
+    if not fresh:
+        _refresh_rodeos_dia_async(tambo, dias)
+    return jsonify(data)
+
+
 # --- Proyección de rebaños ---------------------------------------------------
 # Depende del estado reproductivo de hoy, que cambia de a poco: TTL largo.
 PROYECCION_CACHE_TTL_S = 3600  # 1 hora
