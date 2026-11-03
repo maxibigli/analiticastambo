@@ -1607,11 +1607,40 @@ def api_configuracion():
                     **_estado_archivos(tambo)})
 
 
+@app.get("/api/configuracion/bases")
+@auth.requiere_rol("admin")
+def api_configuracion_bases():
+    """Bases del servidor a las que el usuario del tambo puede entrar, para el
+    selector "Base de datos" de ⚙ Configuración. Usa la conexión GUARDADA: si se
+    cambió la IP o el usuario hay que guardar antes de pedir la lista."""
+    tambo = _tambo_del_request()
+    try:
+        return jsonify({"bases": db.listar_bases(tambo),
+                        "actual": tambos.conexion(tambo).get("database")})
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"No se pudo leer la lista de bases: {exc}"}), 502
+
+
+def _olvidar_datos_de(tambo: str):
+    """Tira lo que se calculó con la conexión anterior de este tambo. Se llama al
+    guardar la configuración: si cambió la base, el caché (30-60 min de vida) y los
+    hechos "esta base tiene tal tabla" seguirían describiendo la otra."""
+    prefijo = tambo + ":"
+    with _cache_lock:
+        for k in [k for k in _cache if k.startswith(prefijo)]:
+            _cache.pop(k, None)
+        for k in [k for k in _errores_tabla if k.startswith(prefijo)]:
+            _errores_tabla.pop(k, None)
+    with _tiene_bcs_lock:
+        _tiene_bcs.pop(tambo, None)
+
+
 @app.post("/api/configuracion")
 @auth.requiere_rol("admin")
 def api_guardar_configuracion():
     tambo = _tambo_del_request()
     datos = dict(request.json or {})
+    base_anterior = tambos.conexion(tambo).get("database")
     # Campo de UI, no de configuracion_tambo.guardar(): si el usuario no tocó
     # el campo contraseña (lo dejó en blanco a propósito, ver el frontend),
     # no hay que pisar la que ya estaba guardada con un vacío.
@@ -1623,6 +1652,8 @@ def api_guardar_configuracion():
         cfg = configuracion_tambo.guardar(tambo, datos)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    if tambos.conexion(tambo).get("database") != base_anterior:
+        _olvidar_datos_de(tambo)
     cfg["contrasena_configurada"] = bool(cfg.pop("contrasena"))
     cfg["nvr_contrasena_configurada"] = bool(cfg.pop("nvr_contrasena"))
     cfg["tambo"] = tambo

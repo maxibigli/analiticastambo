@@ -2331,6 +2331,37 @@ la copia de San José estaban disponibles (4060 y `RECOVERY_PENDING`); se analiz
 con una conexión propia de solo lectura con autenticación de Windows, sin tocar
 la configuración del tambo.
 
+## La base de datos de cada tambo se elige en ⚙ Configuración (03/11/2026)
+
+Antes la base (`DDM`, `DDM_LAMARTINA`, `SanJose`...) solo se podía fijar en
+`tambos.py`. Ahora la sección "Conexión a la base" tiene un campo **Base de
+datos** (`base_datos` en `configuracion_tambo.py`) que pisa la de `tambos.py`
+(`tambos._config_manual`); vacío = la declarada ahí. El tambo SIGUE teniendo que
+existir en `tambos.py` (id, rebaños): esto cambia a qué base apunta, no crea
+tambos nuevos.
+
+**"Ver bases"** (`GET /api/configuracion/bases`, `db.listar_bases`) conecta a
+`master` con la conexión GUARDADA y lista las bases con `HAS_DBACCESS = 1`: las
+que ESE usuario puede abrir. Es a propósito un filtro de acceso y no una lista
+de todo el servidor: un `delpro_lectura` huérfano en una base recién restaurada
+(el error 4060 de siempre) simplemente NO aparece, y eso sirve de diagnóstico
+(en esta PC ofrece `SanJose` y no `DDM_LAMARTINA`). Si se cambió IP, usuario o
+contraseña hay que guardar antes de pedir la lista.
+
+Tres decisiones, todas medidas:
+- **El nombre se valida** (`[A-Za-z0-9_.-]`, hasta 128): va dentro de la cadena de
+  conexión (`DATABASE=...;`) y un `;` o `=` agregaría atributos de conexión.
+  Probado con `DDM;Encrypt=no`, `a b`, `x=y` y 200 caracteres: todos rechazados (400).
+- **Al guardar con una base distinta se descarta lo calculado de ESE tambo**
+  (`_olvidar_datos_de`: caché, "esta base no tiene tal tabla" y `_tiene_bcs`). El
+  caché dura 30-60 min y, sin esto, seguiría mostrando la base anterior. Solo
+  toca las claves del tambo editado (verificado con un segundo tambo).
+- **`listar_bases` NO pasa por el semáforo de consultas pesadas** (`_slot_for`):
+  es metadatos instantáneo y, haciéndolo esperar turno, la pantalla de
+  Configuración se colgaba detrás del calentamiento del tablero. Aun así, con
+  SQL Express saturado tardó de 30 a 40 s en loguear (medido en esta PC), así que
+  la pantalla avisa que puede demorar.
+
 ## Tiempos muertos de la sala convencional: SALA PARADA (07/10/2026)
 
 El tambo mostró el gráfico de una sesión de San José con minutos sin ordeñar al

@@ -61,6 +61,28 @@ def _conn_str(tambo_id: str) -> tuple[str, str]:
 MAX_ROWS = 5000
 QUERY_TIMEOUT_S = 180
 
+
+def listar_bases(tambo: str = DEFAULT_TAMBO) -> list:
+    """Las bases del servidor del tambo a las que ESTE usuario puede entrar (las que
+    muestra el selector de ⚙ Configuración). Conecta a `master` con la conexión GUARDADA
+    del tambo y filtra con `HAS_DBACCESS`: un usuario de solo lectura ve únicamente las
+    bases donde está mapeado, así que no ofrece elegir una que después daría el 4060.
+    Consulta fija, sin texto del usuario: no pasa por `validate_sql`."""
+    # SIN `_slot_for`: ese semáforo existe para que no corran de a dos las consultas
+    # PESADAS contra SQL Express, y esta es una lectura de metadatos instantánea.
+    # Haciéndola esperar el turno, la pantalla de Configuración quedaba colgada
+    # detrás del calentamiento de todo el tablero (minutos, con la base ocupada).
+    conn_str, _ = _conn_str(tambo)
+    conn_str = re.sub(r"DATABASE=[^;]*;", "DATABASE=master;", conn_str)
+    conn = pyodbc.connect(conn_str, timeout=10)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sys.databases WHERE database_id > 4 "
+                    "AND state = 0 AND HAS_DBACCESS(name) = 1 ORDER BY name")
+        return [r[0] for r in cur.fetchall()]
+    finally:
+        conn.close()
+
 # Palabras que nunca deben aparecer en una consulta generada
 _FORBIDDEN = re.compile(
     r"\b(insert|update|delete|drop|alter|create|truncate|merge|grant|revoke|"

@@ -3304,8 +3304,20 @@
       <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Contraseña
         <input type="password" id="cfg-contrasena" placeholder="(sin cambios)" style="width:160px;padding:7px 8px">
       </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Base de datos
+        <span style="display:flex;gap:6px">
+          <input type="text" id="cfg-base" list="cfg-bases-lista" placeholder="(la de tambos.py)" autocomplete="off"
+                 style="width:200px;padding:7px 8px">
+          <button type="button" class="secundario" id="cfg-bases-ver" title="Lista las bases del servidor a las que puede entrar el usuario guardado">Ver bases</button>
+        </span>
+        <datalist id="cfg-bases-lista"></datalist>
+      </label>
     </div>
     <div class="aviso" id="config-contrasena-nota" style="margin-top:6px"></div>
+    <div class="aviso" id="config-bases-nota" style="margin-top:4px">
+      <b>Base de datos</b>: vacío = la declarada en <code>tambos.py</code>. <b>Ver bases</b> muestra las que el usuario
+      <b>guardado</b> puede abrir (si cambiaste IP, usuario o contraseña, guardá primero). Al cambiarla se descarta lo
+      calculado con la base anterior. Si el servidor está ocupado, <b>Ver bases</b> puede tardar medio minuto.</div>
 
     <div class="aviso" style="margin:16px 0 6px;font-weight:600">Hardware</div>
     <div class="controls" style="flex-wrap:wrap;gap:18px">
@@ -12913,6 +12925,8 @@ async function cargarConfiguracion() {
     document.getElementById('cfg-ip').value = cfg.ip || '';
     document.getElementById('cfg-puerto').value = cfg.puerto || '';
     document.getElementById('cfg-usuario').value = cfg.usuario || '';
+    document.getElementById('cfg-base').value = cfg.base_datos || '';
+    document.getElementById('cfg-bases-lista').innerHTML = '';
     document.getElementById('cfg-contrasena').value = '';
     document.getElementById('config-contrasena-nota').textContent = cfg.contrasena_configurada
       ? 'Ya hay una contraseña guardada — dejá el campo vacío para conservarla.'
@@ -13918,6 +13932,20 @@ document.getElementById('cfg-sala').addEventListener('change', (e) => {
   _actualizarPuestosConfig(e.target.value === 'convencional');
 });
 
+document.getElementById('cfg-bases-ver').addEventListener('click', async () => {
+  const nota = document.getElementById('config-bases-nota');
+  const lista = document.getElementById('cfg-bases-lista');
+  nota.textContent = 'Consultando el servidor…';
+  try {
+    const d = await pedirJSON('/api/configuracion/bases?tambo=' + encodeURIComponent(tamboActual));
+    lista.innerHTML = d.bases.map(b => `<option value="${escHtml(b)}">`).join('');
+    nota.innerHTML = `Bases que este usuario puede abrir: <b>${d.bases.map(escHtml).join(', ') || '(ninguna)'}</b>. `
+      + `Tocá el campo "Base de datos" para elegir una. En uso ahora: <b>${escHtml(d.actual || '?')}</b>.`;
+  } catch (e) {
+    nota.textContent = e.message;
+  }
+});
+
 document.getElementById('config-guardar').addEventListener('click', async () => {
   const estado = document.getElementById('config-estado');
   const numOrNull = v => (v === '' || v == null) ? null : Number(v);
@@ -13926,6 +13954,7 @@ document.getElementById('config-guardar').addEventListener('click', async () => 
     ip: document.getElementById('cfg-ip').value.trim() || null,
     puerto: numOrNull(document.getElementById('cfg-puerto').value),
     usuario: document.getElementById('cfg-usuario').value.trim() || null,
+    base_datos: document.getElementById('cfg-base').value.trim() || null,
     contrasena: document.getElementById('cfg-contrasena').value || null,
     tiene_bcs: document.getElementById('cfg-tiene-bcs').checked,
     tiene_podal: document.getElementById('cfg-tiene-podal').checked,

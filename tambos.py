@@ -154,6 +154,10 @@ def _config_manual(tambo_id: str) -> dict:
             base["password"] = cfg.get("contrasena") or ""
         else:
             base["auth"] = "windows"
+    # La base se elige desde ⚙ Configuración (campo "Base de datos") y pisa la de
+    # arriba. Va aparte de ip/puerto/usuario: sirve igual con la conexión declarada acá.
+    if cfg.get("base_datos"):
+        base["database"] = cfg["base_datos"]
     if cfg.get("sala"):
         base["sala"] = cfg["sala"]
     return base

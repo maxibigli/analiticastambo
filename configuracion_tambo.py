@@ -22,6 +22,7 @@ fuentes de verdad para lo mismo.
 """
 import json
 import os
+import re
 import threading
 import urllib.parse
 
@@ -68,8 +69,12 @@ SALAS_LABEL = {"rotativa": "Rotativa", "convencional": "Convencional (espina de 
 # siempre. No se valida al guardar: el tambo puede querer dejar la ruta puesta
 # antes de copiar el archivo, y bloquear el guardado por eso sería molesto sin
 # necesidad — la pantalla informa el estado con `estado_rutas()`.
-_CAMPOS_TEXTO = ("nombre", "ip", "usuario", "contrasena", "ruta_toros", "ruta_precios",
+_CAMPOS_TEXTO = ("nombre", "ip", "usuario", "contrasena", "base_datos", "ruta_toros", "ruta_precios",
                  "sensehub_ip", "nvr_ip", "nvr_usuario", "nvr_contrasena", "nvr_plantilla")
+# El nombre de la base va DENTRO de la cadena de conexión (`DATABASE=...;`): un
+# `;` o un `=` colado ahí agregaría atributos de conexión que nadie pidió. Se
+# acepta solo lo que SQL Server permite en un nombre común.
+_RE_BASE_DATOS = re.compile(r"[A-Za-z0-9_.\-]{1,128}")
 _CAMPOS_BOOL = ("tiene_bcs", "tiene_podal")
 _CAMPOS_ENUM = {
     "sistema_actividad": SISTEMAS_ACTIVIDAD,
@@ -156,6 +161,7 @@ CAMARA_SEG_DESPUES_DEFECTO = 300
 
 DEFAULT = {
     "nombre": None, "ip": None, "puerto": None, "usuario": None, "contrasena": None,
+    "base_datos": None,
     "tiene_bcs": False, "tiene_podal": False,
     "sistema_actividad": "sin_sistema",
     "caudalimetro": "sin_caudalimetro",
@@ -314,6 +320,9 @@ def guardar(tambo_id: str, datos: dict) -> dict:
     for clave, valor in (datos or {}).items():
         if clave in _CAMPOS_TEXTO:
             entrantes[clave] = (str(valor).strip() or None) if valor is not None else None
+            if clave == "base_datos" and entrantes[clave] and not _RE_BASE_DATOS.fullmatch(entrantes[clave]):
+                raise ValueError(f"Nombre de base inválido: {entrantes[clave]!r} (solo letras, números, "
+                                 "guion, guion bajo y punto).")
         elif clave in _CAMPOS_INT:
             if valor in (None, ""):
                 entrantes[clave] = None
