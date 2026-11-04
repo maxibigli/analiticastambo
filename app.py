@@ -5385,6 +5385,16 @@ def _fecha_ar_a_iso(txt):
     return f"{a}-{m.zfill(2)}-{d.zfill(2)}"
 
 
+def _laser_traer(usuario, password):
+    """Los dos períodos de La Serenísima con un solo login. `entregas` es la lista
+    COMBINADA (anterior + actual, ya en orden cronológico) para quien necesita mirar
+    por fechas —el cruce con CICLA y el UFC del Tablero—: el período actual arranca
+    vacío cada mes y se llena con días de demora, y sin esto esas dos cosas quedaban
+    ciegas los primeros días de cada mes."""
+    p = laserenisima.obtener_periodos(usuario, password, ("anterior", "actual"))
+    return {"entregas": p["anterior"] + p["actual"], "actual": p["actual"], "anterior": p["anterior"]}
+
+
 def _refresh_laser_async():
     key = "laser:actual"
     with _cache_lock:
@@ -5396,8 +5406,7 @@ def _refresh_laser_async():
         try:
             usuario = os.environ.get("LASER_USUARIO")
             password = os.environ.get("LASER_PASSWORD")
-            entregas = laserenisima.obtener_entregas(usuario, password)
-            _cache_set(key, {"entregas": entregas})
+            _cache_set(key, _laser_traer(usuario, password))
         except Exception:  # noqa: BLE001
             pass
         finally:
@@ -5411,8 +5420,11 @@ def _refresh_laser_async():
 @auth.requiere_rol("admin")
 def api_laser_entregas():
     """Litros/grasa/proteínas/UFC/temperatura OFICIALES de La Serenísima
-    (comprador) para el tambo 1565, período actual. Login vía
-    LASER_USUARIO/LASER_PASSWORD (env)."""
+    (comprador) para el tambo 1565. Login vía LASER_USUARIO/LASER_PASSWORD (env).
+
+    `?periodo=actual|anterior` pide uno a mano. Sin parámetro devuelve el actual, y si
+    todavía no tiene entregas (el mes recién arranca y La Serenísima publica con días de
+    demora) devuelve el anterior con un `aviso`, en vez de una pantalla en cero."""
     usuario = os.environ.get("LASER_USUARIO")
     password = os.environ.get("LASER_PASSWORD")
     if not usuario or not password:
@@ -5423,19 +5435,32 @@ def api_laser_entregas():
     data, fresh = _cache_get(key, allow_stale=True, ttl=LASER_CACHE_TTL_S)
     if data is None:
         try:
-            entregas = laserenisima.obtener_entregas(usuario, password)
+            data = _laser_traer(usuario, password)
         except laserenisima.LaserError as exc:
             return jsonify({"error": str(exc)}), 502
         except Exception as exc:  # noqa: BLE001
             return jsonify({"error": f"No se pudo consultar La Serenísima: {exc}"}), 502
-        data = {"entregas": entregas}
         _cache_set(key, data)
     elif not fresh:
         _refresh_laser_async()
 
-    entregas = data["entregas"]
+    actual, anterior = data.get("actual") or [], data.get("anterior") or []
+    pedido = request.args.get("periodo")
+    if pedido not in ("actual", "anterior"):
+        pedido = None
+    mostrado = pedido or ("actual" if actual else "anterior")
+    entregas = actual if mostrado == "actual" else anterior
+    aviso = None
+    if pedido is None and mostrado == "anterior":
+        aviso = ("El período actual todavía no tiene entregas publicadas (La Serenísima las carga "
+                 "con unos días de demora): se muestra el período anterior.")
+    elif not entregas:
+        aviso = "Este período no tiene entregas publicadas."
     litros = [e["litros"] for e in entregas if e["litros"] is not None]
     return jsonify({
+        "periodo": mostrado, "aviso": aviso,
+        "desde": entregas[0]["fecha"] if entregas else None,
+        "hasta": entregas[-1]["fecha"] if entregas else None,
         "entregas": entregas,
         "resumen": {
             "total_entregas": len(entregas),
@@ -5483,7 +5508,7 @@ def api_entregas_comparar():
     data_l, _ = _cache_get(key_l, allow_stale=True, ttl=LASER_CACHE_TTL_S)
     if data_l is None:
         try:
-            data_l = {"entregas": laserenisima.obtener_entregas(laser_usuario, laser_pw)}
+            data_l = _laser_traer(laser_usuario, laser_pw)
             _cache_set(key_l, data_l)
         except Exception as exc:  # noqa: BLE001
             return jsonify({"error": f"La Serenísima: {exc}"}), 502

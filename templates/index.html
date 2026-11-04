@@ -1861,8 +1861,13 @@
   <section class="card" id="laser-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">🧪 Calidad de leche (La Serenísima)</h2>
-      <span class="aviso">Datos oficiales del comprador — período actual, tambo 1565.</span>
+      <span class="aviso" id="laser-periodo-txt">Datos oficiales del comprador, tambo 1565.</span>
+      <div class="lac-segment" id="laser-periodo" role="group" aria-label="Período" style="margin-left:auto">
+        <button class="lac-segment__item" data-periodo="anterior" aria-pressed="false">Período anterior</button>
+        <button class="lac-segment__item" data-periodo="actual" aria-pressed="false">Período actual</button>
+      </div>
     </div>
+    <div class="aviso" id="laser-aviso" style="margin-top:8px" hidden></div>
     <p class="explica" style="margin-top:10px">
       <b>Qué muestra.</b> Los parámetros con los que el comprador liquida la leche: grasa, proteínas,
       unidades formadoras de colonia y temperatura de recepción. Son los números que definen el
@@ -7782,14 +7787,29 @@ async function cargarComparar() {
 let chartLaserLitros = null, chartLaserGrasa = null, chartLaserProteinas = null,
     chartLaserUfc = null, chartLaserTemp = null;
 
-async function cargarLaser() {
+document.getElementById('laser-periodo')?.addEventListener('click', ev => {
+  const b = ev.target.closest('[data-periodo]');
+  if (b) cargarLaser(b.dataset.periodo);
+});
+
+async function cargarLaser(periodo) {
   try {
-    const d = await pedirJSON('/api/laser/entregas');
+    // Sin `periodo` el servidor elige: el actual, o el anterior si el actual todavía no tiene
+    // entregas (arranca vacío cada mes). Con `periodo` (botones de la tarjeta) respeta lo pedido.
+    const d = await pedirJSON('/api/laser/entregas' + (periodo ? '?periodo=' + periodo : ''));
     const r = d.resumen;
+    const etiquetaPeriodo = d.periodo === 'anterior' ? 'período anterior' : 'período actual';
+    document.querySelectorAll('#laser-periodo [data-periodo]').forEach(b =>
+      b.setAttribute('aria-pressed', String(b.dataset.periodo === d.periodo)));
+    document.getElementById('laser-periodo-txt').textContent =
+      `Datos oficiales del comprador — ${etiquetaPeriodo}` + (d.desde ? ` (${d.desde} al ${d.hasta})` : '') + ', tambo 1565.';
+    const av = document.getElementById('laser-aviso');
+    av.hidden = !d.aviso;
+    av.textContent = d.aviso ? '⚠ ' + d.aviso : '';
     const ultima = d.entregas[d.entregas.length - 1];
     const ufcUltimo = (ultima && ultima.ufc != null) ? ultima.ufc : 'NORMAL';
     document.getElementById('laser-kpis').innerHTML = [
-      ['Entregas (período actual)', r.total_entregas],
+      [`Entregas (${etiquetaPeriodo})`, r.total_entregas],
       ['Litros totales', r.litros_total],
       ['Grasa % promedio', r.grasa_promedio],
       ['Proteínas % promedio', r.proteinas_promedio],

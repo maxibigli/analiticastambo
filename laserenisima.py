@@ -87,13 +87,16 @@ def _iniciar_sesion(usuario: str, password: str) -> requests.Session:
     return s
 
 
-def obtener_entregas(usuario: str, password: str, periodo: str = "actual") -> list[dict]:
-    """Trae y combina las dos tablas (litros + físico-químico) del tambo 1565."""
-    with _lock:
-        s = _iniciar_sesion(usuario, password)
-        base_df = BASE + "/Pages/DatosFisicos/"
-        r_left = s.get(f"{base_df}DatosFisicosCuerpoLeft.aspx?idTambo={TAMBO_ID}&periodo={periodo}", timeout=20)
-        r_content = s.get(f"{base_df}DatosFisicosCuerpoContent.aspx?idTambo={TAMBO_ID}&periodo={periodo}", timeout=20)
+def _leer_periodo(s: requests.Session, periodo: str) -> list[dict]:
+    """Las entregas de UN período (`actual` o `anterior`) con una sesión ya iniciada.
+
+    `actual` es el mes en curso y `anterior` el mes completo anterior (medido el
+    04/11/2026: `anterior` va del 1/10 al 31/10 con 93 entregas). OJO: el período actual
+    arranca VACÍO cada mes y se llena con días de demora — el 04/11 la página dice
+    literalmente "TOTAL 0" —; una lista vacía acá NO es un error de conexión."""
+    base_df = BASE + "/Pages/DatosFisicos/"
+    r_left = s.get(f"{base_df}DatosFisicosCuerpoLeft.aspx?idTambo={TAMBO_ID}&periodo={periodo}", timeout=20)
+    r_content = s.get(f"{base_df}DatosFisicosCuerpoContent.aspx?idTambo={TAMBO_ID}&periodo={periodo}", timeout=20)
 
     tablas_izq = BeautifulSoup(r_left.text, "html.parser").find_all("table")
     if len(tablas_izq) < 2:
@@ -121,3 +124,17 @@ def obtener_entregas(usuario: str, password: str, periodo: str = "actual") -> li
             "celulas": col(4), "ufc": col(5), "temperatura": col(6),
         })
     return entregas
+
+
+def obtener_entregas(usuario: str, password: str, periodo: str = "actual") -> list[dict]:
+    """Trae y combina las dos tablas (litros + físico-químico) del tambo 1565."""
+    with _lock:
+        s = _iniciar_sesion(usuario, password)
+        return _leer_periodo(s, periodo)
+
+
+def obtener_periodos(usuario: str, password: str, periodos=("anterior", "actual")) -> dict:
+    """Varios períodos con UN solo login: `{periodo: [entregas]}`."""
+    with _lock:
+        s = _iniciar_sesion(usuario, password)
+        return {p: _leer_periodo(s, p) for p in periodos}

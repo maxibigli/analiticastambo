@@ -2865,6 +2865,27 @@ por el margen de ±6 h: 3 y 33 filas con relleno caían en sus sesiones (la de l
 Si el equipo vuelve a rellenar `EndTime`, el síntoma visible es "No se puede medir la sala parada: solo el N% ..."
 en el detalle de la sesión.
 
+## La Serenísima "no devuelve datos": el período actual arranca vacío cada mes (04/11/2026)
+
+La tarjeta "Calidad de leche (La Serenísima)" de Entrega de Leche salía en cero (0 entregas, gráficos
+vacíos). **No era un fallo de conexión**: con las credenciales de esta PC el login anda y la lectura también.
+El 04/11 el período `actual` es noviembre y la página del comprador dice literalmente "TOTAL 0": La Serenísima
+publica las entregas con DÍAS de demora (el 23/07 había 52 filas, o sea hasta el ~17/07: ~6 días), así que
+los primeros días de cada mes no hay nada. El período `anterior` es el mes completo previo (1/10 al 31/10:
+93 entregas, 2.198.584 litros). Los otros valores de `periodo` que se probaron (`mes`, `ultimo`, `2026-11`)
+devuelven 0 filas: solo existen `actual` y `anterior`.
+
+Qué se hizo (`laserenisima.py`, `app.py`, tarjeta en `index.html`):
+- `laserenisima.obtener_periodos` trae los dos períodos con UN solo login; `app._laser_traer` los guarda en
+  el caché `laser:actual` como `actual`, `anterior` y `entregas` (combinada, en orden cronológico).
+- `/api/laser/entregas` sin parámetro devuelve el actual y, si está vacío, el anterior con un `aviso`;
+  `?periodo=actual|anterior` respeta lo pedido. La tarjeta tiene un selector "Período anterior / actual" y
+  muestra el rango de fechas y el aviso.
+- El cruce CICLA contra La Serenísima (`/api/entregas/comparar`) y el UFC del Tablero leen la lista combinada:
+  sin eso quedaban ciegos los primeros días de cada mes.
+- **La alerta de UFC (`_lineas_alertas_puntuales`) NO cambió**: cuenta las entregas del período EN CURSO sobre
+  el umbral; sumarle el mes anterior habría cambiado lo que significa el mensaje.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).
