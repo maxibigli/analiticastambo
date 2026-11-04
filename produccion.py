@@ -58,14 +58,19 @@ def _filtro(desde: str, hasta: str) -> str:
             "AND d.TotalYield > 0")
 
 
-def sql_por_rodeo_dia(desde: str, hasta: str) -> str:
-    """Un renglón por (día, rodeo DEL DÍA): vacas con leche, vacas y kg válidos, DEL promedio."""
+def sql_por_rodeo_dia(desde: str, hasta: str, grupos_sub: str) -> str:
+    """Un renglón por (día, rodeo DEL DÍA): vacas con leche, vacas y kg válidos, DEL promedio.
+
+    `grupos_sub` es `salas.grupos_subquery(tambo)`: los rodeos de ordeñe REALES de este tambo.
+    No es opcional: la base DDM la comparten varios tambos (La Ponderosa, Don Germán, SB) y
+    sin ese filtro entran sus rodeos y sus vacas (aparecían "VO Don German", "Animals SB")."""
     return f"""
         SELECT CONVERT(varchar(10), d.[Date], 120) AS fecha, g.Name AS grupo, g.Number AS numero,
                COUNT(*) AS vacas, {_VALIDAS}, AVG(CAST(d.DIM AS float)) AS dim_prom
         FROM AnimalDaily d
         JOIN BasicAnimal b ON b.OID = d.BasicAnimal AND b.GCRecord IS NULL AND b.Number > 0
         JOIN AbstractGroup g ON g.OID = d.AnimalGroup AND g.GCRecord IS NULL
+        JOIN ({grupos_sub}) gr ON gr.grupo = d.AnimalGroup
         WHERE {_filtro(desde, hasta)}
         GROUP BY d.[Date], g.Name, g.Number
         ORDER BY fecha, g.Number
@@ -73,15 +78,16 @@ def sql_por_rodeo_dia(desde: str, hasta: str) -> str:
     """
 
 
-def sql_por_del_dia(desde: str, hasta: str) -> str:
+def sql_por_del_dia(desde: str, hasta: str, grupos_sub: str) -> str:
     """Un renglón por (día, tramo de DEL, clase de lactancia). El frontend suma los
     días del período que se compare: no hace falta volver a la base para cambiar
-    de período ni de clase."""
+    de período ni de clase. `grupos_sub`: ver `sql_por_rodeo_dia`."""
     return f"""
         SELECT CONVERT(varchar(10), d.[Date], 120) AS fecha, {_CASE_DEL} AS banda,
                {_CASE_LACT} AS lact, COUNT(*) AS vacas, {_VALIDAS}
         FROM AnimalDaily d
         JOIN BasicAnimal b ON b.OID = d.BasicAnimal AND b.GCRecord IS NULL AND b.Number > 0
+        JOIN ({grupos_sub}) gr ON gr.grupo = d.AnimalGroup
         WHERE {_filtro(desde, hasta)} AND d.DIM IS NOT NULL
         GROUP BY d.[Date], {_CASE_DEL}, {_CASE_LACT}
         ORDER BY fecha

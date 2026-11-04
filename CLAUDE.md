@@ -2775,6 +2775,11 @@ Menú lateral "📈 Análisis de Producción" (`produccion` en `auth.PAGINAS_POR
   (lo usa también `/api/rutina/rodeos_dia`).
 - **Los tramos de DEL son los de "Flujos de ordeño"** (`flujos.DEO_BUCKETS`: 0-30, 31-60, 61-90, 91-120,
   121-150, 151-200, 201-300, 300+) para poder leer una pantalla al lado de la otra.
+- **Filtrar por los rodeos de ordeñe de ESTE tambo** (`salas.grupos_subquery(tambo)`, pasado como `grupos_sub`
+  a `sql_por_rodeo_dia`/`sql_por_del_dia`): la base DDM la comparten varios tambos y sin ese JOIN aparecían
+  "VO Don German", "Animals SB", "Vaq Parir Junio" (en `DDM` local 226 filas de rodeo -> 175 con el filtro). Probado
+  de punta a punta en el navegador con La Ponderosa (rotativa): las tres pestañas andan; el flujo muestra
+  "Colocación" (segundos) en vez de "% bajo", que es lo que mide esa sala.
 - **`BasicAnimal.Number > 0`** siempre: la vaca comodín acumula los kg de todas las ordeñadas sin ID
   (un día "una vaca" tenía 13.409 kg y llevó la banda 0-30 a 153 kg promedio).
 - **`IsYieldValid` es la marca de "total del día completo" y los kg por vaca se calculan SOLO con días
@@ -2791,15 +2796,65 @@ Menú lateral "📈 Análisis de Producción" (`produccion` en `auth.PAGINAS_POR
   21/10 tenía 1.011 vacas y 26 kg/vaca).
 - Mínimos: no se dibuja un rodeo/tramo con menos de 5 vacas válidas en un día, ni se muestra el promedio de
   un período con menos de 30 vacas-día u ordeños (una vaca sola "es" el promedio del rodeo).
-- **`EndTime` de `SessionMilkYield` trae un relleno en algunos días** (la medianoche UTC del día del ordeño =
-  21:00 del día anterior): 26/10 526 ordeños, 27/10 1.172 (46% del día), 28/10 777, 29/10 53, 30/10 62,
-  01/11 63. La duración da de -10.000 a -40.000 s. `_DUR_SEG` (salas/convencional.py) ahora toma un fin menor
-  o igual al comienzo como desconocido (NULL). **PENDIENTE: `hora_fin` en `sql_rutina`/`sql_rendimiento`
-  (Rutina de ordeño, sala parada, ocupación) usa `EndTime` directo y puede estar afectado esos días.**
+- **`EndTime` de `SessionMilkYield` trae un relleno en algunos días** (resuelto el 03/11/2026, ver
+  "`EndTime` de relleno" abajo): 26/10 526 ordeños, 27/10 1.172 (46% del día), 28/10 777, 29/10 53, 30/10 62,
+  01/11 63 (y antes: 21/10 484, 23/10 494, 24/10 877). La duración da de -10.000 a -40.000 s.
+
 - Tiempos medidos (La Martina nov, caché tibia): producción 0,1-0,2 s, flujo por DEL 0,8 s (30 días) y 2,4 s
   (90). La Ponderosa (`DDM` local, fría): 0,3 s / 2,7 s / 1,7 s a 30 días.
 - Las bases locales de prueba: `DDM_LAMARTINA` (hasta 28/08) y `DDM_LAMARTINA_NOV` (backup del 02/11, hasta
   01/11), restauradas con `restaurar_lamartina.bat .\DELPRO <nombre>`.
+
+### `EndTime` de relleno en la convencional (03/11/2026)
+
+El relleno es SIEMPRE el mismo instante: **las 21:00:00 locales (= 00:00 UTC)**, no "un fin anterior" en general.
+Para los ordeños que arrancan pasadas las 21:00 cae ANTES del comienzo (duración negativa); para los 40 que
+arrancaron entre las 20:50 y las 20:59 cae DESPUÉS por 23-204 s (una duración falsa que parece un ordeño corto;
+0,2% de ~22.400 filas del 24/10 al 01/11). No hay ninguna duración > 30 min del 24/10 al 01/11: el relleno nunca
+da un ordeño largo.
+
+**Qué distorsionaba** (La Martina nov, medido con el código anterior):
+
+- **Duración de sesión**: `fin = max(hora_fin or hora_id)` toma el relleno, que es "verdadero". Sesiones de la
+  tarde daban 191 min contra 367 reales (27/10 17:49) y las de la mañana 689 contra 366 (26/10 09:31). Eso arrastra
+  los kg/h de Rendimiento Sala (599 contra 1.137 el 26/10).
+- **Tiempo de ordeño** (`dur_prom_ordeño`, mediana de "lerdas"): -24.287 s de promedio el 27/10; mediana -26.725 s,
+  que dejaba "sin lerdas" en 0% (toda la sesión "lerda") el 27/10 01:29.
+- **Barras de rodeo del gráfico**: 135 de 174 con `fin < inicio` el 27/10 01:29.
+- **Sala parada** (`entre_grupos`, `manejo_corral`) y **ocupación**: `_tramos_sala_parada` ya descartaba `fin <=
+  inicio`, pero una vaca sin fin no ocupa la sala, así que con 15% de fines válidos la sala "estaba vacía" casi
+  toda la sesión: **1.651 min de exceso en una sesión de 381 min** (27/10 01:29), 850 el 28/10 01:30.
+- Score: con solo la capa 1 (abajo) las sesiones de madrugada subían 5 puntos (lerdas pasaba de 0 a 100 sobre una
+  muestra sesgada) y el resto casi no se movía; con las tres capas ver el párrafo siguiente a la lista.
+
+**Regla aplicada (tres capas, solo convencional):**
+
+1. `salas/convencional.py` `_FIN_VALIDO`: `hora_fin` de `sql_rutina` y `sql_rendimiento` sale NULL si `EndTime <=
+   BeginTime` (misma regla que `_DUR_SEG`). No se inventa una duración ni se reemplaza por otra hora: aguas arriba
+   el código ya sabe qué hacer con un fin NULL (`hora_fin or hora_id`, `if hora_fin`).
+2. `FIN_VALIDO_MIN = 0.9`: si menos del 90% de las visitas de la sesión tiene fin válido, `entre_grupos`,
+   `manejo_corral` y `ocupacion` quedan SIN DATO (`_huecos_por_rodeo`, `_vacio_entre_mangadas`), con un `info` que
+   dice el porcentaje. Medido: sesiones afectadas 15-56%, sanas 100%, rozadas 97-99%.
+3. Lo mismo para "vacas lerdas", que vive en `rutina._analizar_sesion`: parámetro `fin_valido_min` (por defecto
+   `None` = se puntúa siempre, que es la rotativa), que `convencional._opciones_score` pasa en `FIN_VALIDO_MIN`.
+   Con 15% de fines la mediana era de 480 s (sesión sana: ~330) porque sobreviven pocas vacas que no son muestra.
+
+Un componente sin dato sale del score y su peso se reparte (mecanismo de siempre), así que esas sesiones puntúan
+sobre colocación + identificación + mezcla (65 de 100 puntos): 27/10 01:29 pasa de 31 a 47, 26/10 17:25 de 29 a 40,
+28/10 01:30 de 29 a 45. Suben porque lo que se quitó era basura que puntuaba 0, no porque la sala haya mejorado.
+
+**Invariante verificado** (antes y después sobre las mismas entradas, JSON completo de sesiones + hallazgos + fines
++ Rendimiento Sala): La Ponderosa 06/07 y 30/07 (73·73·69 y 78·78·79), San José 03-05/10 (80·92·95, 89·89·92,
+90·84·93) y La Martina 20/10 y 25/10 idénticos. San José tiene 1 sola fila con `EndTime <= BeginTime` en 40 días
+(27/09). OJO: la base local de La Ponderosa llega solo al 31/07; el 84·82·78 del 11/08 hay que verificarlo contra
+producción. La consulta de la rotativa (`rutina.sql_rendimiento`, `s.EndTime`) NO se tocó: 0 filas con fin <=
+comienzo en DDM desde julio.
+
+**Lo que NO se resolvió:** los 40 ordeños con fin 21:00:00 DESPUÉS del comienzo (arriba) siguen contando como
+cortos; atraparlos pide fijar las 21:00, atadas a la zona horaria del tambo. Y el 31/10 (día "sano") también cambia
+por el margen de ±6 h: 3 y 33 filas con relleno caían en sus sesiones (la de la tarde pasa de 660 a 373 min).
+Si el equipo vuelve a rellenar `EndTime`, el síntoma visible es "No se puede medir la sala parada: solo el N% ..."
+en el detalle de la sesión.
 
 ## Entorno de desarrollo (esta PC)
 

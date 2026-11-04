@@ -4470,8 +4470,9 @@ def api_produccion_analisis():
                     "bandas": produccion.BANDAS_DEL}
         d, h = desde.isoformat(), hasta.isoformat()
         # En serie a propósito: db.py ya serializa por servidor.
-        rodeo = db.run_query(produccion.sql_por_rodeo_dia(d, h), tambo=tambo, max_rows=dias * 40)
-        por_del = db.run_query(produccion.sql_por_del_dia(d, h), tambo=tambo, max_rows=dias * 40)
+        grupos = salas.grupos_subquery(tambo)   # solo los rodeos de ordeñe de ESTE tambo
+        rodeo = db.run_query(produccion.sql_por_rodeo_dia(d, h, grupos), tambo=tambo, max_rows=dias * 40)
+        por_del = db.run_query(produccion.sql_por_del_dia(d, h, grupos), tambo=tambo, max_rows=dias * 40)
         return {"hasta": h, "desde": d, "rodeo": _filas(rodeo), "del": _filas(por_del),
                 "bandas": produccion.BANDAS_DEL}
 
