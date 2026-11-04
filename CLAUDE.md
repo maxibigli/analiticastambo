@@ -2756,7 +2756,50 @@ ahora (`sql_flujos_rodeos_dia` está en `salas/convencional.py`; la rotativa con
   juzgar bueno/malo). Día con <60% de la mediana de ordeños = "parcial".
 - Los errores del refresco en segundo plano se guardan en `_rodeos_dia_error` (60 s) y salen
   como 502, para no dejar la pantalla en "calentando" para siempre.
-- **Pendiente de verificar:** tiempos de la consulta completa con datos reales de 30-90 días.
+- **Tiempos medidos** (La Martina, backup 02/11, caché tibia): 7 días 0,8 s, 30 días 1,6 s, 90 días 5,5 s. En frío la
+  primera lectura va a disco y tarda 35-45 s (SQL Express con poca RAM).
+- Un rodeo con un solo ordeño ese día (p. ej. "Pre-Parto": 1 vaca, 0 kg) da promedios sin sentido (100% flujo bajo).
+
+## Análisis de Producción: página propia, tres pestañas (03/11/2026)
+
+Menú lateral "📈 Análisis de Producción" (`produccion` en `auth.PAGINAS_POR_ROL`, solo admin). Pestañas:
+**Producción por rodeo**, **Producción por días en leche** y **Flujo por días en leche**. Un período A
+(últimos N días completos) contra un B (los N anteriores), N = 7/14/30 elegible; la ventana de datos es de
+30 a 120 días y termina en el ÚLTIMO día con datos de la base, no en hoy.
+
+- `produccion.py`: las consultas de producción salen de `AnimalDaily` (una fila por vaca y día) y son las
+  mismas en rotativa y convencional. El flujo por DEL es de cada sala (`sql_flujos_del_dia` en
+  `salas/convencional.py` y `salas/rotativa.py` -> `flujos.sql_por_deo_dia`). Endpoints:
+  `/api/produccion/analisis` (rodeo + DEL, una vez) y `/api/produccion/flujos_del` (aparte: recorre los
+  ordeños uno por uno). Helper común de caché con error visible: `_servir_analisis` en `app.py`
+  (lo usa también `/api/rutina/rodeos_dia`).
+- **Los tramos de DEL son los de "Flujos de ordeño"** (`flujos.DEO_BUCKETS`: 0-30, 31-60, 61-90, 91-120,
+  121-150, 151-200, 201-300, 300+) para poder leer una pantalla al lado de la otra.
+- **`BasicAnimal.Number > 0`** siempre: la vaca comodín acumula los kg de todas las ordeñadas sin ID
+  (un día "una vaca" tenía 13.409 kg y llevó la banda 0-30 a 153 kg promedio).
+- **`IsYieldValid` es la marca de "total del día completo" y los kg por vaca se calculan SOLO con días
+  válidos.** Esto corrige lo que figuraba más arriba ("IsYieldValid no sirve"): medido en La Martina
+  (15-20/10, días completos) la misma vaca da 41,9 kg en Rodeo 1 con día válido y 27,3 kg sin él; la marca
+  se reparte parejo (80-93% por rodeo, 84-93% por tramo de DEL), así que no sesga. Sin esto, cada ordeño
+  que falta en la base baja el promedio sin que haya bajado la leche. Las consultas devuelven `vacas` (con
+  leche), `vacas_v` y `kg_v` (válidas). La producción total es una ESTIMACIÓN (`vacas` por el kg/vaca de las
+  válidas) y la pantalla lo dice.
+- **La base de La Martina tiene días con ordeños faltantes** (backup 02/11): 2.148 ordeños el 21/10 y 2.157
+  el 23/10 contra ~2.900; 643 el 24/10, 927 el 25/10, 1.612 el 26/10. Un día se marca incompleto si sus vacas
+  VÁLIDAS son menos del 60% de la mediana (el último día casi siempre: la marca se cierra de noche, 11/01 tenía
+  29 de ~900). Esos días no entran en A ni B. El conteo de vacas con leche NO sirve para detectarlos (el
+  21/10 tenía 1.011 vacas y 26 kg/vaca).
+- Mínimos: no se dibuja un rodeo/tramo con menos de 5 vacas válidas en un día, ni se muestra el promedio de
+  un período con menos de 30 vacas-día u ordeños (una vaca sola "es" el promedio del rodeo).
+- **`EndTime` de `SessionMilkYield` trae un relleno en algunos días** (la medianoche UTC del día del ordeño =
+  21:00 del día anterior): 26/10 526 ordeños, 27/10 1.172 (46% del día), 28/10 777, 29/10 53, 30/10 62,
+  01/11 63. La duración da de -10.000 a -40.000 s. `_DUR_SEG` (salas/convencional.py) ahora toma un fin menor
+  o igual al comienzo como desconocido (NULL). **PENDIENTE: `hora_fin` en `sql_rutina`/`sql_rendimiento`
+  (Rutina de ordeño, sala parada, ocupación) usa `EndTime` directo y puede estar afectado esos días.**
+- Tiempos medidos (La Martina nov, caché tibia): producción 0,1-0,2 s, flujo por DEL 0,8 s (30 días) y 2,4 s
+  (90). La Ponderosa (`DDM` local, fría): 0,3 s / 2,7 s / 1,7 s a 30 días.
+- Las bases locales de prueba: `DDM_LAMARTINA` (hasta 28/08) y `DDM_LAMARTINA_NOV` (backup del 02/11, hasta
+  01/11), restauradas con `restaurar_lamartina.bat .\DELPRO <nombre>`.
 
 ## Entorno de desarrollo (esta PC)
 

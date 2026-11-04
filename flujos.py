@@ -254,6 +254,37 @@ def sql_por_deo(desde: str, hasta: str) -> str:
     """
 
 
+def sql_por_deo_dia(desde: str, hasta: str) -> str:
+    """Curva de flujo por tramo de DEL y por DÍA (pestaña "Flujo por días en leche"
+    de Análisis de Producción): un renglón por (día, tramo). El frontend suma los
+    días de cada período con pesos por ordeños.
+
+    Solo vacas identificadas (`Number > 0`): el comodín no tiene DEL. El DEL sale de
+    `AnimalDaily` por el enlace directo de la bajada (`SessionMilkYield.AnimalDaily`),
+    igual que `sql_por_deo`. No hay porcentaje de flujo bajo (la rotativa mide
+    SEGUNDOS de flujo bajo: `coloc_seg`)."""
+    return f"""
+        SELECT CONVERT(varchar(10), CAST(v.CreationTime AS date), 120) AS fecha,
+               {_CASE_DEO} AS banda, COUNT(*) AS ordenos,
+               {_FLUJOS_PROM},
+               AVG(y.AverageFlow) AS f_prom,
+               AVG(y.PeakFlow)    AS f_pico,
+               CAST(NULL AS float) AS pct_bajo,
+               AVG(y.IsoDuration * 1.0)          AS dur_seg,
+               AVG(y.LowFlowDurationInSec * 1.0) AS coloc_seg,
+               {_BIMODAL}
+        FROM MilkingDeviceVisit v
+        JOIN CMSMilkYield y ON y.MilkingDeviceVisit = v.OID
+        JOIN SessionMilkYield s ON s.OID = y.OID
+        JOIN BasicAnimal b ON b.OID = s.BasicAnimal AND b.GCRecord IS NULL AND b.Number > 0
+        JOIN AnimalDaily d ON d.OID = s.AnimalDaily
+        WHERE {_rango(desde, hasta)} AND d.DIM IS NOT NULL
+        GROUP BY CAST(v.CreationTime AS date), {_CASE_DEO}
+        ORDER BY fecha
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
+
+
 # --- Tiempo estimado entre ordeños ------------------------------------------
 # ESTIMACIÓN, no una medición: DelPro no tiene sensor de entrada/salida al
 # corral ni al corral de espera. Lo único medible es el tiempo transcurrido

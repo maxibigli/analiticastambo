@@ -105,6 +105,10 @@ def sql_flujos_por_deo(desde: str, hasta: str) -> str:
     return flujos.sql_por_deo(desde, hasta)
 
 
+def sql_flujos_del_dia(desde: str, hasta: str) -> str:
+    return flujos.sql_por_deo_dia(desde, hasta)
+
+
 def sql_flujos_tiempo_fuera(desde: str, hasta: str) -> str:
     return flujos.sql_tiempo_fuera(desde, hasta)
 

@@ -640,7 +640,13 @@ PUBLICA_UMBRAL_RETIRADA = False
 # La duración del ordeño no viene como columna (no hay `IsoDuration`): se
 # calcula del intervalo, que es exactamente lo que esa columna guarda en la
 # rotativa (verificado en su momento: IsoDuration = EndTime - BeginTime).
-_DUR_SEG = "DATEDIFF(second, y.BeginTime, y.EndTime)"
+# OJO: en algunos días `EndTime` NO es un dato sino un relleno (la medianoche del día
+# del ordeño en UTC, o sea las 21:00 del día anterior en hora local). Medido en La
+# Martina, backup del 02/11: 26/10 526 ordeños, 27/10 1.172 (el 46% del día), 28/10
+# 777, 29/10 53, 30/10 62, 01/11 63; los otros días 0. Con esa fecha la "duración" da de
+# -10.000 a -40.000 s y arrastra el promedio del día a negativo. Un fin menor o igual al
+# comienzo se toma como DESCONOCIDO (NULL, que AVG ignora), no como una duración.
+_DUR_SEG = "CASE WHEN y.EndTime > y.BeginTime THEN DATEDIFF(second, y.BeginTime, y.EndTime) END"
 
 # `LowFlowDurationInSec` (segundos de flujo bajo al inicio) NO TIENE
 # EQUIVALENTE. Lo más parecido es `LowMilkFlowPercentage`, que es un PORCENTAJE
@@ -755,8 +761,8 @@ def sql_flujos_rodeos_dia(desde: str, hasta: str) -> str:
     índice por fecha de AnimalDaily y la consulta pasa de 0,1 s a 38 s con solo 7
     días (medido en La Martina, `y+ex+ad` con y sin el rango). Con la ventana
     literal en ambos lados la consulta de 7 días (sin agregados) quedó en 0,1 s.
-    NO verificado: la consulta COMPLETA con 45-90 días contra datos reales (la PC de
-    desarrollo tiene SQL Express casi sin RAM y la caché fría la hace pasar de 40 s)."""
+    Medida completa sobre La Martina (backup del 02/11, caché tibia): 7 días 0,8 s,
+    30 días 1,6 s, 90 días 5,5 s. En frío la primera pasada lee de disco y tarda 35-45 s."""
     d, h = rutina.validar_fecha(desde), rutina.validar_fecha(hasta)
     return f"""
         SELECT CONVERT(varchar(10), CAST(y.BeginTime AS date), 120) AS fecha,
@@ -819,6 +825,42 @@ def sql_flujos_por_deo(desde: str, hasta: str) -> str:
         WHERE {_rango_conv(desde, hasta)} AND d.DIM IS NOT NULL
           AND ex.FlowZerotoFifteen IS NOT NULL
         GROUP BY {flujos._CASE_DEO}
+        OPTION (MAX_GRANT_PERCENT = 20)
+    """
+
+
+def sql_flujos_del_dia(desde: str, hasta: str) -> str:
+    """Flujo por tramo de DEL y por día (Análisis de Producción). Mismas columnas que
+    `flujos.sql_por_deo_dia`, con `pct_bajo` (porcentaje de flujo bajo, que es lo que
+    mide esta sala) en lugar de `coloc_seg` (segundos, que no tiene).
+
+    El rango de `d.[Date]` se repite aunque el enlace `y.AnimalDaily` ya la
+    acote: es el mismo caso que en `sql_flujos_rodeos_dia`, el optimizador no usa
+    el índice por fecha de AnimalDaily sin él. La bajada puede estar enlazada al
+    `AnimalDaily` del día anterior o siguiente (el enlace directo no coincide
+    con la fecha del ordeño en 1/3 de los casos), por eso se ensancha un día."""
+    import flujos
+    d, h = rutina.validar_fecha(desde), rutina.validar_fecha(hasta)
+    return f"""
+        SELECT CONVERT(varchar(10), CAST(y.BeginTime AS date), 120) AS fecha,
+               {flujos._CASE_DEO} AS banda, COUNT(*) AS ordenos,
+               {_FLUJOS_PROM_CONV},
+               AVG(ex.AverageFlow) AS f_prom,
+               AVG(ex.PeakFlow)    AS f_pico,
+               AVG(ex.LowMilkFlowPercentage * 1.0) AS pct_bajo,
+               AVG({_DUR_SEG} * 1.0) AS dur_seg,
+               {_COLOC_SEG} AS coloc_seg,
+               {_BIMODAL_CONV}
+        FROM SessionMilkYield y
+        JOIN SessionMilkYieldEx ex ON ex.OID = y.OID
+        JOIN BasicAnimal b ON b.OID = y.BasicAnimal AND b.GCRecord IS NULL AND b.Number > 0
+        JOIN AnimalDaily d ON d.OID = y.AnimalDaily
+                          AND d.[Date] >= DATEADD(day, -1, '{d}')
+                          AND d.[Date] < DATEADD(day, 2, '{h}')
+        WHERE {_rango_conv(desde, hasta)} AND d.DIM IS NOT NULL
+          AND ex.FlowZerotoFifteen IS NOT NULL
+        GROUP BY CAST(y.BeginTime AS date), {flujos._CASE_DEO}
+        ORDER BY fecha
         OPTION (MAX_GRANT_PERCENT = 20)
     """
 

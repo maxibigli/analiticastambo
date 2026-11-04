@@ -863,6 +863,7 @@
     {% if 'ordeno' in paginas_visibles %}<button class="nav-item" data-pagina="ordeno">🔄 <span>Ordeño en vivo</span></button>{% endif %}
     {% if 'sala_cms' in paginas_visibles %}<button class="nav-item" data-pagina="sala_cms">🐟 <span>Ordeño en Vivo Sala CMS</span></button>{% endif %}
     {% if 'rutina' in paginas_visibles %}<button class="nav-item" data-pagina="rutina">⏱️ <span>Rutina de ordeño</span></button>{% endif %}
+    {% if 'produccion' in paginas_visibles %}<button class="nav-item" data-pagina="produccion">📈 <span>Análisis de Producción</span></button>{% endif %}
     {# "Rendimiento Sala", "Flujos de ordeño" y "Evolución" ya NO son entradas
        del menú: son PESTAÑAS dentro de "Rutina de ordeño" (ver #rutina-tabs).
        Las cuatro miran el ordeño y pertenecen a la misma sección; el menú
@@ -2707,6 +2708,153 @@
 
 
 
+
+  {% if 'produccion' in paginas_visibles %}
+  {# --- Página "Análisis de Producción": cómo viene la producción, por rodeo y por
+     días en leche (DEL). Mismo patrón de pestañas que #salud-tabs. Los datos se
+     piden una vez (`/api/produccion/analisis`) y el período, la clase de lactancia, la
+     medida y los rodeos se cambian en el navegador sin volver a la base. #}
+  <div class="page" id="page-produccion" hidden>
+    <section class="card" id="prod-card">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0">📈 Análisis de Producción</h2>
+        <span class="aviso">Cómo viene la leche: por rodeo, por días en leche y el flujo de ordeño.</span>
+        <div class="controls" style="margin-left:auto">
+          <label class="aviso" style="display:flex;align-items:center;gap:5px">Mirar los últimos
+            <select id="prod-dias" style="padding:6px 8px">
+              <option value="30">30</option><option value="60" selected>60</option>
+              <option value="90">90</option><option value="120">120</option>
+            </select> días
+          </label>
+          <label class="aviso" style="display:flex;align-items:center;gap:5px">Comparar
+            <select id="prod-n" style="padding:6px 8px">
+              <option value="7" selected>7</option><option value="14">14</option><option value="30">30</option>
+            </select> días contra los anteriores
+          </label>
+          <button class="secundario" id="prod-aplicar">Actualizar</button>
+        </div>
+      </div>
+      <p class="explica" style="margin-top:10px">
+        <b>De dónde sale.</b> Una fila por vaca y día (<code>AnimalDaily</code>): los kg del día, el rodeo
+        que tenía <b>ese día</b>, sus días en leche (DEL) y su número de lactancia. Se cuentan las
+        vacas identificadas con leche; las ordeñadas sin identificar no tienen DEL ni rodeo y quedan
+        afuera. <b>kg por vaca</b> son los kg de las vacas con el <b>total del día cerrado</b> (válido) dividido
+        por esas vacas-día: una vaca a la que le faltan ordeños en la base tiene un total parcial que bajaría el
+        promedio sin que la producción haya cambiado. La <b>producción estimada</b> aplica ese promedio a todas las
+        vacas con leche.
+        <br><b>Período y comparación.</b> Los días se cuentan hacia atrás desde el último día con datos de la
+        base. El período A son los últimos días <b>completos</b> y el B los inmediatamente anteriores.
+        Un día con pocas vacas de total válido (el último, que se cierra de noche, o uno en que la base no
+        recibió todos los ordeños) se marca con * y no entra en las comparaciones.
+        Las flechas indican el sentido del cambio; no dicen si es bueno o malo, porque una baja puede ser
+        solo que entraron más vacas frescas o más vacas de fin de lactancia.
+      </p>
+      <div class="aviso" id="prod-info" style="margin-top:8px"></div>
+    </section>
+
+    <div class="lac-segment" id="prod-tabs" role="group" aria-label="Sección"
+         style="margin-bottom:14px;flex-wrap:wrap;max-width:100%;border-radius:18px">
+      <button class="lac-segment__item" data-tab="rodeo" aria-pressed="true">🐄 Producción por rodeo</button>
+      <button class="lac-segment__item" data-tab="del" aria-pressed="false">📅 Producción por días en leche</button>
+      <button class="lac-segment__item" data-tab="flujo" aria-pressed="false">💧 Flujo por días en leche</button>
+    </div>
+
+    <div id="prod-panel-rodeo">
+      <section class="card">
+        <div class="kpis" id="prod-kpis"></div>
+        <div style="margin-top:18px">
+          <h3 class="g-titulo">Evolución día a día</h3>
+          <div class="controls" style="align-items:center;margin-bottom:8px">
+            <label class="aviso" style="display:flex;align-items:center;gap:5px">Medida
+              <select id="prod-r-metrica" style="padding:6px 8px">
+                <option value="kg_vaca">kg por vaca por día</option>
+                <option value="vacas">Vacas con leche</option>
+                <option value="kg">Producción estimada (kg)</option>
+                <option value="dim">DEL promedio</option>
+              </select>
+            </label>
+            <span class="aviso">Ver como</span>
+            <div class="lac-segment" id="prod-r-tipo" role="group" aria-label="Tipo de gráfico">
+              <button class="lac-segment__item" data-tipo="line" aria-pressed="true">Líneas</button>
+              <button class="lac-segment__item" data-tipo="bar" aria-pressed="false">Barras</button>
+              <button class="lac-segment__item" data-tipo="point" aria-pressed="false">Puntos</button>
+            </div>
+          </div>
+          <div id="prod-r-chips" class="controls" style="flex-wrap:wrap;gap:6px 14px;margin-bottom:8px"></div>
+          <div class="chart-box" style="height:340px"><canvas id="chart-prod-rodeo"></canvas></div>
+          <div class="aviso" id="prod-r-parciales" style="margin-top:6px"></div>
+        </div>
+        <div style="margin-top:22px">
+          <h3 class="g-titulo">Período contra período, por rodeo</h3>
+          <p class="explica">
+            <b>Cómo leerla.</b> Cada fila es un rodeo. <b>Vacas</b> son las vacas con leche por día (promedio del
+            período) y <b>DEL</b> sus días en leche promedio: si el DEL de un rodeo cambia mucho entre períodos, la
+            comparación de kg ya no es entre vacas parecidas (un rodeo que recibe frescas sube, uno que las
+            pierde baja, sin que ninguna vaca haya cambiado).
+          </p>
+          <div class="tabla-scroll" style="max-height:none;overflow-x:auto"><table id="prod-r-tabla"></table></div>
+        </div>
+      </section>
+    </div>
+
+    <div id="prod-panel-del" hidden>
+      <section class="card">
+        <h3 class="g-titulo">Curva de producción por días en leche</h3>
+        <p class="explica">
+          <b>Qué muestra.</b> Los kg por vaca y por día de cada tramo de DEL, para el período A y el B, y cuántas
+          vacas hay en cada tramo. Es la curva de lactancia del rodeo <b>tal como está hoy</b> (cortes
+          transversales, no el seguimiento de las mismas vacas): una curva que sube entre períodos
+          es producción más alta en esos DEL, y una que se mueve a la derecha es un rodeo más viejo.
+          Separar por lactancia es lo que da una curva legible: una primípara no llega al pico de una vaca grande.
+        </p>
+        <div class="controls" style="align-items:center;margin-bottom:8px">
+          <label class="aviso" style="display:flex;align-items:center;gap:5px">Lactancia
+            <select id="prod-d-lact" style="padding:6px 8px">
+              <option value="0">Todas</option><option value="1">1ª (primíparas)</option>
+              <option value="2">2ª</option><option value="3">3ª o más</option>
+            </select>
+          </label>
+        </div>
+        <div class="chart-box" style="height:340px"><canvas id="chart-prod-del"></canvas></div>
+        <div class="tabla-scroll" style="max-height:none;overflow-x:auto;margin-top:12px"><table id="prod-d-tabla"></table></div>
+        <div style="margin-top:22px">
+          <h3 class="g-titulo">Cómo viene cada tramo, día a día</h3>
+          <p class="explica">
+            <b>Para qué.</b> La curva de arriba son dos fotos; esto es la película. Cada línea es un tramo de DEL:
+            si una baja mientras las demás se sostienen, el problema está en ese momento de la lactancia
+            (por ejemplo las recién paridas), no en todo el rodeo. No se dibuja un día con menos de 5 vacas en
+            el tramo.
+          </p>
+          <div class="chart-box" style="height:340px"><canvas id="chart-prod-del-dia"></canvas></div>
+          <div class="aviso" id="prod-d-parciales" style="margin-top:6px"></div>
+        </div>
+      </section>
+    </div>
+
+    <div id="prod-panel-flujo" hidden>
+      <section class="card">
+        <h3 class="g-titulo">Flujo de ordeño por días en leche</h3>
+        <p class="explica">
+          <b>Qué muestra.</b> Cómo baja la leche en cada tramo de DEL: la curva por tramos de tiempo (0–15, 15–30,
+          30–60 y 60–120 s), la retirada, el pico y la duración del ordeño, para el período A y el B. Una vaca
+          fresca suele tener otro perfil de flujo que una de fin de lactancia, así que leer el flujo del rodeo
+          entero mezcla las dos cosas. Se calcula sobre los ordeños de vacas identificadas; un tramo con menos de
+          30 ordeños en el período no se muestra.
+        </p>
+        <div class="controls" style="align-items:center;margin-bottom:8px">
+          <label class="aviso" style="display:flex;align-items:center;gap:5px">Medida
+            <select id="prod-f-metrica" style="padding:6px 8px"></select>
+          </label>
+        </div>
+        <div class="aviso" id="prod-f-info"></div>
+        <div id="prod-f-cuerpo" hidden>
+          <div class="chart-box" style="height:340px"><canvas id="chart-prod-flujo"></canvas></div>
+          <div class="tabla-scroll" style="max-height:none;overflow-x:auto;margin-top:12px"><table id="prod-f-tabla"></table></div>
+        </div>
+      </section>
+    </div>
+  </div>
+  {% endif %}
 
   <div class="page" id="page-salud" hidden>
     <section class="card" id="salud-kpis-card">
@@ -5863,6 +6011,383 @@ if (document.getElementById('rod-tipo')) conectarSelectorTipo('rod-tipo', tipo =
   rodTipo = tipo;
   if (rodDatos) dibujarRodeos();
 });
+
+// --- Análisis de Producción -------------------------------------------------
+// Los datos se piden UNA vez (`/api/produccion/analisis`: kg y vacas por día y rodeo,
+// y por día, tramo de DEL y lactancia) y todo lo demás —período, lactancia, medida,
+// rodeos— se arma acá sin volver a la base. El flujo por DEL va aparte
+// (`/api/produccion/flujos_del`) porque recorre los ordeños uno por uno y se pide
+// recién al abrir su pestaña.
+let prodDatos = null, prodFlujo = null, prodReintento = null, prodFlujoReintento = null;
+let chartProdRodeo = null, chartProdDel = null, chartProdDelDia = null, chartProdFlujo = null;
+let prodRTipo = 'line', prodRSel = null, prodTabActual = 'rodeo';
+const PROD_TABS = { rodeo: 'prod-panel-rodeo', del: 'prod-panel-del', flujo: 'prod-panel-flujo' };
+// Menos que esto no es una medida sino una anécdota (una vaca sola "es" el promedio de su rodeo).
+const PROD_MIN_VACAS_DIA = 5;     // vacas de un rodeo/tramo en UN día, para dibujarlo
+const PROD_MIN_MUESTRA = 30;      // vacas-día (u ordeños) de un PERÍODO, para mostrar su promedio
+const PROD_COLOC = { k: 'coloc_seg', t: 'Tiempo de flujo bajo (colocación)', col: 'Colocación', u: 's', dec: 0 };
+const PROD_FLUJO_CLAVES = ['f_0_15', 'f_15_30', 'f_30_60', 'f_60_120', 'f_retirada', 'f_prom', 'f_pico',
+                           'pct_bajo', 'coloc_seg', 'dur_seg', 'pct_bimodal', 'pct_arranque_lento'];
+const PROD_FLUJO_METRICAS = PROD_FLUJO_CLAVES.map(k => k === 'coloc_seg' ? PROD_COLOC : ROD_METRICAS.find(m => m.k === k));
+
+const prodEl = id => document.getElementById(id);
+const prodDiaCorto = f => etiquetaDia(f);
+
+// Un día con muy pocos registros contra uno normal es un día a medias (la copia de la base corta
+// a mitad de jornada). Mismo criterio del 60% de la mediana que usa "Rodeos por día".
+function prodParciales(dias, totalPorDia) {
+  const v = dias.map(f => totalPorDia[f] || 0).sort((a, b) => a - b);
+  const mediana = v.length ? v[Math.floor(v.length / 2)] : 0;
+  return new Set(dias.filter(f => (totalPorDia[f] || 0) < 0.6 * mediana));
+}
+
+// Período A = los últimos `n` días completos; B = los `n` completos inmediatamente anteriores.
+function prodPeriodos(dias, parciales, n) {
+  const ok = dias.filter(f => !parciales.has(f));
+  return { A: ok.slice(-n), B: ok.length > n ? ok.slice(-2 * n, -n) : [] };
+}
+const prodN = () => Number(prodEl('prod-n').value) || 7;
+
+function prodDelta(m, a, b) {
+  if (a == null || b == null) return '';
+  const dif = a - b, red = m.dur ? Math.round(dif) : Number(dif.toFixed(m.dec));
+  if (red === 0) return '<div class="aviso" style="margin:0">= igual</div>';
+  const txt = m.dur ? fmtMinSeg(Math.abs(dif)) : Math.abs(dif).toLocaleString('es-AR',
+    { minimumFractionDigits: m.dec, maximumFractionDigits: m.dec });
+  return `<div class="aviso" style="margin:0">${dif > 0 ? '▲ +' : '▼ −'}${txt}</div>`;
+}
+function prodPct(a, b) {
+  if (a == null || !b) return '—';
+  const p = 100 * (a - b) / b;
+  if (Math.abs(p) < 0.05) return '= igual';
+  return `${p > 0 ? '▲ +' : '▼ −'}${Math.abs(p).toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+}
+const prodNum = (v, dec) => v == null ? '—' : Number(v).toLocaleString('es-AR', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+
+function prodArmar(d) {
+  const nombres = new Map(), por = { total: {} };
+  (d.rodeo || []).forEach(f => {
+    nombres.set(String(f.numero), f.grupo);
+    // `vv`/`kgs`: vacas con el total del día VÁLIDO y sus kg; con eso se calcula el kg por vaca.
+    // `kg` es la producción ESTIMADA del rodeo (todas sus vacas con leche al promedio de las válidas).
+    (por[String(f.numero)] ||= {})[f.fecha] = { vacas: f.vacas, vv: f.vacas_v, kgs: f.kg_v, dim: f.dim_prom,
+      kg: f.vacas_v ? f.vacas * f.kg_v / f.vacas_v : null };
+  });
+  const dias = [...new Set((d.rodeo || []).map(f => f.fecha))].sort();
+  const totalValidas = {};
+  dias.forEach(fecha => {
+    let v = 0, vv = 0, kgs = 0, est = 0, dw = 0;
+    Object.keys(por).forEach(c => {
+      const x = c === 'total' ? null : por[c][fecha];
+      if (x) { v += x.vacas; vv += x.vv; kgs += x.kgs; est += x.kg || 0; dw += (x.dim || 0) * x.vacas; }
+    });
+    por.total[fecha] = { vacas: v, vv, kgs, kg: est, dim: v ? dw / v : null };
+    totalValidas[fecha] = vv;
+  });
+  // Por tramo de DEL: fecha -> banda -> lactancia -> {vacas, kg}
+  const delIdx = {};
+  (d.del || []).forEach(f => {
+    (((delIdx[f.fecha] ||= {})[f.banda] ||= {})[f.lact] = { vacas: f.vacas, vv: f.vacas_v, kg: f.kg_v });
+  });
+  return { desde: d.desde, hasta: d.hasta, dias, nombres, por, delIdx, bandas: d.bandas || [],
+           parciales: prodParciales(dias, totalValidas),
+           claves: [...nombres.keys()].sort((a, b) => Number(a) - Number(b)) };
+}
+
+function prodAgg(c, lista) {
+  const D = prodDatos;
+  let v = 0, vv = 0, ks = 0, est = 0, dw = 0, nd = 0;
+  lista.forEach(f => {
+    const x = D.por[c][f];
+    if (x) { v += x.vacas; vv += x.vv; ks += x.kgs; est += x.kg || 0; dw += (x.dim || 0) * x.vacas; nd++; }
+  });
+  return { vacas: nd ? v / nd : null, kg: nd ? est / nd : null,
+           kgv: vv >= PROD_MIN_MUESTRA ? ks / vv : null, dim: v ? dw / v : null };
+}
+
+function prodNombre(c) { return c === 'total' ? 'Todo el tambo' : prodDatos.nombres.get(c); }
+function prodColor(c) { return c === 'total' ? css('--text-primary') : SERIES[prodDatos.claves.indexOf(c) % SERIES.length]; }
+
+function pintarProd() {
+  const D = prodDatos, info = prodEl('prod-info');
+  if (!D.dias.length) { info.textContent = 'No hay producción registrada en este período.'; return; }
+  const { A, B } = prodPeriodos(D.dias, D.parciales, prodN());
+  const rango = l => l.length ? `${prodDiaCorto(l[0])}–${prodDiaCorto(l[l.length - 1])}` : '—';
+  info.textContent = `Datos del ${prodDiaCorto(D.desde)} al ${prodDiaCorto(D.hasta)} (${D.dias.length} días). `
+    + `Período A: ${rango(A)} (${A.length} días). Período B: ${B.length ? rango(B) + ` (${B.length} días)` : 'no hay días completos suficientes antes del A'}.`
+    + (D.parciales.size ? ` Días incompletos, fuera de las comparaciones: ${[...D.parciales].map(prodDiaCorto).join(', ')}.` : '');
+  if (!prodRSel) prodRSel = new Set(['total', ...D.claves]);
+  pintarProdTab(prodTabActual);
+}
+
+function pintarProdTab(tab) {
+  if (!prodDatos || !prodDatos.dias.length) return;
+  if (tab === 'rodeo') pintarProdRodeo();
+  else if (tab === 'del') pintarProdDel();
+  else if (tab === 'flujo' && prodFlujo) pintarProdFlujo();
+}
+
+// ---- Pestaña: producción por rodeo ----------------------------------------
+function pintarProdRodeo() {
+  const D = prodDatos, n = prodN();
+  const { A, B } = prodPeriodos(D.dias, D.parciales, n);
+  const a = prodAgg('total', A), b = prodAgg('total', B);
+  const tile = (l, v, sub) => `<div class="tile"><div class="label">${l}</div><div class="value">${v}</div>`
+    + `<div class="aviso" style="margin:2px 0 0">${sub || ''}</div></div>`;
+  prodEl('prod-kpis').innerHTML = [
+    tile('kg por vaca por día', prodNum(a.kgv, 1), B.length ? prodPct(a.kgv, b.kgv) + ` contra los ${B.length} días anteriores` : ''),
+    tile('Vacas con leche por día', prodNum(a.vacas, 0), B.length ? prodPct(a.vacas, b.vacas) : ''),
+    tile('Producción diaria estimada (kg)', prodNum(a.kg, 0), B.length ? prodPct(a.kg, b.kg) : ''),
+    tile('DEL promedio', prodNum(a.dim, 0), B.length ? prodDelta({ dec: 0 }, a.dim, b.dim).replace(/<[^>]+>/g, '') : ''),
+  ].join('');
+
+  prodEl('prod-r-chips').innerHTML = ['total', ...D.claves].map(c => `
+    <label class="aviso" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer">
+      <input type="checkbox" data-prod-rod="${c}"${prodRSel.has(c) ? ' checked' : ''}>
+      <span style="width:10px;height:10px;border-radius:2px;background:${prodColor(c)}"></span>${escHtml(prodNombre(c))}
+    </label>`).join('');
+
+  const met = prodEl('prod-r-metrica').value;
+  const MET = { kg_vaca: ['kg/vaca', 1], vacas: ['vacas', 0], kg: ['kg (estimados)', 0], dim: ['DEL', 0] }[met];
+  const valor = x => {
+    if (!x) return null;
+    if (met === 'kg_vaca') return x.vv >= PROD_MIN_VACAS_DIA ? x.kgs / x.vv : null;
+    if (met === 'dim') return x.vacas >= PROD_MIN_VACAS_DIA ? x.dim : null;
+    return x[met];
+  };
+  const claves = ['total', ...D.claves].filter(c => prodRSel.has(c));
+  const o = baseOpts(true);
+  o.interaction = { mode: 'index', intersect: false };
+  o.scales.y.beginAtZero = met !== 'kg_vaca' && met !== 'dim';
+  o.scales.y.title = { display: true, text: MET[0] };
+  o.plugins.tooltip = { callbacks: { label: it => ` ${it.dataset.label}: ${prodNum(it.parsed.y, MET[1])} ${MET[0]}` } };
+  chartProdRodeo = graficoTipado('chart-prod-rodeo', chartProdRodeo,
+    D.dias.map(f => prodDiaCorto(f) + (D.parciales.has(f) ? '*' : '')),
+    claves.map(c => linea(prodNombre(c), D.dias.map(f => valor(D.por[c][f])), prodColor(c),
+      c === 'total' ? { borderDash: [6, 4], borderWidth: 2.5, pointRadius: 0 } : {})), o, prodRTipo);
+  prodEl('prod-r-parciales').textContent = D.parciales.size
+    ? `* Día incompleto (${[...D.parciales].map(prodDiaCorto).join(', ')}): muy pocas vacas con el total del día cerrado, así que sus kg por vaca salen de una muestra chica (o de ninguna) y no se compara con otros días.`
+    : (met === 'kg_vaca') ? 'No se dibuja un rodeo en un día con menos de 5 vacas con el total del día válido.' : '';
+
+  const fila = c => {
+    const x = prodAgg(c, A), y = prodAgg(c, B);
+    return `<tr${c === 'total' ? ' style="font-weight:600"' : ''}><td>${escHtml(prodNombre(c))}</td>`
+      + `<td style="text-align:right">${prodNum(x.vacas, 0)}</td><td style="text-align:right">${prodNum(x.dim, 0)}</td>`
+      + `<td style="text-align:right">${prodNum(x.kgv, 1)}</td><td style="text-align:right">${prodNum(y.kgv, 1)}</td>`
+      + `<td style="text-align:right;white-space:nowrap">${x.kgv != null && y.kgv != null ? (x.kgv - y.kgv > 0 ? '+' : '') + prodNum(x.kgv - y.kgv, 1) : '—'}</td>`
+      + `<td style="text-align:right;white-space:nowrap">${prodPct(x.kgv, y.kgv)}</td>`
+      + `<td style="text-align:right">${prodNum(y.dim, 0)}</td></tr>`;
+  };
+  prodEl('prod-r-tabla').innerHTML = '<thead><tr><th>Rodeo</th><th style="text-align:right">Vacas/día A</th>'
+    + '<th style="text-align:right">DEL A</th><th style="text-align:right">kg/vaca A</th>'
+    + '<th style="text-align:right">kg/vaca B</th><th style="text-align:right">Diferencia</th>'
+    + '<th style="text-align:right">Cambio</th><th style="text-align:right">DEL B</th></tr></thead><tbody>'
+    + [...D.claves, 'total'].map(fila).join('') + '</tbody>';
+}
+
+// ---- Pestaña: producción por días en leche --------------------------------
+function prodDelAgg(lista, lact) {
+  const D = prodDatos, out = {};
+  D.bandas.forEach(bd => { out[bd] = { vacasDia: 0, vv: 0, kg: 0 }; });
+  lista.forEach(f => {
+    const dia = D.delIdx[f];
+    if (!dia) return;
+    Object.keys(dia).forEach(bd => {
+      if (!out[bd]) return;
+      Object.keys(dia[bd]).forEach(l => {
+        if (lact === 0 || Number(l) === lact) {
+          out[bd].vacasDia += dia[bd][l].vacas; out[bd].vv += dia[bd][l].vv; out[bd].kg += dia[bd][l].kg;
+        }
+      });
+    });
+  });
+  return out;
+}
+
+function pintarProdDel() {
+  const D = prodDatos, n = prodN(), lact = Number(prodEl('prod-d-lact').value);
+  const { A, B } = prodPeriodos(D.dias, D.parciales, n);
+  const a = prodDelAgg(A, lact), b = prodDelAgg(B, lact);
+  const kgv = (x) => x.vv >= PROD_MIN_MUESTRA ? x.kg / x.vv : null;
+  const vacasA = D.bandas.map(bd => A.length ? a[bd].vacasDia / A.length : null);
+  const o = baseOpts(true);
+  o.interaction = { mode: 'index', intersect: false };
+  o.scales.y.title = { display: true, text: 'kg por vaca por día' };
+  o.scales.y1 = { position: 'right', beginAtZero: true, grid: { drawOnChartArea: false }, border: { display: false },
+                  title: { display: true, text: 'vacas por día (período A)' } };
+  chartProdDel = dibujar('chart-prod-del', chartProdDel, {
+    type: 'bar',
+    data: { labels: D.bandas.map(bd => bd + ' días'), datasets: [
+      { type: 'bar', label: 'Vacas por día (A)', data: vacasA, yAxisID: 'y1', order: 3,
+        backgroundColor: SERIES[1] + '55', borderWidth: 0, maxBarThickness: 46 },
+      Object.assign(linea(`kg/vaca, período A (${A.length} días)`, D.bandas.map(bd => kgv(a[bd])), SERIES[0]),
+        { type: 'line', order: 1, pointRadius: 3.5 }),
+      ...(B.length ? [Object.assign(linea(`kg/vaca, período B (${B.length} días)`, D.bandas.map(bd => kgv(b[bd])), SERIES[3]),
+        { type: 'line', order: 2, borderDash: [6, 4] })] : []),
+    ] },
+    options: o,
+  });
+
+  const fila = bd => {
+    const x = kgv(a[bd]), y = kgv(b[bd]);
+    return `<tr><td>${bd}</td><td style="text-align:right">${prodNum(A.length ? a[bd].vacasDia / A.length : null, 0)}</td>`
+      + `<td style="text-align:right">${prodNum(x, 1)}</td><td style="text-align:right">${prodNum(y, 1)}</td>`
+      + `<td style="text-align:right;white-space:nowrap">${x != null && y != null ? (x - y > 0 ? '+' : '') + prodNum(x - y, 1) : '—'}</td>`
+      + `<td style="text-align:right;white-space:nowrap">${prodPct(x, y)}</td></tr>`;
+  };
+  prodEl('prod-d-tabla').innerHTML = '<thead><tr><th>Días en leche</th><th style="text-align:right">Vacas/día A</th>'
+    + '<th style="text-align:right">kg/vaca A</th><th style="text-align:right">kg/vaca B</th>'
+    + '<th style="text-align:right">Diferencia</th><th style="text-align:right">Cambio</th></tr></thead><tbody>'
+    + D.bandas.map(fila).join('') + '</tbody>';
+
+  // Día por día, un tramo por línea.
+  const dato = (f, bd) => {
+    const celda = (D.delIdx[f] || {})[bd];
+    if (!celda) return null;
+    let v = 0, kg = 0;
+    Object.keys(celda).forEach(l => { if (lact === 0 || Number(l) === lact) { v += celda[l].vv; kg += celda[l].kg; } });
+    return v >= PROD_MIN_VACAS_DIA ? kg / v : null;
+  };
+  const o2 = baseOpts(true);
+  o2.interaction = { mode: 'index', intersect: false };
+  o2.scales.y.beginAtZero = false;
+  o2.scales.y.title = { display: true, text: 'kg por vaca por día' };
+  chartProdDelDia = dibujar('chart-prod-del-dia', chartProdDelDia, {
+    type: 'line',
+    data: { labels: D.dias.map(f => prodDiaCorto(f) + (D.parciales.has(f) ? '*' : '')),
+            datasets: D.bandas.map((bd, i) => linea(bd + ' días', D.dias.map(f => dato(f, bd)), SERIES[i % SERIES.length],
+              { pointRadius: 1.5, borderWidth: 1.8 })) },
+    options: o2,
+  });
+  prodEl('prod-d-parciales').textContent = D.parciales.size
+    ? `* Día incompleto (${[...D.parciales].map(prodDiaCorto).join(', ')}): pocas vacas con el total del día cerrado.` : '';
+}
+
+// ---- Pestaña: flujo por días en leche -------------------------------------
+function prodFlujoArmar(d) {
+  const idx = {}, totalPorDia = {};
+  (d.filas || []).forEach(f => { (idx[f.fecha] ||= {})[f.banda] = f; totalPorDia[f.fecha] = (totalPorDia[f.fecha] || 0) + f.ordenos; });
+  const dias = Object.keys(idx).sort();
+  // Solo las medidas que esta sala registra: una columna entera en NULL no se ofrece.
+  const metricas = PROD_FLUJO_METRICAS.filter(m => (d.filas || []).some(f => f[m.k] != null));
+  return { desde: d.desde, hasta: d.hasta, dias, idx, bandas: d.bandas || [], metricas,
+           parciales: prodParciales(dias, totalPorDia) };
+}
+
+// Promedio de la medida en un tramo de DEL durante un período, ponderado por ordeños.
+function prodFlujoAgg(lista, bd) {
+  const F = prodFlujo, out = { ordenos: 0 }, num = {}, den = {};
+  lista.forEach(fe => {
+    const r = (F.idx[fe] || {})[bd];
+    if (!r) return;
+    out.ordenos += r.ordenos;
+    F.metricas.forEach(m => { if (r[m.k] != null) { num[m.k] = (num[m.k] || 0) + r[m.k] * r.ordenos; den[m.k] = (den[m.k] || 0) + r.ordenos; } });
+  });
+  F.metricas.forEach(m => { out[m.k] = out.ordenos >= PROD_MIN_MUESTRA && den[m.k] ? num[m.k] / den[m.k] : null; });
+  return out;
+}
+
+function pintarProdFlujo() {
+  const F = prodFlujo, info = prodEl('prod-f-info');
+  if (!F.dias.length) { info.textContent = 'No hay ordeños con DEL en este período.'; prodEl('prod-f-cuerpo').hidden = true; return; }
+  const { A, B } = prodPeriodos(F.dias, F.parciales, prodN());
+  const rango = l => l.length ? `${prodDiaCorto(l[0])}–${prodDiaCorto(l[l.length - 1])}` : '—';
+  info.textContent = `Período A: ${rango(A)} (${A.length} días). Período B: ${B.length ? rango(B) + ` (${B.length} días)` : 'sin días completos antes del A'}.`;
+  prodEl('prod-f-cuerpo').hidden = false;
+
+  const sel = prodEl('prod-f-metrica');
+  if (!sel.options.length) {
+    sel.innerHTML = F.metricas.map(m => `<option value="${m.k}">${m.t}</option>`).join('');
+    sel.value = (F.metricas.find(m => m.k === 'f_prom') || F.metricas[0]).k;
+  }
+  const m = F.metricas.find(x => x.k === sel.value) || F.metricas[0];
+  const a = {}, b = {};
+  F.bandas.forEach(bd => { a[bd] = prodFlujoAgg(A, bd); b[bd] = prodFlujoAgg(B, bd); });
+  const o = baseOpts(true);
+  o.interaction = { mode: 'index', intersect: false };
+  o.scales.y.beginAtZero = !!m.cero;
+  o.scales.y.title = { display: true, text: m.u };
+  if (m.dur) o.scales.y.ticks = { callback: v => fmtMinSeg(v) };
+  o.plugins.tooltip = { callbacks: { label: it => ` ${it.dataset.label}: ${rodNum(m, it.parsed.y)} ${m.dur ? '' : m.u}` } };
+  chartProdFlujo = dibujar('chart-prod-flujo', chartProdFlujo, {
+    type: 'line',
+    data: { labels: F.bandas.map(bd => bd + ' días'), datasets: [
+      Object.assign(linea(`Período A (${A.length} días)`, F.bandas.map(bd => a[bd][m.k]), SERIES[0]), { pointRadius: 3.5 }),
+      ...(B.length ? [Object.assign(linea(`Período B (${B.length} días)`, F.bandas.map(bd => b[bd][m.k]), SERIES[3]), { borderDash: [6, 4] })] : []),
+    ] },
+    options: o,
+  });
+
+  const fila = bd => `<tr><td>${bd}</td><td style="text-align:right">${prodNum(a[bd].ordenos / Math.max(A.length, 1), 0)}</td>`
+    + F.metricas.map(mm => `<td style="text-align:right;white-space:nowrap">${rodNum(mm, a[bd][mm.k])}`
+      + `${B.length ? prodDelta(mm, a[bd][mm.k], b[bd][mm.k]) : ''}</td>`).join('') + '</tr>';
+  prodEl('prod-f-tabla').innerHTML = '<thead><tr><th>Días en leche</th><th style="text-align:right" title="Ordeños por día, período A">Ordeños/día</th>'
+    + F.metricas.map(mm => `<th style="text-align:right" title="${mm.t}${mm.u && !mm.dur ? ' (' + mm.u + ')' : ''}">${mm.col}</th>`).join('')
+    + '</tr></thead><tbody>' + F.bandas.map(fila).join('') + '</tbody>';
+}
+
+async function cargarProdFlujo() {
+  clearTimeout(prodFlujoReintento);
+  const info = prodEl('prod-f-info');
+  info.textContent = 'Agrupando los flujos por días en leche…';
+  try {
+    const d = await pedirJSON(`/api/produccion/flujos_del?dias=${prodEl('prod-dias').value}`
+      + `&tambo=${encodeURIComponent(tamboActual)}`);
+    if (d.no_disponible) { info.textContent = d.mensaje; prodEl('prod-f-cuerpo').hidden = true; return; }
+    prodEl('prod-f-metrica').innerHTML = '';
+    prodFlujo = prodFlujoArmar(d);
+    pintarProdFlujo();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; prodFlujoReintento = setTimeout(cargarProdFlujo, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+async function cargarProduccion() {
+  clearTimeout(prodReintento);
+  const info = prodEl('prod-info');
+  info.textContent = 'Leyendo la producción…';
+  try {
+    const d = await pedirJSON(`/api/produccion/analisis?dias=${prodEl('prod-dias').value}`
+      + `&tambo=${encodeURIComponent(tamboActual)}`);
+    prodDatos = prodArmar(d);
+    prodFlujo = null;
+    prodRSel = null;
+    pintarProd();
+    if (prodTabActual === 'flujo') cargarProdFlujo();
+  } catch (e) {
+    if (e.calentando) { info.textContent = e.message; prodReintento = setTimeout(cargarProduccion, 4000); return; }
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+function activarTabProd(tab) {
+  if (!PROD_TABS[tab]) tab = 'rodeo';
+  prodTabActual = tab;
+  document.querySelectorAll('#prod-tabs [data-tab]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tab === tab)));
+  Object.entries(PROD_TABS).forEach(([k, id]) => { prodEl(id).hidden = k !== tab; });
+  // Un gráfico dibujado con su tarjeta oculta queda de 0x0: se dibuja recién cuando se ve.
+  if (tab === 'flujo' && prodDatos && !prodFlujo) cargarProdFlujo();
+  else pintarProdTab(tab);
+}
+
+prodEl('prod-tabs')?.addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-tab]');
+  if (btn) activarTabProd(btn.dataset.tab);
+});
+prodEl('prod-aplicar')?.addEventListener('click', cargarProduccion);
+prodEl('prod-dias')?.addEventListener('change', cargarProduccion);
+prodEl('prod-n')?.addEventListener('change', () => { if (prodDatos) { pintarProd(); } });
+prodEl('prod-r-metrica')?.addEventListener('change', () => prodDatos && pintarProdRodeo());
+prodEl('prod-d-lact')?.addEventListener('change', () => prodDatos && pintarProdDel());
+prodEl('prod-f-metrica')?.addEventListener('change', () => prodFlujo && pintarProdFlujo());
+prodEl('prod-r-chips')?.addEventListener('change', ev => {
+  const c = ev.target.dataset.prodRod;
+  if (!c || !prodDatos) return;
+  if (ev.target.checked) prodRSel.add(c); else prodRSel.delete(c);
+  pintarProdRodeo();
+});
+if (prodEl('prod-r-tipo')) conectarSelectorTipo('prod-r-tipo', tipo => { prodRTipo = tipo; if (prodDatos) pintarProdRodeo(); });
 
 // --- Proyección de rebaños ---------------------------------------------------
 let chartProyLact = null, chartProyProd = null, chartProyMov = null;
@@ -12747,7 +13272,7 @@ const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
 // dentro de otra: 'rendimiento'/'flujos'/'evolucion' en 'rutina', y
 // 'proyeccion' en 'repro'. Siguen existiendo como PERMISOS en
 // auth.PAGINAS_POR_ROL, que es lo que decide si cada pestaña se dibuja.
-const PAGINAS = ['dashboard', 'consultas', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
+const PAGINAS = ['dashboard', 'consultas', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'produccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 
 // Id viejo -> dónde vive ahora. `irAPagina` lo traduce para que un favorito,
@@ -13035,6 +13560,7 @@ function cargarDatosDePagina(id) {
   // `prepararTabRutina` la primera vez que se abre cada una, para no disparar
   // tres consultas grandes por entrar a la sección.
   else if (id === 'rutina') cargarRutina();
+  else if (id === 'produccion') cargarProduccion();
   // 'proyeccion' pasó a ser la última pestaña de 'repro': la ofrece el
   // handler de #repro-tabs al abrirla, igual que las demás pestañas pesadas
   // de esa barra.
@@ -13153,6 +13679,7 @@ function irAPagina(id) {
   if (id === 'sala_cms') reprogramarRefrescoSala(); else clearInterval(salaTimer);
   // El reintento de Salud solo tiene sentido con esa página a la vista.
   if (id !== 'salud') clearTimeout(saludReintento);
+  if (id !== 'produccion') { clearTimeout(prodReintento); clearTimeout(prodFlujoReintento); }
   // Ídem los reintentos de Flujos y Rendimiento Sala mientras el caché se
   // calienta. Ahora son PESTAÑAS de 'rutina', así que el corte es al salir de
   // esa página — no al cambiar de pestaña, para que una consulta pesada que ya
