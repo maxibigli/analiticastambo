@@ -2739,9 +2739,8 @@ sospechar de la app o de la red — ese descarte largo ya se hizo una vez.
 ## Rutina de ordeño: pestaña "Rodeos por día" (03/11/2026)
 
 Replica la planilla por grupo de DelPro (flujos 0-15/15-30/30-60/60-120, retirada, pico,
-% flujo bajo, duración, kg/vaca) pero DÍA POR DÍA y comparable. Solo sala convencional por
-ahora (`sql_flujos_rodeos_dia` está en `salas/convencional.py`; la rotativa contesta
-`no_disponible`). Comparte permiso con "Flujos de ordeño" (`'flujos'`, solo admin).
+% flujo bajo, duración, kg/vaca) pero DÍA POR DÍA y comparable. Las DOS salas desde el 04/11/2026: `sql_flujos_rodeos_dia` en `salas/convencional.py` y, para
+la rotativa, `flujos.sql_rodeos_dia` (salas que no la definan contestan `no_disponible`). Comparte permiso con "Flujos de ordeño" (`'flujos'`, solo admin).
 
 - **El rodeo es el del DÍA** (`AnimalDaily.AnimalGroup`), no el actual. `MilkingGroup` viene
   NULL en todas las filas de La Martina. Ver "Los DOS criterios de rodeo".
@@ -2759,6 +2758,16 @@ ahora (`sql_flujos_rodeos_dia` está en `salas/convencional.py`; la rotativa con
 - **Tiempos medidos** (La Martina, backup 02/11, caché tibia): 7 días 0,8 s, 30 días 1,6 s, 90 días 5,5 s. En frío la
   primera lectura va a disco y tarda 35-45 s (SQL Express con poca RAM).
 - Un rodeo con un solo ordeño ese día (p. ej. "Pre-Parto": 1 vaca, 0 kg) da promedios sin sentido (100% flujo bajo).
+- **Rotativa (04/11/2026)**: el rodeo del día sale de `AnimalDaily.AnimalGroup` por el enlace directo de la
+  bajada (`SessionMilkYield.AnimalDaily`). Medido en La Ponderosa (7 días, 28.568 ordeños): el enlace cae en la
+  fecha del ordeño en el 99,95% y su rodeo coincide con `CMSDeviceVisit.VisitedInGroup` en el 96,7% de las
+  visitas que lo tienen (viene NULL en el 17%); `BasicAnimal.[Group]` (hoy) coincide solo en el 88%. Mide
+  SEGUNDOS de flujo bajo (`coloc_seg`, columna "Colocación") y no el porcentaje: cada sala trae una de las dos y
+  la pestaña ofrece solo las medidas que traen datos (`rodArmar` -> `metricas`). Tiempos en `DDM` local:
+  14 días 2,8 s, 45 días 4,6 s.
+- **Solo los rodeos de ordeñe de este tambo**: el endpoint descarta las filas cuyo `numero` no esté en
+  `sala.sql_grupos()` (en la rotativa entraban "Animals SB" y "VO Don German", y Secas/PreParto con un puñado
+  de ordeños; en La Martina "Pre-Parto"). Si esa lista viene vacía no se filtra.
 
 ## Análisis de Producción: página propia, tres pestañas (03/11/2026)
 

@@ -5841,14 +5841,17 @@ const ROD_METRICAS = [
   { k: 'f_prom', t: 'Flujo promedio', col: 'Prom.', u: 'kg/min', dec: 2 },
   { k: 'f_pico', t: 'Flujo pico', col: 'Pico', u: 'kg/min', dec: 2 },
   { k: 'pct_bajo', t: '% de flujo bajo', col: '% bajo', u: '%', dec: 1 },
+  // La rotativa mide SEGUNDOS de flujo bajo (colocación) y la convencional un PORCENTAJE: cada sala
+  // trae una de las dos y la otra viene en NULL; `rodArmar` deja afuera la que no tenga datos.
+  { k: 'coloc_seg', t: 'Tiempo de flujo bajo (colocación)', col: 'Colocación', u: 's', dec: 0 },
   { k: 'dur_seg', t: 'Duración del ordeño', col: 'Duración', u: 'min:s', dec: 0, dur: true },
   { k: 'pct_bimodal', t: 'Bimodalidad', col: 'Bimodal', u: '%', dec: 1 },
   { k: 'pct_arranque_lento', t: 'Arranque lento', col: 'Arr. lento', u: '%', dec: 1 },
 ];
 // Las que se SUMAN para armar el total del tambo; el resto se pondera por ordeños.
 const ROD_SUMAS = ['ordenos', 'vacas', 'kg'];
-// Columnas de la planilla (se omite `kg`: ya está dividido por vaca).
-const ROD_COLUMNAS = ROD_METRICAS.filter(m => m.k !== 'kg');
+// Medidas que se calculan en el navegador (no vienen en las filas): se ofrecen siempre.
+const ROD_DERIVADAS = ['kg_vaca', 'ordenos', 'vacas', 'kg'];
 
 const rodNum = (m, v) => v == null ? '—' : m.dur ? fmtMinSeg(v)
   : Number(v).toLocaleString('es-AR', { minimumFractionDigits: m.dec, maximumFractionDigits: m.dec });
@@ -5884,7 +5887,9 @@ function rodArmar(d) {
   const mediana = orden.length ? orden[Math.floor(orden.length / 2)] : 0;
   const parciales = new Set(dias.filter(f => ordenosDia[f] < 0.6 * mediana));
   const claves = [...nombres.keys()].sort((a, b) => Number(a) - Number(b));
-  return { desde: d.desde, hasta: d.hasta, dias, nombres, por, parciales, claves };
+  // Solo las medidas que esta sala registra: una columna entera en NULL no se ofrece.
+  const metricas = ROD_METRICAS.filter(m => ROD_DERIVADAS.includes(m.k) || filas.some(f => f[m.k] != null));
+  return { desde: d.desde, hasta: d.hasta, dias, nombres, por, parciales, claves, metricas };
 }
 
 function rodColor(clave) {
@@ -5909,9 +5914,9 @@ function pintarRodeos() {
   document.getElementById('rod-cuerpo').hidden = false;
 
   const selM = document.getElementById('rod-metrica');
-  if (!selM.options.length) {
-    selM.innerHTML = ROD_METRICAS.map(m => `<option value="${m.k}">${m.t}</option>`).join('');
-  }
+  const elegida = selM.value;
+  selM.innerHTML = D.metricas.map(m => `<option value="${m.k}">${m.t}</option>`).join('');
+  if (D.metricas.some(m => m.k === elegida)) selM.value = elegida;
   if (!rodSel) rodSel = new Set(['total', ...D.claves]);
   document.getElementById('rod-chips').innerHTML = ['total', ...D.claves].map(c => `
     <label class="aviso" style="display:inline-flex;align-items:center;gap:5px;cursor:pointer">
@@ -5970,11 +5975,11 @@ function pintarRodeosTabla() {
     const fa = D.por[c][a], fb = D.por[c][b];
     const nombre = c === 'total' ? 'Todo el tambo' : D.nombres.get(c);
     return `<tr${c === 'total' ? ' style="font-weight:600"' : ''}><td>${escHtml(nombre)}</td>`
-      + ROD_COLUMNAS.map(m => `<td style="text-align:right;white-space:nowrap">${rodNum(m, fa ? fa[m.k] : null)}`
+      + D.metricas.filter(m => m.k !== 'kg').map(m => `<td style="text-align:right;white-space:nowrap">${rodNum(m, fa ? fa[m.k] : null)}`
         + `${fa ? delta(m, fa[m.k], fb ? fb[m.k] : null) : ''}</td>`).join('') + '</tr>';
   };
   document.getElementById('rod-tabla').innerHTML = '<thead><tr><th>Rodeo</th>'
-    + ROD_COLUMNAS.map(m => `<th style="text-align:right" title="${m.t}${m.u && !m.dur ? ' (' + m.u + ')' : ''}">${m.col}</th>`).join('')
+    + D.metricas.filter(m => m.k !== 'kg').map(m => `<th style="text-align:right" title="${m.t}${m.u && !m.dur ? ' (' + m.u + ')' : ''}">${m.col}</th>`).join('')
     + '</tr></thead><tbody>' + [...D.claves, 'total'].map(fila).join('') + '</tbody>';
 }
 
@@ -6025,10 +6030,9 @@ const PROD_TABS = { rodeo: 'prod-panel-rodeo', del: 'prod-panel-del', flujo: 'pr
 // Menos que esto no es una medida sino una anécdota (una vaca sola "es" el promedio de su rodeo).
 const PROD_MIN_VACAS_DIA = 5;     // vacas de un rodeo/tramo en UN día, para dibujarlo
 const PROD_MIN_MUESTRA = 30;      // vacas-día (u ordeños) de un PERÍODO, para mostrar su promedio
-const PROD_COLOC = { k: 'coloc_seg', t: 'Tiempo de flujo bajo (colocación)', col: 'Colocación', u: 's', dec: 0 };
 const PROD_FLUJO_CLAVES = ['f_0_15', 'f_15_30', 'f_30_60', 'f_60_120', 'f_retirada', 'f_prom', 'f_pico',
                            'pct_bajo', 'coloc_seg', 'dur_seg', 'pct_bimodal', 'pct_arranque_lento'];
-const PROD_FLUJO_METRICAS = PROD_FLUJO_CLAVES.map(k => k === 'coloc_seg' ? PROD_COLOC : ROD_METRICAS.find(m => m.k === k));
+const PROD_FLUJO_METRICAS = PROD_FLUJO_CLAVES.map(k => ROD_METRICAS.find(m => m.k === k));
 
 const prodEl = id => document.getElementById(id);
 const prodDiaCorto = f => etiquetaDia(f);

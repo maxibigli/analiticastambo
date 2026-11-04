@@ -105,6 +105,18 @@ def sql_flujos_por_deo(desde: str, hasta: str) -> str:
     return flujos.sql_por_deo(desde, hasta)
 
 
+def sql_ultimo_dia_ordeno() -> str:
+    """Último día con leche (`aaaa-mm-dd`): la ventana de "Rodeos por día" se arma hacia
+    atrás desde ahí y no desde hoy, porque las copias de la base vienen con atraso. Sale de
+    `AnimalDaily` (índice por fecha) y no de `MilkingDeviceVisit` (escaneo)."""
+    return ("SELECT CONVERT(varchar(10), MAX(d.[Date]), 120) AS ultimo FROM AnimalDaily d "
+            "WHERE d.GCRecord IS NULL AND d.TotalYield > 0")
+
+
+def sql_flujos_rodeos_dia(desde: str, hasta: str) -> str:
+    return flujos.sql_rodeos_dia(desde, hasta)
+
+
 def sql_flujos_del_dia(desde: str, hasta: str) -> str:
     return flujos.sql_por_deo_dia(desde, hasta)
 

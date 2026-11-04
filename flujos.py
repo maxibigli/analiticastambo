@@ -254,6 +254,44 @@ def sql_por_deo(desde: str, hasta: str) -> str:
     """
 
 
+def sql_rodeos_dia(desde: str, hasta: str) -> str:
+    """Un renglón por (día, rodeo DEL DÍA) para la pestaña "Rodeos por día" de Rutina de
+    ordeño. Mismas columnas que `salas.convencional.sql_flujos_rodeos_dia`, con
+    `coloc_seg` (segundos de flujo bajo, lo que mide esta sala) en lugar de `pct_bajo`.
+
+    EL RODEO ES EL DEL DÍA: sale de `AnimalDaily.AnimalGroup` por el enlace directo de la
+    bajada (`SessionMilkYield.AnimalDaily`). Medido en La Ponderosa (7 días, 28.568
+    ordeños con vaca identificada): el enlace cae en la fecha del ordeño en el 99,95%, y
+    su rodeo coincide con `CMSDeviceVisit.VisitedInGroup` en el 96,7% de las visitas que
+    lo tienen (ese campo viene NULL en el 17%, por eso no se usa). `BasicAnimal.[Group]`
+    (el de hoy) coincide solo en el 88%: cambiaría la historia de cada rodeo cada vez
+    que se mueven vacas. Solo vacas identificadas (`Number > 0`)."""
+    return f"""
+        SELECT CONVERT(varchar(10), CAST(v.CreationTime AS date), 120) AS fecha,
+               g.Name AS grupo, g.Number AS numero,
+               COUNT(*) AS ordenos,
+               COUNT(DISTINCT s.BasicAnimal) AS vacas,
+               SUM(s.TotalYield) AS kg,
+               {_FLUJOS_PROM},
+               AVG(y.AverageFlow) AS f_prom,
+               AVG(y.PeakFlow)    AS f_pico,
+               CAST(NULL AS float) AS pct_bajo,
+               AVG(y.IsoDuration * 1.0)          AS dur_seg,
+               AVG(y.LowFlowDurationInSec * 1.0) AS coloc_seg,
+               {_BIMODAL}
+        FROM MilkingDeviceVisit v
+        JOIN CMSMilkYield y ON y.MilkingDeviceVisit = v.OID
+        JOIN SessionMilkYield s ON s.OID = y.OID
+        JOIN BasicAnimal b ON b.OID = s.BasicAnimal AND b.GCRecord IS NULL AND b.Number > 0
+        JOIN AnimalDaily d ON d.OID = s.AnimalDaily
+        JOIN AbstractGroup g ON g.OID = d.AnimalGroup AND g.GCRecord IS NULL
+        WHERE {_rango(desde, hasta)}
+        GROUP BY CAST(v.CreationTime AS date), g.Name, g.Number
+        ORDER BY fecha, g.Number
+        OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
+    """
+
+
 def sql_por_deo_dia(desde: str, hasta: str) -> str:
     """Curva de flujo por tramo de DEL y por DÍA (pestaña "Flujo por días en leche"
     de Análisis de Producción): un renglón por (día, tramo). El frontend suma los

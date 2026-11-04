@@ -4446,7 +4446,18 @@ def api_rutina_rodeos_dia():
             return {"hasta": None, "desde": None, "filas": []}
         data = db.run_query(sala.sql_flujos_rodeos_dia(desde.isoformat(), hasta.isoformat()),
                             tambo=tambo, max_rows=dias * 30)
-        return {"hasta": hasta.isoformat(), "desde": desde.isoformat(), "filas": _filas(data)}
+        filas = _filas(data)
+        # Solo los rodeos de ordeñe de ESTE tambo: la base DDM la comparten varios tambos y
+        # en la rotativa aparecían "Animals SB" y "VO Don German" (y rodeos que no ordeñan,
+        # como Secas o PreParto, con un puñado de ordeños). Si la lista de rodeos no se puede
+        # armar, se deja todo en vez de dejar la pantalla vacía.
+        grupos = db.run_query(sala.sql_grupos(), tambo=tambo, max_rows=200)
+        if "numero" in grupos["columns"]:
+            i = grupos["columns"].index("numero")
+            numeros = {r[i] for r in grupos["rows"]}
+            if numeros:
+                filas = [f for f in filas if f["numero"] in numeros]
+        return {"hasta": hasta.isoformat(), "desde": desde.isoformat(), "filas": filas}
 
     return _servir_analisis(tambo, f"rodeos_dia:{dias}", armar,
                             "Agrupando ordeños por rodeo y día…")
