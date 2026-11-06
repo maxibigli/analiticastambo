@@ -812,32 +812,72 @@
   .salud-res-ver { margin-top: auto; font-size: 12.5px; color: var(--accent); font-weight: 600; }
   /* Sistema: shell + sidebar + topbar */
   .app-shell { display: flex; min-height: 100vh; align-items: stretch; }
+  /* Menú lateral en ÁRBOL, fondo blanco y texto azul (pedido del 06/11/2026). Los colores son
+     propios del menú y NO siguen el tema claro/oscuro: es blanco y azul en los dos. Sticky para
+     que siga a la vista aunque la página sea larga (con los submenús abiertos el árbol es alto). */
   .sidebar {
-    flex: 0 0 216px; width: 216px; background: var(--brand-navy);
-    display: flex; flex-direction: column; padding: 16px 10px; gap: 2px;
+    --side-bg: #ffffff; --side-fg: #0a56a8; --side-fg-fuerte: #064a94; --side-tenue: #5f87b0;
+    --side-hover: #e8f2fc; --side-activo: #d6e8fa; --side-linea: #d3e1ef;
+    flex: 0 0 252px; width: 252px; background: var(--side-bg); border-right: 1px solid var(--side-linea);
+    display: flex; flex-direction: column; padding: 16px 10px 24px; gap: 2px;
+    position: sticky; top: 0; height: 100vh; align-self: flex-start; overflow-y: auto;
   }
   .sidebar-brand {
     display: flex; align-items: center; gap: 9px;
-    font-weight: 750; font-size: 16.5px; padding: 6px 10px 18px; white-space: nowrap;
-    color: var(--brand-ink); letter-spacing: -.1px;
+    font-weight: 750; font-size: 16.5px; padding: 6px 10px 14px; white-space: nowrap;
+    color: var(--side-fg-fuerte); letter-spacing: -.1px;
   }
   .sidebar-brand img { width: 24px; height: 24px; flex-shrink: 0; }
   .nav-item {
     display: flex; align-items: center; gap: 10px; text-align: left; background: transparent;
-    color: rgba(255,255,255,.72); border: none; border-left: 3px solid transparent; border-radius: 8px;
-    padding: 10px 12px; font-size: 14px; font: inherit; cursor: pointer; width: 100%;
+    color: var(--side-fg); border: none; border-left: 3px solid transparent; border-radius: 8px;
+    padding: 10px 12px; font: inherit; font-size: 15.5px; font-weight: 700; cursor: pointer; width: 100%;
+    position: relative;
   }
-  .nav-item:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .nav-item:hover { background: var(--side-hover); color: var(--side-fg-fuerte); }
   .nav-item.activa {
-    background: var(--brand-navy-2); color: #fff; font-weight: 650;
+    background: var(--side-activo); color: var(--side-fg-fuerte); font-weight: 700;
     border-left-color: var(--accent);
   }
+  /* Línea fina entre página y página (en el hueco de 2px que las separa, sin tocar el fondo del
+     hover ni el del activo). No se dibuja después de la última de la sección, ni entre una página
+     abierta y su propio submenú. */
+  .nav-item::after {
+    content: ''; position: absolute; left: 12px; right: 12px; bottom: -1px; height: 1px;
+    background: var(--side-linea);
+  }
+  .nav-grupo-cuerpo > .nav-item:last-child::after,
+  .nav-item.abierto::after { display: none; }
+  .nav-grupo-cuerpo > .nav-item:has(+ .nav-sub:last-child)::after { display: none; }
+  .nav-chev { margin-left: auto; font-size: 11px; opacity: .7; transition: transform .15s; }
+  .nav-item.abierto .nav-chev { transform: rotate(180deg); }
+  .nav-grupo-tit {
+    display: flex; align-items: center; gap: 6px; width: 100%; background: transparent; border: none;
+    color: var(--side-tenue); font: inherit; font-size: 12px; font-weight: 650;
+    padding: 12px 12px 4px; margin-top: 10px; border-top: 1px solid var(--side-linea);
+    cursor: pointer; text-align: left;
+  }
+  .nav-grupo-tit:hover { color: var(--side-fg-fuerte); }
+  .nav-grupo-tit .nav-chev { margin-left: 0; font-size: 10px; }
+  .nav-grupo-tit.cerrado .nav-chev { transform: rotate(-90deg); }
+  .nav-grupo-cuerpo { display: flex; flex-direction: column; gap: 2px; }
+  .nav-grupo-cuerpo[hidden] { display: none; }
+  .nav-sub { display: none; margin: 1px 0 6px 20px; padding-left: 8px; border-left: 1px solid var(--side-linea); }
+  .nav-sub.abierto { display: flex; flex-direction: column; gap: 1px; }
+  .nav-subitem {
+    background: transparent; border: none; border-radius: 0; color: var(--side-fg); font: inherit;
+    font-size: 13px; font-weight: 400; text-align: left; padding: 7px 10px; cursor: pointer; width: 100%;
+    line-height: 1.3;
+  }
+  .nav-subitem + .nav-subitem { border-top: 1px solid var(--side-linea); }
+  .nav-subitem:hover { background: var(--side-hover); color: var(--side-fg-fuerte); }
+  .nav-subitem.activa { background: var(--side-activo); color: var(--side-fg-fuerte); font-weight: 400; }
   .sidebar-fondo { display: none; }
   .main-area { flex: 1; min-width: 0; display: flex; flex-direction: column; }
   .hamburguesa { display: none; background: transparent; border: 1px solid var(--baseline); color: var(--text-primary); padding: 6px 10px; }
   @media (max-width: 880px) {
     .sidebar {
-      position: fixed; left: 0; top: 0; bottom: 0; z-index: 41; transform: translateX(-100%);
+      position: fixed; left: 0; top: 0; bottom: 0; height: auto; z-index: 41; transform: translateX(-100%);
       transition: transform .2s ease; box-shadow: 2px 0 16px rgba(0,0,0,.3);
     }
     .sidebar.abierta { transform: translateX(0); }
@@ -14831,6 +14871,168 @@ document.getElementById('config-guardar').addEventListener('click', async () => 
 
 document.querySelectorAll('.nav-item').forEach(el =>
   el.addEventListener('click', () => irAPagina(el.dataset.pagina)));
+
+// --- Menú lateral en árbol (06/11/2026) -------------------------------------------------------
+// El menú se REARMA acá, a partir de los botones que ya trae la plantilla (que ya vienen filtrados
+// por permiso con `paginas_visibles`): se agrupan por sección y, a las páginas que tienen barra de
+// pestañas, se les cuelga un submenú LEÍDO de esa barra. Así el árbol nunca se desfasa de las
+// pestañas reales, y una pestaña que el usuario no tiene permiso de ver tampoco aparece en el árbol.
+(function armarMenuArbol() {
+  const GRUPOS = [
+    ['', ['dashboard', 'tablero', 'consultas']],
+    ['Ordeño', ['ordeno', 'sala_cms', 'rutina']],
+    ['Leche', ['produccion', 'entregas']],
+    ['Rodeo', ['salud', 'repro', 'alimentacion', 'ficha']],
+    ['Instalación', ['iot', 'sensehub']],
+    ['Gestión', ['tareas', 'checklist', 'configuracion']],
+  ];
+  // Página -> id de su barra de pestañas (el submenú se lee de ahí).
+  const BARRAS = { rutina: 'rutina-tabs', produccion: 'prod-tabs', repro: 'repro-tabs',
+                   alimentacion: 'alim-tabs', salud: 'salud-tabs', configuracion: 'config-tabs' };
+  // Páginas sin pestañas pero con varias tarjetas: el submenú salta a cada una.
+  const ANCLAS = { entregas: [['Entregas CICLA', 'cicla-card'], ['Caudalímetro vs. comprador', 'comparar-card'],
+                              ['Calidad de leche', 'laser-card']] };
+  const sidebar = document.getElementById('sidebar');
+  const items = {}, subs = {}, grupoDe = {}, cuerpos = {}, titulos = {};
+  sidebar.querySelectorAll('.nav-item').forEach(el => { items[el.dataset.pagina] = el; });
+  let guardado = {};
+  try { guardado = JSON.parse(localStorage.getItem('lactia_menu_grupos') || '{}'); } catch (e) { /* modo privado */ }
+  const guardarGrupos = () => {
+    try { localStorage.setItem('lactia_menu_grupos', JSON.stringify(guardado)); } catch (e) { /* idem */ }
+  };
+  // "⏱️ Análisis de Rutina" -> "Análisis de Rutina": se saca el ícono de adelante.
+  const limpiar = t => t.trim().replace(/^[^\p{L}\p{N}]+/u, '').trim();
+
+  function crearSub(p) {
+    const botones = [];
+    const barra = BARRAS[p] && document.getElementById(BARRAS[p]);
+    if (barra) {
+      barra.querySelectorAll('[data-tab]').forEach(b => {
+        if (b.hidden) return;
+        let rotulo = limpiar(b.textContent);
+        if (rotulo === limpiar(items[p].textContent)) rotulo = 'General';
+        botones.push({ rotulo, tab: b.dataset.tab });
+      });
+    } else if (ANCLAS[p]) {
+      ANCLAS[p].forEach(([rotulo, ancla]) => { if (document.getElementById(ancla)) botones.push({ rotulo, ancla }); });
+    }
+    if (botones.length < 2) return null;
+    const div = document.createElement('div');
+    div.className = 'nav-sub';
+    botones.forEach(b => {
+      const el = document.createElement('button');
+      el.className = 'nav-subitem';
+      el.type = 'button';
+      el.dataset.pagina = p;
+      if (b.tab) el.dataset.tab = b.tab; else el.dataset.ancla = b.ancla;
+      el.textContent = b.rotulo;
+      div.appendChild(el);
+    });
+    return div;
+  }
+
+  const frag = document.createDocumentFragment();
+  const usados = new Set();
+  GRUPOS.forEach(([nombre, paginas]) => {
+    const presentes = paginas.filter(p => items[p]);
+    if (!presentes.length) return;
+    const cuerpo = document.createElement('div');
+    cuerpo.className = 'nav-grupo-cuerpo';
+    if (nombre) {
+      const tit = document.createElement('button');
+      tit.type = 'button';
+      tit.className = 'nav-grupo-tit';
+      tit.innerHTML = '<span class="nav-chev" aria-hidden="true">▾</span>' + nombre;
+      tit.addEventListener('click', () => {
+        guardado[nombre] = !guardado[nombre];   // true = plegado
+        guardarGrupos();
+        aplicarGrupos();
+      });
+      titulos[nombre] = tit; cuerpos[nombre] = cuerpo;
+      frag.appendChild(tit);
+    }
+    frag.appendChild(cuerpo);
+    presentes.forEach(p => {
+      usados.add(p); grupoDe[p] = nombre;
+      cuerpo.appendChild(items[p]);
+      const sub = crearSub(p);
+      if (sub) {
+        subs[p] = sub;
+        items[p].classList.add('con-sub');
+        items[p].insertAdjacentHTML('beforeend', '<span class="nav-chev" aria-hidden="true">▾</span>');
+        cuerpo.appendChild(sub);
+      }
+    });
+  });
+  // Una página que algún día no esté en el mapa no desaparece: queda al final.
+  Object.keys(items).filter(p => !usados.has(p)).forEach(p => frag.appendChild(items[p]));
+  sidebar.appendChild(frag);
+
+  let actual = null;
+  function aplicarGrupos() {
+    Object.keys(cuerpos).forEach(g => {
+      // El grupo de la página que se está mirando nunca queda plegado: se perdería de vista dónde se está.
+      const plegado = !!guardado[g] && grupoDe[actual] !== g;
+      cuerpos[g].hidden = plegado;
+      titulos[g].classList.toggle('cerrado', plegado);
+    });
+  }
+  function sincronizar() {
+    const act = (sidebar.querySelector('.nav-item.activa') || {}).dataset?.pagina || null;
+    if (act !== actual) {
+      actual = act;
+      Object.keys(subs).forEach(p => {   // acordeón: un solo submenú abierto, el de la página activa
+        subs[p].classList.toggle('abierto', p === act);
+        items[p].classList.toggle('abierto', p === act);
+      });
+    }
+    aplicarGrupos();
+    Object.keys(subs).forEach(p => {
+      const barra = BARRAS[p] && document.getElementById(BARRAS[p]);
+      subs[p].querySelectorAll('[data-tab]').forEach(b => {
+        const orig = barra && barra.querySelector('[data-tab="' + b.dataset.tab + '"]');
+        b.classList.toggle('activa', p === act && !!orig && orig.getAttribute('aria-pressed') === 'true');
+      });
+    });
+  }
+
+  // Tocar una página que ya está abierta pliega/despliega su submenú en vez de volver a navegar.
+  sidebar.addEventListener('click', ev => {
+    const it = ev.target.closest('.nav-item.con-sub');
+    if (!it || !it.classList.contains('activa')) return;
+    const sub = subs[it.dataset.pagina];
+    sub.classList.toggle('abierto');
+    it.classList.toggle('abierto', sub.classList.contains('abierto'));
+    ev.stopPropagation();
+  }, true);
+  // Tocar un submenú: ir a la página y a esa pestaña (o tarjeta).
+  sidebar.addEventListener('click', ev => {
+    const sb = ev.target.closest('.nav-subitem');
+    if (!sb) return;
+    const p = sb.dataset.pagina;
+    irAPagina(p);
+    if (sb.dataset.tab) {
+      const orig = document.querySelector('#' + BARRAS[p] + ' [data-tab="' + sb.dataset.tab + '"]');
+      if (orig) orig.click();
+    } else if (sb.dataset.ancla) {
+      requestAnimationFrame(() => {
+        const el = document.getElementById(sb.dataset.ancla);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+    cerrarMenuMovil();   // si ya estaba en esa página, irAPagina sale antes de cerrarlo
+  });
+
+  // Se mantiene al día solo: cuando cambia de página (irAPagina) o de pestaña (aria-pressed de la barra).
+  const _irAPagina = irAPagina;
+  irAPagina = function () { const r = _irAPagina.apply(this, arguments); sincronizar(); return r; };
+  const obs = new MutationObserver(sincronizar);
+  Object.values(BARRAS).forEach(id => {
+    const barra = document.getElementById(id);
+    if (barra) obs.observe(barra, { subtree: true, attributes: true, attributeFilter: ['aria-pressed'] });
+  });
+  sincronizar();
+})();
 window.addEventListener('hashchange', () => irAPagina(location.hash.slice(1)));
 document.getElementById('btn-hamburguesa').addEventListener('click', () => {
   document.getElementById('sidebar').classList.toggle('abierta');

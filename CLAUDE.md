@@ -2886,6 +2886,32 @@ Qué se hizo (`laserenisima.py`, `app.py`, tarjeta en `index.html`):
 - **La alerta de UFC (`_lineas_alertas_puntuales`) NO cambió**: cuenta las entregas del período EN CURSO sobre
   el umbral; sumarle el mes anterior habría cambiado lo que significa el mensaje.
 
+## Menú lateral en árbol, blanco con texto azul (06/11/2026)
+
+El menú pasó de 17 entradas sueltas a un árbol: secciones plegables (Ordeño, Leche, Rodeo, Instalación,
+Gestión; Dashboard, Tablero y Consultas quedan arriba sin título) y, debajo de cada página que tiene pestañas,
+un submenú con esas pestañas. Tocar un submenú va a la página y a esa pestaña. Fondo blanco y texto azul por
+pedido del tambo; los colores son PROPIOS del menú (variables `--side-*` en `.sidebar`) y no siguen el tema
+claro/oscuro. Se hizo primero una simulación y el tambo eligió la variante "agrupada" (la otra era una lista
+plana con submenús). La agrupación es criterio nuestro, no existía antes.
+
+**Se arma en el navegador, no en la plantilla** (`armarMenuArbol` en `index.html`): reordena los botones
+`.nav-item` que la plantilla ya trae filtrados con `paginas_visibles` y lee cada submenú de la barra de pestañas
+REAL de la página (`rutina-tabs`, `prod-tabs`, `repro-tabs`, `alim-tabs`, `salud-tabs`, `config-tabs`). Por eso:
+- Un usuario sin permiso para una página o pestaña no la ve en el árbol (el operario no ve nada de más).
+- Agregar una pestaña a una de esas barras la suma sola al árbol. **Una página nueva con pestañas hay que
+  agregarla a `GRUPOS` y a `BARRAS`** (si no queda al final del menú, sin submenú; no desaparece).
+- Tocar un submenú hace `irAPagina(pagina)` y `click()` sobre el botón original de la barra: se reusa el
+  handler de cada pestaña en vez de duplicar qué mostrar. El árbol se mantiene al día con un
+  `MutationObserver` sobre `aria-pressed` de las barras y envolviendo `irAPagina`, así que los saltos que ya
+  existían (Tablero, tarjetas del Resumen de Salud) también marcan la pestaña en el árbol.
+- "Entrega de Leche" no tiene pestañas sino tres tarjetas: su submenú (`ANCLAS`) hace scroll a cada una.
+- Un solo submenú abierto a la vez (el de la página activa); tocar la página activa lo pliega/despliega. El
+  grupo de la página activa nunca queda plegado. El plegado de grupos se recuerda en `localStorage`
+  (`lactia_menu_grupos`).
+- El menú ahora es `position: sticky` (alto de la ventana, con scroll propio): con los submenús abiertos el árbol
+  es más alto que la pantalla. En celular sigue siendo el panel fijo que se abre con ☰.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).
