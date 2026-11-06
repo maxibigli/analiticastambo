@@ -871,20 +871,28 @@
   .nav-item.abierto .nav-chev { transform: rotate(180deg); }
   .nav-grupo-tit {
     display: flex; align-items: center; gap: 6px; width: 100%; background: transparent; border: none;
-    color: var(--side-tenue); font: inherit; font-size: 12px; font-weight: 650;
-    padding: 12px 12px 4px; margin-top: 10px; border-top: 1px solid var(--side-linea);
+    color: var(--side-fg); font: inherit; font-size: 15.5px; font-weight: 700;
+    padding: 12px 12px 6px; margin-top: 10px; border-top: 1px solid var(--side-linea);
     cursor: pointer; text-align: left;
   }
   .nav-grupo-tit:hover { color: var(--side-fg-fuerte); }
-  .nav-grupo-tit .nav-chev { margin-left: 0; font-size: 10px; }
+  .nav-grupo-tit .nav-chev { margin-left: 0; font-size: 11px; opacity: .8; }
   .nav-grupo-tit.cerrado .nav-chev { transform: rotate(-90deg); }
   .nav-grupo-cuerpo { display: flex; flex-direction: column; gap: 2px; }
+  /* Jerarquía (pedido del 06/11/2026): el TÍTULO de la sección (Ordeño, Leche...) es lo grande
+     y en negrita; las páginas de adentro son el submenú, chicas y simples, y las pestañas de cada
+     página (`.nav-subitem`) todavía más chicas. Las tres primeras (Dashboard, Tablero, Consultas)
+     no tienen título de sección: son el menú principal y conservan el tamaño grande. */
+  .nav-grupo-cuerpo.con-titulo > .nav-item {
+    font-size: 13.5px; font-weight: 400; padding: 8px 12px 8px 20px; gap: 8px;
+  }
+  .nav-grupo-cuerpo.con-titulo > .nav-item.activa { font-weight: 600; }
   .nav-grupo-cuerpo[hidden] { display: none; }
   .nav-sub { display: none; margin: 1px 0 6px 20px; padding-left: 8px; border-left: 1px solid var(--side-linea); }
   .nav-sub.abierto { display: flex; flex-direction: column; gap: 1px; }
   .nav-subitem {
     background: transparent; border: none; border-radius: 0; color: var(--side-fg); font: inherit;
-    font-size: 13px; font-weight: 400; text-align: left; padding: 7px 10px; cursor: pointer; width: 100%;
+    font-size: 12.5px; font-weight: 400; text-align: left; padding: 6px 10px; cursor: pointer; width: 100%;
     line-height: 1.3;
   }
   .nav-subitem + .nav-subitem { border-top: 1px solid var(--side-linea); }
@@ -14968,7 +14976,7 @@ document.querySelectorAll('.nav-item').forEach(el =>
     const presentes = paginas.filter(p => items[p]);
     if (!presentes.length) return;
     const cuerpo = document.createElement('div');
-    cuerpo.className = 'nav-grupo-cuerpo';
+    cuerpo.className = 'nav-grupo-cuerpo' + (nombre ? ' con-titulo' : '');
     if (nombre) {
       const tit = document.createElement('button');
       tit.type = 'button';
