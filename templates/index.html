@@ -526,52 +526,70 @@
      la fila vacío en una pantalla ancha. Empaquetada, ninguna fila queda a
      medio llenar; qué grupo es cada una lo dice `.tb-grupo-tag` adentro de
      la propia tarjeta (ver `tarjetaTablero`), no ya un <h3> por sección. */
-  .tb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  .tb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
     gap: 12px; }
-  .tb-grupo-tag { font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em;
-    color: var(--muted); font-weight: 600; margin-bottom: 5px; }
+  /* Variante "semáforo pleno": el ESTADO pinta toda la tarjeta (fondo suave +
+     etiqueta con texto), así se lee de lejos y no depende solo de distinguir
+     colores. `--e` es el color del estado; el fondo, el borde y el tono del
+     número salen de mezclarlo con la superficie y con el texto, así que sirven
+     igual en modo claro y oscuro sin definir dos paletas. Sin dato (`.sin`)
+     no se pinta nada: no hay estado que mostrar. */
+  .tb-card { --e: var(--muted); --tb-bg: var(--surface-1); }
+  .tb-card[data-nivel="bien"]     { --e: var(--good); }
+  .tb-card[data-nivel="atencion"] { --e: var(--warning); }
+  .tb-card[data-nivel="mal"]      { --e: var(--critical); }
+  .tb-card[data-nivel]            { --tb-bg: color-mix(in srgb, var(--e) 13%, var(--surface-1)); }
+  .tb-grupo-tag { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+    color: color-mix(in srgb, var(--e) 55%, var(--text-primary)); font-weight: 600; margin-bottom: 5px; }
   .tb-card { position: relative; text-align: left; width: 100%; cursor: pointer;
-    background: var(--surface-1); border: 1px solid var(--border);
+    background: var(--tb-bg);
+    border: 1px solid color-mix(in srgb, var(--e) 35%, transparent);
     border-radius: var(--lac-radius-card, 10px);
-    padding: 13px 15px 14px; font: inherit; color: inherit;
-    /* La franja de color va a la izquierda y no arriba: al lado del número se
-       lee como parte del dato, y arriba competía con el borde de la tarjeta. */
-    border-left: 4px solid var(--muted);
+    padding: 14px 15px 13px; font: inherit; color: inherit;
     box-shadow: 0 1px 2px rgba(14,23,32,.04), 0 8px 24px -12px rgba(14,23,32,.10);
     transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease; }
   .tb-card:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.22);
     border-color: var(--accent); }
   .tb-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .tb-card.sin { cursor: pointer; opacity: .72; border-left-color: var(--muted); }
-  /* El chip de estado va absoluto arriba a la derecha, así que el nombre
-     necesita dejarle lugar: sin este padding, "Índice de conversión de
-     alimento" se metía por debajo y se leía "...alimentoCALCULANDO". */
-  .tb-nom { font-size: 11.5px; color: var(--text-secondary); line-height: 1.3;
-    min-height: 30px; padding-right: 76px; }
-  .tb-val { font-family: var(--lac-font-display); font-size: 27px; font-weight: 700;
-    letter-spacing: -.01em; line-height: 1.1; margin-top: 4px;
+  .tb-card.sin { cursor: pointer; opacity: .72; border-color: var(--border); }
+  .tb-nom { font-size: 13.5px; color: var(--text-primary); line-height: 1.25;
+    min-height: 34px; }
+  /* Número grande en tipografía condensada: en Windows sale Bahnschrift; si no
+     está, Arial Narrow y por último la tipografía de siempre. Sin descargar
+     nada (la app no depende de internet para verse bien). */
+  .tb-val { font-family: Bahnschrift, 'Arial Narrow', var(--lac-font-display), sans-serif;
+    font-stretch: 75%; font-size: 46px; font-weight: 700;
+    letter-spacing: -.01em; line-height: 1; margin-top: 6px;
+    color: color-mix(in srgb, var(--e) 55%, var(--text-primary));
     font-variant-numeric: tabular-nums; }
-  .tb-val small { font-size: 12px; font-weight: 500; opacity: .65; margin-left: 3px; }
-  .tb-sub { font-size: 10.5px; color: var(--muted); margin-top: 3px; min-height: 13px; }
-  /* Escala: dónde cae el valor entre el verde y el rojo configurados. Sin esto
-     el color es una opinión sin referencia. */
-  .tb-escala { position: relative; height: 5px; border-radius: 3px; margin-top: 9px;
-    background: linear-gradient(90deg, var(--good), var(--warning), var(--critical)); }
-  .tb-escala i { position: absolute; top: -3px; width: 3px; height: 11px; border-radius: 2px;
-    background: var(--text-primary); box-shadow: 0 0 0 2px var(--surface-1); }
-  .tb-lims { display: flex; justify-content: space-between; font-size: 9.5px;
-    color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
-  .tb-ir { font-size: 10px; color: var(--accent); margin-top: 8px; opacity: 0;
+  .tb-val small { font-size: 15px; font-weight: 600; margin-left: 4px; color: inherit; opacity: .85; }
+  .tb-sub { font-size: 12px; color: var(--text-secondary); margin-top: 4px; min-height: 15px; }
+  /* Escala: dónde cae el valor entre el verde y el rojo configurados. Tres
+     tramos lisos (verde / naranja / rojo) con el marcador encima: sin esto el
+     color es una opinión sin referencia. */
+  .tb-escala { position: relative; height: 6px; margin-top: 10px;
+    background: linear-gradient(90deg,
+      var(--good) 0 32.5%, transparent 32.5% 33.75%,
+      var(--warning) 33.75% 66.25%, transparent 66.25% 67.5%,
+      var(--critical) 67.5% 100%); border-radius: 3px; }
+  .tb-escala i { position: absolute; top: -4px; width: 4px; height: 14px; border-radius: 2px;
+    background: color-mix(in srgb, var(--e) 55%, var(--text-primary));
+    box-shadow: 0 0 0 2px var(--tb-bg); }
+  .tb-lims { display: flex; justify-content: space-between; font-size: 11px;
+    color: var(--text-secondary); margin-top: 5px; font-variant-numeric: tabular-nums; }
+  .tb-ir { font-size: 11px; color: var(--accent); margin-top: 8px; opacity: 0;
     transition: opacity .12s ease; }
   .tb-card:hover .tb-ir, .tb-card:focus-visible .tb-ir { opacity: 1; }
-  .tb-chip { position: absolute; top: 10px; right: 12px; font-size: 9px;
-    text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
-    max-width: 70px; text-align: right; line-height: 1.15; }
-  .tb-chip.viejo { color: var(--warning); }
+  /* Etiqueta de estado, arriba a la derecha, en la misma línea que el grupo. */
+  .tb-chip { position: absolute; top: 11px; right: 12px; font-size: 11px; font-weight: 600;
+    padding: 2px 9px; border-radius: 99px; line-height: 1.3; white-space: nowrap;
+    background: var(--e); color: #fff; }
+  .tb-card[data-nivel="atencion"] .tb-chip { color: #3b2800; }
+  .tb-chip.calc { background: transparent; color: var(--muted); padding: 2px 0; font-weight: 500; }
   /* Cuándo se leyó el dato. Con el servidor caído es la diferencia entre un
      número que sirve y uno que engaña. */
-  .tb-leido { font-size: 9.5px; color: var(--muted); margin-top: 7px;
-    padding-top: 6px; border-top: 1px dashed var(--border); }
+  .tb-leido { font-size: 11px; color: var(--text-secondary); margin-top: 7px;
+    padding-top: 6px; border-top: 1px dashed color-mix(in srgb, var(--e) 30%, var(--border)); }
   .tb-leido.viejo { color: var(--warning); }
   /* La tarjeta con dato viejo se distingue del resto sin perder su color de
      semáforo: el borde punteado dice "esto no es de ahora". */
@@ -9097,6 +9115,10 @@ function pintarTablero() {
   });
 }
 
+// Texto de la etiqueta de estado de cada tarjeta. El estado se dice con palabras
+// además del color, para que no dependa de distinguir verde de naranja.
+const ETIQUETA_NIVEL = { bien: 'En rango', atencion: 'Atención', mal: 'Fuera de rango' };
+
 function tarjetaTablero(t) {
   const hayValor = t.valor != null;
   const val = hayValor ? Number(t.valor).toLocaleString('es-AR',
@@ -9119,13 +9141,13 @@ function tarjetaTablero(t) {
     : '';
   return `<button class="tb-card${hayValor ? '' : ' sin'}${t.viejo ? ' viejo' : ''}"
       data-pagina="${escHtml(t.pagina)}" data-tab="${escHtml(t.tab || '')}" data-ancla="${escHtml(t.ancla || '')}"
-      style="${hayValor ? `border-left-color:${t.color}` : ''}"
+      ${hayValor && ETIQUETA_NIVEL[t.nivel] ? `data-nivel="${escHtml(t.nivel)}"` : ''}
       title="${escHtml(t.ayuda)}">
-    ${t.calculando ? '<span class="tb-chip">calculando</span>'
-      : (t.viejo ? '<span class="tb-chip viejo">última lectura</span>' : '')}
+    ${t.calculando ? '<span class="tb-chip calc">calculando</span>'
+      : (hayValor && ETIQUETA_NIVEL[t.nivel] ? `<span class="tb-chip">${ETIQUETA_NIVEL[t.nivel]}</span>` : '')}
     <div class="tb-grupo-tag">${escHtml(t.grupo)}</div>
     <div class="tb-nom">${escHtml(t.nombre)}</div>
-    <div class="tb-val" style="${hayValor ? `color:${t.color}` : 'color:var(--muted);font-size:19px'}">${val}${
+    <div class="tb-val" style="${hayValor ? '' : 'color:var(--muted);font-size:19px'}">${val}${
       hayValor ? `<small>${escHtml(t.unidad)}</small>` : ''}</div>
     <div class="tb-sub">${sub}</div>
     ${marca}
