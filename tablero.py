@@ -155,14 +155,20 @@ INDICADORES = [
     },
     {
         "clave": "ordenos_hora",
-        "nombre": "Ordeños/hora promedio",
-        "unidad": "ordeños/h", "decimales": 1,
+        "nombre": "Vacas ordeñadas por hora",
+        "unidad": "vacas/h", "decimales": 1,
         "direccion": "alto_mejor", "verde": 300, "rojo": 200,
         "fuente": "rendimiento", "pagina": "rendimiento",
-        "destino": "Rendimiento Sala",
+        "destino": "Rendimiento Sala › por rodeo",
+        # Al hacer clic la pantalla baja sola hasta el gráfico por rodeo.
+        "ancla": "rend-por-rodeo",
         "grupo": "Ordeño",
-        "ayuda": ("Promedio simple entre las sesiones del período: cuántos ordeños "
-                  "procesó la sala por hora de funcionamiento."),
+        "ayuda": ("Promedio simple entre las sesiones del período: cuántas vacas "
+                  "ordeñó la sala por hora de funcionamiento. Es lo que DelPro llama "
+                  "«ordeños/hora»: cada ordeño con leche es una vaca que pasó por la "
+                  "sala (una vaca ordeñada en dos sesiones cuenta en las dos). "
+                  "Cuenta ordeños con leche ÷ horas de la sesión, de la primera "
+                  "vaca en ordeñarse a la última en terminar."),
     },
     {
         "clave": "litros_hora",
@@ -379,6 +385,7 @@ def armar(valores: dict, config: dict = None, lecturas: dict = None,
             **{k: ind[k] for k in ("clave", "nombre", "unidad", "decimales",
                                     "direccion", "pagina", "destino", "ayuda", "grupo")},
             "tab": ind.get("tab"),
+            "ancla": ind.get("ancla"),
             "valor": valor,
             "verde": verde, "rojo": rojo,
             "color": (col or {}).get("css"),

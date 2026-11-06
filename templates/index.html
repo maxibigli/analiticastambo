@@ -2327,8 +2327,8 @@
       </p>
       <div style="overflow-x:auto;margin-top:10px" id="rend-perm-tabla"></div>
     </div>
-    <div style="margin-top:14px">
-      <div class="aviso" style="margin-bottom:6px">Ordeños/hora y retiradas forzadas — por rodeo</div>
+    <div style="margin-top:14px" id="rend-por-rodeo">
+      <div class="aviso" style="margin-bottom:6px">Vacas ordeñadas por hora (ordeños/hora) y retiradas forzadas — por rodeo</div>
       <p class="explica" style="margin-top:0">
         <b>Qué muestra.</b> A qué ritmo pasa cada rodeo por la rotativa: cuántos ordeños suyos
         salen por hora mientras está su turno. Al lado, cuántas veces la máquina retiró la
@@ -2344,7 +2344,7 @@
       <div class="chart-box" style="height:280px"><canvas id="chart-rend-vacas-hora-grupo"></canvas></div>
     </div>
     <div style="margin-top:14px">
-      <div class="aviso" style="margin-bottom:6px">Ordeños/hora — evolución por rodeo</div>
+      <div class="aviso" style="margin-bottom:6px">Vacas ordeñadas por hora (ordeños/hora) — evolución por rodeo</div>
       <div class="chart-box" style="height:260px"><canvas id="chart-rend-ordenios-hora-evolucion"></canvas></div>
     </div>
     <div style="margin-top:14px">
@@ -5162,7 +5162,7 @@ async function cargarRendimiento() {
       ['% de identificación', pctIdent != null ? (Math.round(100 * pctIdent) / 100) + '%' : 'no disponible'],
       ['Ordeños sin identificar', ident ? `${fmt(identDesc)} (${fmt(Math.round(identKg))} kg)` : '—'],
       ['Rotaciones promedio/sesión', rotProm],
-      ['Ordeños/hora promedio', ordHoraProm ?? '—'],
+      ['Vacas ordeñadas por hora (promedio)', ordHoraProm ?? '—'],
       ['Litros/hora promedio', kgHoraProm ?? '—'],
       ['Vacas por puesto (promedio)', vacasPorPuestoProm ?? '—'],
       ['Vacas por persona (promedio)', vacasPorPersonaProm ?? '—'],
@@ -9093,7 +9093,7 @@ function pintarTablero() {
     `<div class="tb-grid">${todas.map(tarjetaTablero).join('')}</div>`;
 
   document.querySelectorAll('#tab-grupos .tb-card').forEach(el => {
-    el.addEventListener('click', () => saltarDesdeTablero(el.dataset.pagina, el.dataset.tab));
+    el.addEventListener('click', () => saltarDesdeTablero(el.dataset.pagina, el.dataset.tab, el.dataset.ancla));
   });
 }
 
@@ -9118,7 +9118,7 @@ function tarjetaTablero(t) {
       `${escHtml(fechaHora(t.leido))}${t.hace ? ` <span style="opacity:.75">(${escHtml(t.hace)})</span>` : ''}</div>`
     : '';
   return `<button class="tb-card${hayValor ? '' : ' sin'}${t.viejo ? ' viejo' : ''}"
-      data-pagina="${escHtml(t.pagina)}" data-tab="${escHtml(t.tab || '')}"
+      data-pagina="${escHtml(t.pagina)}" data-tab="${escHtml(t.tab || '')}" data-ancla="${escHtml(t.ancla || '')}"
       style="${hayValor ? `border-left-color:${t.color}` : ''}"
       title="${escHtml(t.ayuda)}">
     ${t.calculando ? '<span class="tb-chip">calculando</span>'
@@ -9137,7 +9137,7 @@ function tarjetaTablero(t) {
 // El clic abre la pantalla de origen con el último mes ya puesto. Si el destino
 // tiene un selector de período propio, se le pide el rango más cercano al mes
 // en vez de dejarlo en su valor por defecto: la tarjeta prometió un histórico.
-function saltarDesdeTablero(pagina, tab) {
+function saltarDesdeTablero(pagina, tab, ancla) {
   if (!pagina) return;
   const dias = (tabDatos && tabDatos.historico && tabDatos.historico.dias) || 30;
   irAPagina(pagina);
@@ -9163,6 +9163,15 @@ function saltarDesdeTablero(pagina, tab) {
       hasta.value = tabDatos.historico.hasta;
       const btn = document.getElementById('rend-aplicar');
       if (btn) btn.click();
+    }
+    // Sección puntual dentro de la página (ej. la tasa por rodeo). Se espera un
+    // poco más que el resto: el rango recién aplicado redibuja la pantalla y el
+    // scroll hecho antes quedaría corrido.
+    if (ancla) {
+      setTimeout(() => {
+        const el = document.getElementById(ancla);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 500);
     }
   }, 60);
 }
