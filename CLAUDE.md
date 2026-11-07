@@ -3032,12 +3032,60 @@ REAL de la página (`rutina-tabs`, `prod-tabs`, `repro-tabs`, `alim-tabs`, `salu
   handler de cada pestaña en vez de duplicar qué mostrar. El árbol se mantiene al día con un
   `MutationObserver` sobre `aria-pressed` de las barras y envolviendo `irAPagina`, así que los saltos que ya
   existían (Tablero, tarjetas del Resumen de Salud) también marcan la pestaña en el árbol.
-- "Entrega de Leche" no tiene pestañas sino tres tarjetas: su submenú (`ANCLAS`) hace scroll a cada una.
+- "Entrega de Leche" no tiene pestañas sino cuatro tarjetas (CICLA, comparación con el comprador, Balance de
+  leche, calidad): su submenú (`ANCLAS`) hace scroll a cada una.
 - Un solo submenú abierto a la vez (el de la página activa); tocar la página activa lo pliega/despliega. El
   grupo de la página activa nunca queda plegado. El plegado de grupos se recuerda en `localStorage`
   (`lactia_menu_grupos`).
 - El menú ahora es `position: sticky` (alto de la ventana, con scroll propio): con los submenús abiertos el árbol
   es más alto que la pantalla. En celular sigue siendo el panel fijo que se abre con ☰.
+
+## Balance de leche: sala → tanque → camión (07/11/2026)
+
+Página "Entrega de Leche" → tarjeta "Balance de leche". Pone la MISMA leche en los tres sistemas de medición, por
+día: **sala** (DelPro, `AnimalDaily.TotalYield`, en KILOS), **tanque** (Milky, litros por carga, venta + guachera) y
+**camión** (La Serenísima, litros por día). Dos tramos: *sala → tanque* y *tanque → camión*. Diseño:
+`docs/superpowers/specs/2026-11-07-balance-leche-design.md`; plan: `docs/superpowers/plans/2026-11-07-balance-leche.md`.
+Toda la lógica es `balance_leche.py` (pura, sin base ni red); `app.py` trae los datos (`_balance_leche`) y
+`index.html` la dibuja (`cargarBalance`). Pruebas: `tests/` (`C:\Python314\python.exe -m unittest discover -s tests`).
+
+**El factor 1,05 L por kg es una CALIBRACIÓN, no una conversión física.** Medido con `medir_factor_litros.py` en
+SERVER-DELPRO (17 días, 17/10 al 02/11/2026): Milky da 1,0506 L por cada kg de DelPro; desvío 1,1 % por día y 0,2 %
+en ventanas de 7 días; la correlación es con el MISMO día (0,87; con ±1 día, 0,3). Por densidad (~1,03 kg/L) darían
+~0,971: DelPro queda ~8 % por debajo de lo que Milky y el comprador coinciden en medir, y la causa NO se conoce.
+Es editable en pantalla (solo admin, se guarda por tambo en `configuracion_tambos.json`, campo `factor_kg_litros`,
+rango 0,5 a 2,0). Hay que volver a medirlo cuando haya más datos (`medir_factor_litros.py`).
+
+Reglas de cálculo (todas medidas, ver el spec):
+- **Día de DelPro cerrado** = vacas con leche ≥ 90 % de la mediana del período. DelPro consolida con VARIOS días de
+  atraso (el 07/11 el último día completo era el 02/11; el 03/11 tenía 95 kg y 0 vacas). El piso de 50 vacas de
+  `resumen.VACAS_MIN_DIA` no sirve acá (el tambo ordeña ~1.600). Los días sin cerrar se muestran atenuados y no
+  tienen desvío.
+- **Umbral ±3 %** (`cicla.UMBRAL_DIF_PCT`, el de la tarjeta del comprador). Desvío normal de la sala: 1,1 % por día.
+- **Fecha corrida:** las cargas de Milky caen a las 00:00–00:02, 07:20 y 15:20 (~23.000 L cada una) y el comprador
+  asigna la de medianoche a otro día. El 25 y 26/10 dieron +52 % y −27 % en el tramo del camión y se compensan
+  (≈ −0,7 % de los dos días juntos): no es leche perdida. Regla: dos días seguidos, signo opuesto, la suma **en
+  litros** dentro de ±3 % del volumen de los dos días, y **los dos días fuera del umbral**. Sin esa última condición
+  el 01/11 (−1,2 %, ruido normal) junto al 02/11 (+3,2 %, desvío real) se tomaba por corrida y tapaba el desvío.
+  Los días corridos se muestran en violeta y no alertan.
+- **Fechas del comprador sin ceros** (`1/11/2026`): `balance_leche._iso_de_ar` rellena. Se descubrió probando en el
+  navegador: los tests con fechas con ceros no lo veían.
+- **Sin comprador** (sin `LASER_*` o si falla): el balance sale sin el tramo del camión. **Sin `MILKY_*`**: error
+  claro (400) que nombra las variables.
+
+**Alerta** (línea del aviso de alertas puntuales, `_lineas_alerta_balance`): desvío fuera de ±3 % en algún tramo.
+- Un día se evalúa recién cuando existe el día **siguiente** (así se distingue fecha corrida de pérdida); la alerta
+  llega con un día de atraso.
+- Una sola vez por día y tramo: `balance_leche_avisos.json` (fuera de git) guarda el último día evaluado por tambo. No
+  se usa la antigüedad del dato porque DelPro consolida tarde. Sin registro previo solo se evalúa el último día
+  evaluable (no inunda con avisos viejos).
+- `registrar=True` SOLO en el ciclo real (`_revisar_alertas_whatsapp`); el botón "Probar" arma el mismo mensaje sin
+  "gastar" el aviso. Si el envío falla después de registrar, ese aviso se pierde (aceptado: es raro).
+- Una fuente caída es una línea "⚠️ Balance de leche: no se pudo revisar" y no corta las demás alertas. Sin `MILKY_*`
+  no avisa nada (igual que la alerta de temperatura).
+
+`/api/entregas/comparar` se refactorizó para compartir `_cargas_cicla` y `_entregas_laser` con el balance (misma
+caché); su respuesta no cambió (hay un test con la respuesta capturada antes del refactor).
 
 ## Entorno de desarrollo (esta PC)
 

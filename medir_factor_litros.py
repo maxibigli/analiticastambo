@@ -11,7 +11,8 @@ Qué mira:
     identificar, Number = 0, que también sale por el tanque).
   * Milky: litros de TODAS las cargas del día (venta + guachera), porque todas
     salen del mismo tanque.
-  * Se excluye el día en curso (parcial).
+  * Solo cuentan los días de DelPro cerrados (criterio de balance_leche.PISO_VACAS): el último día y
+    los que DelPro todavía no consolidó traen muy pocas vacas y darían un cociente absurdo.
 
 El cociente Milky/DelPro mezcla la conversión real kg->litros con las pérdidas
 reales (leche que no pasa por el tanque, retenida, descartada). Por eso se mira
@@ -23,6 +24,7 @@ import statistics as st
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import balance_leche  # noqa: E402
 import cicla  # noqa: E402
 import db  # noqa: E402
 from tambos import DEFAULT_TAMBO  # noqa: E402
@@ -56,7 +58,11 @@ for c in cargas:
     m = mk.setdefault(f"{aa}-{mm}-{dd}", {"venta": 0.0, "otros": 0.0})
     m["venta" if c.get("es_venta") else "otros"] += c["lts_cicla"] or 0
 
-dias = [d for d in sorted(set(delpro) & set(mk)) if d != hoy.isoformat()]
+vacas_con_leche = [v["vacas"] for v in delpro.values() if v["vacas"] > 0]
+piso = balance_leche.PISO_VACAS * st.median(vacas_con_leche) if vacas_con_leche else 0
+print(f"Día cerrado = al menos {piso:.0f} vacas ({balance_leche.PISO_VACAS:.0%} de la mediana, "
+      "el mismo criterio del Balance de leche).")
+dias = [d for d in sorted(set(delpro) & set(mk)) if delpro[d]["vacas"] >= piso and delpro[d]["vacas"] > 0]
 print("\nfecha       kg_DelPro  kg_sin_ident  Milky_venta  Milky_otros  Milky_total   L/kg  vacas")
 filas = []
 for d in dias:

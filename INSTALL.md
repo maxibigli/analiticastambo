@@ -374,6 +374,11 @@ en cada consulta, no del entorno con el que arrancó el proceso. Si el servidor 
 usuario de Windows que el que hizo el `setx`, cargalas con `setx /M` (como Administrador). Los "litros declarados" salen de `LitrosEstimados`
 (supuesto sin verificar, ver `cicla.py`) y el pH ya no está disponible.
 
+**Balance de leche.** La tarjeta "Balance de leche" (sala → tanque → camión) usa estas credenciales de Milky y,
+si están, las de La Serenísima (sin ellas sale solo sala → tanque). Guarda en el servidor, junto al código,
+`balance_leche_avisos.json`: el último día ya avisado por la alerta. Es estado propio de cada instalación (está en
+`.gitignore`); no hay que copiarlo entre PCs.
+
 ### La Serenísima (comprador oficial — tambo 1565, período actual)
 
 ```powershell
