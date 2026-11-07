@@ -262,7 +262,7 @@
               v.kg_total >= 0 ? 'sube' : 'baja');
     h += caja('Promedio por vaca', num(a.promedio_kg), 'kg', delta(v.promedio_kg, ' kg'), '',
               v.promedio_kg >= 0 ? 'sube' : 'baja');
-    h += caja('Vacas ordeñadas', num(a.vacas_ordenadas), '',
+    h += caja('Vacas ordeñadas', num(a.vacas_con_leche != null ? a.vacas_con_leche : a.vacas_ordenadas), '',
               k.ordenos_ultimo_dia ? num(k.ordenos_ultimo_dia) + ' ordeños' : '');
     h += caja('Sin identificar', num(pct), '%', num(Math.round(a.kg_desconocida)) + ' kg',
               pct !== null && pct >= 3 ? 'warn' : '');

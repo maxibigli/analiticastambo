@@ -2172,6 +2172,7 @@ def api_resumen_produccion():
         "variacion": {
             "kg_total": _variacion("kg_total"), "kg_desconocida": _variacion("kg_desconocida"),
             "promedio_kg": _variacion("promedio_kg"), "vacas_ordenadas": _variacion("vacas_ordenadas"),
+            "vacas_con_leche": _variacion("vacas_con_leche"),
         } if ayer else None,
     })
 

@@ -22,17 +22,28 @@ GRUPO_DIAS = 30
 GRUPOS_TOP_N = 6             # grupos más numerosos a graficar (evita saturar el gráfico)
 VACAS_MIN_DIA = 50           # por debajo de esto, el día se considera incompleto (copia parcial)
 
+# Dos conteos de vacas, a propósito (ver también `produccion.py`):
+#   `vacas_con_leche`  todas las vacas con leche ese día, tengan o no el total del día
+#                      cerrado. Es "cuántas vacas se ordeñaron".
+#   `vacas_ordenadas`  solo las de total VÁLIDO (`IsYieldValid = 1`). Es el divisor del kg por
+#                      vaca: una vaca a la que le faltan ordeños tiene un total parcial y
+#                      bajaría el promedio. Antes este era el ÚNICO conteo y la tarjeta
+#                      "Vacas ordeñadas" mostraba 1.608 mientras Análisis de Producción
+#                      mostraba 1.730 para el mismo tambo: la diferencia son las vacas con
+#                      el día sin cerrar. `kg_total`/`kg_desconocida` siguen siendo solo de
+#                      días válidos.
 SQL_PRODUCCION_DIARIA = f"""
     SELECT CAST(ad.Date AS date) AS fecha,
-           SUM(CASE WHEN b.Number > 0 THEN ad.TotalYield ELSE 0 END) AS kg_total,
-           SUM(CASE WHEN b.Number = 0 THEN ad.TotalYield ELSE 0 END) AS kg_desconocida,
-           COUNT(DISTINCT CASE WHEN b.Number > 0 THEN b.OID END) AS vacas_ordenadas
+           SUM(CASE WHEN b.Number > 0 AND ad.IsYieldValid = 1 THEN ad.TotalYield ELSE 0 END) AS kg_total,
+           SUM(CASE WHEN b.Number = 0 AND ad.IsYieldValid = 1 THEN ad.TotalYield ELSE 0 END) AS kg_desconocida,
+           COUNT(DISTINCT CASE WHEN b.Number > 0 AND ad.IsYieldValid = 1 THEN b.OID END) AS vacas_ordenadas,
+           COUNT(DISTINCT CASE WHEN b.Number > 0 THEN b.OID END) AS vacas_con_leche
     FROM AnimalDaily ad
     JOIN BasicAnimal b ON b.OID = ad.BasicAnimal
-    WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1 AND ad.TotalYield > 0
+    WHERE ad.GCRecord IS NULL AND ad.TotalYield > 0
       AND ad.Date >= DATEADD(day, -{PRODUCCION_DIAS + PRODUCCION_MARGEN_DIAS}, CAST(GETDATE() AS date))
     GROUP BY ad.Date
-    HAVING COUNT(DISTINCT CASE WHEN b.Number > 0 THEN b.OID END) >= {VACAS_MIN_DIA}
+    HAVING COUNT(DISTINCT CASE WHEN b.Number > 0 AND ad.IsYieldValid = 1 THEN b.OID END) >= {VACAS_MIN_DIA}
     ORDER BY ad.Date
     OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 15)
 """
