@@ -4415,23 +4415,20 @@ function pintarKpisDashboard() {
     }
   }
 
-  // "Vacas ordeñadas" son TODAS las vacas con leche ese día (la misma cuenta de "Vacas con leche
-  // por día" en Análisis de Producción). El promedio por vaca sigue saliendo solo de las de total
-  // cerrado (`vacas_ordenadas`): una vaca con ordeños faltantes bajaría el promedio. Si el
-  // servidor todavía no manda `vacas_con_leche` se cae a la cuenta de antes.
-  const vacasLeche = a.vacas_con_leche != null ? a.vacas_con_leche : a.vacas_ordenadas;
+  // "Vacas ordeñadas" = vacas con leche Y con el total del día cerrado (`vacas_ordenadas`,
+  // IsYieldValid = 1). Es la misma base del promedio por vaca y de los kg del día, así que los
+  // tres números del Dashboard cierran entre sí. (`vacas_con_leche`, que además cuenta las del
+  // día sin cerrar, sigue llegando del servidor para Análisis de Producción, pero acá no se usa.)
+  const vacasLeche = a.vacas_ordenadas;
   const ordPorVaca = (k.ordenos_ultimo_dia && vacasLeche)
     ? Math.round(10 * k.ordenos_ultimo_dia / vacasLeche) / 10 : null;
-  const sinCerrar = (a.vacas_con_leche != null && a.vacas_ordenadas != null)
-    ? a.vacas_con_leche - a.vacas_ordenadas : 0;
 
   const tiles = [
     ['Producción del día', fmt(a.kg_total), 'kg', flecha(v.kg_total, ' kg')],
     ['Promedio por vaca', fmt(a.promedio_kg), 'kg', flecha(v.promedio_kg, ' kg')],
     ['Vacas ordeñadas', fmt(vacasLeche), '',
       k.ordenos_ultimo_dia != null
-        ? `${fmt(k.ordenos_ultimo_dia)} ordeños${ordPorVaca ? ` · ${fmt(ordPorVaca)} por vaca` : ''}`
-          + (sinCerrar > 0 ? ` · ${fmt(sinCerrar)} con el día sin cerrar` : '') : null],
+        ? `${fmt(k.ordenos_ultimo_dia)} ordeños${ordPorVaca ? ` · ${fmt(ordPorVaca)} por vaca` : ''}` : null],
     ['Sin identificar', pctDesc != null ? fmt(pctDesc) : '—', '%',
       a.kg_desconocida != null ? `${fmt(Math.round(a.kg_desconocida))} kg sin dueño` : null, true],
     ['Rodeo activo', fmt(k.animales_activos), '',
