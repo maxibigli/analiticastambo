@@ -358,16 +358,19 @@ entorno, nunca en el código**. Sin estas variables, esas secciones del dashboar
 simplemente muestran un aviso de "faltan variables" — el resto de la app sigue
 funcionando normal.
 
-### CICLA/SISCLAC (caudalímetro de la rotativa)
+### Caudalímetro de la rotativa (API de Milky / Controllac)
 
 ```powershell
-setx CICLA_USUARIO "tu_usuario_de_cicla"
-setx CICLA_PASSWORD "tu_contraseña_de_cicla"
+setx MILKY_USUARIO "tu_usuario_de_la_api"
+setx MILKY_PASSWORD "tu_contraseña_de_la_api"
 ```
 
-Trae litros medidos y temperatura de entrega por carga (tarjeta "Entregas de
-leche (CICLA)"). El informe de CICLA pagina de a ~40 filas; para rangos largos
-puede avisar que el resultado está incompleto (ver aviso en la tarjeta).
+Son las credenciales de la API compartida de Milky (`milky.controllac.com.ar`), que
+reemplaza al sitio viejo de CICLA (`CICLA_USUARIO`/`CICLA_PASSWORD` ya no se usan). Trae litros
+medidos y temperatura de entrega por carga (tarjeta "Entregas de leche (CICLA)"), recorriendo
+todas las páginas. Hay que cargarlas en **cada** instalación (la PC de desarrollo y
+SERVER-DELPRO) y reiniciar el proceso. Los "litros declarados" salen de `LitrosEstimados`
+(supuesto sin verificar, ver `cicla.py`) y el pH ya no está disponible.
 
 ### La Serenísima (comprador oficial — tambo 1565, período actual)
 

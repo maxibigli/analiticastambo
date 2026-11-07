@@ -1,13 +1,45 @@
 # -*- coding: utf-8 -*-
-"""Integración con CICLA/SISCLAC (http://cicla.sisclac.com): informe de cargas
-del caudalímetro instalado en la rotativa (equipo CER_001, responsable
-Cereigido) para comparar litros medidos por CICLA vs los declarados, y la
-temperatura de entrega, y así detectar desvíos frente al proveedor.
+"""Integración con el caudalímetro de la rotativa (equipo CER_001, cliente 21,
+Cereigido): cargas con litros medidos, litros declarados y temperatura de
+entrega, para detectar desvíos frente al proveedor.
+
+DESDE 07/11/2026 SE LEE DE LA API DE MILKY (https://milky.controllac.com.ar), no
+del sitio viejo. El sitio viejo (cicla.sisclac.com, scraping de un formulario
+ASP.NET) dejó de servir el informe: el login pasa pero la página de cargas ya no
+se puede leer. Su código sigue más abajo como `obtener_cargas_sitio_viejo`, sin
+usarse, por si hay que consultarlo.
 
 Credenciales SOLO por variable de entorno (nunca en el código):
-  CICLA_USUARIO, CICLA_PASSWORD
+  MILKY_USUARIO, MILKY_PASSWORD
+(NO se reusan CICLA_USUARIO/CICLA_PASSWORD: son del sitio viejo, y mandarlas a otro
+servidor sería regalarle una credencial a quien no corresponde.)
 
-Formulario ASP.NET WebForms verificado a mano (2026-07-23):
+API de Milky (documento "APIs compartidas v1.1"):
+  - POST /api/Auth/Login {userName, password} -> access_token (bearer, dura 8 h).
+  - GET  /api/Query/Cargas?fechaDesde&fechaHasta&page&pageSize, header
+    Authorization: Bearer <token>. Cada usuario ve solo lo de su cliente.
+  - Las cargas vienen paginadas (items, total, page, pageSize): se recorren TODAS, así
+    que ya no existe el "incompleto" del sitio viejo, que no dejaba pasar de la 1ª página.
+
+CÓMO SE TRADUCE CADA CAMPO al formato que ya usaba la app (verificado contra 126
+cargas reales del 17/10 al 07/11/2026):
+  lts_cicla        <- LitrosTotal. LitrosFact es IGUAL en las 126 cargas (dicen lo mismo).
+  lts_declarados   <- LitrosEstimados. SUPUESTO SIN VERIFICAR: el sitio viejo ya no
+                      responde y no se pudo comparar una misma carga en los dos. Son
+                      números redondos (25.000/26.000/27.000, o 500 en la guachera), o
+                      sea lo que se estima al cargar, no una medición. Consecuencia
+                      medida: contra eso, las cargas de camión dan mediana -7% y las de
+                      guachera +31%, así que con el umbral de 3% casi todas salen con
+                      "alerta de diferencia". Si "declarados" era otra cosa, esas
+                      alertas y el promedio de diferencia no sirven.
+  nro_cliente      <- Tambo (mismos códigos 5003/4613/23 que ya mapeaba DESTINOS).
+  temperatura      <- TempPromedio.
+  ph               <- no existe en la API: queda en None.
+  fecha            <- FechaIni (es la que filtra la API) como 'dd/mm/aaaa hh:mm:ss'.
+  carga            <- Id de la carga en Milky (el "Nro Carga" viejo era otra numeración).
+  Las cargas con Anulado = 1 se descartan.
+
+Formulario ASP.NET WebForms del sitio viejo, verificado a mano (2026-07-23):
   - Login: POST a Application/Login/Default.aspx con
     ctl00$MainContent$txtUser / ctl00$MainContent$txtpass.
   - Informe: GET Application/Informes/EquiposTambo/, filtro por
@@ -19,8 +51,10 @@ Formulario ASP.NET WebForms verificado a mano (2026-07-23):
     PH Prom.
 """
 import datetime
+import os
 import re
 import threading
+import time
 
 import requests
 from bs4 import BeautifulSoup
@@ -141,8 +175,9 @@ def _paginas_disponibles(soup):
     return pags
 
 
-def obtener_cargas(desde: datetime.date, hasta: datetime.date, usuario: str, password: str) -> tuple[list[dict], bool]:
-    """Trae y parsea el detalle de cargas de CICLA entre dos fechas (incluidas).
+def obtener_cargas_sitio_viejo(desde: datetime.date, hasta: datetime.date, usuario: str, password: str) -> tuple[list[dict], bool]:
+    """[YA NO SE USA — el sitio viejo no sirve más el informe; ver el docstring del módulo.]
+    Trae y parsea el detalle de cargas de CICLA entre dos fechas (incluidas).
 
     La grilla pagina de a ~40 filas. Se intentó seguir las páginas siguientes
     (postback __doPostBack(grdGrillaCargas, 'Page$N')) pero el sitio devuelve
@@ -196,6 +231,140 @@ def obtener_cargas(desde: datetime.date, hasta: datetime.date, usuario: str, pas
             "alerta_temp": temp is not None and temp > UMBRAL_TEMP_C,
         })
     return cargas, incompleto
+
+
+# --- API de Milky --------------------------------------------------------------
+
+MILKY_BASE = "https://milky.controllac.com.ar"
+PAGE_SIZE = 200          # registros por página que se piden (el defecto de la API es 50)
+MAX_PAGINAS = 50         # tope de seguridad: 10.000 cargas por consulta, mucho más que cualquier rango real
+TOKEN_VIDA_S = 7.5 * 3600   # el token dura 8 h: se renueva un poco antes de que venza
+TIMEOUT_S = 30
+
+_token_lock = threading.Lock()
+_token_cache = {"usuario": None, "token": None, "vence": 0.0}
+
+
+def credenciales() -> tuple[str | None, str | None]:
+    """(usuario, contraseña) de la API de Milky, solo de las variables MILKY_*."""
+    return os.environ.get("MILKY_USUARIO"), os.environ.get("MILKY_PASSWORD")
+
+
+def _mensaje_error(r) -> str:
+    try:
+        d = r.json()
+        return str(d.get("detail") or d.get("message") or d)[:200]
+    except Exception:  # noqa: BLE001
+        return (r.text or "")[:200]
+
+
+def _token(usuario: str, password: str, forzar: bool = False) -> str:
+    """Token vigente, reutilizado hasta que vence (la API pide no loguearse por consulta)."""
+    with _token_lock:
+        c = _token_cache
+        if (not forzar and c["token"] and c["usuario"] == usuario and time.time() < c["vence"]):
+            return c["token"]
+        try:
+            r = requests.post(MILKY_BASE + "/api/Auth/Login",
+                              json={"userName": usuario, "password": password}, timeout=TIMEOUT_S)
+        except requests.RequestException as exc:
+            raise CiclaError(f"No se pudo conectar con Milky: {exc}") from exc
+        if r.status_code == 401:
+            raise CiclaError("Milky rechazó el usuario/contraseña (revisá MILKY_USUARIO/MILKY_PASSWORD).")
+        if r.status_code != 200:
+            raise CiclaError(f"Milky respondió {r.status_code} al iniciar sesión: {_mensaje_error(r)}")
+        token = (r.json() or {}).get("access_token")
+        if not token:
+            raise CiclaError("Milky no devolvió un token de acceso.")
+        c.update(usuario=usuario, token=token, vence=time.time() + TOKEN_VIDA_S)
+        return token
+
+
+def _get(path: str, params: dict, usuario: str, password: str) -> dict:
+    """GET autenticado. Si el token fue rechazado (venció o lo invalidaron) se pide uno nuevo UNA vez."""
+    for intento in (0, 1):
+        token = _token(usuario, password, forzar=bool(intento))
+        try:
+            r = requests.get(MILKY_BASE + path, params=params, timeout=TIMEOUT_S,
+                             headers={"Authorization": "Bearer " + token})
+        except requests.RequestException as exc:
+            raise CiclaError(f"No se pudo conectar con Milky: {exc}") from exc
+        if r.status_code == 401 and intento == 0:
+            continue
+        if r.status_code == 422:
+            raise CiclaError(f"Milky no aceptó los parámetros: {_mensaje_error(r)}")
+        if r.status_code != 200:
+            raise CiclaError(f"Milky respondió {r.status_code}: {_mensaje_error(r)}")
+        return r.json()
+    raise CiclaError("Milky rechazó el token dos veces seguidas.")
+
+
+def _fecha_ar(iso: str | None) -> str:
+    """'2026-11-07T11:01:35' -> '07/11/2026 11:01:35' (el formato que la app ya espera: el día
+    se toma con split(' ')[0] y se pasa a ISO con _fecha_ar_a_iso)."""
+    if not iso:
+        return ""
+    try:
+        return datetime.datetime.fromisoformat(iso).strftime("%d/%m/%Y %H:%M:%S")
+    except ValueError:
+        return str(iso)
+
+
+def _carga_desde_api(it: dict) -> dict:
+    """Una carga de Milky con las claves que ya usaban `resumen()`, app.py y las pantallas."""
+    lts_cicla = it.get("LitrosTotal")
+    lts_decl = it.get("LitrosEstimados")
+    diferencia = (lts_cicla - lts_decl) if lts_cicla is not None and lts_decl is not None else None
+    dif_pct = round(diferencia / lts_decl * 100, 1) if diferencia is not None and lts_decl else None
+    nro_cliente = str(it.get("Tambo") or "").strip()
+    destino = destino_de(nro_cliente)
+    temp = it.get("TempPromedio")
+    return {
+        "turno": "", "carga": str(it.get("Id") or ""), "fecha": _fecha_ar(it.get("FechaIni")),
+        "cliente": str(it.get("IdCliente") or ""), "equipo": it.get("IdEq") or "",
+        "remito": str(it.get("Remito") or ""), "nro_cliente": nro_cliente,
+        "destino": destino,
+        "destino_label": ETIQUETAS_DESTINO.get(destino, destino),
+        "es_venta": destino == "serenisima",
+        "lts_cicla": lts_cicla, "lts_declarados": lts_decl, "diferencia": diferencia,
+        "diferencia_pct": dif_pct, "temperatura": temp,
+        "ph": None,   # la API de Milky no lo trae
+        "alerta_diferencia": dif_pct is not None and abs(dif_pct) > UMBRAL_DIF_PCT,
+        "alerta_temp": temp is not None and temp > UMBRAL_TEMP_C,
+    }
+
+
+def obtener_cargas(desde: datetime.date, hasta: datetime.date, usuario: str, password: str) -> tuple[list[dict], bool]:
+    """Cargas del caudalímetro entre dos fechas (incluidas), de la API de Milky.
+
+    Devuelve (cargas, incompleto), la misma forma que tenía con el sitio viejo para no tocar a
+    quien la llama. `incompleto` solo es True si se llegó al tope de seguridad de páginas sin
+    cubrir `total` (no debería pasar); ya no hay "más páginas que no se pudieron traer".
+    Una carga cuenta en el día en que EMPEZÓ (es el criterio del filtro de la API)."""
+    if not usuario or not password:
+        raise CiclaError("Faltan las variables de entorno MILKY_USUARIO / MILKY_PASSWORD (ver INSTALL.md).")
+    params = {"fechaDesde": f"{desde.isoformat()}T00:00:00",
+              "fechaHasta": f"{hasta.isoformat()}T23:59:59", "pageSize": PAGE_SIZE}
+    items, total, incompleto = [], None, False
+    with _lock:
+        for pagina in range(1, MAX_PAGINAS + 1):
+            d = _get("/api/Query/Cargas", {**params, "page": pagina}, usuario, password)
+            lote = d.get("items") or []
+            items.extend(lote)
+            total = d.get("total", len(items))
+            if not lote or len(items) >= total:
+                break
+        else:
+            incompleto = len(items) < (total or 0)
+    # Sin repetidas (si entra una carga nueva mientras se recorren las páginas, el corrimiento
+    # puede mostrar una dos veces), sin anuladas, y en orden cronológico (la API devuelve de la
+    # más reciente a la más antigua).
+    unicas = {}
+    for it in items:
+        unicas[it.get("Id", id(it))] = it
+    items = [it for it in unicas.values() if it.get("Anulado") != 1]
+    items.sort(key=lambda it: it.get("FechaIni") or "")
+    return [_carga_desde_api(it) for it in items], incompleto
 
 
 def solo_ventas(cargas: list[dict]) -> list[dict]:

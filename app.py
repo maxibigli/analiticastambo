@@ -4081,8 +4081,7 @@ def _refresh_cicla_async(desde, hasta):
 
     def worker():
         try:
-            usuario = os.environ.get("CICLA_USUARIO")
-            password = os.environ.get("CICLA_PASSWORD")
+            usuario, password = cicla.credenciales()
             cargas, incompleto = cicla.obtener_cargas(desde, hasta, usuario, password)
             _cache_set(key, {"cargas": cargas, "incompleto": incompleto})
         except Exception:  # noqa: BLE001
@@ -5387,7 +5386,8 @@ def api_reproduccion_rebanos():
 @auth.requiere_rol("admin")
 def api_cicla_cargas():
     """Litros medidos (CICLA) vs declarados y temperatura de entrega, por
-    carga del caudalímetro. Login vía CICLA_USUARIO/CICLA_PASSWORD (env)."""
+    carga del caudalímetro. Se lee de la API de Milky (ver cicla.py), con las credenciales
+    MILKY_USUARIO/MILKY_PASSWORD (env). OJO: "declarados" = LitrosEstimados, supuesto sin verificar."""
     hoy = datetime.date.today()
     try:
         hasta = (datetime.datetime.strptime(request.args["hasta"], "%Y-%m-%d").date()
@@ -5399,11 +5399,10 @@ def api_cicla_cargas():
     if desde > hasta:
         desde, hasta = hasta, desde
 
-    usuario = os.environ.get("CICLA_USUARIO")
-    password = os.environ.get("CICLA_PASSWORD")
+    usuario, password = cicla.credenciales()
     if not usuario or not password:
-        return jsonify({"error": "Faltan las variables de entorno CICLA_USUARIO / "
-                                 "CICLA_PASSWORD (ver INSTALL.md)."}), 400
+        return jsonify({"error": "Faltan las variables de entorno MILKY_USUARIO / "
+                                 "MILKY_PASSWORD (ver INSTALL.md)."}), 400
 
     key = f"cicla:{desde.isoformat()}:{hasta.isoformat()}"
     data, fresh = _cache_get(key, allow_stale=True, ttl=CICLA_CACHE_TTL_S)
@@ -5544,10 +5543,11 @@ def api_entregas_comparar():
     if desde > hasta:
         desde, hasta = hasta, desde
 
-    cicla_usuario, cicla_pw = os.environ.get("CICLA_USUARIO"), os.environ.get("CICLA_PASSWORD")
+    cicla_usuario, cicla_pw = cicla.credenciales()
     laser_usuario, laser_pw = os.environ.get("LASER_USUARIO"), os.environ.get("LASER_PASSWORD")
     if not (cicla_usuario and cicla_pw and laser_usuario and laser_pw):
-        return jsonify({"error": "Faltan variables de entorno de CICLA y/o La Serenísima."}), 400
+        return jsonify({"error": "Faltan variables de entorno de Milky (MILKY_USUARIO/MILKY_PASSWORD) "
+                                 "y/o de La Serenísima."}), 400
 
     key_c = f"cicla:{desde.isoformat()}:{hasta.isoformat()}"
     data_c, _ = _cache_get(key_c, allow_stale=True, ttl=CICLA_CACHE_TTL_S)
@@ -5887,7 +5887,7 @@ def _lineas_alertas_puntuales(tambo: str) -> list:
             return f"{lo:.{decimales}f}"
         return f"{lo:.{decimales}f} – {hi:.{decimales}f}"
 
-    usuario, password = os.environ.get("CICLA_USUARIO"), os.environ.get("CICLA_PASSWORD")
+    usuario, password = cicla.credenciales()
     if usuario and password:
         try:
             hoy = datetime.date.today()

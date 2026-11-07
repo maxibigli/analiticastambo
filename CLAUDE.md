@@ -42,7 +42,7 @@ se aplican solos (`TEMPLATES_AUTO_RELOAD=True`).
 ## Credenciales
 
 Nunca hardcodear contraseñas/tokens en el código. Todo sale de variables de
-entorno (`DELPRO_PWD_<TAMBO>`, `CICLA_PASSWORD`, `TELEGRAM_BOT_TOKEN`, etc. —
+entorno (`DELPRO_PWD_<TAMBO>`, `MILKY_PASSWORD`, `TELEGRAM_BOT_TOKEN`, etc. —
 ver `tambos.py` e `INSTALL.md`). Si aparece un secreto en texto plano en
 algún archivo, es un error: sacarlo y pedirle al usuario que lo setee él
 mismo con `setx`.
@@ -907,6 +907,44 @@ ese rodeo, para que la suma de los rodeos dé la del tambo (verificado: 454 y 45
 OJO al agregar SQL con `{{` o `{%` dentro de un template literal de JS en
 `index.html`: Jinja lo lee como sintaxis propia y la página entera devuelve
 500 (`${{a: 1}[k]}` rompió el render). Poner un espacio o usar un ternario.
+
+## Caudalímetro de la rotativa: de scraping de CICLA a la API de Milky (07/11/2026)
+
+`cicla.py` leía el caudalímetro (equipo `CER_001`, cliente 21) scrapeando el sitio viejo
+`cicla.sisclac.com`. **Ese sitio dejó de servir el informe**: el login pasa pero la página de
+cargas no se puede leer ("¿sesión vencida?"). Controllac compartió la API de Milky
+(`https://milky.controllac.com.ar`, documento "APIs compartidas v1.1": login POST con token de 8 h,
+consultas GET con `Authorization: Bearer`, paginadas) y `obtener_cargas` ahora la usa, con el
+**mismo formato de salida**, así que `app.py` solo cambió de dónde saca las credenciales
+(`cicla.credenciales()`). El código del sitio viejo quedó como `obtener_cargas_sitio_viejo`, sin usar.
+
+**Credenciales: `MILKY_USUARIO` / `MILKY_PASSWORD`, en CADA instalación** (PC de desarrollo y
+SERVER-DELPRO) con `setx`, y reiniciar el proceso. NO se reusan `CICLA_USUARIO/CICLA_PASSWORD`: la
+primera prueba mandó esas a Milky por error de configuración y dio 401; son del sitio viejo y no
+corresponde enviárselas a otro servidor. Se recorren TODAS las páginas (ya no existe el aviso de
+"incompleto" del sitio viejo), se deduplica por `Id` (una carga nueva a mitad de la paginación
+corre las páginas) y se descartan las anuladas.
+
+**Qué campo es cada cosa, medido sobre 126 cargas reales (17/10 al 07/11/2026):**
+  * `lts_cicla` = `LitrosTotal`; `LitrosFact` es IGUAL en las 126 (dicen lo mismo).
+  * `nro_cliente` = `Tambo`, con los mismos códigos de siempre: 5003 y 4613 a La Serenísima
+    (~23.500 L por carga), 23 a la guachera (~660 L). `DESTINOS` no cambió.
+  * `temperatura` = `TempPromedio`. El **pH ya no existe** (la API no lo trae).
+  * Una carga cuenta en el día en que EMPEZÓ (`FechaIni`, que es lo que filtra la API). Dura de
+    minutos a ~4,5 h (mediana 2 h 13 min).
+
+**`lts_declarados` = `LitrosEstimados` es un SUPUESTO SIN VERIFICAR.** Lo eligió el usuario
+cuando no se pudo comparar una misma carga con el sitio viejo. Son números redondos (25.000 /
+26.000 / 27.000, o 500 en la guachera): lo que se estima al cargar. Medido, contra eso las
+cargas de camión dan mediana −7% y **47 de 65 salen con "alerta de diferencia" (umbral 3%)**; las
+de guachera dan +30% y 64 de 65. Si "declarados" era otra cosa, la tarjeta "Entregas de leche
+(CICLA)" muestra alertas que no significan nada. **No afecta la comparación contra La Serenísima**
+(`/api/entregas/comparar` usa solo `lts_cicla`).
+
+**La alerta de temperatura de las 8:00/20:00 es casi toda de la guachera**: de 50 cargas sobre
+5 °C, 49 son de guachera (mediana 6,6 °C, la leche de los terneros) y solo 1 de las 65 que se
+venden. `app.py` la cuenta sobre TODAS las cargas, así que va a avisar todos los días por leche
+que no se vende. Pendiente de decidir con el tambo si se limita a `es_venta`.
 
 ## Agente de IA: gráficos, tablas e informes (07/11/2026)
 
