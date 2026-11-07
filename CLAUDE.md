@@ -3032,8 +3032,8 @@ REAL de la página (`rutina-tabs`, `prod-tabs`, `repro-tabs`, `alim-tabs`, `salu
   handler de cada pestaña en vez de duplicar qué mostrar. El árbol se mantiene al día con un
   `MutationObserver` sobre `aria-pressed` de las barras y envolviendo `irAPagina`, así que los saltos que ya
   existían (Tablero, tarjetas del Resumen de Salud) también marcan la pestaña en el árbol.
-- "Entrega de Leche" no tiene pestañas sino cuatro tarjetas (CICLA, comparación con el comprador, Balance de
-  leche, calidad): su submenú (`ANCLAS`) hace scroll a cada una.
+- "Entrega de Leche" no tiene pestañas sino cuatro tarjetas, en este orden: Entregas de Leche (CICLA), Comprador
+  (calidad), Caudalímetro vs. comprador y Comparación de Cargas (antes "Balance de leche"): su submenú (`ANCLAS`) hace scroll a cada una.
 - Un solo submenú abierto a la vez (el de la página activa); tocar la página activa lo pliega/despliega. El
   grupo de la página activa nunca queda plegado. El plegado de grupos se recuerda en `localStorage`
   (`lactia_menu_grupos`).
