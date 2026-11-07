@@ -21,6 +21,7 @@ import agente
 import ai
 import alimentacion
 import auth
+import balance_leche
 import bitacora
 import checklist
 import cicla
@@ -5527,6 +5528,28 @@ def api_laser_entregas():
     })
 
 
+def _cargas_cicla(desde, hasta, usuario, password) -> dict:
+    """Cargas de Milky del rango, cacheadas (`/api/entregas/comparar` y el Balance de leche
+    comparten la misma clave, así que no se loguea dos veces). Lanza lo que lance `cicla`."""
+    key = f"cicla:{desde.isoformat()}:{hasta.isoformat()}"
+    data, _ = _cache_get(key, allow_stale=True, ttl=CICLA_CACHE_TTL_S)
+    if data is None:
+        cargas, incompleto = cicla.obtener_cargas(desde, hasta, usuario, password)
+        data = {"cargas": cargas, "incompleto": incompleto}
+        _cache_set(key, data)
+    return data
+
+
+def _entregas_laser(usuario, password) -> dict:
+    """Entregas de La Serenísima (los dos períodos), cacheadas con la clave `laser:actual`."""
+    key = "laser:actual"
+    data, _ = _cache_get(key, allow_stale=True, ttl=LASER_CACHE_TTL_S)
+    if data is None:
+        data = _laser_traer(usuario, password)
+        _cache_set(key, data)
+    return data
+
+
 @app.get("/api/entregas/comparar")
 @auth.requiere_rol("admin")
 def api_entregas_comparar():
@@ -5549,24 +5572,14 @@ def api_entregas_comparar():
         return jsonify({"error": "Faltan variables de entorno de Milky (MILKY_USUARIO/MILKY_PASSWORD) "
                                  "y/o de La Serenísima."}), 400
 
-    key_c = f"cicla:{desde.isoformat()}:{hasta.isoformat()}"
-    data_c, _ = _cache_get(key_c, allow_stale=True, ttl=CICLA_CACHE_TTL_S)
-    if data_c is None:
-        try:
-            cargas_c, incompleto_c = cicla.obtener_cargas(desde, hasta, cicla_usuario, cicla_pw)
-            data_c = {"cargas": cargas_c, "incompleto": incompleto_c}
-            _cache_set(key_c, data_c)
-        except Exception as exc:  # noqa: BLE001
-            return jsonify({"error": f"CICLA: {exc}"}), 502
-
-    key_l = "laser:actual"
-    data_l, _ = _cache_get(key_l, allow_stale=True, ttl=LASER_CACHE_TTL_S)
-    if data_l is None:
-        try:
-            data_l = _laser_traer(laser_usuario, laser_pw)
-            _cache_set(key_l, data_l)
-        except Exception as exc:  # noqa: BLE001
-            return jsonify({"error": f"La Serenísima: {exc}"}), 502
+    try:
+        data_c = _cargas_cicla(desde, hasta, cicla_usuario, cicla_pw)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"CICLA: {exc}"}), 502
+    try:
+        data_l = _entregas_laser(laser_usuario, laser_pw)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"La Serenísima: {exc}"}), 502
 
     desde_s, hasta_s = desde.isoformat(), hasta.isoformat()
     # Solo las cargas que salieron a La Serenísima. Las de guachera las mide el
@@ -5608,6 +5621,89 @@ def api_entregas_comparar():
                     "lts_otros_destinos": round(sum(excluidos_por_dia.values())),
                     "destinos": resumen_c["destinos"],
                     "destinos_sin_clasificar": resumen_c["destinos_sin_clasificar"]})
+
+
+class BalanceError(Exception):
+    """Un fallo del Balance de leche que el endpoint traduce a respuesta HTTP."""
+
+    def __init__(self, mensaje: str, status: int):
+        super().__init__(mensaje)
+        self.mensaje, self.status = mensaje, status
+
+
+BALANCE_DIAS_DEFECTO = 20      # 21 días con hoy: alcanzan para ≥ 15 días cerrados aunque DelPro consolide tarde
+BALANCE_KG_TTL_S = 600
+
+
+def _balance_leche(tambo: str, desde: datetime.date, hasta: datetime.date) -> dict:
+    """Balance sala -> tanque -> camión entre dos fechas (ver balance_leche.py). Lanza
+    `BalanceError`. Sin credenciales de La Serenísima, o si el comprador falla, el balance
+    sale igual sin el tramo del camión (`comprador_disponible` falso)."""
+    usuario, password = cicla.credenciales()
+    if not (usuario and password):
+        raise BalanceError("Faltan las variables de entorno de Milky (MILKY_USUARIO/MILKY_PASSWORD).", 400)
+    try:
+        cargas = _cargas_cicla(desde, hasta, usuario, password)
+    except Exception as exc:  # noqa: BLE001
+        raise BalanceError(f"CICLA: {exc}", 502) from exc
+
+    clave_kg = _clave(tambo, f"balance_kg:{desde.isoformat()}:{hasta.isoformat()}")
+    data_kg, _ = _cache_get(clave_kg, ttl=BALANCE_KG_TTL_S)
+    if data_kg is None:
+        try:
+            data_kg = db.run_query(balance_leche.sql_kg_diarios(desde, hasta), tambo=tambo)
+        except Exception as exc:  # noqa: BLE001
+            raise BalanceError(f"DelPro: {exc}", 502) from exc
+        _cache_set(clave_kg, data_kg)
+
+    comprador = None
+    usuario_l, password_l = os.environ.get("LASER_USUARIO"), os.environ.get("LASER_PASSWORD")
+    if usuario_l and password_l:
+        try:
+            comprador = balance_leche.litros_comprador_por_dia(_entregas_laser(usuario_l, password_l)["entregas"])
+        except Exception:  # noqa: BLE001
+            comprador = None
+
+    milky = balance_leche.litros_milky_por_dia(cargas["cargas"])
+    resultado = balance_leche.calcular(balance_leche.filas_kg(data_kg), milky, comprador,
+                                       balance_leche.factor_de(tambo))
+    resultado.update({"desde": desde.isoformat(), "hasta": hasta.isoformat(),
+                      "cicla_incompleto": cargas.get("incompleto", False),
+                      "factor_defecto": balance_leche.FACTOR_DEFECTO,
+                      "factor_densidad": round(balance_leche.FACTOR_DENSIDAD_TIPICO, 3)})
+    return resultado
+
+
+@app.get("/api/balance/leche")
+@auth.requiere_rol("admin")
+def api_balance_leche():
+    """Balance de leche por día: DelPro (kg x factor) -> tanque de Milky -> La Serenísima."""
+    tambo = _tambo_del_request()
+    hoy = datetime.date.today()
+    try:
+        hasta = (datetime.datetime.strptime(request.args["hasta"], "%Y-%m-%d").date()
+                 if request.args.get("hasta") else hoy)
+        desde = (datetime.datetime.strptime(request.args["desde"], "%Y-%m-%d").date()
+                 if request.args.get("desde") else hasta - datetime.timedelta(days=BALANCE_DIAS_DEFECTO))
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    if desde > hasta:
+        desde, hasta = hasta, desde
+    try:
+        return jsonify(_balance_leche(tambo, desde, hasta))
+    except BalanceError as exc:
+        return jsonify({"error": exc.mensaje}), exc.status
+
+
+@app.post("/api/balance/factor")
+@auth.requiere_rol("admin")
+def api_balance_factor():
+    """Guarda el factor litros/kg del tambo (calibración de DelPro, ver balance_leche.py)."""
+    tambo = _tambo_del_request()
+    try:
+        return jsonify({"factor": balance_leche.guardar_factor(tambo, (request.json or {}).get("factor"))})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 @app.post("/api/consulta")
@@ -5859,7 +5955,30 @@ def _enviar_resumen_a_canales_activos(texto: str, html: str):
         raise ultimo_error
 
 
-def _lineas_alertas_puntuales(tambo: str) -> list:
+def _lineas_alerta_balance(tambo: str, registrar: bool = False) -> list:
+    """Líneas de alerta del Balance de leche (sala -> tanque -> camión): los días con desvío
+    fuera de ±3 % en algún tramo, una sola vez por día y tramo (ver balance_leche.evaluar_alertas).
+
+    `registrar=False` (botón "Probar") calcula lo mismo sin guardar qué se avisó: si no, probar
+    el mensaje "gastaría" el aviso y el ciclo real ya no lo mandaría. Sin credenciales de Milky
+    no hay balance: no se avisa nada (igual que la alerta de temperatura). Una fuente caída es
+    una línea de advertencia, nunca una excepción: no tiene que cortar las demás alertas."""
+    usuario, password = cicla.credenciales()
+    if not (usuario and password):
+        return []
+    try:
+        hoy = datetime.date.today()
+        balance = _balance_leche(tambo, hoy - datetime.timedelta(days=BALANCE_DIAS_DEFECTO), hoy)
+        avisados = balance_leche.leer_avisados(tambo)
+        eventos, nuevos = balance_leche.evaluar_alertas(balance["dias"], avisados)
+        if registrar and nuevos != avisados:
+            balance_leche.guardar_avisados(tambo, nuevos)
+        return balance_leche.texto_alerta(eventos, balance["umbral"])
+    except Exception as exc:  # noqa: BLE001
+        return [f"⚠️ Balance de leche: no se pudo revisar ({exc})."]
+
+
+def _lineas_alertas_puntuales(tambo: str, registrar: bool = False) -> list:
     """Una línea de texto por tipo de alerta puntual que tenga algo que
     contar HOY (temperatura CICLA, U.F.C. de La Serenísima, score de
     rutina, incidencias de la rotativa) -- antes cada condición individual
@@ -5915,6 +6034,8 @@ def _lineas_alertas_puntuales(tambo: str) -> list:
                               f"({_rango(altas)}, umbral {round(ALERTA_UFC_LASER)}).")
         except Exception as exc:  # noqa: BLE001
             lineas.append(f"⚠️ La Serenísima: no se pudo revisar ({exc}).")
+
+    lineas += _lineas_alerta_balance(tambo, registrar)   # ya resiliente: ver ahí
 
     try:
         hoy_str = datetime.date.today().strftime("%Y-%m-%d")
@@ -5983,7 +6104,7 @@ def _html_alertas_puntuales(lineas: list) -> str:
 </div>"""
 
 
-def _construir_mensaje_alertas(tambo: str):
+def _construir_mensaje_alertas(tambo: str, registrar: bool = False):
     """Arma UN solo mensaje con todo lo que haya para avisar, en vez de un
     envío por cada condición (ver comentario de más arriba). Orden pedido
     por el usuario: Tablero de Diagnóstico, alertas puntuales (CICLA/La
@@ -6012,7 +6133,7 @@ def _construir_mensaje_alertas(tambo: str):
     except Exception as exc:  # noqa: BLE001
         partes_texto.append(f"⚠️ Tablero de Diagnóstico: no se pudo armar ({exc}).")
 
-    lineas = _lineas_alertas_puntuales(tambo)   # ya resiliente por fuente, ver ahí
+    lineas = _lineas_alertas_puntuales(tambo, registrar)   # ya resiliente por fuente, ver ahí
     if lineas:
         partes_texto.append("\n".join(lineas))
         secciones_html.append(_html_alertas_puntuales(lineas))
@@ -6036,7 +6157,9 @@ def _revisar_alertas_whatsapp():
     if not _canales_disponibles():
         return
     try:
-        texto, html = _construir_mensaje_alertas(tambos.DEFAULT_TAMBO)
+        # `registrar=True` SOLO acá: el ciclo real es el que "gasta" el aviso del Balance de leche
+        # (se avisa una vez por día y tramo). El botón "Probar" arma el mismo mensaje sin gastarlo.
+        texto, html = _construir_mensaje_alertas(tambos.DEFAULT_TAMBO, registrar=True)
         if texto:
             _enviar_resumen_a_canales_activos(texto, html)
     except Exception:  # noqa: BLE001
