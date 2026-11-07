@@ -189,13 +189,28 @@
      que hay una burbuja de "pensando…" que se reemplaza cuando llega la
      respuesta — sin eso, un silencio largo se lee como que la app se colgó. */
   #agente-log {
-    display: flex; flex-direction: column; gap: 10px; max-height: 420px;
+    display: flex; flex-direction: column; gap: 10px; max-height: min(72vh, 680px);
     overflow-y: auto; padding: 4px 2px;
   }
   #agente-log:empty::before {
-    content: "Preguntale algo del tambo — \"¿cómo anda la rutina esta semana?\", \"¿qué vacas hay que revisar?\"";
+    content: "Preguntale algo del tambo — \"¿cómo anda la rutina esta semana?\", \"¿qué vacas hay que revisar?\". Para un análisis completo elegí Informe: \"cómo anduvieron las células somáticas los últimos 3 meses y qué impacto económico tuvieron\"";
     color: var(--muted); font-size: 13px; font-style: italic;
   }
+  /* Gráficos, tablas e informes dentro de una respuesta del agente. */
+  .agente-msg.bot.informe { max-width: 100%; align-self: stretch; padding: 14px 18px; }
+  .agente-msg.bot.informe h3 { font-size: 15px; margin: 16px 0 6px; padding-bottom: 3px; border-bottom: 1px solid var(--border); }
+  .agente-msg.bot.informe h3:first-child { margin-top: 0; }
+  .agente-msg table { margin: 6px 0 10px; font-size: 12.5px; }
+  .agente-msg th { position: static; background: color-mix(in srgb, var(--accent) 9%, var(--surface-1)); }
+  .agente-msg td.num { white-space: nowrap; }
+  .agente-tabla { overflow-x: auto; }
+  .agente-grafico { margin: 8px 0 12px; }
+  .agente-grafico .agente-grafico-tit { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+  .agente-grafico .chart-box { height: 250px; }
+  .agente-grafico .aviso.sin-origen { color: var(--warning); margin-top: 2px; }
+  .agente-acciones { display: flex; gap: 8px; margin-top: 12px; }
+  .agente-acciones button { padding: 6px 12px; font-size: 13px; }
+  #agente-formato { padding: 8px 8px; }
   .agente-msg { max-width: 88%; padding: 9px 13px; border-radius: 12px; line-height: 1.45; font-size: 14px; }
   .agente-msg.usuario {
     align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 3px;
@@ -3522,6 +3537,12 @@
       <input type="text" id="agente-input" placeholder="Escribí o tocá el micrófono para preguntar…"
              autocomplete="off">
       <button type="button" id="agente-mic" title="Preguntar por voz" hidden>🎤</button>
+      <select id="agente-formato" title="Cómo querés la respuesta" aria-label="Formato de la respuesta">
+        <option value="auto">Automático</option>
+        <option value="grafico">Gráfico</option>
+        <option value="informe">Informe</option>
+        <option value="tabla">Tabla</option>
+      </select>
       <button type="button" id="agente-enviar">Enviar</button>
     </div>
   </section>
@@ -7926,25 +7947,185 @@ function mdSimple(texto) {
   const lineas = esc.split('\n');
   let html = '', enLista = false;
   const cerrarLista = () => { if (enLista) { html += '</ul>'; enLista = false; } };
-  for (const linea of lineas) {
+  // Tablas markdown: | a | b | con una fila de separación |---|---|. Las celdas
+  // numéricas van alineadas a la derecha, como en el resto de las tablas de la app.
+  const esFilaTabla = l => /^\s*\|.*\|\s*$/.test(l);
+  const esSeparador = l => /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(l);
+  const celdas = l => l.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+  const esNumero = c => /^[~≈+\-−]?\s*\d[\d.,]*\s*(%|[\p{L}/$.]{0,10})?$/u.test(c);
+  for (let i = 0; i < lineas.length; i++) {
+    const linea = lineas[i];
+    if (esFilaTabla(linea) && i + 1 < lineas.length && esSeparador(lineas[i + 1])) {
+      cerrarLista();
+      const cab = celdas(linea);
+      let j = i + 2; const filas = [];
+      while (j < lineas.length && esFilaTabla(lineas[j])) { filas.push(celdas(lineas[j])); j++; }
+      html += '<div class="agente-tabla"><table><thead><tr>' + cab.map(c => `<th>${c}</th>`).join('') +
+        '</tr></thead><tbody>' + filas.map(f => '<tr>' + cab.map((_, k) =>
+          `<td${esNumero(f[k] || '') ? ' class="num"' : ''}>${f[k] ?? ''}</td>`).join('') + '</tr>').join('') +
+        '</tbody></table></div>';
+      i = j - 1;
+      continue;
+    }
     const m = linea.match(/^#{1,4}\s+(.*)/);
     const li = linea.match(/^[-*]\s+(.*)/);
-    if (m) { cerrarLista(); html += `<h3>${m[1]}</h3>`; }
+    const marcador = linea.trim().match(/^\[\[(g\d+)\]\]$/);
+    if (marcador) { cerrarLista(); html += `<div class="agente-grafico-ph" data-g="${marcador[1]}"></div>`; }
+    else if (m) { cerrarLista(); html += `<h3>${m[1]}</h3>`; }
     else if (li) { if (!enLista) { html += '<ul>'; enLista = true; } html += `<li>${li[1]}</li>`; }
     else if (linea.trim()) { cerrarLista(); html += `<p>${linea}</p>`; }
     else cerrarLista();
   }
   cerrarLista();
-  return html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  // Un marcador suelto dentro de una frase no tiene dónde dibujarse: se saca.
+  return html.replace(/\[\[g\d+\]\]/g, '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 }
 
-function agenteAgregarMensaje(rol, texto, extraClase) {
+// Gráficos que arma el agente con la herramienta `graficar` (ver agente.py). Cada
+// uno trae tipo, etiquetas y series ya validadas; acá solo se dibujan. `claro`
+// es para imprimir: el tema oscuro de la app dibuja los textos en gris claro y
+// sobre papel blanco no se verían.
+function agenteConfigGrafico(g, claro) {
+  const labels = g.etiquetas;
+  const color = k => SERIES[k % 8];
+  const tinta = claro ? '#222' : null;
+  if (g.tipo === 'pie') {
+    return { type: 'doughnut',
+      data: { labels, datasets: [{ data: g.series[0].valores, backgroundColor: SERIES.slice(0, labels.length),
+        borderColor: claro ? '#fff' : css('--surface-1'), borderWidth: 2 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '58%', animation: claro ? false : undefined,
+        color: tinta || undefined,
+        plugins: { legend: { position: 'right', labels: { boxWidth: 12, boxHeight: 12, color: tinta || undefined } },
+          tooltip: { callbacks: { label: c => `${c.label}: ${c.parsed.toLocaleString('es-AR')}${g.unidad ? ' ' + g.unidad : ''}` } } } } };
+  }
+  const o = baseOpts(g.series.length > 1);
+  if (g.unidad) o.scales.y.title = { display: true, text: g.unidad, color: tinta || undefined };
+  o.scales.y.beginAtZero = g.tipo === 'bar';
+  o.plugins.tooltip = { callbacks: { label: c => c.parsed.y == null ? null
+    : `${c.dataset.label}: ${c.parsed.y.toLocaleString('es-AR')}${g.unidad ? ' ' + g.unidad : ''}` } };
+  if (claro) {
+    o.animation = false;
+    o.color = tinta;
+    o.scales.x.ticks = { color: '#333' }; o.scales.y.ticks = { color: '#333' };
+    o.scales.x.border = { color: '#999' }; o.scales.y.grid = { color: '#ddd' };
+    o.plugins.legend.labels.color = tinta;
+  }
+  const datasets = g.series.map((s, k) => g.tipo === 'line'
+    ? { label: s.nombre, data: s.valores, borderColor: color(k), backgroundColor: color(k), borderWidth: 2,
+        pointRadius: labels.length > 40 ? 0 : 3, tension: .25, spanGaps: true }
+    : { label: s.nombre, data: s.valores, backgroundColor: color(k), maxBarThickness: 36, borderRadius: 4 });
+  return { type: g.tipo === 'line' ? 'line' : 'bar', data: { labels, datasets }, options: o };
+}
+
+// Arma el contenedor de un gráfico (título, lienzo, aviso si hay valores sin origen).
+function agenteCrearGrafico(g) {
+  const box = document.createElement('div');
+  box.className = 'agente-grafico';
+  box.dataset.gid = g.id;
+  const tit = document.createElement('div');
+  tit.className = 'agente-grafico-tit'; tit.textContent = g.titulo || '';
+  const caja = document.createElement('div');
+  caja.className = 'chart-box';
+  const cv = document.createElement('canvas');
+  caja.appendChild(cv);
+  box.append(tit, caja);
+  if (g.valores_sin_origen && g.valores_sin_origen.length) {
+    const av = document.createElement('div');
+    av.className = 'aviso sin-origen';
+    av.textContent = '⚠ Estos valores no figuran tal cual en los datos consultados (puede ser un cálculo del ' +
+      'asistente): ' + g.valores_sin_origen.map(v => v.toLocaleString('es-AR')).join(', ') + '.';
+    box.appendChild(av);
+  }
+  new Chart(cv, agenteConfigGrafico(g, false));
+  return box;
+}
+
+// Pone cada gráfico donde el texto lo pidió ([[g1]] en una línea sola) y los que
+// quedaron sin lugar, al final de la respuesta.
+function agenteColocarGraficos(div, graficos) {
+  const por = Object.fromEntries((graficos || []).map(g => [g.id, g]));
+  const usados = new Set();
+  div.querySelectorAll('.agente-grafico-ph').forEach(ph => {
+    const g = por[ph.dataset.g];
+    if (g && !usados.has(g.id)) { usados.add(g.id); ph.replaceWith(agenteCrearGrafico(g)); }
+    else ph.remove();
+  });
+  for (const g of (graficos || [])) if (!usados.has(g.id)) div.appendChild(agenteCrearGrafico(g));
+}
+
+// Informe para imprimir o guardar como PDF: una ventana con el contenido en tema
+// claro y los gráficos redibujados como imagen (los lienzos de la pantalla usan
+// los colores del tema oscuro y no se leerían sobre papel).
+function agenteImprimir(burbuja) {
+  const clon = burbuja.cloneNode(true);
+  clon.querySelectorAll('.agente-acciones').forEach(e => e.remove());
+  const porId = Object.fromEntries((burbuja._graficos || []).map(g => [g.id, g]));
+  clon.querySelectorAll('.agente-grafico').forEach(caja => {
+    const g = porId[caja.dataset.gid];
+    const original = burbuja.querySelector(`.agente-grafico[data-gid="${caja.dataset.gid}"]`);
+    const cv = document.createElement('canvas');
+    cv.width = 900; cv.height = 420;
+    const tmp = document.createElement('div');
+    tmp.style.cssText = 'position:fixed;left:-9999px;top:0;width:900px;height:420px';
+    tmp.appendChild(cv); document.body.appendChild(tmp);
+    let img = null;
+    if (g) {
+      const cfg = agenteConfigGrafico(g, true);
+      cfg.options.responsive = false; cfg.options.maintainAspectRatio = false;
+      const ch = new Chart(cv, cfg);
+      img = document.createElement('img');
+      img.src = ch.toBase64Image('image/png', 1); img.style.maxWidth = '100%';
+      ch.destroy();
+    }
+    tmp.remove();
+    const nuevo = document.createElement('div');
+    nuevo.className = 'g';
+    const tit = original && original.querySelector('.agente-grafico-tit');
+    if (tit) { const t = document.createElement('div'); t.className = 'gt'; t.textContent = tit.textContent; nuevo.appendChild(t); }
+    if (img) nuevo.appendChild(img);
+    const av = original && original.querySelector('.sin-origen');
+    if (av) { const a = document.createElement('div'); a.className = 'av'; a.textContent = av.textContent; nuevo.appendChild(a); }
+    caja.replaceWith(nuevo);
+  });
+  const w = window.open('', '_blank');
+  if (!w) { alert('El navegador bloqueó la ventana del informe. Permitila para este sitio e intentá de nuevo.'); return; }
+  const hoy = new Date().toLocaleDateString('es-AR');
+  w.document.write(`<!doctype html><html lang="es"><head><meta charset="utf-8"><title>Informe LactIA</title><style>
+    body { font: 13px/1.5 Arial, Helvetica, sans-serif; color: #111; max-width: 800px; margin: 24px auto; padding: 0 16px; }
+    .cab { border-bottom: 2px solid #0072CE; padding-bottom: 6px; margin-bottom: 14px; display: flex; justify-content: space-between; }
+    .cab b { color: #0072CE; font-size: 18px; } .cab span { color: #555; }
+    h3 { font-size: 15px; color: #0072CE; margin: 18px 0 6px; padding-bottom: 3px; border-bottom: 1px solid #ccc; break-after: avoid; }
+    p { margin: 0 0 8px; } ul { margin: 4px 0 8px; padding-left: 20px; }
+    table { border-collapse: collapse; width: 100%; margin: 6px 0 12px; font-size: 12px; break-inside: avoid; }
+    th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; } th { background: #eaf3fb; }
+    td.num { text-align: right; white-space: nowrap; }
+    .g { margin: 8px 0 14px; break-inside: avoid; } .gt { font-weight: 600; margin-bottom: 4px; }
+    .av { color: #9a5b00; font-size: 11px; }
+    @media print { body { margin: 0; max-width: none; } }
+  </style></head><body><div class="cab"><b>LactIA · Informe</b><span>${hoy}</span></div>${clon.innerHTML}</body></html>`);
+  w.document.close(); w.focus();
+  setTimeout(() => w.print(), 400);
+}
+
+function agenteAgregarMensaje(rol, texto, extraClase, graficos, conAcciones) {
   const log = document.getElementById('agente-log');
   const div = document.createElement('div');
   div.className = `agente-msg ${rol}${extraClase ? ' ' + extraClase : ''}`;
   div.innerHTML = rol === 'usuario'
     ? (texto || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
     : mdSimple(texto);
+  if (rol !== 'usuario') {
+    div._graficos = graficos || [];
+    agenteColocarGraficos(div, graficos);
+    if (conAcciones) {
+      const ac = document.createElement('div');
+      ac.className = 'agente-acciones';
+      const b = document.createElement('button');
+      b.type = 'button'; b.className = 'secundario'; b.textContent = '🖨 Imprimir / guardar PDF';
+      b.addEventListener('click', () => agenteImprimir(div));
+      ac.appendChild(b); div.appendChild(ac);
+    }
+  }
   log.appendChild(div);
   log.scrollTop = log.scrollHeight;
   return div;
@@ -7959,16 +8140,22 @@ async function agentePreguntar() {
   agentePreguntando = true;
   document.getElementById('agente-enviar').disabled = true;
 
+  const formato = document.getElementById('agente-formato').value;
   agenteAgregarMensaje('usuario', pregunta);
-  const pensando = agenteAgregarMensaje('bot', 'Pensando… puede tardar hasta un par de minutos.', 'pensando');
+  const pensando = agenteAgregarMensaje('bot', formato === 'informe'
+    ? 'Armando el informe… consulta varias fuentes y puede tardar unos minutos.'
+    : 'Pensando… puede tardar hasta un par de minutos.', 'pensando');
 
   try {
     const r = await pedirJSON('/api/agente/preguntar?tambo=' + encodeURIComponent(tamboActual), {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pregunta, mensajes: agenteMensajes }),
+      body: JSON.stringify({ pregunta, mensajes: agenteMensajes, formato }),
     });
     pensando.remove();
-    agenteAgregarMensaje('bot', r.respuesta || '(sin respuesta)');
+    // Es un informe si el usuario lo pidió o si la respuesta se armó con secciones.
+    const esInforme = formato === 'informe' || ((r.respuesta || '').match(/^#{1,4}\s/gm) || []).length >= 3;
+    agenteAgregarMensaje('bot', r.respuesta || '(sin respuesta)', esInforme ? 'informe' : '',
+                         r.graficos || [], esInforme);
     agenteMensajes = r.mensajes || agenteMensajes;
   } catch (e) {
     pensando.remove();

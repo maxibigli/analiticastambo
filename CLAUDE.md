@@ -908,6 +908,79 @@ OJO al agregar SQL con `{{` o `{%` dentro de un template literal de JS en
 `index.html`: Jinja lo lee como sintaxis propia y la página entera devuelve
 500 (`${{a: 1}[k]}` rompió el render). Poner un espacio o usar un ternario.
 
+## Agente de IA: gráficos, tablas e informes (07/11/2026)
+
+El chat "💬 Preguntale a LactIA" (`agente.py`) ahora puede dibujar y armar informes.
+Hay un selector **Automático / Gráfico / Informe / Tabla** al lado del cuadro de texto
+(`formato` en el body de `/api/agente/preguntar`). **Antes del cambio, las únicas consultas
+con gráfico eran las de "Preguntar con IA" (SQL libre), que está BLOQUEADA en bases de
+producción** (`tambos.es_produccion`); el agente, que sí corre en producción, contestaba solo
+texto. Por WhatsApp no cambia nada: ahí no se ofrece `graficar` ni se aplica el formato.
+
+**`graficar` es una herramienta de PRESENTACIÓN: no consulta nada.** El modelo la usa con
+datos que YA le devolvieron las otras herramientas, así que no abre ninguna vía nueva a la
+base (las tres capas de solo-lectura de la sección de abajo siguen igual). El servidor la
+valida (tipo `line`/`bar`/`pie`, hasta 60 puntos y 6 series, un valor por etiqueta) y dos
+reglas que salen de corridas reales con el modelo, no de suponer:
+  * **Cada valor se busca entre los números que de verdad devolvieron las herramientas de
+    ESA pregunta** (`_esta_entre`, tolerancia de redondeo). Si alguno no está, el gráfico sale
+    con un aviso naranja "no figuran tal cual en los datos consultados". No prueba que el
+    valor esté mal —un promedio calculado por el modelo también queda marcado—, pero obliga a
+    decirlo. Un gráfico marcado que el texto ya no menciona (el modelo lo corrigió con otra
+    llamada) se descarta (`_graficos_finales`).
+  * **Series con escalas muy distintas (más de 20 veces) en un mismo eje se rechazan.** El
+    modelo puso "RCS promedio (cél/ml)" de 92.312 a 157.743 junto a "% de vacas altas" de 6,9 a
+    12,3: la segunda quedaba como una línea pegada al cero. Es una instrucción de un gráfico por
+    unidad Y además un control en el servidor, porque la instrucción sola no alcanzó.
+
+**El modelo escribió marcadores `[[g1]]` sin llamar nunca a `graficar`** (medido, formato
+Informe). Los gráficos se ubican en el texto con esos marcadores en una línea sola. Ahora, si el
+usuario eligió Gráfico o Informe y no hay ninguno, se le reclama UNA vez que los arme
+(`exigio_graficos`) y los marcadores huérfanos se eliminan del texto. Con "Automático" no se
+exige nada: una pregunta de un dato suelto no necesita gráfico.
+
+**Informe = documento para leer e imprimir**, con secciones fijas en el prompt (Resumen, Cómo
+evolucionó, Dónde está el problema, Impacto económico, Qué conviene mirar, Datos y límites).
+Usa más tokens (`MAX_TOKENS_INFORME` 5.000 contra 2.000) y avisa si la respuesta se cortó por
+largo. El botón **🖨 Imprimir / guardar PDF** abre una ventana en tema CLARO con los gráficos
+redibujados como imagen: los lienzos de la pantalla usan los colores del tema oscuro y sobre
+papel blanco los textos no se verían (verificado mirando el render). Las tablas son markdown
+(`mdSimple` las dibuja, con las celdas numéricas a la derecha).
+
+### Herramienta `salud_rcs_informe` y el impacto económico del RCS
+
+La pestaña "Análisis de RCS" calcula todo en el NAVEGADOR (`rcspAnalizar` y compañía); el
+agente no tiene navegador, así que `salud_rcs_informe.py` es un **porte a Python** del mismo
+cálculo, servido en `/api/salud/rcs_informe` a partir de los mismos agregados que ya mandan
+`/rcs_historico` y `/rcs_dinamica` (se extrajeron `_rcs_historico_filas` y `_rcs_dinamica_filas`
+en `app.py` para que pantalla e informe lean exactamente lo mismo). **Verificado contra el
+JavaScript original con datos reales de La Ponderosa: 66 cifras comparadas (por rodeo, por
+tramo de RCS, efecto de una infección nueva, dinámica intra y seco), todas idénticas.** Si se
+toca el cálculo de RCS en `index.html`, hay que tocarlo también acá y volver a comparar.
+
+**La plata es lo único que no sale de la base, y tiene tres reglas:**
+  * **Precio de la leche = el de la planilla de precios** (`precios_alimentos`, efectivo por
+    litro). Sin precio NO hay pesos: el informe lo dice y da la pérdida en kg. Nunca un precio
+    por defecto.
+  * **La planilla que genera la app trae el precio de la leche marcado "← ESTIMADO"** (USD 0,35 ×
+    tipo de cambio 1.500 = $525/litro) y su encabezado dice que los precios son estimaciones del
+    sistema, no del tambo. Hasta ahora ninguna pantalla lo distinguía. `precios_alimentos.leer`
+    ahora devuelve `leche_estimada` (hay una nota con "estimad" en la fila de la leche), y el
+    informe lo pone primero (`AVISO_PRECIO_ESTIMADO`) con la orden de destacarlo junto a cada
+    cifra en pesos. **Mientras esa nota siga en la planilla, los $ del informe son de ejemplo.**
+    Se arregla cargando el precio real y borrando la nota «ESTIMADO», igual que el "SI" de los
+    insumos. (La ruta de la planilla es la misma para todos los tambos salvo que se configure otra
+    en `ruta_precios`: un tambo sin planilla propia usa el precio de La Ponderosa.)
+  * **La pérdida se extrapola SOLO a los días que cubren los controles** (`dias_cubiertos`: cada
+    control vale por el intervalo hasta el siguiente), no a todo el período pedido. Primera
+    versión extrapolaba a los 191 días pedidos con un último control de hace cuatro meses:
+    $73,9 millones contra $31,7 millones correctos. Si el último control es de hace más de 45
+    días, el informe lo avisa. Es la leche que NO se produjo: no incluye bonificaciones ni
+    castigos de calidad del comprador (no están en ningún sistema conectado) ni tratamientos ni
+    descarte, y toma 1 kg = 1 litro, como Rentabilidad.
+
+Los controles lecheros son MENSUALES: un período de menos de 2 meses trae un solo punto.
+
 ## Agente de IA: preguntas del tambo en lenguaje natural (14/08/2026)
 
 `agente.py` + `POST /api/agente/preguntar` (gateado admin). Responde

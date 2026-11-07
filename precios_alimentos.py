@@ -116,6 +116,15 @@ def _leer_excel(ruta: str) -> dict:
     tc, _ = _celda_por_etiqueta(ws, ETIQUETA_TC)
     leche_usd, fila_leche = _celda_por_etiqueta(ws, ETIQUETA_LECHE)
     leche_manual, _ = _celda_por_etiqueta(ws, ETIQUETA_LECHE_MANUAL)
+    # La planilla que genera la app trae el precio de la leche como "← ESTIMADO" en
+    # una nota de la misma fila (no hay columna "Estimado" para ese renglón, como sí
+    # la hay para los insumos). Mientras esa marca siga ahí, el precio es un valor de
+    # ejemplo y cualquier cifra en pesos que salga de él lo es también: se informa
+    # para que ninguna pantalla lo presente como el precio del tambo. Se borra
+    # editando la nota, igual que el "SI" de la columna Estimado de los insumos.
+    leche_estimada = False
+    if fila_leche:
+        leche_estimada = any("estimad" in _norm(c.value) for c in ws[fila_leche])
 
     # Encabezado de la tabla: la primera fila que tenga la columna del nombre.
     objetivo = _norm(COLUMNAS["ingrediente"])
@@ -178,6 +187,7 @@ def _leer_excel(ruta: str) -> dict:
         "leche_usd_litro": leche_usd,
         "precio_litro": leche_kg,
         "leche_via": leche_via,
+        "leche_estimada": leche_estimada,
         "archivo": os.path.basename(ruta),
     }
 
@@ -246,5 +256,6 @@ def resumen(ruta: str = None) -> dict:
         "tipo_cambio": d.get("tipo_cambio"),
         "precio_litro": d.get("precio_litro"),
         "leche_usd_litro": d.get("leche_usd_litro"),
+        "leche_estimada": d.get("leche_estimada"),
         "falta": faltan or None,
     }

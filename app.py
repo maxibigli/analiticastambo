@@ -61,6 +61,7 @@ import rentabilidad
 import tasa_prenez
 import reproduccion
 import resumen
+import salud_rcs_informe
 import produccion
 import rutina
 import sala_convencional
@@ -2387,10 +2388,21 @@ def api_salud_rcs_historico():
     un promedio de período es suma/cantidad, no un promedio de promedios. El
     rodeo es el del DÍA del control (ver salud.sql_rcs_historico)."""
     tambo = _tambo_del_request()
+    filas, espera = _rcs_historico_filas(tambo)
+    if espera:
+        return espera
+    return jsonify({"filas": filas, "umbral": salud.UMBRAL_RCS,
+                    "bandas_del": {str(k): v for k, v in salud.BANDAS_DEL.items()},
+                    "bandas_scc": {str(k): v for k, v in salud.BANDAS_SCC.items()}})
+
+
+def _rcs_historico_filas(tambo: str):
+    """(filas, None) o (None, respuesta_de_espera). Lo usan la pantalla "Análisis de
+    RCS" y el informe del agente, para que los dos partan de los MISMOS agregados."""
     sql = salud.sql_rcs_historico(salas.de(tambo).sql_grupos())
     data, espera = _servir_cacheado(tambo, "salud_rcs_historico", "Calculando RCS histórico…", sql)
     if espera:
-        return espera
+        return None, espera
     filas = []
     for r in data["rows"]:
         f = dict(zip(data["columns"], r))
@@ -2398,9 +2410,53 @@ def api_salud_rcs_historico():
         f["suma_scc"] = round(f["suma_scc"] * salud.RCS_A_CELULAS)
         f["maximo"] = round(f["maximo"] * salud.RCS_A_CELULAS) if f["maximo"] is not None else None
         filas.append(f)
-    return jsonify({"filas": filas, "umbral": salud.UMBRAL_RCS,
-                    "bandas_del": {str(k): v for k, v in salud.BANDAS_DEL.items()},
-                    "bandas_scc": {str(k): v for k, v in salud.BANDAS_SCC.items()}})
+    return filas, None
+
+
+def _rcs_dinamica_filas(tambo: str):
+    """Ídem `_rcs_historico_filas` para la dinámica entre controles consecutivos."""
+    sql = salud.sql_rcs_dinamica(salas.de(tambo).sql_grupos())
+    data, espera = _servir_cacheado(tambo, "salud_rcs_dinamica", "Calculando dinámica del RCS…", sql)
+    if espera:
+        return None, espera
+    return [dict(zip(data["columns"], r)) for r in data["rows"]], None
+
+
+@app.get("/api/salud/rcs_informe")
+@auth.requiere_rol("admin")
+def api_salud_rcs_informe():
+    """Informe de RCS de un período (por defecto, 90 días) con la leche que cuesta y su
+    valor en pesos, armado en el servidor para el agente de IA. Es el mismo cálculo de
+    la pestaña "Análisis de RCS" (ver salud_rcs_informe.py); la plata sale del precio de
+    la leche de la planilla de precios del tambo, y si no está, no se inventa."""
+    tambo = _tambo_del_request()
+    filas, espera = _rcs_historico_filas(tambo)
+    if espera:
+        return espera
+    din, espera = _rcs_dinamica_filas(tambo)
+    if espera:
+        return espera
+    try:
+        ref_max = int(request.args.get("ref_max") or 2)
+    except ValueError:
+        return jsonify({"error": "ref_max tiene que ser un número entero (1 o 2)."}), 400
+    if ref_max not in (1, 2):
+        return jsonify({"error": "ref_max tiene que ser 1 (hasta 100.000) o 2 (hasta 200.000)."}), 400
+    desde, hasta = request.args.get("desde") or None, request.args.get("hasta") or None
+    try:
+        for v in (desde, hasta):
+            if v:
+                datetime.date.fromisoformat(v)
+    except ValueError:
+        return jsonify({"error": "Las fechas tienen que ser AAAA-MM-DD."}), 400
+    try:
+        pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+        precio = pr.get("precio_litro")
+        info = {"estimado": pr.get("leche_estimada"), "via": pr.get("leche_via"),
+                "usd_litro": pr.get("leche_usd_litro"), "tipo_cambio": pr.get("tipo_cambio")}
+    except Exception:  # noqa: BLE001 - sin planilla legible no hay pesos, pero el resto sí
+        precio, info = None, None
+    return jsonify(salud_rcs_informe.armar(filas, din, desde, hasta, ref_max, precio, precio_info=info))
 
 
 @app.get("/api/salud/rcs_dinamica")
@@ -2412,11 +2468,9 @@ def api_salud_rcs_dinamica():
     cantidad de vacas: el frontend arma las tasas de cualquier período sumando.
     Ver salud.sql_rcs_dinamica para qué es un par 'intra' y uno 'seco'."""
     tambo = _tambo_del_request()
-    sql = salud.sql_rcs_dinamica(salas.de(tambo).sql_grupos())
-    data, espera = _servir_cacheado(tambo, "salud_rcs_dinamica", "Calculando dinámica del RCS…", sql)
+    filas, espera = _rcs_dinamica_filas(tambo)
     if espera:
         return espera
-    filas = [dict(zip(data["columns"], r)) for r in data["rows"]]
     return jsonify({"filas": filas, "umbral": salud.UMBRAL_RCS,
                     "max_gap_intra_dias": salud.MAX_GAP_INTRA_DIAS})
 
@@ -5638,9 +5692,10 @@ def api_agente_preguntar():
     if not pregunta:
         return jsonify({"error": "Escribí una pregunta."}), 400
     historial = body.get("mensajes") if isinstance(body.get("mensajes"), list) else None
+    formato = body.get("formato") if body.get("formato") in agente.FORMATOS else None
     tambo = _tambo_del_request()
     try:
-        resultado = agente.responder(pregunta, tambo, historial=historial)
+        resultado = agente.responder(pregunta, tambo, historial=historial, formato=formato)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"No se pudo responder: {exc}"}), 502
     return jsonify(resultado)
