@@ -1895,7 +1895,7 @@
   <div class="page" id="page-entregas" hidden>
   <section class="card" id="cicla-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">🥛 Entregas de leche (CICLA)</h2>
+      <h2 style="margin:0">🥛 Entregas de Leche (CICLA)</h2>
       <span class="aviso">Litros medidos por el caudalímetro y temperatura de entrega, por carga y por destino.</span>
       <div class="controls" style="margin-left:auto">
         <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
@@ -1935,72 +1935,9 @@
     <div id="cicla-hallazgos" style="margin-top:14px"></div>
   </section>
 
-  <section class="card" id="comparar-card">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">⚖️ Caudalímetro vs. Comprador (litros/día)</h2>
-      <span class="aviso">Litros Cicla (caudalímetro) vs. litros oficiales recibidos por La Serenísima, por día · umbral ±3%.</span>
-      <div class="controls" style="margin-left:auto">
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
-          <input type="date" id="comparar-desde" style="padding:6px 8px">
-        </label>
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
-          <input type="date" id="comparar-hasta" style="padding:6px 8px">
-        </label>
-        <button class="secundario" id="comparar-recalcular" title="Volver a calcular la comparación con estas fechas">Recalcular</button>
-      </div>
-    </div>
-    <p class="explica" style="margin-top:10px">
-      <b>Qué muestra.</b> Lo que el tambo midió contra lo que el comprador reconoce, día por día. Es
-      la comparación que importa: la diferencia entre las dos curvas son litros que se produjeron y
-      no se cobran.
-      <br><b>Cómo se calcula.</b> Litros de CICLA contra litros de la liquidación de La Serenísima,
-      cruzados por fecha. El umbral marcado es ±3%: por debajo de eso la diferencia entra en la
-      tolerancia normal entre dos instrumentos distintos; por encima conviene revisar.
-    </p>
-    <div class="aviso" id="comparar-info" style="margin-top:8px"></div>
-    <div class="chart-box" style="height:240px;margin-top:10px"><canvas id="chart-comparar"></canvas></div>
-  </section>
-
-  <section class="card" id="balance-card">
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">🧮 Balance de leche (sala → tanque → camión)</h2>
-      <span class="aviso">La misma leche en los tres sistemas de medición, por día · umbral ±3%.</span>
-      <div class="controls" style="margin-left:auto">
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
-          <input type="date" id="balance-desde" style="padding:6px 8px">
-        </label>
-        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
-          <input type="date" id="balance-hasta" style="padding:6px 8px">
-        </label>
-        <button class="secundario" id="balance-recalcular" title="Volver a calcular el balance con estas fechas">Recalcular</button>
-      </div>
-    </div>
-    <p class="explica" style="margin-top:10px">
-      <b>Qué muestra.</b> Dónde se pierde o se gana leche entre la sala, el tanque y el camión. Cada línea del
-      gráfico es un tramo: <b>sala → tanque</b> (lo que miden los medidores de DelPro contra lo que sale por el
-      caudalímetro de Milky) y <b>tanque → camión</b> (lo que vende Milky contra lo que reconoce La Serenísima).
-      <br><b>Cómo se calcula.</b> DelPro mide en kilos: se pasan a litros con el <b>factor</b> de abajo, que es una
-      calibración medida con los datos del tambo y no una conversión física. Cada día se compara en el mismo día, y
-      solo cuentan los días de DelPro ya cerrados. El umbral es ±3%. Un día se avisa recién cuando existe el
-      siguiente, para distinguir una <b>fecha corrida</b> (una carga de medianoche que cada sistema asigna a otro día,
-      no es leche perdida) de una pérdida real.
-    </p>
-    <div class="bal-factor">
-      <label class="aviso" for="balance-factor">Factor de DelPro</label>
-      <input type="text" id="balance-factor" inputmode="decimal" autocomplete="off" aria-describedby="balance-factor-nota">
-      <span class="aviso">litros por kg</span>
-      <button class="secundario" id="balance-factor-guardar" type="button">Guardar factor</button>
-      <span class="aviso" id="balance-factor-nota"></span>
-    </div>
-    <div class="aviso" id="balance-info" style="margin-top:8px"></div>
-    <div class="chart-box" style="height:240px;margin-top:10px"><canvas id="chart-balance"></canvas></div>
-    <div id="balance-cascada"></div>
-    <div id="balance-tabla" style="margin-top:14px;overflow-x:auto"></div>
-  </section>
-
   <section class="card" id="laser-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">🧪 Calidad de leche (La Serenísima)</h2>
+      <h2 style="margin:0">🧪 Comprador: calidad de leche (La Serenísima)</h2>
       <span class="aviso" id="laser-periodo-txt">Datos oficiales del comprador, tambo 1565.</span>
       <div class="lac-segment" id="laser-periodo" role="group" aria-label="Período" style="margin-left:auto">
         <button class="lac-segment__item" data-periodo="anterior" aria-pressed="false">Período anterior</button>
@@ -2041,6 +1978,70 @@
       </div>
     </div>
   </section>
+
+  <section class="card" id="comparar-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">⚖️ Caudalímetro vs. Comprador (litros/día)</h2>
+      <span class="aviso">Litros Cicla (caudalímetro) vs. litros oficiales recibidos por La Serenísima, por día · umbral ±3%.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="comparar-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="comparar-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="comparar-recalcular" title="Volver a calcular la comparación con estas fechas">Recalcular</button>
+      </div>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Qué muestra.</b> Lo que el tambo midió contra lo que el comprador reconoce, día por día. Es
+      la comparación que importa: la diferencia entre las dos curvas son litros que se produjeron y
+      no se cobran.
+      <br><b>Cómo se calcula.</b> Litros de CICLA contra litros de la liquidación de La Serenísima,
+      cruzados por fecha. El umbral marcado es ±3%: por debajo de eso la diferencia entra en la
+      tolerancia normal entre dos instrumentos distintos; por encima conviene revisar.
+    </p>
+    <div class="aviso" id="comparar-info" style="margin-top:8px"></div>
+    <div class="chart-box" style="height:240px;margin-top:10px"><canvas id="chart-comparar"></canvas></div>
+  </section>
+
+  <section class="card" id="balance-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🧮 Comparación de Cargas (sala → tanque → camión)</h2>
+      <span class="aviso">La misma leche en los tres sistemas de medición, por día · umbral ±3%.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="balance-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="balance-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="balance-recalcular" title="Volver a calcular el balance con estas fechas">Recalcular</button>
+      </div>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Qué muestra.</b> Dónde se pierde o se gana leche entre la sala, el tanque y el camión. Cada línea del
+      gráfico es un tramo: <b>sala → tanque</b> (lo que miden los medidores de DelPro contra lo que sale por el
+      caudalímetro de Milky) y <b>tanque → camión</b> (lo que vende Milky contra lo que reconoce La Serenísima).
+      <br><b>Cómo se calcula.</b> DelPro mide en kilos: se pasan a litros con el <b>factor</b> de abajo, que es una
+      calibración medida con los datos del tambo y no una conversión física. Cada día se compara en el mismo día, y
+      solo cuentan los días de DelPro ya cerrados. El umbral es ±3%. Un día se avisa recién cuando existe el
+      siguiente, para distinguir una <b>fecha corrida</b> (una carga de medianoche que cada sistema asigna a otro día,
+      no es leche perdida) de una pérdida real.
+    </p>
+    <div class="bal-factor">
+      <label class="aviso" for="balance-factor">Factor de DelPro</label>
+      <input type="text" id="balance-factor" inputmode="decimal" autocomplete="off" aria-describedby="balance-factor-nota">
+      <span class="aviso">litros por kg</span>
+      <button class="secundario" id="balance-factor-guardar" type="button">Guardar factor</button>
+      <span class="aviso" id="balance-factor-nota"></span>
+    </div>
+    <div class="aviso" id="balance-info" style="margin-top:8px"></div>
+    <div class="chart-box" style="height:240px;margin-top:10px"><canvas id="chart-balance"></canvas></div>
+    <div id="balance-cascada"></div>
+    <div id="balance-tabla" style="margin-top:14px;overflow-x:auto"></div>
+  </section>
+
   </div>
 
   <div class="page" id="page-tablero" hidden>
@@ -15334,8 +15335,8 @@ document.querySelectorAll('.nav-item').forEach(el =>
   const BARRAS = { rutina: 'rutina-tabs', produccion: 'prod-tabs', repro: 'repro-tabs',
                    alimentacion: 'alim-tabs', salud: 'salud-tabs', configuracion: 'config-tabs' };
   // Páginas sin pestañas pero con varias tarjetas: el submenú salta a cada una.
-  const ANCLAS = { entregas: [['Entregas CICLA', 'cicla-card'], ['Caudalímetro vs. comprador', 'comparar-card'], ['Balance de leche', 'balance-card'],
-                              ['Calidad de leche', 'laser-card']] };
+  const ANCLAS = { entregas: [['Entregas de Leche', 'cicla-card'], ['Comprador', 'laser-card'], ['Caudalímetro vs. comprador', 'comparar-card'],
+                              ['Comparación de Cargas', 'balance-card']] };
   const sidebar = document.getElementById('sidebar');
   const items = {}, subs = {}, grupoDe = {}, cuerpos = {}, titulos = {};
   sidebar.querySelectorAll('.nav-item').forEach(el => { items[el.dataset.pagina] = el; });
