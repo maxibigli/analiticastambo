@@ -7,6 +7,7 @@ import datetime
 import json
 import os
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -34,6 +35,7 @@ LASER = {"entregas": [{"fecha": "24/10/2026", "litros": 68000}, {"fecha": "25/10
                       {"fecha": "26/10/2026", "litros": 95800}, {"fecha": "27/10/2026", "litros": 70900}],
          "actual": [], "anterior": []}
 URL = "?desde=2026-10-24&hasta=2026-10-27"
+TAMBO = app.tambos.DEFAULT_TAMBO
 
 
 class Base(unittest.TestCase):
@@ -153,8 +155,59 @@ class TestBalance(Base):
         self.assertEqual(self._get().get_json()["factor"], 1.06)    # no pisó lo guardado
 
 
+class TestCacheVencida(Base):
+    """Los datos del comprador y de Milky no pueden quedar congelados en la caché: la alerta del balance los
+    usa y, con el comprador congelado, el tramo tanque -> camión dejaba de alertar sin avisar."""
+
+    def _vencer(self, clave, valor):
+        app._cache[clave] = (time.time() - 100000, valor)
+
+    def test_comprador_vencido_se_vuelve_a_traer(self):
+        self._vencer("laser:actual", {"entregas": [], "viejo": True})
+        self.assertEqual(app._entregas_laser("u", "p"), LASER)
+        self.assertEqual(app._cache["laser:actual"][1], LASER)
+
+    def test_comprador_vencido_y_caido_devuelve_lo_viejo(self):
+        self._vencer("laser:actual", {"viejo": True})
+        with mock.patch.object(app, "_laser_traer", side_effect=RuntimeError("sin red")):
+            self.assertEqual(app._entregas_laser("u", "p"), {"viejo": True})
+
+    def test_comprador_sin_cache_y_caido_lanza(self):
+        with mock.patch.object(app, "_laser_traer", side_effect=RuntimeError("sin red")):
+            with self.assertRaises(RuntimeError):
+                app._entregas_laser("u", "p")
+
+    def test_milky_vencido_se_vuelve_a_traer(self):
+        desde, hasta = datetime.date(2026, 10, 24), datetime.date(2026, 10, 27)
+        self._vencer(f"cicla:{desde}:{hasta}", {"cargas": [], "incompleto": False})
+        self.assertEqual(len(app._cargas_cicla(desde, hasta, "u", "p")["cargas"]), len(CARGAS))
+
+
+class TestTamboConMilky(Base):
+    """Milky y La Serenísima son de UNA instalación: otro tambo no puede cruzarse con esos litros."""
+
+    def test_otro_tambo_sin_caudalimetro_configurado(self):
+        r = self.client.get("/api/balance/leche" + URL + "&tambo=lamartina_local")
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("Milky", r.get_json()["error"])
+
+    def test_otro_tambo_con_caudalimetro_y_usina_configurados(self):
+        configuracion_tambo.guardar("lamartina_local", {"caudalimetro": "cicla", "usina_lactea": "la_serenisima"})
+        r = self.client.get("/api/balance/leche" + URL + "&tambo=lamartina_local")
+        self.assertEqual(r.status_code, 200)
+        self.assertIs(r.get_json()["comprador_disponible"], True)
+
+    def test_otro_tambo_con_milky_pero_sin_usina_no_trae_comprador(self):
+        configuracion_tambo.guardar("lamartina_local", {"caudalimetro": "cicla"})
+        d = self.client.get("/api/balance/leche" + URL + "&tambo=lamartina_local").get_json()
+        self.assertIs(d["comprador_disponible"], False)
+
+    def test_la_alerta_de_otro_tambo_no_dice_nada(self):
+        self.assertEqual(app._lineas_alerta_balance("lamartina_local", registrar=True), [])
+
+
 class TestAlerta(Base):
-    """`_lineas_alerta_balance`: el aviso del desvío en las alertas puntuales."""
+    """`_lineas_alerta_balance`: el aviso del desvío en las alertas puntuales (tambo por defecto, que es el de Milky)."""
 
     def setUp(self):
         super().setUp()
@@ -171,35 +224,35 @@ class TestAlerta(Base):
             self.addCleanup(p.stop)
 
     def test_linea_sin_registrar_no_consume_el_aviso(self):
-        lineas = app._lineas_alerta_balance("t", registrar=False)
+        lineas = app._lineas_alerta_balance(TAMBO, registrar=False)
         self.assertEqual(len(lineas), 1)
         self.assertIn("+3,2 %", lineas[0])
-        self.assertEqual(balance_leche.leer_avisados("t"), {})
-        self.assertEqual(app._lineas_alerta_balance("t", registrar=False), lineas)   # sigue disponible
+        self.assertEqual(balance_leche.leer_avisados(TAMBO), {})
+        self.assertEqual(app._lineas_alerta_balance(TAMBO, registrar=False), lineas)   # sigue disponible
 
     def test_registrar_no_repite(self):
-        self.assertEqual(len(app._lineas_alerta_balance("t", registrar=True)), 1)
-        self.assertEqual(balance_leche.leer_avisados("t")["sala_tanque"], "2026-11-02")
-        self.assertEqual(app._lineas_alerta_balance("t", registrar=True), [])
+        self.assertEqual(len(app._lineas_alerta_balance(TAMBO, registrar=True)), 1)
+        self.assertEqual(balance_leche.leer_avisados(TAMBO)["sala_tanque"], "2026-11-02")
+        self.assertEqual(app._lineas_alerta_balance(TAMBO, registrar=True), [])
 
     def test_balance_roto_es_una_linea_de_advertencia(self):
         with mock.patch.object(app, "_balance_leche", side_effect=app.BalanceError("DelPro: sin red", 502)):
-            lineas = app._lineas_alerta_balance("t", registrar=True)
+            lineas = app._lineas_alerta_balance(TAMBO, registrar=True)
         self.assertEqual(len(lineas), 1)
         self.assertTrue(lineas[0].startswith("⚠️ Balance de leche"))
         self.assertIn("sin red", lineas[0])
-        self.assertEqual(balance_leche.leer_avisados("t"), {})
+        self.assertEqual(balance_leche.leer_avisados(TAMBO), {})
 
     def test_sin_credenciales_de_milky_no_hay_linea(self):
         with mock.patch.object(app.cicla, "credenciales", lambda: (None, None)):
-            self.assertEqual(app._lineas_alerta_balance("t", registrar=True), [])
+            self.assertEqual(app._lineas_alerta_balance(TAMBO, registrar=True), [])
 
     def test_balance_roto_no_corta_las_demas_alertas(self):
         carga_caliente = app.cicla._carga_desde_api({
             "Id": "1", "FechaIni": datetime.datetime.now().strftime("%Y-%m-%dT%H:%M:%S"), "LitrosTotal": 20000,
             "LitrosEstimados": 20000, "Tambo": 5003, "TempPromedio": 6.0})
         with mock.patch.object(app, "_balance_leche", side_effect=app.BalanceError("DelPro: sin red", 502)),                 mock.patch.object(app.cicla, "obtener_cargas", lambda *a, **k: ([carga_caliente], False)):
-            lineas = app._lineas_alertas_puntuales("t")
+            lineas = app._lineas_alertas_puntuales(TAMBO)
         self.assertTrue(any("CICLA" in l and "temperatura" in l for l in lineas), lineas)
         self.assertTrue(any(l.startswith("⚠️ Balance de leche") for l in lineas), lineas)
 

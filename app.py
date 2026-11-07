@@ -5528,26 +5528,36 @@ def api_laser_entregas():
     })
 
 
+def _cache_o_traer(key: str, ttl: float, traer):
+    """Dato cacheado si está fresco; si venció, se vuelve a traer. Si traerlo falla se devuelve el viejo
+    (y si no había ninguno, se relanza el error). Antes se usaba `allow_stale=True` a secas: el dato quedaba
+    congelado para siempre y, con la alerta del balance leyendo de acá, el tramo tanque -> camión dejaba de
+    alertar sin avisar (el comprador se quedaba en el día del primer pedido del proceso)."""
+    data, fresca = _cache_get(key, allow_stale=True, ttl=ttl)
+    if data is not None and fresca:
+        return data
+    try:
+        nuevo = traer()
+    except Exception:  # noqa: BLE001
+        if data is None:
+            raise
+        return data
+    _cache_set(key, nuevo)
+    return nuevo
+
+
 def _cargas_cicla(desde, hasta, usuario, password) -> dict:
     """Cargas de Milky del rango, cacheadas (`/api/entregas/comparar` y el Balance de leche
     comparten la misma clave, así que no se loguea dos veces). Lanza lo que lance `cicla`."""
-    key = f"cicla:{desde.isoformat()}:{hasta.isoformat()}"
-    data, _ = _cache_get(key, allow_stale=True, ttl=CICLA_CACHE_TTL_S)
-    if data is None:
+    def traer():
         cargas, incompleto = cicla.obtener_cargas(desde, hasta, usuario, password)
-        data = {"cargas": cargas, "incompleto": incompleto}
-        _cache_set(key, data)
-    return data
+        return {"cargas": cargas, "incompleto": incompleto}
+    return _cache_o_traer(f"cicla:{desde.isoformat()}:{hasta.isoformat()}", CICLA_CACHE_TTL_S, traer)
 
 
 def _entregas_laser(usuario, password) -> dict:
     """Entregas de La Serenísima (los dos períodos), cacheadas con la clave `laser:actual`."""
-    key = "laser:actual"
-    data, _ = _cache_get(key, allow_stale=True, ttl=LASER_CACHE_TTL_S)
-    if data is None:
-        data = _laser_traer(usuario, password)
-        _cache_set(key, data)
-    return data
+    return _cache_o_traer("laser:actual", LASER_CACHE_TTL_S, lambda: _laser_traer(usuario, password))
 
 
 @app.get("/api/entregas/comparar")
@@ -5635,10 +5645,25 @@ BALANCE_DIAS_DEFECTO = 20      # 21 días con hoy: alcanzan para ≥ 15 días ce
 BALANCE_KG_TTL_S = 600
 
 
+def _tambo_con_milky(tambo: str) -> bool:
+    """Milky y las credenciales `MILKY_*` son de UNA instalación: la del tambo por defecto, o la de un tambo que
+    declaró el caudalímetro CICLA en su configuración. Sin esto, elegir otro tambo en el selector cruzaba SU DelPro
+    con los litros de La Ponderosa y mostraba, en rojo, desvíos de decenas de % como si fueran pérdidas."""
+    return tambo == tambos.DEFAULT_TAMBO or configuracion_tambo.config_de(tambo).get("caudalimetro") == "cicla"
+
+
+def _tambo_con_serenisima(tambo: str) -> bool:
+    """Ídem para La Serenísima (`LASER_*`, tambo 1565): el por defecto o uno con `usina_lactea` configurada."""
+    return tambo == tambos.DEFAULT_TAMBO or configuracion_tambo.config_de(tambo).get("usina_lactea") == "la_serenisima"
+
+
 def _balance_leche(tambo: str, desde: datetime.date, hasta: datetime.date) -> dict:
     """Balance sala -> tanque -> camión entre dos fechas (ver balance_leche.py). Lanza
     `BalanceError`. Sin credenciales de La Serenísima, o si el comprador falla, el balance
     sale igual sin el tramo del camión (`comprador_disponible` falso)."""
+    if not _tambo_con_milky(tambo):
+        raise BalanceError("Este tambo no tiene el caudalímetro de Milky configurado: el balance necesita "
+                           "los litros del tanque (⚙ Configuración → caudalímetro CICLA).", 400)
     usuario, password = cicla.credenciales()
     if not (usuario and password):
         raise BalanceError("Faltan las variables de entorno de Milky (MILKY_USUARIO/MILKY_PASSWORD).", 400)
@@ -5658,7 +5683,7 @@ def _balance_leche(tambo: str, desde: datetime.date, hasta: datetime.date) -> di
 
     comprador = None
     usuario_l, password_l = os.environ.get("LASER_USUARIO"), os.environ.get("LASER_PASSWORD")
-    if usuario_l and password_l:
+    if usuario_l and password_l and _tambo_con_serenisima(tambo):
         try:
             comprador = balance_leche.litros_comprador_por_dia(_entregas_laser(usuario_l, password_l)["entregas"])
         except Exception:  # noqa: BLE001
@@ -5964,7 +5989,7 @@ def _lineas_alerta_balance(tambo: str, registrar: bool = False) -> list:
     no hay balance: no se avisa nada (igual que la alerta de temperatura). Una fuente caída es
     una línea de advertencia, nunca una excepción: no tiene que cortar las demás alertas."""
     usuario, password = cicla.credenciales()
-    if not (usuario and password):
+    if not (usuario and password and _tambo_con_milky(tambo)):
         return []
     try:
         hoy = datetime.date.today()

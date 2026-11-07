@@ -214,8 +214,8 @@ def calcular(kg_dia: list, milky: dict, comprador, factor: float, umbral: float 
 
 
 # --- Alertas --------------------------------------------------------------------------------------
-# Un día se evalúa para alertar recién cuando existe el día SIGUIENTE en el mismo tramo: con el par
-# completo se ve si fue una fecha corrida (una carga de medianoche asignada a otro día) y no se
+# Un día se evalúa para alertar recién cuando existe un día POSTERIOR en el mismo tramo (normalmente el
+# siguiente): con el par completo se ve si fue una fecha corrida (una carga de medianoche asignada a otro día) y no se
 # alerta una pérdida que no es tal. La alerta llega con un día de atraso. DelPro consolida con
 # varios días de atraso, así que la antigüedad del dato no sirve para no repetir: se guarda, por
 # tambo y por tramo, el último día ya evaluado (`balance_leche_avisos.json`) y cada día se evalúa
@@ -230,16 +230,14 @@ def evaluar_alertas(dias: list, avisados: dict) -> tuple:
     """-> (eventos, avisados_nuevo). `dias` es `calcular(...)["dias"]`; `avisados` es
     {tramo: "AAAA-MM-DD"} (el último día ya evaluado). Evento: {"tramo", "fecha",
     "desvio_pct"}. Un par de fecha corrida no genera evento (`calcular` ya le sacó la alerta)."""
-    por_fecha = {d["fecha"]: d for d in dias}
     eventos, nuevos = [], dict(avisados)
     for tramo in TRAMOS:
         col = f"desvio_{tramo}_pct"
-        evaluables = []
-        for d in sorted(dias, key=lambda x: x["fecha"]):
-            sig = datetime.date.fromisoformat(d["fecha"]) + datetime.timedelta(days=1)
-            sig = por_fecha.get(sig.isoformat())
-            if d[col] is not None and sig is not None and sig[col] is not None:
-                evaluables.append(d)
+        con_dato = [d for d in sorted(dias, key=lambda x: x["fecha"]) if d[col] is not None]
+        # Evaluable = ya hay algún día POSTERIOR con dato. Casi siempre es el día siguiente, pero si
+        # ese día no existe (DelPro sin ordeños ese día, no cerrado) y hay uno más adelante, el hueco
+        # es permanente —los datos llegan en orden— y esperar sería descartar la alerta en silencio.
+        evaluables = con_dato[:-1]
         if not evaluables:
             continue
         ultimo = avisados.get(tramo)

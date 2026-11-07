@@ -3074,8 +3074,10 @@ Reglas de cálculo (todas medidas, ver el spec):
   claro (400) que nombra las variables.
 
 **Alerta** (línea del aviso de alertas puntuales, `_lineas_alerta_balance`): desvío fuera de ±3 % en algún tramo.
-- Un día se evalúa recién cuando existe el día **siguiente** (así se distingue fecha corrida de pérdida); la alerta
-  llega con un día de atraso.
+- Un día se evalúa recién cuando existe un día **posterior** con dato en ese tramo (normalmente el siguiente: así se
+  distingue fecha corrida de pérdida); la alerta llega con un día de atraso. Si el día siguiente no existe pero hay uno
+  más adelante (DelPro sin ordeños ese día, o sin cerrar), el hueco es permanente y el día se evalúa igual: esperar
+  habría descartado en silencio una alerta real.
 - Una sola vez por día y tramo: `balance_leche_avisos.json` (fuera de git) guarda el último día evaluado por tambo. No
   se usa la antigüedad del dato porque DelPro consolida tarde. Sin registro previo solo se evalúa el último día
   evaluable (no inunda con avisos viejos).
@@ -3083,6 +3085,15 @@ Reglas de cálculo (todas medidas, ver el spec):
   "gastar" el aviso. Si el envío falla después de registrar, ese aviso se pierde (aceptado: es raro).
 - Una fuente caída es una línea "⚠️ Balance de leche: no se pudo revisar" y no corta las demás alertas. Sin `MILKY_*`
   no avisa nada (igual que la alerta de temperatura).
+
+**Alcance por tambo:** Milky (`MILKY_*`) y La Serenísima (`LASER_*`) son de UNA instalación. El balance y su alerta solo
+corren para el tambo por defecto o uno que declare `caudalimetro: cicla` (y `usina_lactea: la_serenisima` para el
+tramo del camión) en ⚙ Configuración; otro tambo recibe un 400 claro. Sin esto, elegir otro tambo en el selector
+cruzaba SU DelPro con los litros de La Ponderosa y mostraba desvíos de decenas de % como si fueran pérdidas.
+
+**Caché de Milky y del comprador:** `_cache_o_traer` vuelve a traer el dato cuando venció (y devuelve el viejo si falla).
+Antes se usaba `allow_stale=True` a secas y el dato quedaba congelado para siempre: con la alerta leyendo de ahí, el
+tramo tanque → camión dejaba de alertar sin avisar (lo encontró el revisor final).
 
 `/api/entregas/comparar` se refactorizó para compartir `_cargas_cicla` y `_entregas_laser` con el balance (misma
 caché); su respuesta no cambió (hay un test con la respuesta capturada antes del refactor).

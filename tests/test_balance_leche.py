@@ -217,6 +217,15 @@ class TestAlertas(unittest.TestCase):
         self.assertEqual(eventos, [])
         self.assertEqual(nuevos["sala_tanque"], "2026-11-01")
 
+    def test_hueco_de_delpro_no_pierde_la_alerta(self):
+        """01, 02, 04 y 05/11 con datos y SIN el 03: el 02/11 (+16,7 %) no tiene "día siguiente" pero ya hay días
+        posteriores, o sea que nunca lo va a tener. No se puede descartar en silencio una alerta real."""
+        dias = [_d("2026-11-01", st=0.5), _d("2026-11-02", st=16.7), _d("2026-11-04", st=0.2),
+                _d("2026-11-05", st=0.1)]
+        eventos, nuevos = bl.evaluar_alertas(dias, {"sala_tanque": "2026-11-01"})
+        self.assertEqual([(e["fecha"], e["desvio_pct"]) for e in eventos], [("2026-11-02", 16.7)])
+        self.assertEqual(nuevos["sala_tanque"], "2026-11-04")
+
     def test_no_repite(self):
         dias = [_d("2026-11-02", st=3.2), _d("2026-11-03", st=0.4)]
         eventos, nuevos = bl.evaluar_alertas(dias, {"sala_tanque": "2026-10-31"})
