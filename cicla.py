@@ -11,6 +11,8 @@ usarse, por si hay que consultarlo.
 
 Credenciales SOLO por variable de entorno (nunca en el código):
   MILKY_USUARIO, MILKY_PASSWORD
+Se leen del entorno del proceso y, si no están, del REGISTRO de Windows (donde las deja `setx`):
+así una variable recién cargada se ve sin reiniciar el servidor (ver `_variable`).
 (NO se reusan CICLA_USUARIO/CICLA_PASSWORD: son del sitio viejo, y mandarlas a otro
 servidor sería regalarle una credencial a quien no corresponde.)
 
@@ -53,6 +55,7 @@ Formulario ASP.NET WebForms del sitio viejo, verificado a mano (2026-07-23):
 import datetime
 import os
 import re
+import sys
 import threading
 import time
 
@@ -245,9 +248,47 @@ _token_lock = threading.Lock()
 _token_cache = {"usuario": None, "token": None, "vence": 0.0}
 
 
+def _variable(nombre: str) -> str | None:
+    """Valor de una variable de entorno, primero del proceso y si no está, del REGISTRO de Windows.
+
+    `setx` guarda la variable en el registro pero NO la agrega a los procesos que ya existen, ni a
+    los que lance una ventana, un acceso directo o una tarea anterior al `setx`: los procesos
+    heredan el entorno de quien los crea. En SERVER-DELPRO eso pasó en la práctica (07/11/2026): el
+    servidor arrancó sin ver MILKY_USUARIO/MILKY_PASSWORD aunque estaban bien guardadas, y hubo que
+    matarlo y relanzarlo copiando las variables a mano. Leyendo el registro cada vez, una variable
+    cargada con `setx` se ve al toque, sin reiniciar nada.
+
+    Orden: el entorno del proceso manda (sirve para pisar el valor en una prueba), después las del
+    usuario (HKCU\\Environment, lo que escribe `setx`) y por último las de la máquina
+    (`setx /M`). OJO: si el servidor corre con OTRO usuario de Windows que el que hizo el `setx`,
+    el registro de ese otro usuario no la tiene: ahí hace falta `setx /M` o repetirlo con ese usuario."""
+    valor = os.environ.get(nombre)
+    if valor:
+        return valor
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+    except ImportError:
+        return None
+    ubicaciones = ((winreg.HKEY_CURRENT_USER, "Environment"),
+                   (winreg.HKEY_LOCAL_MACHINE, r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"))
+    for raiz, ruta in ubicaciones:
+        try:
+            with winreg.OpenKey(raiz, ruta) as clave:
+                valor, tipo = winreg.QueryValueEx(clave, nombre)
+        except OSError:
+            continue   # no existe en esta ubicación (o no se puede leer): se prueba la siguiente
+        if tipo == winreg.REG_EXPAND_SZ:
+            valor = os.path.expandvars(valor)
+        if valor:
+            return str(valor)
+    return None
+
+
 def credenciales() -> tuple[str | None, str | None]:
-    """(usuario, contraseña) de la API de Milky, solo de las variables MILKY_*."""
-    return os.environ.get("MILKY_USUARIO"), os.environ.get("MILKY_PASSWORD")
+    """(usuario, contraseña) de la API de Milky, solo de las variables MILKY_* (ver `_variable`)."""
+    return _variable("MILKY_USUARIO"), _variable("MILKY_PASSWORD")
 
 
 def _mensaje_error(r) -> str:

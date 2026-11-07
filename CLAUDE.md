@@ -919,7 +919,15 @@ consultas GET con `Authorization: Bearer`, paginadas) y `obtener_cargas` ahora l
 (`cicla.credenciales()`). El código del sitio viejo quedó como `obtener_cargas_sitio_viejo`, sin usar.
 
 **Credenciales: `MILKY_USUARIO` / `MILKY_PASSWORD`, en CADA instalación** (PC de desarrollo y
-SERVER-DELPRO) con `setx`, y reiniciar el proceso. NO se reusan `CICLA_USUARIO/CICLA_PASSWORD`: la
+SERVER-DELPRO) con `setx`. **Se leen del REGISTRO de Windows cuando el proceso no las tiene**
+(`cicla._variable`: entorno del proceso, después `HKCU\Environment`, después `HKLM`), en cada
+consulta, así que no hace falta reiniciar. Esto salió de un problema real: `setx` guarda en el
+registro pero no cambia los procesos ya creados ni los que lanza una ventana/tarea anterior al
+`setx`, y el servidor de SERVER-DELPRO arrancó sin verlas aunque estaban bien guardadas (la tarjeta
+decía "faltan las variables"); hubo que matarlo y relanzarlo copiándolas a mano. **Solo cubre las
+MILKY_\***: `LASER_*`, `TWILIO_*`, `HASTEN_*`, `ANTHROPIC_API_KEY` y el resto siguen leyéndose del
+entorno del proceso y siguen necesitando reinicio. Si el servidor corre con OTRO usuario de Windows
+que el del `setx`, el registro de ese usuario no las tiene: usar `setx /M`. NO se reusan `CICLA_USUARIO/CICLA_PASSWORD`: la
 primera prueba mandó esas a Milky por error de configuración y dio 401; son del sitio viejo y no
 corresponde enviárselas a otro servidor. Se recorren TODAS las páginas (ya no existe el aviso de
 "incompleto" del sitio viejo), se deduplica por `Id` (una carga nueva a mitad de la paginación

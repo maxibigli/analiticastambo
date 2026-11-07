@@ -369,7 +369,9 @@ Son las credenciales de la API compartida de Milky (`milky.controllac.com.ar`), 
 reemplaza al sitio viejo de CICLA (`CICLA_USUARIO`/`CICLA_PASSWORD` ya no se usan). Trae litros
 medidos y temperatura de entrega por carga (tarjeta "Entregas de leche (CICLA)"), recorriendo
 todas las páginas. Hay que cargarlas en **cada** instalación (la PC de desarrollo y
-SERVER-DELPRO) y reiniciar el proceso. Los "litros declarados" salen de `LitrosEstimados`
+SERVER-DELPRO). **No hace falta reiniciar el servidor**: estas dos se leen del registro de Windows
+en cada consulta, no del entorno con el que arrancó el proceso. Si el servidor corre con otro
+usuario de Windows que el que hizo el `setx`, cargalas con `setx /M` (como Administrador). Los "litros declarados" salen de `LitrosEstimados`
 (supuesto sin verificar, ver `cicla.py`) y el pH ya no está disponible.
 
 ### La Serenísima (comprador oficial — tambo 1565, período actual)
