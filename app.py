@@ -5892,10 +5892,15 @@ def _lineas_alertas_puntuales(tambo: str) -> list:
         try:
             hoy = datetime.date.today()
             cargas, _incompleto = cicla.obtener_cargas(hoy - datetime.timedelta(days=1), hoy, usuario, password)
+            # SOLO las cargas que se venden. Medido sobre 130 cargas (17/10 al 07/11/2026): de
+            # las 50 que pasaron de 5 °C, 49 eran de guachera (leche para los terneros, mediana
+            # 6,6 °C) y 1 de las 65 de venta. Contarlas todas hacía sonar el aviso todos los días
+            # por leche que nunca llega al comprador.
             altas = [c["temperatura"] for c in cargas
-                     if c["temperatura"] is not None and c["temperatura"] > ALERTA_TEMP_CICLA_C]
+                     if c.get("es_venta") and c["temperatura"] is not None
+                     and c["temperatura"] > ALERTA_TEMP_CICLA_C]
             if altas:
-                lineas.append(f"🌡️ CICLA: {len(altas)} carga(s) hoy con temperatura sobre el umbral "
+                lineas.append(f"🌡️ CICLA: {len(altas)} carga(s) de venta hoy con temperatura sobre el umbral "
                               f"({_rango(altas, 1)}°C, umbral {ALERTA_TEMP_CICLA_C}°C).")
         except Exception as exc:  # noqa: BLE001
             lineas.append(f"⚠️ CICLA: no se pudo revisar ({exc}).")

@@ -1926,6 +1926,15 @@
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">⚖️ Caudalímetro vs. Comprador (litros/día)</h2>
       <span class="aviso">Litros Cicla (caudalímetro) vs. litros oficiales recibidos por La Serenísima, por día · umbral ±3%.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="comparar-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="comparar-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="comparar-recalcular" title="Volver a calcular la comparación con estas fechas">Recalcular</button>
+      </div>
     </div>
     <p class="explica" style="margin-top:10px">
       <b>Qué muestra.</b> Lo que el tambo midió contra lo que el comprador reconoce, día por día. Es
@@ -7852,11 +7861,22 @@ document.getElementById('alertas-probar-ciclo').addEventListener('click', async 
   }
 });
 
-let chartComparar = null;
+let chartComparar = null, compararCalculado = false, compararCargando = false;
 
+// El rango sale de los selectores de ESTA tarjeta. Antes estaba fijo en "los últimos 7 días",
+// así que al cambiar el período en "Entregas de leche (CICLA)" la comparación quedaba en el
+// anterior y no había cómo recalcularla. Si todavía no se tocó nada, arranca con el rango de
+// la tarjeta de CICLA (si ya se eligió uno) o con la última semana.
 async function cargarComparar() {
+  if (compararCargando) return;
   const info = document.getElementById('comparar-info');
-  const hasta = hoyISO(), desde = menosDias(hasta, 6);
+  const iDesde = document.getElementById('comparar-desde'), iHasta = document.getElementById('comparar-hasta');
+  const btn = document.getElementById('comparar-recalcular');
+  let hasta = iHasta.value || document.getElementById('cicla-hasta').value || hoyISO();
+  let desde = iDesde.value || document.getElementById('cicla-desde').value || menosDias(hasta, 6);
+  if (desde > hasta) [desde, hasta] = [hasta, desde];
+  iDesde.value = desde; iHasta.value = hasta;
+  compararCalculado = true; compararCargando = true; btn.disabled = true;
   info.textContent = 'Consultando CICLA y La Serenísima…';
   try {
     const d = await pedirJSON(`/api/entregas/comparar?desde=${desde}&hasta=${hasta}`);
@@ -7873,8 +7893,20 @@ async function cargarComparar() {
       (d.cicla_incompleto ? ' ⚠ CICLA puede estar incompleto para este rango (ver tarjeta de arriba).' : '');
   } catch (e) {
     info.textContent = 'Error: ' + e.message;
+  } finally {
+    compararCargando = false; btn.disabled = false;
   }
 }
+document.getElementById('comparar-recalcular').addEventListener('click', cargarComparar);
+// "Aplicar" en la tarjeta de CICLA cambia el período de arriba: se lo pasamos a la comparación, y
+// si esa ya se calculó alguna vez se recalcula sola (si no, sigue esperando su "Calcular" a pedido).
+// Este oyente se registra DESPUÉS del de cargarCicla, así que las fechas ya están normalizadas.
+document.getElementById('cicla-aplicar').addEventListener('click', () => {
+  const d = document.getElementById('cicla-desde').value, h = document.getElementById('cicla-hasta').value;
+  if (d) document.getElementById('comparar-desde').value = d;
+  if (h) document.getElementById('comparar-hasta').value = h;
+  if (compararCalculado) cargarComparar();
+});
 
 let chartLaserLitros = null, chartLaserGrasa = null, chartLaserProteinas = null,
     chartLaserUfc = null, chartLaserTemp = null;

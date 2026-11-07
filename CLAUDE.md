@@ -941,10 +941,18 @@ de guachera dan +30% y 64 de 65. Si "declarados" era otra cosa, la tarjeta "Entr
 (CICLA)" muestra alertas que no significan nada. **No afecta la comparación contra La Serenísima**
 (`/api/entregas/comparar` usa solo `lts_cicla`).
 
-**La alerta de temperatura de las 8:00/20:00 es casi toda de la guachera**: de 50 cargas sobre
-5 °C, 49 son de guachera (mediana 6,6 °C, la leche de los terneros) y solo 1 de las 65 que se
-venden. `app.py` la cuenta sobre TODAS las cargas, así que va a avisar todos los días por leche
-que no se vende. Pendiente de decidir con el tambo si se limita a `es_venta`.
+**La alerta de temperatura de las 8:00/20:00 cuenta SOLO las cargas de venta** (`es_venta`). De 50
+cargas sobre 5 °C, 49 eran de guachera (mediana 6,6 °C, la leche de los terneros) y solo 1 de las
+65 que se venden: contándolas todas, el aviso sonaba todos los días por leche que no llega al
+comprador. **La tarjeta "Entregas de leche (CICLA)" sigue contando TODAS** en sus "Alertas de
+temperatura (>4°C)" y en el listado de cargas fuera de rango (muestra el registro completo del
+caudalímetro); allí la guachera sigue apareciendo.
+
+**"Caudalímetro vs. Comprador" tiene sus propias fechas y un botón "Recalcular"** (07/11/2026).
+Estaba fija en "los últimos 7 días": al cambiar el período en la tarjeta de CICLA la comparación
+quedaba en el anterior y no había forma de recalcularla. Ahora arranca con el rango de CICLA (o la
+última semana), "Aplicar" en CICLA le pasa el período y, si ya se había calculado, la recalcula sola;
+si todavía no, sigue esperando su "Calcular" a pedido. El servidor ya aceptaba `desde`/`hasta`.
 
 ## Agente de IA: gráficos, tablas e informes (07/11/2026)
 
