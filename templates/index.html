@@ -333,6 +333,19 @@
   .badge.vivo { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
   .badge.vivo::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--critical); animation: latido 1.4s infinite; }
   .badge.historico { background: color-mix(in srgb, var(--muted) 22%, transparent); color: var(--text-secondary); }
+  /* Balance de leche (sala -> tanque -> camión) */
+  .bal-factor { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .bal-factor input { width: 90px; padding: 6px 8px; }
+  .bal-cascada { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .bal-cascada .tile { flex: 1 1 190px; }
+  .bal-cascada .sub { color: var(--text-secondary); font-size: 12px; margin-top: 2px; }
+  .bal-paso { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; min-width: 84px; font-size: 18px; color: var(--muted); }
+  .bal-chip { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 20px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .bal-ok { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--text-primary); }
+  .bal-alerta { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
+  .bal-corrida { background: color-mix(in srgb, var(--violeta) 16%, transparent); color: var(--text-primary); }
+  .bal-nd { color: var(--muted); }
+  #balance-tabla tr.bal-sin-cerrar td { opacity: .55; }
   @keyframes latido { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
   #ordeno-tabla td.cell-alerta { color: var(--critical); font-weight: 600; }
   #ordeno-tabla td.cell-aviso { color: var(--accent); font-weight: 600; }
@@ -1946,6 +1959,43 @@
     </p>
     <div class="aviso" id="comparar-info" style="margin-top:8px"></div>
     <div class="chart-box" style="height:240px;margin-top:10px"><canvas id="chart-comparar"></canvas></div>
+  </section>
+
+  <section class="card" id="balance-card">
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <h2 style="margin:0">🧮 Balance de leche (sala → tanque → camión)</h2>
+      <span class="aviso">La misma leche en los tres sistemas de medición, por día · umbral ±3%.</span>
+      <div class="controls" style="margin-left:auto">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
+          <input type="date" id="balance-desde" style="padding:6px 8px">
+        </label>
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Hasta
+          <input type="date" id="balance-hasta" style="padding:6px 8px">
+        </label>
+        <button class="secundario" id="balance-recalcular" title="Volver a calcular el balance con estas fechas">Recalcular</button>
+      </div>
+    </div>
+    <p class="explica" style="margin-top:10px">
+      <b>Qué muestra.</b> Dónde se pierde o se gana leche entre la sala, el tanque y el camión. Cada línea del
+      gráfico es un tramo: <b>sala → tanque</b> (lo que miden los medidores de DelPro contra lo que sale por el
+      caudalímetro de Milky) y <b>tanque → camión</b> (lo que vende Milky contra lo que reconoce La Serenísima).
+      <br><b>Cómo se calcula.</b> DelPro mide en kilos: se pasan a litros con el <b>factor</b> de abajo, que es una
+      calibración medida con los datos del tambo y no una conversión física. Cada día se compara en el mismo día, y
+      solo cuentan los días de DelPro ya cerrados. El umbral es ±3%. Un día se avisa recién cuando existe el
+      siguiente, para distinguir una <b>fecha corrida</b> (una carga de medianoche que cada sistema asigna a otro día,
+      no es leche perdida) de una pérdida real.
+    </p>
+    <div class="bal-factor">
+      <label class="aviso" for="balance-factor">Factor de DelPro</label>
+      <input type="text" id="balance-factor" inputmode="decimal" autocomplete="off" aria-describedby="balance-factor-nota">
+      <span class="aviso">litros por kg</span>
+      <button class="secundario" id="balance-factor-guardar" type="button">Guardar factor</button>
+      <span class="aviso" id="balance-factor-nota"></span>
+    </div>
+    <div class="aviso" id="balance-info" style="margin-top:8px"></div>
+    <div class="chart-box" style="height:240px;margin-top:10px"><canvas id="chart-balance"></canvas></div>
+    <div id="balance-cascada"></div>
+    <div id="balance-tabla" style="margin-top:14px;overflow-x:auto"></div>
   </section>
 
   <section class="card" id="laser-card">
@@ -7906,6 +7956,136 @@ document.getElementById('cicla-aplicar').addEventListener('click', () => {
   if (d) document.getElementById('comparar-desde').value = d;
   if (h) document.getElementById('comparar-hasta').value = h;
   if (compararCalculado) cargarComparar();
+});
+
+// --- Balance de leche: sala (DelPro) -> tanque (Milky) -> camión (La Serenísima) ---------------
+let chartBalance = null, balanceCargando = false;
+
+// `fmt` redondea a 1 decimal y el factor tiene 2 (1,05): se formatea aparte.
+function balFactor(v) { return v.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 3 }); }
+
+function balPct(v) {
+  return v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v)) + ' %';
+}
+
+function balChip(dia, tramo) {
+  const v = dia['desvio_' + tramo + '_pct'];
+  if (v == null) return '<span class="bal-chip bal-nd">' + (tramo === 'sala_tanque' && !dia.cerrado && dia.kg != null ? 'sin cerrar' : '—') + '</span>';
+  if (dia['corrida_' + tramo])
+    return `<span class="bal-chip bal-corrida" title="Dos días seguidos con desvío opuesto que se compensan: una carga cambió de día, no es leche perdida.">fecha corrida ${balPct(v)}</span>`;
+  return `<span class="bal-chip ${dia['alerta_' + tramo] ? 'bal-alerta' : 'bal-ok'}">${balPct(v)}</span>`;
+}
+
+function graficaBalance(canvasId, chartRef, dias, umbral) {
+  const etiquetas = dias.map(d => d.fecha.slice(5));
+  const serie = (tramo, color, nombre) => ({
+    label: nombre, data: dias.map(d => d['desvio_' + tramo + '_pct']),
+    borderColor: color, backgroundColor: color, borderWidth: 2, tension: .2, spanGaps: false,
+    pointRadius: dias.map(d => (d['alerta_' + tramo] || d['corrida_' + tramo]) ? 6 : 3.5),
+    pointBackgroundColor: dias.map(d => d['alerta_' + tramo] ? css('--critical')
+      : d['corrida_' + tramo] ? css('--violeta') : color),
+  });
+  const limite = v => ({ label: `${v > 0 ? '+' : '−'}${umbral} %`, data: dias.map(() => v), borderColor: css('--warning'),
+    borderDash: [5, 4], borderWidth: 1.3, pointRadius: 0 });
+  const opts = baseOpts(true);
+  opts.plugins.legend.labels.filter = item => item.datasetIndex < 2;
+  opts.scales.y = { suggestedMin: -5, suggestedMax: 5, grid: { color: css('--grid') }, border: { display: false },
+                    ticks: { callback: v => v + ' %' } };
+  return dibujar(canvasId, chartRef, {
+    type: 'line', options: opts,
+    data: { labels: etiquetas, datasets: [serie('sala_tanque', SERIES[0], 'Sala → tanque'),
+                                          serie('tanque_camion', SERIES[3], 'Tanque → camión'),
+                                          limite(umbral), limite(-umbral)] },
+  });
+}
+
+function pintarBalanceTarjetas(d) {
+  const t = d.totales;
+  const tile = (titulo, valor, sub) => `<div class="tile"><div class="label">${titulo}</div>` +
+    `<div class="value">${valor == null ? '—' : fmt(valor) + ' L'}</div><div class="sub">${sub}</div></div>`;
+  const paso = (v, nota) => `<div class="bal-paso"><span class="bal-chip ${v == null ? 'bal-nd' : (Math.abs(v) > d.umbral ? 'bal-alerta' : 'bal-ok')}">${balPct(v)}</span>→` +
+    `<span class="aviso" style="font-size:11px;text-align:center">${nota}</span></div>`;
+  let html = '<div class="bal-cascada">' +
+    tile('Sala · DelPro', t.lts_delpro, `kg × ${balFactor(d.factor)} · solo días cerrados`) +
+    paso(t.desvio_sala_tanque_pct, 'período') +
+    tile('Tanque · Milky', t.lts_milky, 'venta + guachera, los mismos días');
+  if (d.comprador_disponible) {
+    html += paso(t.desvio_tanque_camion_pct, 'ventas vs. comprador') +
+      tile('Camión · La Serenísima', t.lts_comprador, `contra ${fmt(t.lts_venta)} L vendidos según Milky`);
+  } else {
+    html += '<div class="bal-paso"><span class="aviso">sin datos del comprador</span></div>';
+  }
+  html += '</div>';
+  if (d.tramo_mayor) {
+    const nombre = d.tramo_mayor === 'sala_tanque' ? 'sala → tanque' : 'tanque → camión';
+    const v = d.totales['desvio_' + d.tramo_mayor + '_pct'];
+    html += `<div class="aviso" style="margin-top:8px">El tramo que más se desvía en el período es <b>${nombre}</b> (${balPct(v)}).</div>`;
+  }
+  document.getElementById('balance-cascada').innerHTML = html;
+}
+
+function pintarBalanceTabla(d) {
+  const filas = d.dias.slice().reverse().map(x =>
+    `<tr class="${x.cerrado || x.kg == null ? '' : 'bal-sin-cerrar'}"><td>${x.fecha.slice(8)}/${x.fecha.slice(5, 7)}</td>` +
+    `<td class="num">${x.lts_delpro == null ? '—' : fmt(x.lts_delpro)}</td>` +
+    `<td class="num">${x.lts_milky == null ? '—' : fmt(Math.round(x.lts_milky))}</td>` +
+    (d.comprador_disponible ? `<td class="num">${x.lts_comprador == null ? '—' : fmt(Math.round(x.lts_comprador))}</td>` : '') +
+    `<td>${balChip(x, 'sala_tanque')}</td>` +
+    (d.comprador_disponible ? `<td>${balChip(x, 'tanque_camion')}</td>` : '') + '</tr>').join('');
+  document.getElementById('balance-tabla').innerHTML = d.dias.length
+    ? '<table class="lac-table"><thead><tr><th>Día</th><th class="num">DelPro (L)</th><th class="num">Milky (L)</th>' +
+      (d.comprador_disponible ? '<th class="num">Comprador (L)</th>' : '') +
+      '<th>Sala → tanque</th>' + (d.comprador_disponible ? '<th>Tanque → camión</th>' : '') +
+      '</tr></thead><tbody>' + filas + '</tbody></table>'
+    : '';
+}
+
+async function cargarBalance() {
+  if (balanceCargando) return;
+  const info = document.getElementById('balance-info');
+  const iDesde = document.getElementById('balance-desde'), iHasta = document.getElementById('balance-hasta');
+  const btn = document.getElementById('balance-recalcular');
+  const params = new URLSearchParams({ tambo: tamboActual });
+  if (iDesde.value) params.set('desde', iDesde.value);
+  if (iHasta.value) params.set('hasta', iHasta.value);
+  balanceCargando = true; btn.disabled = true;
+  info.textContent = 'Consultando DelPro, Milky y La Serenísima…';
+  try {
+    const d = await pedirJSON('/api/balance/leche?' + params.toString());
+    iDesde.value = d.desde; iHasta.value = d.hasta;
+    document.getElementById('balance-factor').value = String(d.factor).replace('.', ',');
+    const dif = Math.round((d.factor / d.factor_densidad - 1) * 100);
+    document.getElementById('balance-factor-nota').textContent =
+      `Medido: ${balFactor(d.factor_defecto)} (17/10 al 02/11/2026). Por la densidad de la leche (≈1,03 kg/L) serían ≈${balFactor(d.factor_densidad)}: ` +
+      `DelPro queda ≈${dif}% por debajo de lo que miden Milky y el comprador, por una causa sin determinar.`;
+    chartBalance = graficaBalance('chart-balance', chartBalance, d.dias, d.umbral);
+    pintarBalanceTarjetas(d);
+    pintarBalanceTabla(d);
+    const cerrados = d.dias.filter(x => x.cerrado).length;
+    const alertas = d.dias.filter(x => x.alerta_sala_tanque || x.alerta_tanque_camion).length;
+    const corridas = d.dias.filter(x => x.corrida_sala_tanque || x.corrida_tanque_camion).length;
+    info.textContent = `${cerrados} día(s) de DelPro cerrados entre ${d.desde} y ${d.hasta} · ${alertas} con desvío >${d.umbral}%` +
+      (corridas ? ` · ${corridas} por fecha corrida` : '') + '.' +
+      (d.comprador_disponible ? '' : ' Sin datos de La Serenísima: solo se muestra sala → tanque.') +
+      (d.cicla_incompleto ? ' ⚠ CICLA puede estar incompleto para este rango.' : '');
+  } catch (e) {
+    info.textContent = 'Error: ' + e.message;
+  } finally {
+    balanceCargando = false; btn.disabled = false;
+  }
+}
+document.getElementById('balance-recalcular').addEventListener('click', cargarBalance);
+document.getElementById('balance-factor-guardar').addEventListener('click', async () => {
+  const nota = document.getElementById('balance-factor-nota');
+  try {
+    await pedirJSON('/api/balance/factor?tambo=' + encodeURIComponent(tamboActual), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ factor: document.getElementById('balance-factor').value }),
+    });
+    await cargarBalance();
+  } catch (e) {
+    nota.textContent = 'No se guardó: ' + e.message;
+  }
 });
 
 let chartLaserLitros = null, chartLaserGrasa = null, chartLaserProteinas = null,
@@ -13901,6 +14081,7 @@ function cargarDatosDePagina(id) {
   else if (id === 'entregas') {
     activarAPedido('cicla-info', cargarCicla, 'las cargas de CICLA', DEMORA);
     activarAPedido('comparar-info', cargarComparar, 'la comparación con el comprador', DEMORA);
+    activarAPedido('balance-info', cargarBalance, 'el balance de leche', DEMORA);
     activarAPedido('laser-info', cargarLaser, 'la calidad de La Serenísima', DEMORA);
   }
   else if (id === 'salud') { cargarSalud(); cargarComposicionRodeo(); }
@@ -15153,7 +15334,7 @@ document.querySelectorAll('.nav-item').forEach(el =>
   const BARRAS = { rutina: 'rutina-tabs', produccion: 'prod-tabs', repro: 'repro-tabs',
                    alimentacion: 'alim-tabs', salud: 'salud-tabs', configuracion: 'config-tabs' };
   // Páginas sin pestañas pero con varias tarjetas: el submenú salta a cada una.
-  const ANCLAS = { entregas: [['Entregas CICLA', 'cicla-card'], ['Caudalímetro vs. comprador', 'comparar-card'],
+  const ANCLAS = { entregas: [['Entregas CICLA', 'cicla-card'], ['Caudalímetro vs. comprador', 'comparar-card'], ['Balance de leche', 'balance-card'],
                               ['Calidad de leche', 'laser-card']] };
   const sidebar = document.getElementById('sidebar');
   const items = {}, subs = {}, grupoDe = {}, cuerpos = {}, titulos = {};
