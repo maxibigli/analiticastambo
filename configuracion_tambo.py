@@ -21,6 +21,7 @@ la página de Configuración los lee y guarda ahí directo, para no tener dos
 fuentes de verdad para lo mismo.
 """
 import json
+import math
 import os
 import re
 import threading
@@ -76,6 +77,7 @@ _CAMPOS_TEXTO = ("nombre", "ip", "usuario", "contrasena", "base_datos", "ruta_to
 # acepta solo lo que SQL Server permite en un nombre común.
 _RE_BASE_DATOS = re.compile(r"[A-Za-z0-9_.\-]{1,128}")
 _CAMPOS_BOOL = ("tiene_bcs", "tiene_podal")
+_CAMPOS_FLOAT = ("factor_kg_litros",)
 _CAMPOS_ENUM = {
     "sistema_actividad": SISTEMAS_ACTIVIDAD,
     "caudalimetro": CAUDALIMETROS,
@@ -190,6 +192,10 @@ DEFAULT = {
     "nvr_plantilla": None,
     "camara_seg_antes": None, "camara_seg_despues": None,
     "camaras": [],
+    # Litros por kg de DelPro para el "Balance de leche" (ver balance_leche.py).
+    # None = el defecto medido (balance_leche.FACTOR_DEFECTO). El rango válido lo
+    # controla balance_leche.guardar_factor.
+    "factor_kg_litros": None,
 }
 
 # Nombres que se buscan cuando la ruta configurada es una CARPETA. Los de toros
@@ -331,6 +337,17 @@ def guardar(tambo_id: str, datos: dict) -> dict:
                     entrantes[clave] = int(valor)
                 except (TypeError, ValueError):
                     raise ValueError(f"Valor inválido para {clave}: {valor!r} (se espera un entero)")
+        elif clave in _CAMPOS_FLOAT:
+            if valor in (None, ""):
+                entrantes[clave] = None
+            else:
+                try:
+                    numero = float(str(valor).replace(",", "."))
+                except (TypeError, ValueError):
+                    raise ValueError(f"Valor inválido para {clave}: {valor!r} (se espera un número)")
+                if not math.isfinite(numero):
+                    raise ValueError(f"Valor inválido para {clave}: {valor!r} (se espera un número finito)")
+                entrantes[clave] = numero
         elif clave in _CAMPOS_BOOL:
             entrantes[clave] = bool(valor)
         elif clave in _CAMPOS_ENUM:

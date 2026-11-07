@@ -103,3 +103,7 @@ bitacora_fotos/
 
 # Copias de resguardo locales antes de cambios grandes (no se comparten)
 porlasdudas/
+
+# Último día ya evaluado por el "Balance de leche" para no repetir alertas (ver balance_leche.py).
+# Estado propio de cada instalación.
+balance_leche_avisos.json
