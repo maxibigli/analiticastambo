@@ -3049,10 +3049,20 @@ día: **sala** (DelPro, `AnimalDaily.TotalYield`, en KILOS), **tanque** (Milky, 
 Toda la lógica es `balance_leche.py` (pura, sin base ni red); `app.py` trae los datos (`_balance_leche`) y
 `index.html` la dibuja (`cargarBalance`). Pruebas: `tests/` (`C:\Python314\python.exe -m unittest discover -s tests`).
 
-**El factor 1,05 L por kg es una CALIBRACIÓN, no una conversión física.** Medido con `medir_factor_litros.py` en
-SERVER-DELPRO (17 días, 17/10 al 02/11/2026): Milky da 1,0506 L por cada kg de DelPro; desvío 1,1 % por día y 0,2 %
-en ventanas de 7 días; la correlación es con el MISMO día (0,87; con ±1 día, 0,3). Por densidad (~1,03 kg/L) darían
-~0,971: DelPro queda ~8 % por debajo de lo que Milky y el comprador coinciden en medir, y la causa NO se conoce.
+**Los kg de DelPro incluyen las lecturas NO válidas (08/11/2026).** `AnimalDaily.IsYieldValid <> 1` marca un total
+del día incompleto en DelPro (faltan ordeños de esa vaca), pero esa leche sí fue al tanque. Medido con
+`medir_kg_invalidos.py` en SERVER-DELPRO (17 días, 17/10 al 02/11/2026): 33.287 kg, 1.406 filas (~83 por día), 2,83 %
+de lo válido. Sumarlos baja el cociente Milky/DelPro de 1,0506 a 1,0217 y lo vuelve más parejo (rango diario 0,023
+contra 0,049). El 02/11 (3.535 kg inválidos, el día con más) daba +3,2 % de "desvío" con el criterio anterior y da
++0,8 % con este: era leche medida de menos, no de más en el tanque. `sql_kg_diarios` suma todas las filas con leche;
+las `vacas` (con las que se decide el día cerrado) siguen siendo solo las identificadas con lectura válida.
+
+**El factor 1,02 L por kg es una CALIBRACIÓN, no una conversión física.** Medido con `medir_factor_litros.py` en
+SERVER-DELPRO (17 días, 17/10 al 02/11/2026): con todos los kg, Milky da 1,0217 L por cada kg de DelPro (antes, solo
+con lecturas válidas: 1,0506); la correlación es con el MISMO día (0,87; con ±1 día, 0,3). Por densidad (~1,03 kg/L)
+darían ~0,971: DelPro queda ~7,6 % por debajo de lo que Milky y el comprador coinciden en medir. Las lecturas
+inválidas explican solo el 34 % de ese faltante; el resto (~5 %) NO tiene causa conocida (¿medidores de sala que leen
+bajo? ¿leche que no pasa por ningún medidor?).
 Es editable en pantalla (solo admin, se guarda por tambo en `configuracion_tambos.json`, campo `factor_kg_litros`,
 rango 0,5 a 2,0). Hay que volver a medirlo cuando haya más datos (`medir_factor_litros.py`).
 

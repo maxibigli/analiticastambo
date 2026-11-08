@@ -152,7 +152,11 @@ class TestEntradas(unittest.TestCase):
     def test_sql_kg_diarios(self):
         sql = bl.sql_kg_diarios(datetime.date(2026, 10, 17), datetime.date(2026, 11, 2))
         self.assertIn("AnimalDaily", sql)
-        self.assertIn("IsYieldValid = 1", sql)
+        # Los kg incluyen las lecturas no válidas (leche real que va al tanque): el filtro de
+        # IsYieldValid = 1 ya no va en el WHERE, solo en el conteo de vacas del día cerrado.
+        self.assertNotIn("AND ad.IsYieldValid = 1 AND ad.TotalYield > 0", sql)
+        self.assertIn("ad.TotalYield > 0", sql)
+        self.assertIn("CASE WHEN ad.IsYieldValid = 1 AND b.Number > 0 THEN b.OID", sql)
         self.assertIn("2026-10-17", sql)
         self.assertIn("2026-11-02", sql)
         self.assertNotIn("HAVING", sql)
@@ -174,7 +178,7 @@ class TestFactor(unittest.TestCase):
         self.cfg = configuracion_tambo
 
     def test_defecto(self):
-        self.assertEqual(bl.factor_de("t"), 1.05)
+        self.assertEqual(bl.factor_de("t"), 1.02)
 
     def test_guardar_con_coma(self):
         self.assertEqual(bl.guardar_factor("t", "1,06"), 1.06)
@@ -194,7 +198,7 @@ class TestFactor(unittest.TestCase):
 
     def test_factor_por_tambo(self):
         bl.guardar_factor("a", 1.06)
-        self.assertEqual(bl.factor_de("b"), 1.05)
+        self.assertEqual(bl.factor_de("b"), 1.02)
 
 
 def _d(fecha, st=None, tc=None, corrida_st=False, corrida_tc=False):

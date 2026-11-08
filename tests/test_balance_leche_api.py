@@ -78,13 +78,13 @@ class TestBalance(Base):
         self.assertEqual(r.status_code, 200)
         d = r.get_json()
         self.assertEqual((d["desde"], d["hasta"]), ("2026-10-24", "2026-10-27"))
-        self.assertEqual(d["factor"], 1.05)
-        self.assertEqual(d["factor_defecto"], 1.05)
+        self.assertEqual(d["factor"], 1.02)
+        self.assertEqual(d["factor_defecto"], 1.02)
         self.assertIs(d["comprador_disponible"], True)
         self.assertIs(d["cicla_incompleto"], False)
         dias = {x["fecha"]: x for x in d["dias"]}
         self.assertEqual(len(dias), 4)
-        self.assertEqual(dias["2026-10-25"]["desvio_sala_tanque_pct"], -0.2)     # 74549 / (71116 x 1,05)
+        self.assertEqual(dias["2026-10-25"]["desvio_sala_tanque_pct"], 2.8)      # 74549 / (71116 x 1,02)
         self.assertEqual(dias["2026-10-25"]["desvio_tanque_camion_pct"], 52.1)
         for f in ("2026-10-25", "2026-10-26"):
             self.assertIs(dias[f]["corrida_tanque_camion"], True)

@@ -17,6 +17,13 @@ entre la sala, el tanque y el camión, y que ese desvío **avise como alerta** c
 
 ## Lo medido (base de las decisiones; no son supuestos)
 
+> **Actualización 08/11/2026.** Las cifras de esta sección (1,0506, "≈ 8 %") son de la primera medición, con
+> solo las lecturas válidas de DelPro (`IsYieldValid = 1`). `medir_kg_invalidos.py` mostró que las lecturas no
+> válidas son leche real que va al tanque (33.287 kg, 2,83 % en esos 17 días). Se incluyeron en los kg del
+> Balance: el cociente pasó a **1,0217** (factor por defecto **1,02**), más parejo día a día, y la diferencia
+> con la densidad quedó en ≈ 7,6 % (esos kg explican el 34 %; el resto no tiene causa conocida). Donde más abajo
+> dice 1,05 o "con `IsYieldValid = 1`", vale lo de este párrafo.
+
 Medición con `medir_factor_litros.py` (solo lectura) corrida en SERVER-DELPRO, 17 días consolidados
 (17/10 al 02/11/2026), tambo `ponderosa`:
 
@@ -54,11 +61,11 @@ La pantalla tiene tres bloques, en este orden:
 
 ### Cálculo
 
-- **DelPro en litros** = kg del día × **factor** (1,05 L/kg por defecto). El factor es editable en pantalla.
+- **DelPro en litros** = kg del día × **factor** (1,02 L/kg por defecto; era 1,05 solo con lecturas válidas). El factor es editable en pantalla.
   Solo lo cambian los usuarios con rol admin y queda guardado en el servidor (decisión del diseñador;
   no se fija en el código). La pantalla muestra siempre el factor usado y aclara que es una calibración
   medida, con la diferencia de ≈ 8 % respecto de la conversión por densidad.
-- **Kg de DelPro** = `AnimalDaily.TotalYield` con `IsYieldValid = 1`, **incluyendo la leche sin identificar**
+- **Kg de DelPro** = `AnimalDaily.TotalYield` de todas las filas con leche (también las de `IsYieldValid` distinto de 1), **incluyendo la leche sin identificar**
   (`BasicAnimal.Number = 0`), porque también sale por el tanque. Tomar solo los días **consolidados**.
   *Decisión del diseñador:* el piso de 50 vacas de `resumen.VACAS_MIN_DIA` es demasiado bajo para esto
   (en los 17 días medidos hubo entre 1.600 y 1.676 vacas por día, y el día sin cerrar tenía 0), así que

@@ -11,12 +11,19 @@ Este módulo es PURO (no toca la base ni la red): recibe los datos ya traídos y
 devuelve el balance. `app.py` trae los datos, expone los endpoints y engancha la
 alerta. Diseño y números medidos: docs/superpowers/specs/2026-11-07-balance-leche-design.md
 
-EL FACTOR kg -> litros ES UNA CALIBRACIÓN, NO UNA CONVERSIÓN FÍSICA. Medido el
-17/10 al 02/11/2026 con `medir_factor_litros.py`: Milky da 1,0506 L por cada kg de
-DelPro (desvío 1,1 % por día, 0,2 % en ventanas de 7 días). La conversión por
-densidad de la leche (~1,03 kg/L) daría ~0,971 L/kg: DelPro queda ~8 % por debajo
-de lo que Milky y el comprador coinciden en medir, por una causa que no se conoce.
-Por eso el factor se muestra siempre a la vista y es editable.
+LOS KG DE DELPRO INCLUYEN LAS LECTURAS NO VÁLIDAS (`IsYieldValid` distinto de 1).
+Son ordeños reales cuyo total del día quedó incompleto en DelPro, pero esa leche
+igual va al tanque. Medido el 17/10 al 02/11/2026 con `medir_kg_invalidos.py`: son
+33.287 kg (1.406 filas, 2,83 % de lo válido). Sumarlos baja el cociente Milky/DelPro
+de 1,0506 a 1,0217 y lo vuelve más parejo día a día (rango 0,023 contra 0,049). El
+02/11, con 3.535 kg inválidos, daba +3,2 % de "desvío" y con ellos da +0,8 %.
+
+EL FACTOR kg -> litros ES UNA CALIBRACIÓN, NO UNA CONVERSIÓN FÍSICA. Con esos kg,
+Milky da 1,0217 L por cada kg de DelPro (se usa 1,02). La conversión por densidad de
+la leche (~1,03 kg/L) daría ~0,971 L/kg: DelPro queda ~7,6 % por debajo de lo que
+Milky y el comprador coinciden en medir, y los kg inválidos explican solo el 34 % de
+esa diferencia. El resto (~5 %) sigue sin causa conocida. Por eso el factor se
+muestra siempre a la vista y es editable.
 """
 import datetime
 import json
@@ -27,7 +34,7 @@ import threading
 import cicla
 import configuracion_tambo
 
-FACTOR_DEFECTO = 1.05                 # L por kg de DelPro (medido, ver arriba)
+FACTOR_DEFECTO = 1.02                 # L por kg de DelPro, con lecturas no válidas (medido, ver arriba)
 FACTOR_DENSIDAD_TIPICO = 1 / 1.03     # ~0,971 L/kg: referencia, no se usa para calcular
 UMBRAL_PCT = cicla.UMBRAL_DIF_PCT     # ±3 %, el mismo de la tarjeta "Caudalímetro vs. comprador"
 # Un día de DelPro se da por cerrado si tiene al menos esta fracción de la mediana
@@ -54,7 +61,7 @@ def guardar_factor(tambo: str, valor) -> float:
     try:
         numero = float(str(valor).replace(",", "."))
     except (TypeError, ValueError):
-        raise ValueError(f"Factor inválido: {valor!r} (se espera un número, por ejemplo 1,05).")
+        raise ValueError(f"Factor inválido: {valor!r} (se espera un número, por ejemplo 1,02).")
     if not (FACTOR_MIN <= numero <= FACTOR_MAX):    # también rechaza nan e infinitos
         raise ValueError(f"Factor fuera de rango: {valor!r} (debe estar entre {FACTOR_MIN} y {FACTOR_MAX}).")
     configuracion_tambo.guardar(tambo, {"factor_kg_litros": numero})
@@ -63,16 +70,18 @@ def guardar_factor(tambo: str, valor) -> float:
 
 def sql_kg_diarios(desde: datetime.date, hasta: datetime.date) -> str:
     """Kg por día de ordeñe y vacas identificadas con leche, entre las fechas
-    (inclusive). Misma forma que `resumen.SQL_PRODUCCION_DIARIA` (sin filtro de
-    rebaño: así se midió el factor) pero sin HAVING: decidir qué día está cerrado
-    es de `calcular`, que conoce la mediana del período."""
+    (inclusive). Los kg suman TODAS las filas con leche, también las de lectura no
+    válida (esa leche va al tanque); las vacas cuentan solo las identificadas con
+    lectura válida, que es con lo que se midió el día cerrado. Sin filtro de rebaño
+    (así se midió el factor) y sin HAVING: decidir qué día está cerrado es de
+    `calcular`, que conoce la mediana del período."""
     return f"""
     SELECT CAST(ad.Date AS date) AS fecha,
            SUM(ad.TotalYield) AS kg,
-           COUNT(DISTINCT CASE WHEN b.Number > 0 THEN b.OID END) AS vacas
+           COUNT(DISTINCT CASE WHEN ad.IsYieldValid = 1 AND b.Number > 0 THEN b.OID END) AS vacas
     FROM AnimalDaily ad
     JOIN BasicAnimal b ON b.OID = ad.BasicAnimal
-    WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1 AND ad.TotalYield > 0
+    WHERE ad.GCRecord IS NULL AND ad.TotalYield > 0
       AND ad.Date >= '{desde.isoformat()}' AND ad.Date <= '{hasta.isoformat()}'
     GROUP BY ad.Date
     ORDER BY ad.Date

@@ -8,7 +8,8 @@ la app llega a DelPro y a Milky (SERVER-DELPRO). No imprime credenciales.
 
 Qué mira:
   * DelPro: AnimalDaily.TotalYield por día de ordeñe (identificadas + leche sin
-    identificar, Number = 0, que también sale por el tanque).
+    identificar, Number = 0, que también sale por el tanque), TAMBIÉN con lectura
+    no válida: igual que el Balance de leche (ver medir_kg_invalidos.py).
   * Milky: litros de TODAS las cargas del día (venta + guachera), porque todas
     salen del mismo tanque.
   * Solo cuentan los días de DelPro cerrados (criterio de balance_leche.PISO_VACAS): el último día y
@@ -38,9 +39,9 @@ r = db.run_query(f"""
     SELECT CAST(ad.Date AS date) AS fecha,
            SUM(CASE WHEN b.Number > 0 THEN ad.TotalYield ELSE 0 END) AS kg_ident,
            SUM(CASE WHEN b.Number = 0 THEN ad.TotalYield ELSE 0 END) AS kg_desc,
-           COUNT(DISTINCT CASE WHEN b.Number > 0 THEN b.OID END) AS vacas
+           COUNT(DISTINCT CASE WHEN ad.IsYieldValid = 1 AND b.Number > 0 THEN b.OID END) AS vacas
     FROM AnimalDaily ad JOIN BasicAnimal b ON b.OID = ad.BasicAnimal
-    WHERE ad.GCRecord IS NULL AND ad.IsYieldValid = 1 AND ad.TotalYield > 0
+    WHERE ad.GCRecord IS NULL AND ad.TotalYield > 0
       AND ad.Date >= '{(desde - datetime.timedelta(days=1)).isoformat()}'
       AND ad.Date <= '{(hasta + datetime.timedelta(days=1)).isoformat()}'
     GROUP BY ad.Date ORDER BY ad.Date
