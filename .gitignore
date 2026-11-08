@@ -39,6 +39,12 @@ lavado_programa.json
 # git ni compartirse entre instalaciones.
 pantalla_tv.json
 
+# Panel de despliegue (ver panel_despliegue.py): ajustes propios de cada
+# servidor (rutas, modo de Cloudflare) y los logs de lo que el panel lanzó.
+# Los ajustes no guardan secretos, pero son de cada instalación.
+panel_despliegue.json
+logs_panel/
+
 # Python
 __pycache__/
 *.pyc

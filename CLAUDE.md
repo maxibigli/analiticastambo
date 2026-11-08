@@ -3108,6 +3108,73 @@ tramo tanque → camión dejaba de alertar sin avisar (lo encontró el revisor f
 `/api/entregas/comparar` se refactorizó para compartir `_cargas_cicla` y `_entregas_laser` con el balance (misma
 caché); su respuesta no cambió (hay un test con la respuesta capturada antes del refactor).
 
+## Panel de despliegue: variables de entorno + actualizar/iniciar/parar (08/11/2026)
+
+`panel_despliegue.py` (lanzador `iniciar_panel.bat`, uso en INSTALL.md §11). Pedido del tambo:
+dejar de cargar variables con `setx` una por una y de andar con `actualizar.bat`/`iniciar.bat`
+al desplegar. **App de escritorio (tkinter) que se corre EN SERVER-DELPRO, proceso aparte de
+LactIA y sin puerto**: tiene que poder parar y levantar LactIA sin llevarse puesta, y maneja
+secretos y procesos de producción, así que una página alcanzable por el túnel de Cloudflare
+sería una puerta que no hace falta abrir. El núcleo (`Entorno`, `Despliegue`) no importa tkinter
+y es lo que prueban los tests; la pantalla (`Panel`) es una capa fina encima.
+
+**La regla que ordena el archivo: no confiar en que "el comando anduvo".** Cada acción verifica
+el estado real después —proceso, puerto, HTTP, el valor leído de vuelta del registro— porque el
+historial de este proyecto es de fallas silenciosas (`actualizar.bat` sin Administrador deja
+corriendo el código viejo; un `taskkill` sin permiso "termina" igual). Por eso `Parar` re-lista
+los procesos y `Entorno`/`Registro.escribir` lee de vuelta lo que escribió.
+
+**Variables: escribe al registro de Windows directo, no con `setx`** (`setx` trunca a 1024
+caracteres y se confunde con las comillas). Cuatro cosas que importan, y que están probadas:
+  * **Gana Usuario sobre Equipo.** Guardar en Equipo con un valor viejo en Usuario deja viendo el
+    valor viejo, que es exactamente el "reinicié y sigue igual". El panel muestra los dos alcances
+    (fila naranja si difieren) y ofrece quitar el del otro lado al guardar.
+  * **Al iniciar un proceso se le pasan las variables FRESCAS del registro** (`Entorno.para_hijo`),
+    no las que hereda el panel de cuando se abrió. Es lo que `setx` solo no logra: no llega a los
+    procesos ya creados (mismo problema que ya resolvió `cicla._variable` para MILKY_*).
+  * **`para_hijo` pisa solo las variables GESTIONADAS** (catálogo + las que el tambo agregó), no
+    todo el registro: el `Path` de Usuario se SUMA al del Equipo en Windows, y copiarlo tal cual
+    lo reemplazaría y rompería la búsqueda de `git` y `python`. Los `%VAR%` de un valor expandible
+    se resuelven contra el entorno que se le arma al hijo, no contra el del panel.
+  * **Tipo del valor**: `REG_SZ` salvo que ya fuera `REG_EXPAND_SZ` y el valor siga usando `%`;
+    con `REG_EXPAND_SZ` un `%` suelto dentro de una contraseña se "expandiría" y la cambiaría.
+    Un valor con salto de línea se RECHAZA en vez de recortarlo: no se cambia una contraseña sin avisar.
+
+**`CATALOGO` no se puede desactualizar en silencio**: hay una prueba que recorre todos los `.py`
+y falla si el código lee una variable (`os.environ`, `os.getenv`, `_variable(...)`, `VAR_* = "..."`)
+que no está en el catálogo. **Si agregás una variable nueva a la app, agregala también ahí** (las
+que se arman con f-string por tambo —`DELPRO_PWD_<TAMBO>`, `SENSEHUB_*`, `PODAL_CAM_*`— son
+familias por prefijo). Los secretos van marcados y salen ocultos; nunca se escriben al log ni a
+`panel_despliegue.json` (ese archivo guarda solo rutas y opciones; el token del túnel de
+Cloudflare va como variable `TUNNEL_TOKEN`, no en los argumentos).
+
+**Procesos: se buscan por NOMBRE DE SCRIPT en la línea de comandos** (`servidor.py`,
+`iot_lavado.py`), exigiendo el nombre entero —`servidor.py` no calza con `dummy_servidor.py`—, y
+se cierran con `taskkill /T /F` verificando después. Cierra TODOS los que calzan: el acceso
+directo de la Store y el intérprete real aparecen como dos `servidor.py` (ver "Respuesta inválida
+del servidor"). Lo que lanza el panel sale con `DETACHED_PROCESS`, con la salida a
+`logs_panel\*.log`, y con `PYTHONIOENCODING=utf-8` (con la salida a un archivo Python usa cp1252 y
+un emoji en un `print` tumbaría el servidor). **Actualizar** hace lo mismo que `actualizar.bat`
+pero avisa antes si hay cambios locales que el `reset --hard` descartaría, corta `git` por tiempo
+(sin prompt interactivo) y solo reinicia lo que estaba corriendo —el poller IoT no se arranca
+solo si estaba parado—. Cloudflare tiene dos modos (proceso / servicio de Windows, `auto` mira si
+existe el servicio), porque el servicio llegó a reiniciarse en bucle y el workaround fue correr
+`cloudflared` a mano; no se sabía cuál usa hoy el servidor.
+
+**Cómo se probó (29 pruebas, `tests/test_panel_despliegue.py`) y por qué así:** en esta PC la
+otra sesión tiene su servidor en el 5310, así que NADA toca lo real: las variables van a claves
+temporales de `HKCU\Software`; los procesos son un servidor de mentira en un puerto libre (que
+además lee un puerto de una variable propia, no `DELPRO_PORT`: un `HTTPServer` con reuso de
+dirección puede ROBARLE el puerto a otro proceso en Windows); y `actualizar` corre contra un
+repositorio git temporal con su "origen", **nunca contra el real —un `reset --hard` acá borraría
+trabajo ajeno—**. Lo que NO se pudo verificar desde acá, y es lo primero a mirar en el servidor:
+la reapertura como Administrador (UAC), el modo y la ruta de `cloudflared`, y qué intérprete de
+Python usa (por defecto el del propio panel). Por eso el primer uso es solo mirar el estado.
+
+**Limitación operativa que conviene tener presente:** los procesos que lanza el panel mueren si
+se CIERRA SESIÓN en el RDP (desconectar no los mata). Para que arranquen con la PC sigue haciendo
+falta el Programador de tareas; el panel no lo reemplaza (podría ofrecer crearlas: queda pendiente).
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

@@ -272,6 +272,39 @@ Detalle completo en `PRECALENTAR.md`.
 
 ---
 
+## 11. Panel de despliegue (variables de entorno + actualizar / iniciar / parar)
+
+Para no cargar variables con `setx` una por una ni andar con `actualizar.bat` e `iniciar.bat`:
+doble clic en **`iniciar_panel.bat`**, en el servidor. Se reabre solo como Administrador (Windows
+pide confirmación). Es una ventana de escritorio, no una página: no abre ningún puerto.
+
+- **Pestaña "Variables de entorno"**: todas las que lee la app, con su grupo y una ayuda. Los
+  secretos salen ocultos (casilla "Mostrar secretos"). «Equipo» las ven todos los usuarios y
+  tareas programadas; «Usuario» solo el usuario actual, y **si una variable está en los dos, gana
+  Usuario** (la fila sale naranja). Al guardar, el panel ofrece quitar el valor viejo del otro
+  alcance, para que no pise al nuevo.
+- **Pestaña "Servidor"**: estado, Iniciar / Parar / Reiniciar de LactIA, del poller del gateway
+  IoT (`iot_lavado.py`) y de Cloudflare; **Actualizar LactIA** (lo mismo que `actualizar.bat`:
+  `git fetch` + `reset --hard` + `pip install`, y reinicia lo que estaba corriendo); y
+  **Verificar acceso público**. Cada acción mira el estado real al terminar y lo cuenta en el log.
+
+**Primer uso en el servidor** (primero solo mirar, nada de botones que cambien algo):
+1. `git pull` a mano (la primera vez; después el panel se actualiza con LactIA) y abrir el panel.
+2. En "Servidor" tiene que reflejar la realidad: ¿LactIA corriendo? ¿el poller IoT? ¿Cloudflare?
+3. **Ajustes…**: si Cloudflare corre como servicio de Windows o como proceso, y la ruta de
+   `cloudflared.exe` si no la encuentra. El token del túnel (si se usa) va en la variable
+   `TUNNEL_TOKEN`, **no** en los argumentos: el archivo de ajustes no es privado.
+4. Recién después probar Parar / Iniciar de a un componente.
+
+Cosas a saber:
+- Los procesos que lanza el panel **mueren si se cierra la sesión de Windows** (en RDP, cerrar
+  sesión). Hay que **desconectar**, no cerrar sesión. Para que arranquen con la PC sigue haciendo
+  falta el Programador de tareas (sección 7), que el panel no reemplaza.
+- Cambiar una variable no afecta a LactIA ya corriendo: hay que reiniciarla (el panel lo avisa).
+- Los logs de lo que lanzó el panel quedan en `logs_panel\` (`lactia.log`, `iot.log`, `cloudflared.log`).
+
+---
+
 ## Conexión segura a la base de producción (en la red)
 
 > Para cuando la app se conecta a la base **DDM de la rotativa que está grabando
