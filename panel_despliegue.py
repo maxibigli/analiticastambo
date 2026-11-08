@@ -640,7 +640,11 @@ class Despliegue:
         modo = self.aj["cloudflared_modo"]
         if modo in ("proceso", "servicio"):
             return modo
-        return "servicio" if self._servicio_estado() else "proceso"
+        # auto: manda lo que está pasando, no lo que existe. En SERVER-DELPRO el servicio de
+        # Windows EXISTE pero está detenido (se reiniciaba en bucle) y el túnel corre como un
+        # proceso suelto: decidir por "existe" hacía que Parar detuviera un servicio ya parado,
+        # dijera OK y dejara el túnel andando.
+        return "servicio" if self._servicio_estado().lower() == "running" else "proceso"
 
     def _exe_cloudflared(self) -> str:
         candidatos = [self.aj.get("cloudflared_exe"), shutil.which("cloudflared"),
@@ -650,7 +654,8 @@ class Despliegue:
         for c in candidatos:
             if c and os.path.isfile(c):
                 return c
-        raise ErrorPanel("No encuentro cloudflared.exe. Indicá la ruta en Ajustes.")
+        raise ErrorPanel("No encuentro cloudflared.exe. Indicá la ruta en Ajustes (o, si lo corrés como "
+                         "servicio de Windows, poné el modo «servicio»).")
 
     def _esperar_servicio(self, estado: str) -> bool:
         for _ in range(40):
@@ -694,24 +699,25 @@ class Despliegue:
         return self.verificar_publico(espera=40)
 
     def parar_cloudflared(self) -> bool:
-        modo = self.modo_cloudflared()
-        if modo == "servicio" and self._servicio_estado():
+        """Para el túnel sea como corra: si el servicio de Windows está en marcha lo detiene (matarlo
+        como proceso haría que Windows lo vuelva a levantar), y después cierra cualquier proceso que
+        quede, que es el caso del túnel corrido a mano. Termina verificando que no quede ninguno."""
+        servicio_andaba = self._servicio_estado().lower() == "running"
+        if servicio_andaba:
             nombre = self.aj["cloudflared_servicio"]
-            self.log(f"Parando el servicio «{nombre}»")
+            self.log(f"Parando el servicio de Windows «{nombre}»")
             _ps(f"Stop-Service -Name '{nombre}' -Force", 60)
-            ok = self._esperar_servicio("Stopped")
-            self.log("OK: servicio parado." if ok else "ERROR: el servicio no se detuvo (¿Administrador?).")
-            return ok
+            if not self._esperar_servicio("Stopped"):
+                self.log("ERROR: el servicio no se detuvo (¿Administrador?).")
+                return False
         procs = self._de_cloudflared()
-        if not procs:
-            self.log("Cloudflare ya estaba parado.")
-            return True
-        if self._servicio_estado().lower() == "running":
-            self.log("AVISO: es un servicio de Windows; si lo matás como proceso, Windows lo vuelve a levantar.")
-        ok = self._matar(procs, "Cloudflare")
-        if ok:
-            self.log("OK: Cloudflare parado.")
-        return ok
+        if procs and not self._matar(procs, "Cloudflare"):
+            return False
+        if self._de_cloudflared():
+            self.log("ERROR: cloudflared sigue corriendo.")
+            return False
+        self.log("OK: Cloudflare parado." if (servicio_andaba or procs) else "Cloudflare ya estaba parado.")
+        return True
 
     def reiniciar_cloudflared(self) -> bool:
         return self.parar_cloudflared() and self.iniciar_cloudflared()
@@ -981,11 +987,16 @@ class Panel:
                     f"Corriendo · PID {', '.join(str(p['pid']) for p in iot)} · desde {hora(iot[0])}" if iot else "Parado")
 
         cf = e["cloudflared"]
-        srv = f" · servicio de Windows: {cf['servicio']}" if cf["servicio"] else ""
+        servicio = cf["servicio"]
         if cf["procesos"]:
-            self._poner("cloudflared", verde, f"Corriendo · PID {', '.join(str(p['pid']) for p in cf['procesos'])}{srv}")
+            pids = ", ".join(str(p["pid"]) for p in cf["procesos"])
+            if servicio.lower() == "running":
+                self._poner("cloudflared", verde, f"Corriendo como servicio de Windows · PID {pids}")
+            else:
+                nota = f" (el servicio de Windows existe pero está {servicio})" if servicio else ""
+                self._poner("cloudflared", verde, f"Corriendo como proceso suelto · PID {pids}{nota}")
         else:
-            self._poner("cloudflared", rojo, f"Parado{srv}")
+            self._poner("cloudflared", rojo, "Parado" + (f" · servicio de Windows: {servicio}" if servicio else ""))
 
     def _poner(self, clave: str, color: str, texto: str) -> None:
         punto, lbl = self.est[clave]

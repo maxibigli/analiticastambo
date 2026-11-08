@@ -3227,6 +3227,16 @@ script en SERVER-DELPRO para ver si algún tambo los carga hoy.
 también vacío acá: de tener datos podría reemplazar el precio ESTIMADO de la planilla de precios (ver
 "impacto económico del RCS"). Queda anotado, sin hacer.
 
+## Panel de despliegue: Cloudflare como proceso suelto con el servicio detenido (08/11/2026)
+
+Primera prueba en SERVER-DELPRO: el panel mostró "Corriendo · PID … · servicio de Windows: Stopped": el
+servicio de Windows EXISTE pero está detenido y el túnel corre como un proceso suelto (el que se
+arrancó a mano cuando el servicio se reiniciaba en bucle). La primera versión decidía el modo por
+"existe un servicio" y habría detenido un servicio ya parado, dicho OK y dejado el túnel andando.
+Ahora `modo_cloudflared()` en `auto` manda lo que está PASANDO (servicio solo si está `Running`), y
+`parar_cloudflared()` detiene el servicio si anda y después cierra cualquier proceso que quede,
+verificando que no quede ninguno. Probado con servicio/procesos simulados (`TestCloudflared`).
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

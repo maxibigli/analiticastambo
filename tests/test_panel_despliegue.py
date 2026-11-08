@@ -395,6 +395,73 @@ class TestActualizar(_ConRegistroTemporal):
         self.assertEqual(self.d._del_script("dummy_iot.py"), [])   # el IoT no estaba corriendo: sigue parado
 
 
+class TestCloudflared(_ConRegistroTemporal):
+    """El caso de SERVER-DELPRO: el servicio de Windows EXISTE pero está detenido, y el túnel corre
+    como un proceso suelto (el que se arrancó a mano). Todo con procesos y servicio simulados."""
+
+    def armar(self, servicio, pids):
+        self.lineas, self.matados, self.ps = [], [], []
+        self.estado = {"servicio": servicio, "procs": [{"pid": p, "nombre": "cloudflared.exe"} for p in pids]}
+        d = pd.Despliegue(dict(pd.AJUSTES_DEFECTO), pd.Entorno(usuario=self.clave(), equipo=self.clave()),
+                          log=self.lineas.append)
+        d._servicio_estado = lambda: self.estado["servicio"]
+        d._de_cloudflared = lambda procesos=None: list(self.estado["procs"])
+
+        def matar(procs, que):
+            self.matados += [p["pid"] for p in procs]
+            self.estado["procs"] = []
+            return True
+        d._matar = matar
+
+        def ps(script, timeout=40):
+            self.ps.append(script)
+            if "Stop-Service" in script:                 # parar el servicio termina también su proceso
+                self.estado["servicio"], self.estado["procs"] = "Stopped", []
+            return ""
+        p = mock.patch.object(pd, "_ps", side_effect=ps)
+        p.start()
+        self.addCleanup(p.stop)
+        return d
+
+    def test_proceso_suelto_con_servicio_detenido_se_cierra_el_proceso(self):
+        d = self.armar("Stopped", [6552])
+        self.assertEqual(d.modo_cloudflared(), "proceso")
+        self.assertTrue(d.parar_cloudflared())
+        self.assertEqual(self.matados, [6552], "tenía que cerrar el proceso, no 'parar' un servicio ya parado")
+        self.assertFalse([s for s in self.ps if "Stop-Service" in s])
+        self.assertEqual(self.estado["procs"], [])
+
+    def test_servicio_en_marcha_se_detiene_como_servicio(self):
+        d = self.armar("Running", [100])
+        self.assertEqual(d.modo_cloudflared(), "servicio")
+        self.assertTrue(d.parar_cloudflared())
+        self.assertTrue([s for s in self.ps if "Stop-Service" in s])
+        self.assertEqual(self.matados, [], "ya lo terminó el servicio: no hay nada más que matar")
+
+    def test_si_no_se_puede_cerrar_no_dice_que_lo_logro(self):
+        d = self.armar("Stopped", [6552])
+        d._matar = lambda procs, que: False
+        self.assertFalse(d.parar_cloudflared())
+
+    def test_nada_corriendo(self):
+        d = self.armar("", [])
+        self.assertTrue(d.parar_cloudflared())
+        self.assertIn("ya estaba parado", "\n".join(self.lineas))
+
+    def test_iniciar_con_el_tunel_ya_corriendo_no_lanza_otro(self):
+        d = self.armar("Stopped", [6552])
+        with mock.patch.object(pd.subprocess, "Popen", side_effect=AssertionError("no debía lanzar nada")):
+            self.assertTrue(d.iniciar_cloudflared())
+        self.assertIn("ya está corriendo", "\n".join(self.lineas))
+
+    def test_el_modo_forzado_manda_sobre_lo_detectado(self):
+        d = self.armar("Running", [])
+        d.aj["cloudflared_modo"] = "proceso"
+        self.assertEqual(d.modo_cloudflared(), "proceso")
+        d.aj["cloudflared_modo"] = "servicio"
+        self.assertEqual(d.modo_cloudflared(), "servicio")
+
+
 class TestPantalla(_ConRegistroTemporal):
     """Humo de la pantalla: se arma, muestra, enmascara los secretos y se destruye sin romper."""
 
