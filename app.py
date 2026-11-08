@@ -724,6 +724,19 @@ def _merito_ctx(tambo: str, herd=None):
     return merito.preparar(data["vida"], data["prod"])
 
 
+def _precios_del_tambo(tambo: str) -> dict:
+    """La planilla de precios del tambo con el precio de la leche de ⚙ Configuración (si lo cargó) por encima.
+    TODO lo que valúa leche pasa por acá: leer la planilla directo ignoraría el precio configurado."""
+    precio = configuracion_tambo.config_de(tambo).get("precio_leche")
+    try:
+        pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+    except Exception:  # noqa: BLE001 - sin planilla legible, el precio configurado igual alcanza para la leche
+        if not precio:
+            raise
+        pr = {"precios": {}, "precio_litro": None}
+    return precios_alimentos.aplicar_precio_leche(pr, precio)
+
+
 def _costo_mixer(tambo: str, desde, hasta):
     """({(lote, fecha): $}, precio_litro, resumen_precios), cacheado.
 
@@ -736,7 +749,7 @@ def _costo_mixer(tambo: str, desde, hasta):
     data, _ = _cache_get(clave, allow_stale=True, ttl=RENT_CACHE_TTL_S)
     if data is None:
         consumos = proveedores.de(tambo).consumos(desde, hasta)
-        pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+        pr = _precios_del_tambo(tambo)
         costo = {}
         if pr.get("precios"):
             costo, _diag = alimentacion.costo_por_lote_dia(consumos, pr["precios"])
@@ -951,7 +964,7 @@ def _calentar_alimentacion(tambo: str, herd):
         ms, diag = alimentacion.ms_por_lote_dia(consumos)
         costo, diag_costo, precio_litro = {}, {}, None
         try:
-            pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+            pr = _precios_del_tambo(tambo)
             if pr.get("precios"):
                 costo, diag_costo = alimentacion.costo_por_lote_dia(consumos, pr["precios"])
             precio_litro = pr.get("precio_litro")
@@ -1626,9 +1639,10 @@ def api_configuracion_bases():
 
 
 def _olvidar_datos_de(tambo: str):
-    """Tira lo que se calculó con la conexión anterior de este tambo. Se llama al
+    """Tira lo que se calculó antes de un cambio de configuración de este tambo. Se llama al
     guardar la configuración: si cambió la base, el caché (30-60 min de vida) y los
-    hechos "esta base tiene tal tabla" seguirían describiendo la otra."""
+    hechos "esta base tiene tal tabla" seguirían describiendo la otra; si cambió el precio de
+    la leche, los costos cacheados seguirían valuados con el viejo."""
     prefijo = tambo + ":"
     with _cache_lock:
         for k in [k for k in _cache if k.startswith(prefijo)]:
@@ -1645,6 +1659,7 @@ def api_guardar_configuracion():
     tambo = _tambo_del_request()
     datos = dict(request.json or {})
     base_anterior = tambos.conexion(tambo).get("database")
+    precio_anterior = configuracion_tambo.config_de(tambo).get("precio_leche")
     # Campo de UI, no de configuracion_tambo.guardar(): si el usuario no tocó
     # el campo contraseña (lo dejó en blanco a propósito, ver el frontend),
     # no hay que pisar la que ya estaba guardada con un vacío.
@@ -1656,7 +1671,9 @@ def api_guardar_configuracion():
         cfg = configuracion_tambo.guardar(tambo, datos)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    if tambos.conexion(tambo).get("database") != base_anterior:
+    # Cambió la base: el caché describe la otra. Cambió el precio de la leche: Alimentación y Rentabilidad
+    # cachean 6 horas el costo con ese precio adentro y seguirían mostrando el viejo.
+    if tambos.conexion(tambo).get("database") != base_anterior or cfg.get("precio_leche") != precio_anterior:
         _olvidar_datos_de(tambo)
     cfg["contrasena_configurada"] = bool(cfg.pop("contrasena"))
     cfg["nvr_contrasena_configurada"] = bool(cfg.pop("nvr_contrasena"))
@@ -2452,7 +2469,7 @@ def api_salud_rcs_informe():
     except ValueError:
         return jsonify({"error": "Las fechas tienen que ser AAAA-MM-DD."}), 400
     try:
-        pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+        pr = _precios_del_tambo(tambo)
         precio = pr.get("precio_litro")
         info = {"estimado": pr.get("leche_estimada"), "via": pr.get("leche_via"),
                 "usd_litro": pr.get("leche_usd_litro"), "tipo_cambio": pr.get("tipo_cambio")}
@@ -5738,11 +5755,11 @@ def _camion_balance(tambo: str, desde: datetime.date, hasta: datetime.date):
 
 
 def _precio_leche_balance(tambo: str) -> dict:
-    """Precio del litro de leche de la planilla de precios del tambo, para valuar la diferencia tanque -> camión
-    del Balance. Nunca lanza ni inventa un precio: sin planilla (o sin la fila de leche) `valor` es None y el
+    """Precio del litro de leche del tambo (el de ⚙ Configuración si lo cargó; si no, el de la planilla de
+    precios), para valuar la diferencia tanque -> camión del Balance. Nunca lanza ni inventa un precio: sin planilla (o sin la fila de leche) `valor` es None y el
     Balance sale igual, sin pesos. `estimado`: la planilla marca ese precio como ESTIMADO (mostrarlo junto a la cifra)."""
     try:
-        pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+        pr = _precios_del_tambo(tambo)
     except Exception as exc:  # noqa: BLE001 - sin planilla legible no hay pesos, pero el balance sí
         return {"valor": None, "estimado": False, "via": None, "usd_litro": None, "tipo_cambio": None,
                 "error": f"No se pudo leer la planilla de precios: {exc}"}
@@ -6589,7 +6606,7 @@ def api_alimentacion_conversion():
                 # seguir saliendo igual.
                 costo, diag_costo, precio_litro = {}, {}, None
                 try:
-                    pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+                    pr = _precios_del_tambo(tambo)
                     if pr.get("precios"):
                         costo, diag_costo = alimentacion.costo_por_lote_dia(
                             consumos, pr["precios"])
@@ -6705,7 +6722,7 @@ def api_alimentacion_conversion_historica():
                 # planilla que el tambo mantiene a mano.
                 costo, precio_litro, res_precios = {}, None, {}
                 try:
-                    pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+                    pr = _precios_del_tambo(tambo)
                     if pr.get("precios"):
                         costo, _dc = alimentacion.costo_por_lote_dia(consumos, pr["precios"])
                     precio_litro = pr.get("precio_litro")

@@ -3140,8 +3140,8 @@ factor que usa el balance, un día normal da ≈ 0 %. Se vio en el navegador con
 - **El total del período es la suma NETA** de los días con par tanque+comprador (`totales.lts_dif_camion/valor_dif_camion`):
   las fechas corridas se compensan solas (25/26-oct: +24.890 y −25.851 L son −961 L, no 50.000). Por eso las celdas de
   un día en `corrida_tanque_camion` van en violeta con un `title` que dice que no es plata a recuperar.
-- **Precio**: `app._precio_leche_balance` lee la planilla de precios del tambo (`precios_alimentos.leer(ruta_precios)`,
-  `precio_litro`). Nunca lanza ni inventa un precio (regla de este archivo: sin precio no hay pesos): sin planilla, sin
+- **Precio**: `app._precio_leche_balance` toma el precio de `app._precios_del_tambo` (ver "Precio de la leche en
+  ⚙ Configuración" abajo): el que cargó el tambo y, si no hay, el de la planilla de precios (`precio_litro`). Nunca lanza ni inventa un precio (regla de este archivo: sin precio no hay pesos): sin planilla, sin
   la fila de leche o con precio 0 sale `precio_leche.valor = None` + `error`, los litros se muestran igual y la pantalla
   pide cargar el precio. Si la planilla marca el precio como ESTIMADO (`leche_estimada`) se avisa en rojo junto a la plata.
   La respuesta trae `precio_leche {valor, estimado, via, usd_litro, tipo_cambio, error}`.
@@ -3152,6 +3152,16 @@ factor que usa el balance, un día normal da ≈ 0 %. Se vio en el navegador con
 - `calcular(..., precio_litro=)` es opcional: sin él nada de lo anterior cambia. Tests: `TestPlataYOtrosDestinos` y los
   `test_*precio*` de `tests/test_balance_leche_api.py` (la `Base` simula una planilla SIN precio, así que las pruebas no
   leen la planilla real de la PC). Visto en el navegador con datos de ejemplo (con precio estimado, y sin precio).
+
+**Precio de la leche en ⚙ Configuración (08/11/2026).** Campo `precio_leche` ($ por litro, por tambo; ⚙ Configuración >
+Entrega de leche). **Si está cargado MANDA sobre el de la planilla de precios** (que suele venir marcado ESTIMADO: USD 0,35 ×
+cambio) y deja de ser "estimado" (`leche_via = "configuracion"`); vacío = se usa la planilla, como antes. Se valida > 0
+(`configuracion_tambo.guardar`). Vale en TODO lo que valúa leche porque ahora hay un solo lugar que lee la planilla,
+`app._precios_del_tambo` (antes eran seis lecturas directas): Balance de leche, Alimentación, Rentabilidad e informe de RCS.
+Hay una prueba que falla si alguien vuelve a leer `precios_alimentos.leer(` directo. Con el precio configurado y la planilla
+ilegible igual hay precio; sin precio configurado y planilla ilegible se lanza lo mismo que antes. Al guardar un precio
+distinto se borra el caché del tambo (`_olvidar_datos_de`): alimentación y rentabilidad cachean 6 horas el costo con el precio
+adentro y seguirían mostrando el viejo. A futuro el precio podría salir de una API; hoy lo carga el tambo.
 
 ## Panel de despliegue: variables de entorno + actualizar/iniciar/parar (08/11/2026)
 

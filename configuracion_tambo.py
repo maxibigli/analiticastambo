@@ -82,7 +82,7 @@ _CAMPOS_TEXTO = ("nombre", "ip", "usuario", "contrasena", "base_datos", "ruta_to
 # acepta solo lo que SQL Server permite en un nombre común.
 _RE_BASE_DATOS = re.compile(r"[A-Za-z0-9_.\-]{1,128}")
 _CAMPOS_BOOL = ("tiene_bcs", "tiene_podal")
-_CAMPOS_FLOAT = ("factor_kg_litros",)
+_CAMPOS_FLOAT = ("factor_kg_litros", "precio_leche")
 _CAMPOS_ENUM = {
     "sistema_actividad": SISTEMAS_ACTIVIDAD,
     "caudalimetro": CAUDALIMETROS,
@@ -201,6 +201,10 @@ DEFAULT = {
     # None = el defecto medido (balance_leche.FACTOR_DEFECTO). El rango válido lo
     # controla balance_leche.guardar_factor.
     "factor_kg_litros": None,
+    # Precio de la leche en $ por litro. Si está cargado MANDA sobre el de la planilla de precios (que suele venir
+    # marcado ESTIMADO) en todo lo que valúa leche: Balance de leche, Alimentación, Rentabilidad, informe de RCS.
+    # None = se usa la planilla, como siempre. Ver precios_alimentos.aplicar_precio_leche.
+    "precio_leche": None,
 }
 
 # Nombres que se buscan cuando la ruta configurada es una CARPETA. Los de toros
@@ -352,6 +356,9 @@ def guardar(tambo_id: str, datos: dict) -> dict:
                     raise ValueError(f"Valor inválido para {clave}: {valor!r} (se espera un número)")
                 if not math.isfinite(numero):
                     raise ValueError(f"Valor inválido para {clave}: {valor!r} (se espera un número finito)")
+                if clave == "precio_leche" and numero <= 0:
+                    raise ValueError(f"Valor inválido para {clave}: {valor!r} (el precio por litro tiene que ser mayor "
+                                     "que cero; dejalo vacío para usar el de la planilla de precios)")
                 entrantes[clave] = numero
         elif clave in _CAMPOS_BOOL:
             entrantes[clave] = bool(valor)

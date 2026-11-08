@@ -202,6 +202,30 @@ class TestBalance(Base):
         self.assertIsNone(d["totales"]["valor_dif_camion"])
 
 
+    def test_el_precio_de_configuracion_manda_sobre_la_planilla(self):
+        configuracion_tambo.guardar(TAMBO, {"precio_leche": 600})
+        planilla = {"precio_litro": 500.0, "leche_estimada": True, "leche_via": "usd", "leche_usd_litro": 0.33}
+        with mock.patch.object(app.precios_alimentos, "leer", lambda *a, **k: planilla):
+            d = self._get().get_json()
+        p = d["precio_leche"]
+        self.assertEqual((p["valor"], p["estimado"], p["via"]), (600.0, False, "configuracion"))
+        self.assertIsNone(p["error"])
+        dias = {x["fecha"]: x for x in d["dias"]}
+        self.assertEqual(dias["2026-10-25"]["valor_dif_camion"], 14934000)          # 24.890 L x $600
+        self.assertEqual(d["totales"]["valor_dif_camion"], -536400)                  # -894 L x $600
+
+    def test_el_precio_de_configuracion_alcanza_sin_planilla(self):
+        configuracion_tambo.guardar(TAMBO, {"precio_leche": 600})
+        d = self._get().get_json()          # la Base simula una planilla sin precio
+        self.assertEqual(d["precio_leche"]["valor"], 600.0)
+        self.assertEqual(d["totales"]["valor_dif_camion"], -536400)
+
+    def test_un_precio_de_configuracion_se_nota_aunque_la_planilla_no_se_pueda_leer(self):
+        configuracion_tambo.guardar(TAMBO, {"precio_leche": 600})
+        with mock.patch.object(app.precios_alimentos, "leer", side_effect=RuntimeError("abierto en Excel")):
+            d = self._get().get_json()
+        self.assertEqual(d["precio_leche"]["valor"], 600.0)
+
 
 class TestCacheVencida(Base):
     """Los datos del comprador y de Milky no pueden quedar congelados en la caché: la alerta del balance los

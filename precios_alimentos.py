@@ -219,6 +219,18 @@ def leer(ruta: str = None) -> dict:
         return datos
 
 
+def aplicar_precio_leche(datos: dict, precio) -> dict:
+    """La planilla de `leer()` con el precio de la leche que el tambo cargó en ⚙ Configuración, si lo hay.
+
+    Ese precio manda sobre el de la planilla y ya no es "estimado": lo puso el tambo. Devuelve una COPIA
+    (`leer()` entrega el dato cacheado, que no se puede tocar). Sin precio configurado (None, 0 o vacío)
+    devuelve la planilla tal cual. Los ingredientes y el tipo de cambio no se tocan."""
+    if not precio:
+        return datos
+    return {**datos, "precio_litro": float(precio), "leche_via": "configuracion",
+            "leche_estimada": False, "leche_usd_litro": None}
+
+
 def de(nombre, datos: dict = None) -> dict | None:
     """Precio de un ingrediente por su nombre, como lo escribe el mixer."""
     d = datos if datos is not None else leer()

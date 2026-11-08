@@ -3740,7 +3740,14 @@
       <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Usina láctea
         <select id="cfg-usina-lactea" style="padding:7px 8px"></select>
       </label>
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Precio de la leche ($ por litro)
+        <input type="text" inputmode="decimal" id="cfg-precio-leche" placeholder="vacío = el de la planilla"
+               style="width:170px;padding:7px 8px">
+      </label>
     </div>
+    <div class="aviso" style="margin-top:4px">El precio que cargues acá se usa en todo lo que valúa leche (Balance de leche,
+      Alimentación, Rentabilidad, informe de RCS) y manda sobre el de la planilla de precios, que suele venir marcado como
+      ESTIMADO. Vacío = se usa la planilla.</div>
 
     <div class="aviso" style="margin:16px 0 6px;font-weight:600">Alimentación</div>
     <div class="controls" style="flex-wrap:wrap;gap:14px">
@@ -14466,6 +14473,7 @@ async function cargarConfiguracion() {
     _llenarSelect('cfg-sistema-alimentacion', [SIN_OVERRIDE, ...cat.sistema_alimentacion],
                   cfg.sistema_alimentacion || '');
     _llenarSelect('cfg-sala', [SIN_OVERRIDE, ...cat.sala], cfg.sala || '');
+    document.getElementById('cfg-precio-leche').value = cfg.precio_leche == null ? '' : String(cfg.precio_leche).replace('.', ',');
     document.getElementById('cfg-personas').value = cfg.personas || '';
     document.getElementById('cfg-arreo').value = cfg.arreo_min ?? '';
     document.getElementById('cfg-ordenos-dia').value = cfg.ordenos_dia ?? '';
@@ -15484,6 +15492,7 @@ document.getElementById('config-guardar').addEventListener('click', async () => 
     sistema_actividad: document.getElementById('cfg-sistema-actividad').value,
     caudalimetro: document.getElementById('cfg-caudalimetro').value,
     usina_lactea: document.getElementById('cfg-usina-lactea').value,
+    precio_leche: document.getElementById('cfg-precio-leche').value.trim() || null,
     sistema_alimentacion: document.getElementById('cfg-sistema-alimentacion').value || null,
     sala: document.getElementById('cfg-sala').value || null,
     personas: numOrNull(document.getElementById('cfg-personas').value),
