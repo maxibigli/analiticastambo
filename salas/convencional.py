@@ -166,6 +166,42 @@ def cantidad_puestos(tambo: str) -> int:
     return cfg["lados"] * cfg["puestos_por_lado"]
 
 
+# `SessionMilkYield.EndTime` NO SIEMPRE ES UN DATO: en algunos días el equipo graba
+# un relleno fijo (las 21:00:00 locales = medianoche UTC) en lugar del retiro real.
+# Cae ANTES del comienzo en los ordeños que arrancan pasadas las 21:00 (fin < comienzo,
+# duración de hasta -40.000 s) y DESPUÉS por segundos en los que arrancan en los
+# minutos previos (ver `_DUR_SEG` para el detalle medido). Un fin <= comienzo se toma
+# como DESCONOCIDO (NULL): no se inventa una duración ni se reemplaza por otra hora.
+# Es lo único que se puede descartar con seguridad; los componentes que dependen de
+# conocer el fin de CADA vaca exigen además `FIN_VALIDO_MIN` (ver abajo).
+_FIN_VALIDO = "CASE WHEN y.EndTime > y.BeginTime THEN y.EndTime END"
+
+# Fracción mínima de visitas con fin válido para puntuar lo que depende de los
+# intervalos ordeño a ordeño: sala parada (`entre_grupos`, `manejo_corral`),
+# ocupación y vacas lerdas. Medido en La Martina el 27/10/2026: una sesión con 15% de
+# fines válidos daba "1.651 min de exceso" de sala parada en 380 min de sesión, porque
+# una vaca sin fin conocido no ocupa la sala y entonces la sala "está vacía". Las
+# sesiones afectadas medidas tenían entre 15% y 56% de fines válidos; las sanas, 100%, y
+# las rozadas por el problema, 97-99%. Debajo del mínimo el componente queda SIN DATO y
+# su peso se reparte entre el resto, igual que "colocación" cuando falta el dato.
+FIN_VALIDO_MIN = 0.9
+
+
+def _cobertura_fin(visitas: list) -> float:
+    """Fracción de las visitas con arranque y fin de ordeño válidos (fin > arranque)."""
+    if not visitas:
+        return 1.0
+    ok = sum(1 for v in visitas
+             if v.get("hora_coloc") and v.get("hora_fin") and v["hora_fin"] > v["hora_coloc"])
+    return ok / len(visitas)
+
+
+def _sin_fin_suficiente(nombre: str, cobertura: float) -> str:
+    return (f"No se puede medir {nombre}: solo el {round(100 * cobertura)}% de los ordeños de esta "
+            f"sesión tiene hora de fin válida (el equipo grabó un relleno en el resto), y sin el fin "
+            f"no se sabe cuándo quedó libre cada puesto. No se puntúa.")
+
+
 def sql_rutina(fecha: str) -> str:
     """Visitas de un día (+6h de margen a cada lado, mismo criterio que
     `rutina.sql_rutina`). `lado`/`bloque` viajan además de las columnas comunes:
@@ -202,7 +238,7 @@ def sql_rutina(fecha: str) -> str:
         SELECT ex.MPCNo AS puesto, b.Number AS rp, b.[Group] AS grupo,
                COALESCE(ex.IdTimestamp, y.BeginTime) AS hora_id,
                CASE WHEN ex.IdTimestamp IS NULL THEN 1 ELSE 0 END AS sin_id,
-               y.BeginTime AS hora_coloc, y.EndTime AS hora_fin,
+               y.BeginTime AS hora_coloc, {_FIN_VALIDO} AS hora_fin,
                CAST(ex.ForcedRetract AS int) AS retirada_forzada,
                ex.NoOfReattaches AS recolocaciones, ex.Slips AS deslizamientos,
                ex.Blocks AS bloqueos, ex.KickOffs AS patadas,
@@ -314,6 +350,11 @@ def _vacio_entre_mangadas(visitas: list, duracion_seg: float) -> dict:
         return {"label": "Tiempo vacío entre mangadas", "score": None,
                 "info": "Esta sala no registra el lado de cada ordeño, así que no se puede "
                         "separar el lado que trabaja del que está esperando. No se puntúa.",
+                "hallazgos": []}
+    cobertura = _cobertura_fin(visitas)
+    if cobertura < FIN_VALIDO_MIN:
+        return {"label": "Tiempo vacío entre mangadas", "score": None,
+                "info": _sin_fin_suficiente("el tiempo vacío entre mangadas", cobertura),
                 "hallazgos": []}
 
     huecos, vacio_total, ventana_total = [], 0.0, 0.0
@@ -486,6 +527,12 @@ def _huecos_por_rodeo(visitas: list, duracion_seg: float, nombres: dict | None =
     El corte por rodeo usa `_bloques_de_rodeo`: una corrida corta de otro rodeo
     (una vaca suelta) no cuenta como cambio, ya la mide `mezcla_rodeos`."""
     tol = tol or _tolerancias(None)
+    cobertura = _cobertura_fin(visitas)
+    if cobertura < FIN_VALIDO_MIN:
+        # Con fines desconocidos la sala "parece" parada cuando no lo estuvo
+        # (ver `FIN_VALIDO_MIN`): sin dato, no se puntúa ni se listan hallazgos.
+        info = _sin_fin_suficiente("la sala parada", cobertura)
+        return {"s3": None, "s4": None, "info3": info, "info4": info, "hallazgos": []}
     bloques = _bloques_de_rodeo(visitas)
     huecos, arranque_s = _tramos_sala_parada(visitas)
     nombre = (lambda g: "sin grupo" if g is None else (nombres.get(g, g) if nombres else g))
@@ -556,7 +603,8 @@ def _opciones_score(umbral_prep_s, tambo=None):
             "huecos_fn": lambda visitas, dur, nombres=None: _huecos_por_rodeo(visitas, dur, nombres, tol),
             "umbral_prep_s": umbral, "mide_colocacion": umbral is not None,
             "prep_max_s": PREP_MAX_S, "prep_label": PREP_LABEL,
-            "sin_prep_info": PREP_SIN_UMBRAL, "incluir_sin_grupo": True}
+            "sin_prep_info": PREP_SIN_UMBRAL, "incluir_sin_grupo": True,
+            "fin_valido_min": FIN_VALIDO_MIN}
 
 
 def analizar_dia(tambo: str, columns, rows, fecha: str, grupos=None, pesos=None,
@@ -646,6 +694,11 @@ PUBLICA_UMBRAL_RETIRADA = False
 # 777, 29/10 53, 30/10 62, 01/11 63; los otros días 0. Con esa fecha la "duración" da de
 # -10.000 a -40.000 s y arrastra el promedio del día a negativo. Un fin menor o igual al
 # comienzo se toma como DESCONOCIDO (NULL, que AVG ignora), no como una duración.
+# (`_FIN_VALIDO` es la misma regla para `hora_fin` de las consultas por visita.)
+# Medido el 27/10: el relleno es SIEMPRE las 21:00:00 locales, y los 40 ordeños que
+# arrancaron en los minutos previos (20:50-20:59) tienen fin > comienzo por 23-204 s: una
+# duración falsa que esta regla no atrapa (40 de ~22.400 filas del 24/10 al 01/11, 0,2%).
+# Atraparlas pide fijar las 21:00 (atado a la zona horaria del tambo), así que quedan sin tocar.
 _DUR_SEG = "CASE WHEN y.EndTime > y.BeginTime THEN DATEDIFF(second, y.BeginTime, y.EndTime) END"
 
 # `LowFlowDurationInSec` (segundos de flujo bajo al inicio) NO TIENE
@@ -928,7 +981,7 @@ def sql_rendimiento(desde: str, hasta: str) -> str:
     return f"""
         SELECT ex.MPCNo AS puesto, b.Number AS rp, b.[Group] AS grupo,
                ex.IdTimestamp AS hora_id, y.BeginTime AS hora_creacion,
-               y.BeginTime AS hora_coloc, y.EndTime AS hora_fin,
+               y.BeginTime AS hora_coloc, {_FIN_VALIDO} AS hora_fin,
                y.TotalYield AS kg, CAST(ex.ForcedRetract AS int) AS retirada_forzada,
                NULL AS rotacion, NULL AS turno,
                ex.SideNo AS lado, ex.BatchNo AS bloque

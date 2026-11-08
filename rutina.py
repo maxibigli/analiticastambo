@@ -1172,9 +1172,12 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
                  incluir_sin_grupo: bool = False,
                  identificacion_pct: float | None = None,
                  pesos_incidentes: dict | None = None,
-                 pesos_defecto: dict | None = None) -> dict:
+                 pesos_defecto: dict | None = None,
+                 fin_valido_min: float | None = None) -> dict:
     """Separa las visitas del día (+ margen) en sesiones y puntúa cada una.
     Solo se devuelven las sesiones que se solapan con el día pedido.
+
+    `fin_valido_min`: ver `_analizar_sesion`. None (la rotativa) = no cambia nada.
 
     `grupos`: set de números de grupo a INCLUIR (None = todos). Los animales
     de otros grupos se excluyen de raíz, antes de separar en sesiones, para
@@ -1288,7 +1291,7 @@ def analizar_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = No
     sesiones = [_analizar_sesion(vs, pesos, nombres, ocupacion_fn, huecos_fn, umbral_prep_s,
                                  mide_colocacion, prep_max_s, prep_label,
                                  sin_prep_info, identificacion_pct,
-                                 pesos_incidentes) for vs in del_dia]
+                                 pesos_incidentes, fin_valido_min) for vs in del_dia]
     sesiones.sort(key=lambda s: s["inicio"])
     for i, s in enumerate(sesiones):
         s["indice"] = i
@@ -1406,7 +1409,8 @@ def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = Non
                 incluir_sin_grupo: bool = False,
                 identificacion_pct: float | None = None,
                 pesos_incidentes: dict | None = None,
-                pesos_defecto: dict | None = None):
+                pesos_defecto: dict | None = None,
+                fin_valido_min: float | None = None):
     """Reduce las sesiones de un día a UN punto (promedio ponderado por vacas)
     para graficar la evolución de la rutina a lo largo del tiempo. None si el
     día no tiene ordeños (fin de semana sin datos, feriado, hueco de la copia).
@@ -1416,7 +1420,7 @@ def resumen_dia(columns, rows, fecha: str, grupos=None, pesos: dict | None = Non
     dia = analizar_dia(columns, rows, fecha, grupos, pesos, max_sesiones, nombres,
                        ocupacion_fn, huecos_fn, umbral_prep_s, mide_colocacion,
                        prep_max_s, prep_label, sin_prep_info, incluir_sin_grupo,
-                       identificacion_pct, pesos_incidentes, pesos_defecto)
+                       identificacion_pct, pesos_incidentes, pesos_defecto, fin_valido_min)
     sesiones = dia["sesiones"]
     total_vacas = sum(s["vacas"] for s in sesiones)
     if not sesiones or total_vacas == 0:
@@ -1608,8 +1612,16 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                      prep_max_s: int | None = None, prep_label: str = "Colocación",
                      sin_prep_info: str | None = None,
                      identificacion_pct: float | None = None,
-                     pesos_incidentes: dict | None = None) -> dict:
-    """`mide_colocacion`: si esta sala tiene un instante real de COLOCACIÓN de
+                     pesos_incidentes: dict | None = None,
+                     fin_valido_min: float | None = None) -> dict:
+    """`fin_valido_min`: fracción mínima de visitas con duración de ordeño conocida
+    (`hora_fin` válido) para puntuar "vacas lerdas". Debajo, el componente queda sin
+    dato: la mediana y los lerdas saldrían de las pocas vacas con fin válido, que no
+    son una muestra de la sesión (27/10/2026 en La Martina: 15% de fines válidos,
+    mediana 480 s contra ~330 s de una sesión sana). None = siempre se puntúa, que es
+    lo que hace la rotativa. Ver `salas.convencional.FIN_VALIDO_MIN`.
+
+    `mide_colocacion`: si esta sala tiene un instante real de COLOCACIÓN de
     la pezonera. En la rotativa sí (`VerifiedTime`). En una sala de tandas tipo
     Alpro NO: el único sello previo a la leche es la identificación, y la vaca
     se identifica AL ENTRAR a la sala, no en el puesto. Medido en La Martina el
@@ -1724,12 +1736,17 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
 
     # --- Vacas lerdas: ordeño bastante más largo que la mediana de la sesión ---
     ordenios = [v["ordeño_seg"] for v in visitas if v["ordeño_seg"] is not None]
-    mediana_ordeño = statistics.median(ordenios) if ordenios else None
+    cobertura_ordeño = len(ordenios) / len(visitas)
+    sin_duracion = fin_valido_min is not None and cobertura_ordeño < fin_valido_min
+    mediana_ordeño = statistics.median(ordenios) if ordenios and not sin_duracion else None
     lerdas = 0
     for v in visitas:
         v["lerda"] = bool(mediana_ordeño and v["ordeño_seg"] and v["ordeño_seg"] > mediana_ordeño * UMBRAL_LERDA)
         lerdas += v["lerda"]
-    s2 = 100.0 * (1 - lerdas / len(ordenios)) if ordenios else 100.0
+    if sin_duracion:
+        s2 = None
+    else:
+        s2 = 100.0 * (1 - lerdas / len(ordenios)) if ordenios else 100.0
 
     # --- Huecos: componente intercambiable, ver `huecos_fn` más arriba -------
     huecos = huecos_fn(visitas, duracion_seg, nombres)
@@ -1904,10 +1921,14 @@ def _analizar_sesion(visitas, pesos: dict | None = None, nombres: dict | None = 
                   "identificación el score cae fuerte a propósito — no es un error de cálculo.")
                  if (sin_identificar or (identificacion_pct is not None and identificacion_pct < 100))
                  else "Todos los ordeños quedaron a nombre de su vaca.")},
-            {"clave": "lerdas", "label": "Sin vacas lerdas", "valor": _redondear(s2),
+            {"clave": "lerdas", "label": "Sin vacas lerdas",
+             "valor": _redondear(s2) if s2 is not None else None,
              "peso": pesos["lerdas"],
              "info": (f"{lerdas} vaca(s) con ordeño 50%+ más largo que la mediana "
-                      f"({round(mediana_ordeño)}s).") if mediana_ordeño else "Sin datos de duración."},
+                      f"({round(mediana_ordeño)}s).") if mediana_ordeño else
+                     (f"Solo el {round(100 * cobertura_ordeño)}% de los ordeños tiene hora de fin "
+                      "válida (el equipo grabó un relleno en el resto): no alcanza para medir "
+                      "cuáles se alargaron. No se puntúa." if sin_duracion else "Sin datos de duración.")},
             # Orden y presencia de acá para abajo: EN ESTE ORDEN a propósito,
             # calcado del rediseño del tambo (ver CLAUDE.md, "Rediseño del
             # score de rutina") -- coincide en las dos salas una vez que el
