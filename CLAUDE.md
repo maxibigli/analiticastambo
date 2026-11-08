@@ -3175,6 +3175,58 @@ Python usa (por defecto el del propio panel). Por eso el primer uso es solo mira
 se CIERRA SESIÓN en el RDP (desconectar no los mata). Para que arranquen con la PC sigue haciendo
 falta el Programador de tareas; el panel no lo reemplaza (podría ofrecer crearlas: queda pendiente).
 
+## Origen de las cargas de leche: caudalímetro o despachos de DelPro (08/11/2026)
+
+Pedido del tambo (viendo el menú Leche > Despachos de leche de DelPro): poder tomar las cargas de la
+pantalla "Entrega de Leche" **de DelPro en vez del caudalímetro**, elegible desde ⚙ Configuración
+como ya se elige el caudalímetro. **Primera versión, para ver cómo queda: solo la pantalla "Entregas
+de Leche" (`/api/cicla/cargas`).** El Balance de leche, la comparación contra La Serenísima y el
+aviso de temperatura de las 8:00/20:00 SIGUEN leyendo el caudalímetro; moverlos es una decisión
+aparte (ver "no son lo mismo" abajo).
+
+`despachos_delpro.py` es la rutina aparte: lee `MilkShipmentBase` (un despacho: remito, tanque,
+camión, usina, litros, temperatura y la calidad que informa la usina: grasa, proteína, RCS, CBT...) y
+`MilkForInternalUsage` (leche para uso interno, aparte), y devuelve las cargas con **las mismas
+claves que `cicla._carga_desde_api`** (hay una prueba que lo exige), así `cicla.resumen()` y la
+pantalla andan sin cambios. Elección: `configuracion_tambo` → "Origen de las cargas" (`caudalimetro ==
+"delpro"`; vive en el mismo campo porque es la misma pregunta), y la propia pantalla tiene un selector
+de origen (`?origen=`) para alternar sin tocar la configuración; se recuerda por tambo. Sin configurar
+es el caudalímetro, como siempre.
+
+**NO SON LO MISMO, y por eso no se cambió nada más sin avisar:**
+  * Los litros de DelPro son los que se **cargaron** en el despacho (lo del remito), **no una
+    medición**: no hay un segundo número para comparar, así que no hay "diferencia" ni alerta de
+    diferencia (`lts_declarados` queda en None). Con el caudalímetro sí hay medido contra declarado.
+  * Todo despacho de DelPro es una venta a una usina (`es_venta` siempre True); la leche que se queda
+    en el tambo está en uso interno. El caudalímetro, en cambio, mezcla venta y guachera y las separa
+    por el código de cliente.
+  * Por eso mover el Balance de leche a DelPro NO es cambiar de fuente: el balance usa los litros
+    medidos del tanque para detectar pérdidas, y un número cargado a mano no detecta nada.
+
+**Sin verificar, y la pantalla lo dice:** (1) que `AmountOfMilk` esté en litros y no en kg; (2) qué
+significa cada `InternalMilkUsage` (un entero sin tabla de nombres a la vista: se muestra "Uso N"); (3)
+la unidad de `Scc`/`BacterialCount`. **La copia local de DDM tiene `MilkShipmentBase`,
+`MilkForInternalUsage` y `MilkPrice` en 0 filas**, así que ningún dato real se vio: las consultas se
+validaron contra el esquema real (corren sin error), los números de las pruebas y de las capturas son
+de ejemplo. Los campos de calidad en 0 se tratan como "sin dato" (la usina no los informó), no como una
+medición de 0. Si en SERVER-DELPRO el rango sale vacío, la pantalla lo dice ("DelPro no tiene despachos
+cargados entre X e Y") en vez de mostrar ceros: es la forma más rápida de saber si el tambo carga
+los despachos en DelPro.
+
+**Lo que SÍ se vio en datos reales: San José (copia local `san_jose`), `medir_despachos_delpro.py`.** Cargó
+230 despachos del 01/07 al 23/10/2024 (2 por día, "Tarde" y "Noche", a una usina, 4 a 9.100 L cada uno, la
+mayoría de 6.000 a 8.000 y muchos casi redondos: es lo que se tipea del remito), con temperatura (~4 °C) y
+los campos de calidad en 0 (la usina no los informa en DelPro); y 116 usos internos de 720 a 800 L por día
+(el equivalente de la guachera). **Después del 23/10/2024 no hay ni un despacho**: dejaron de cargarlos. Y la
+producción de sala de ese tambo en DelPro recién arranca en mayo de 2025 (antes tiene ~8 vacas por día), así
+que despachos y sala **no se solapan ni un día** y no se pudo medir el cociente litros/kg. La Ponderosa
+(copia local al 31/07/2026) los tiene vacíos; La Martina no se pudo consultar desde esta PC. Falta correr el
+script en SERVER-DELPRO para ver si algún tambo los carga hoy.
+
+`MilkPrice` (`MilkDate`, `PricePerVolumeUnit`) es el precio de la leche por fecha, también en DelPro y
+también vacío acá: de tener datos podría reemplazar el precio ESTIMADO de la planilla de precios (ver
+"impacto económico del RCS"). Queda anotado, sin hacer.
+
 ## Entorno de desarrollo (esta PC)
 
 Python no está en el PATH (`C:\Users\MAXI\AppData\Local\Programs\Python\Python312\`).

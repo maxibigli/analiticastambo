@@ -35,9 +35,14 @@ SISTEMAS_ACTIVIDAD_LABEL = {
     "sin_sistema": "Sin sistema", "delaval_am2": "Delaval AM2", "delaval_ba": "Delaval BA",
     "scr": "SCR", "nedap": "Nedap",
 }
-CAUDALIMETROS = ["sin_caudalimetro", "cicla", "haasten"]
+# "delpro" no es un caudalímetro: es el ORIGEN de las cargas cuando el tambo las toma de los
+# despachos cargados en DelPro (menú Leche > Despachos de leche, ver despachos_delpro.py) en vez
+# del caudalímetro. Vive en este mismo campo porque es la misma pregunta -- ¿de dónde salen las
+# cargas de leche? -- y así no se agrega un segundo selector que pueda contradecir al primero.
+CAUDALIMETROS = ["sin_caudalimetro", "cicla", "haasten", "delpro"]
 CAUDALIMETROS_LABEL = {
     "sin_caudalimetro": "Sin caudalímetro", "cicla": "CICLA", "haasten": "Haasten",
+    "delpro": "DelPro (despachos cargados en DelPro)",
 }
 USINAS_LACTEAS = ["sin_datos", "la_serenisima"]
 USINAS_LACTEAS_LABEL = {"sin_datos": "Sin datos", "la_serenisima": "La Serenísima"}

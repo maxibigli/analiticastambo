@@ -32,6 +32,7 @@ import config_alertas
 import configuracion_tambo
 import correo
 import db
+import despachos_delpro
 import clima
 import ficha_animal
 import flujos
@@ -5383,12 +5384,55 @@ def api_reproduccion_rebanos():
     return jsonify({"rebanos": rebano.listar(data)})
 
 
+ORIGENES_CARGAS = {"cicla": "Caudalímetro (CICLA / Milky)", "delpro": "DelPro (despachos)"}
+
+
+def _origen_cargas(tambo: str, pedido: str | None = None) -> str:
+    """De dónde salen las cargas de leche de la pantalla "Entregas de leche": lo que pida la propia
+    pantalla (`?origen=`, para comparar las dos fuentes sin tocar la configuración) y, si no pide
+    nada, lo configurado para el tambo en ⚙ Configuración (`caudalimetro == "delpro"`). Sin
+    configurar es el caudalímetro, que es lo que hacía siempre."""
+    if pedido in ORIGENES_CARGAS:
+        return pedido
+    return "delpro" if configuracion_tambo.config_de(tambo).get("caudalimetro") == "delpro" else "cicla"
+
+
+def _origenes_disponibles(tambo: str) -> list[dict]:
+    """Las fuentes que tiene sentido ofrecer en el selector de la pantalla: el caudalímetro solo si
+    el tambo tiene el de Milky (ver `_tambo_con_milky`); DelPro siempre, que es su propia base."""
+    ids = (["cicla"] if _tambo_con_milky(tambo) else []) + ["delpro"]
+    return [{"id": i, "label": ORIGENES_CARGAS[i]} for i in ids]
+
+
+def _respuesta_despachos_delpro(tambo: str, desde: datetime.date, hasta: datetime.date):
+    """La misma respuesta que `/api/cicla/cargas`, con las cargas sacadas de los despachos de DelPro."""
+    def traer():
+        cargas, incompleto = despachos_delpro.obtener_cargas(tambo, desde, hasta)
+        return {"cargas": cargas, "incompleto": incompleto,
+                "uso_interno": despachos_delpro.uso_interno(tambo, desde, hasta)}
+    try:
+        data = _cache_o_traer(f"{tambo}:despachos_delpro:{desde.isoformat()}:{hasta.isoformat()}",
+                              CICLA_CACHE_TTL_S, traer)
+    except despachos_delpro.DespachosError as exc:
+        return jsonify({"error": str(exc)}), 502
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"No se pudieron leer los despachos de DelPro: {exc}"}), 502
+    return jsonify({
+        "origen": "delpro", "origen_label": ORIGENES_CARGAS["delpro"], "origenes": _origenes_disponibles(tambo),
+        "desde": desde.isoformat(), "hasta": hasta.isoformat(),
+        "cargas": data["cargas"], "resumen": cicla.resumen(data["cargas"]),
+        "incompleto": data.get("incompleto", False),
+        "uso_interno": data["uso_interno"], "calidad": despachos_delpro.calidad_resumen(data["cargas"]),
+    })
+
+
 @app.get("/api/cicla/cargas")
 @auth.requiere_rol("admin")
 def api_cicla_cargas():
-    """Litros medidos (CICLA) vs declarados y temperatura de entrega, por
-    carga del caudalímetro. Se lee de la API de Milky (ver cicla.py), con las credenciales
-    MILKY_USUARIO/MILKY_PASSWORD (env). OJO: "declarados" = LitrosEstimados, supuesto sin verificar."""
+    """Cargas de leche del tambo: litros medidos (CICLA) vs declarados y temperatura de entrega, por
+    carga del caudalímetro, o los despachos cargados en DelPro (ver `_origen_cargas`). El de CICLA
+    se lee de la API de Milky (ver cicla.py), con las credenciales MILKY_USUARIO/MILKY_PASSWORD
+    (env). OJO: "declarados" = LitrosEstimados, supuesto sin verificar."""
     hoy = datetime.date.today()
     try:
         hasta = (datetime.datetime.strptime(request.args["hasta"], "%Y-%m-%d").date()
@@ -5399,6 +5443,10 @@ def api_cicla_cargas():
         return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
     if desde > hasta:
         desde, hasta = hasta, desde
+
+    tambo = _tambo_del_request()
+    if _origen_cargas(tambo, request.args.get("origen")) == "delpro":
+        return _respuesta_despachos_delpro(tambo, desde, hasta)
 
     usuario, password = cicla.credenciales()
     if not usuario or not password:
@@ -5420,6 +5468,7 @@ def api_cicla_cargas():
         _refresh_cicla_async(desde, hasta)
 
     return jsonify({
+        "origen": "cicla", "origen_label": ORIGENES_CARGAS["cicla"], "origenes": _origenes_disponibles(tambo),
         "desde": desde.isoformat(), "hasta": hasta.isoformat(),
         "cargas": data["cargas"], "resumen": cicla.resumen(data["cargas"]),
         "incompleto": data.get("incompleto", False),

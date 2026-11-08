@@ -1895,9 +1895,14 @@
   <div class="page" id="page-entregas" hidden>
   <section class="card" id="cicla-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">🥛 Entregas de Leche (CICLA)</h2>
-      <span class="aviso">Litros medidos por el caudalímetro y temperatura de entrega, por carga y por destino.</span>
+      <h2 style="margin:0" id="cicla-titulo">🥛 Entregas de Leche (CICLA)</h2>
+      <span class="aviso" id="cicla-subtitulo">Litros medidos por el caudalímetro y temperatura de entrega, por carga y por destino.</span>
       <div class="controls" style="margin-left:auto">
+        {# Origen de las cargas: por defecto el que tiene configurado el tambo (⚙ Configuración › Origen
+           de las cargas); acá se puede alternar para comparar las dos fuentes sin tocar la configuración. #}
+        <label class="aviso" id="cicla-origen-caja" style="display:none;align-items:center;gap:5px">Origen
+          <select id="cicla-origen" style="padding:6px 8px"></select>
+        </label>
         <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
           <input type="date" id="cicla-desde" style="padding:6px 8px">
         </label>
@@ -1907,7 +1912,17 @@
         <button class="secundario" id="cicla-aplicar">Aplicar</button>
       </div>
     </div>
-    <p class="explica" style="margin-top:10px">
+    <p class="explica" id="cicla-explica-delpro" style="display:none;margin-top:10px">
+      <b>Qué muestra.</b> Los despachos de leche <b>cargados en DelPro</b> (menú Leche › Despachos de
+      leche): remito, tanque, camión, usina, litros, temperatura y la calidad que informa la usina.
+      <br><b>Ojo con los litros.</b> Son los que se <b>cargaron</b> en el despacho, no una medición: no hay un
+      segundo número con el que compararlos, por eso acá no existe la "diferencia" medido vs declarado
+      que sí tiene el caudalímetro. Todo despacho va a una usina, así que se cuenta como venta; la leche
+      que se queda en el tambo está aparte, en "Leche para uso interno".
+      <br><b>Sin verificar todavía:</b> que la columna de litros esté en litros (y no en kg) y qué significa cada
+      tipo de uso interno (DelPro lo guarda como un código, se muestra "Uso N").
+    </p>
+    <p class="explica" id="cicla-explica-cicla" style="margin-top:10px">
       <b>Qué muestra.</b> Cada carga que se despachó: los litros que midió el caudalímetro propio y
       a qué temperatura salió la leche. Es el registro del tambo, antes de que el comprador pese.
       <br><b>Cómo se calcula.</b> Sale de la plataforma CICLA, no de la base de DelPro. El umbral de
@@ -1932,6 +1947,8 @@
       </div>
     </div>
     <div id="cicla-destinos" style="margin-top:16px;overflow-x:auto"></div>
+    <div id="cicla-tabla" style="margin-top:16px;overflow-x:auto"></div>
+    <div id="cicla-uso-interno" style="margin-top:16px;overflow-x:auto"></div>
     <div id="cicla-hallazgos" style="margin-top:14px"></div>
   </section>
 
@@ -3709,7 +3726,7 @@
 
     <div class="aviso" style="margin:16px 0 6px;font-weight:600">Entrega de leche</div>
     <div class="controls" style="flex-wrap:wrap;gap:14px">
-      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Caudalímetro
+      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Origen de las cargas (caudalímetro)
         <select id="cfg-caudalimetro" style="padding:7px 8px"></select>
       </label>
       <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Usina láctea
@@ -4797,13 +4814,30 @@ async function cargarCicla() {
   if (!desde) desde = menosDias(hasta, 6);
   document.getElementById('cicla-desde').value = desde;
   document.getElementById('cicla-hasta').value = hasta;
-  info.textContent = 'Consultando CICLA…';
+  info.textContent = 'Consultando…';
   try {
-    const d = await pedirJSON(`/api/cicla/cargas?desde=${desde}&hasta=${hasta}`);
+    const pedido = ciclaOrigenManual && ciclaOrigenManual.tambo === tamboActual ? ciclaOrigenManual.origen : '';
+    const d = await pedirJSON(`/api/cicla/cargas?desde=${desde}&hasta=${hasta}` +
+      `&tambo=${encodeURIComponent(tamboActual)}` + (pedido ? `&origen=${pedido}` : ''));
+    pintarOrigenCicla(d);
+    const esDelpro = d.origen === 'delpro';
     const r = d.resumen;
     const litros = d.cargas.map(c => c.lts_cicla).filter(v => v != null);
     const litrosProm = litros.length ? Math.round(litros.reduce((a, b) => a + b, 0) / litros.length) : null;
-    document.getElementById('cicla-kpis').innerHTML = [
+    // Calidad que informa la usina (solo DelPro). `n` = cuántos despachos la informaron: sin eso, un
+    // promedio de 1 despacho se lee como si fueran todos.
+    const cal = (k, etiqueta) => {
+      const q = (d.calidad || {})[k];
+      return q && q.promedio != null ? [`${etiqueta} (${q.n} desp.)`, q.promedio] : null;
+    };
+    document.getElementById('cicla-kpis').innerHTML = (esDelpro ? [
+      ['Despachos', r.total_cargas],
+      ['Litros despachados', r.lts_total],
+      ['Litros promedio por despacho', litrosProm],
+      ['Alertas de temperatura (>4°C)', r.alertas_temperatura],
+      ['Temperatura promedio', r.temp_promedio],
+      cal('grasa', 'Grasa %'), cal('proteina', 'Proteína %'), cal('rcs', 'RCS'), cal('cbt', 'CBT'),
+    ] : [
       ['Cargas', r.total_cargas],
       ['Litros totales', r.lts_total],
       ['Litros a La Serenísima', r.lts_venta],
@@ -4811,20 +4845,46 @@ async function cargarCicla() {
       ['Litros promedio por carga', litrosProm],
       ['Alertas de temperatura (>4°C)', r.alertas_temperatura],
       ['Temperatura promedio', r.temp_promedio],
-    ].map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
+    ]).filter(Boolean).map(([l, v]) => `<div class="tile"><div class="label">${l}</div><div class="value">${fmt(v)}</div></div>`).join('');
 
-    // Reparto por destino: no todo lo que mide el caudalímetro se vende.
+    // Reparto por destino: no todo lo que mide el caudalímetro se vende. En DelPro es por usina, y no
+    // hay códigos que clasificar.
     const dest = r.destinos || [];
     document.getElementById('cicla-destinos').innerHTML = dest.length
-      ? '<div class="aviso" style="margin-bottom:6px">Reparto por destino (columna "Nro Cliente" de CICLA)</div>' +
-        '<table class="lac-table"><thead><tr><th>Destino</th><th class="num">Cargas</th>' +
-        '<th class="num">Litros</th><th class="num">% del total</th><th>Códigos</th></tr></thead><tbody>' +
-        dest.map(x => `<tr><td>${x.label}</td><td class="num">${fmt(x.cargas)}</td>` +
+      ? `<div class="aviso" style="margin-bottom:6px">${esDelpro ? 'Reparto por usina' : 'Reparto por destino (columna "Nro Cliente" de CICLA)'}</div>` +
+        `<table class="lac-table"><thead><tr><th>${esDelpro ? 'Usina' : 'Destino'}</th><th class="num">${esDelpro ? 'Despachos' : 'Cargas'}</th>` +
+        `<th class="num">Litros</th><th class="num">% del total</th>${esDelpro ? '' : '<th>Códigos</th>'}</tr></thead><tbody>` +
+        dest.map(x => `<tr><td>${escHtml(x.label)}</td><td class="num">${fmt(x.cargas)}</td>` +
           `<td class="num">${fmt(Math.round(x.lts_cicla))}</td><td class="num">${x.pct == null ? '—' : fmt(x.pct) + '%'}</td>` +
-          `<td>${x.codigos.join(', ')}</td></tr>`).join('') + '</tbody></table>' +
+          (esDelpro ? '' : `<td>${x.codigos.join(', ')}</td>`) + '</tr>').join('') + '</tbody></table>' +
         ((r.destinos_sin_clasificar || []).length
           ? `<div class="aviso" style="margin-top:6px;color:var(--warning)">⚠ Códigos sin clasificar: ` +
             `${r.destinos_sin_clasificar.join(', ')}. No se cuentan como venta hasta asignarles destino.</div>` : '')
+      : '';
+
+    // Solo DelPro: cada despacho con lo que el caudalímetro no trae (tanque, camión, calidad), y la
+    // leche que se quedó en el tambo.
+    const n = (v, dec) => v == null ? '—' : fmt(dec == null ? v : Math.round(v * 10 ** dec) / 10 ** dec);
+    document.getElementById('cicla-tabla').innerHTML = esDelpro && d.cargas.length
+      ? '<div class="aviso" style="margin-bottom:6px">Despachos cargados en DelPro</div>' +
+        '<table class="lac-table"><thead><tr><th>Fecha</th><th>Remito</th><th>Tanque</th><th>Camión</th><th>Usina</th>' +
+        '<th class="num">Litros</th><th class="num">Temp °C</th><th class="num">Grasa %</th><th class="num">Prot. %</th>' +
+        '<th class="num">RCS</th><th class="num">CBT</th></tr></thead><tbody>' +
+        d.cargas.map(c => `<tr><td>${escHtml(c.fecha.split(' ')[0])}</td><td>${escHtml(c.remito)}</td>` +
+          `<td>${escHtml(c.tanque)}</td><td>${escHtml(c.camion)}</td><td>${escHtml(c.destino_label)}</td>` +
+          `<td class="num">${n(c.lts_cicla, 0)}</td>` +
+          `<td class="num"${c.alerta_temp ? ' style="color:var(--critical);font-weight:600"' : ''}>${n(c.temperatura, 1)}</td>` +
+          `<td class="num">${n(c.calidad.grasa, 2)}</td><td class="num">${n(c.calidad.proteina, 2)}</td>` +
+          `<td class="num">${n(c.calidad.rcs, 0)}</td><td class="num">${n(c.calidad.cbt, 0)}</td></tr>`).join('') +
+        '</tbody></table>'
+      : '';
+    const uso = d.uso_interno || [];
+    document.getElementById('cicla-uso-interno').innerHTML = esDelpro && uso.length
+      ? '<div class="aviso" style="margin-bottom:6px">Leche para uso interno (no se vende) · ' +
+        `${fmt(Math.round(uso.reduce((a, u) => a + (u.litros || 0), 0)))} L en total</div>` +
+        '<table class="lac-table"><thead><tr><th>Fecha</th><th>Tipo de uso</th><th class="num">Litros</th></tr></thead><tbody>' +
+        uso.map(u => `<tr><td>${escHtml(u.fecha.split(' ')[0])}</td><td>${escHtml(u.uso_label)}</td>` +
+          `<td class="num">${n(u.litros, 0)}</td></tr>`).join('') + '</tbody></table>'
       : '';
 
     const etiquetas = d.cargas.map(c => c.fecha.split(' ')[0]);
@@ -4841,13 +4901,47 @@ async function cargarCicla() {
         peores.map(c => `<li>${c.fecha} · carga ${c.carga} · ${fmt(c.lts_cicla)} L · temp ${c.temperatura}°C</li>`).join('') + '</ul>'
       : '<div class="aviso">Sin cargas con alerta de temperatura en este rango. ✔</div>';
 
-    info.textContent = `${d.cargas.length} cargas entre ${desde} y ${hasta}.` +
-      (d.incompleto ? ' ⚠ CICLA tiene más páginas de datos que no se pudieron traer automáticamente '
-        + '(intentá un rango más corto, p. ej. una semana, para ver todo).' : '');
+    if (esDelpro) {
+      // Un rango sin despachos NO es un error: es la respuesta (¿cargan los despachos en DelPro?).
+      info.textContent = d.cargas.length
+        ? `${d.cargas.length} despacho(s) entre ${desde} y ${hasta}, cargados en DelPro.` +
+          (d.incompleto ? ' ⚠ La consulta llegó al tope de filas: probá un rango más corto.' : '')
+        : `DelPro no tiene despachos cargados entre ${desde} y ${hasta} (menú Leche › Despachos de leche).` +
+          (uso.length ? '' : ' Tampoco leche de uso interno.');
+    } else {
+      info.textContent = `${d.cargas.length} cargas entre ${desde} y ${hasta}.` +
+        (d.incompleto ? ' ⚠ CICLA tiene más páginas de datos que no se pudieron traer automáticamente '
+          + '(intentá un rango más corto, p. ej. una semana, para ver todo).' : '');
+    }
   } catch (e) {
     info.textContent = 'Error: ' + e.message;
   }
 }
+
+// Origen de las cargas elegido a mano en esta pantalla. Se recuerda POR TAMBO: otro tambo puede no
+// tener el caudalímetro, y arrastrar la elección de uno al otro mostraría la fuente equivocada.
+let ciclaOrigenManual = null;   // {tambo, origen}
+
+function pintarOrigenCicla(d) {
+  const sel = document.getElementById('cicla-origen');
+  const opciones = d.origenes || [];
+  document.getElementById('cicla-origen-caja').style.display = opciones.length > 1 ? 'flex' : 'none';
+  sel.innerHTML = opciones.map(o =>
+    `<option value="${escHtml(o.id)}"${o.id === d.origen ? ' selected' : ''}>${escHtml(o.label)}</option>`).join('');
+  const esDelpro = d.origen === 'delpro';
+  document.getElementById('cicla-titulo').textContent = esDelpro
+    ? '🥛 Despachos de Leche (DelPro)' : '🥛 Entregas de Leche (CICLA)';
+  document.getElementById('cicla-subtitulo').textContent = esDelpro
+    ? 'Despachos cargados en DelPro: litros, temperatura y calidad por remito.'
+    : 'Litros medidos por el caudalímetro y temperatura de entrega, por carga y por destino.';
+  document.getElementById('cicla-explica-delpro').style.display = esDelpro ? '' : 'none';
+  document.getElementById('cicla-explica-cicla').style.display = esDelpro ? 'none' : '';
+}
+
+document.getElementById('cicla-origen').addEventListener('change', ev => {
+  ciclaOrigenManual = { tambo: tamboActual, origen: ev.target.value };
+  cargarCicla();
+});
 document.getElementById('cicla-aplicar').addEventListener('click', cargarCicla);
 
 let chartIncidDia = null, incidReintento = null;
@@ -14081,7 +14175,7 @@ function cargarDatosDePagina(id) {
     activarAPedido('repro-info', cargarRepro, 'los indicadores reproductivos', DEMORA);
   else if (id === 'alimentacion') cargarConciliacion(false);
   else if (id === 'entregas') {
-    activarAPedido('cicla-info', cargarCicla, 'las cargas de CICLA', DEMORA);
+    activarAPedido('cicla-info', cargarCicla, 'las cargas de leche', DEMORA);
     activarAPedido('comparar-info', cargarComparar, 'la comparación con el comprador', DEMORA);
     activarAPedido('balance-info', cargarBalance, 'el balance de leche', DEMORA);
     activarAPedido('laser-info', cargarLaser, 'la calidad de La Serenísima', DEMORA);
