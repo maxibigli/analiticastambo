@@ -5706,20 +5706,53 @@ def _tambo_con_serenisima(tambo: str) -> bool:
     return tambo == tambos.DEFAULT_TAMBO or configuracion_tambo.config_de(tambo).get("usina_lactea") == "la_serenisima"
 
 
+CAMION_FUENTES = {"la_serenisima": "La Serenísima", "delpro": "DelPro (despachos)"}
+
+
+def _camion_balance(tambo: str, desde: datetime.date, hasta: datetime.date):
+    """El "camión" del Balance (lo que se entregó): -> (litros por día | None, fuente | None, uso interno por día).
+
+    1. La Serenísima, si el tambo la tiene y hay credenciales. Si falla NO se pasa a otra fuente en silencio:
+       el balance sale sin camión, como siempre. Dos fuentes con nombres distintos que se cambian solas
+       harían que el mismo gráfico signifique cosas distintas según el día.
+    2. Si no, los despachos cargados en DelPro (menú Leche > Despachos de leche) con la leche de uso interno.
+       Lanza `despachos_delpro.DespachosError` si no se pueden leer. Sin despachos en el rango: sin camión.
+    """
+    usuario_l, password_l = os.environ.get("LASER_USUARIO"), os.environ.get("LASER_PASSWORD")
+    if usuario_l and password_l and _tambo_con_serenisima(tambo):
+        try:
+            entregas = _entregas_laser(usuario_l, password_l)["entregas"]
+            return balance_leche.litros_comprador_por_dia(entregas), "la_serenisima", {}
+        except Exception:  # noqa: BLE001
+            return None, None, {}
+
+    def traer():
+        cargas, _incompleto = despachos_delpro.obtener_cargas(tambo, desde, hasta)
+        return {"cargas": cargas, "uso": despachos_delpro.uso_interno(tambo, desde, hasta)}
+    data = _cache_o_traer(_clave(tambo, f"balance_despachos:{desde.isoformat()}:{hasta.isoformat()}"),
+                          BALANCE_KG_TTL_S, traer)
+    por_dia = balance_leche.litros_despachos_por_dia(data["cargas"])
+    if not por_dia:          # sin despachos con litros en el rango: el tambo no los carga (o no en esas fechas)
+        return None, None, {}
+    return por_dia, "delpro", balance_leche.uso_interno_por_dia(data["uso"])
+
+
 def _balance_leche(tambo: str, desde: datetime.date, hasta: datetime.date) -> dict:
-    """Balance sala -> tanque -> camión entre dos fechas (ver balance_leche.py). Lanza
-    `BalanceError`. Sin credenciales de La Serenísima, o si el comprador falla, el balance
-    sale igual sin el tramo del camión (`comprador_disponible` falso)."""
-    if not _tambo_con_milky(tambo):
-        raise BalanceError("Este tambo no tiene el caudalímetro de Milky configurado: el balance necesita "
-                           "los litros del tanque (⚙ Configuración → caudalímetro CICLA).", 400)
-    usuario, password = cicla.credenciales()
-    if not (usuario and password):
-        raise BalanceError("Faltan las variables de entorno de Milky (MILKY_USUARIO/MILKY_PASSWORD).", 400)
-    try:
-        cargas = _cargas_cicla(desde, hasta, usuario, password)
-    except Exception as exc:  # noqa: BLE001
-        raise BalanceError(f"CICLA: {exc}", 502) from exc
+    """Balance sala -> tanque -> camión entre dos fechas (ver balance_leche.py). Lanza `BalanceError`.
+
+    Con caudalímetro de Milky hay tanque (sala -> tanque -> camión). Sin él, el camión se compara directo
+    con la sala (sala -> camión) y hace falta una fuente de camión: La Serenísima o los despachos de DelPro.
+    Sin camión, o si el comprador falla, el balance sale igual (`comprador_disponible` falso)."""
+    tiene_milky = _tambo_con_milky(tambo)
+    cargas = {"cargas": [], "incompleto": False}
+    if tiene_milky:
+        usuario, password = cicla.credenciales()
+        if not (usuario and password):
+            raise BalanceError("Faltan las variables de entorno de Milky (MILKY_USUARIO/MILKY_PASSWORD).", 400)
+        try:
+            cargas = _cargas_cicla(desde, hasta, usuario, password)
+        except Exception as exc:  # noqa: BLE001
+            raise BalanceError(f"CICLA: {exc}", 502) from exc
 
     clave_kg = _clave(tambo, f"balance_kg:{desde.isoformat()}:{hasta.isoformat()}")
     data_kg, _ = _cache_get(clave_kg, ttl=BALANCE_KG_TTL_S)
@@ -5730,18 +5763,26 @@ def _balance_leche(tambo: str, desde: datetime.date, hasta: datetime.date) -> di
             raise BalanceError(f"DelPro: {exc}", 502) from exc
         _cache_set(clave_kg, data_kg)
 
-    comprador = None
-    usuario_l, password_l = os.environ.get("LASER_USUARIO"), os.environ.get("LASER_PASSWORD")
-    if usuario_l and password_l and _tambo_con_serenisima(tambo):
-        try:
-            comprador = balance_leche.litros_comprador_por_dia(_entregas_laser(usuario_l, password_l)["entregas"])
-        except Exception:  # noqa: BLE001
-            comprador = None
+    avisos = []
+    try:
+        comprador, fuente, uso = _camion_balance(tambo, desde, hasta)
+    except despachos_delpro.DespachosError as exc:
+        if not tiene_milky:
+            raise BalanceError(f"DelPro: {exc}", 502) from exc
+        comprador, fuente, uso = None, None, {}
+        avisos.append(f"No se pudieron leer los despachos de DelPro: {exc}")
+    if not tiene_milky and comprador is None:
+        raise BalanceError("Este tambo no tiene el caudalímetro de Milky ni datos del camión: el balance necesita "
+                           "los litros del tanque (⚙ Configuración → caudalímetro CICLA), los de La Serenísima o los "
+                           "despachos de leche cargados en DelPro (menú Leche > Despachos de leche).", 400)
 
     milky = balance_leche.litros_milky_por_dia(cargas["cargas"])
     resultado = balance_leche.calcular(balance_leche.filas_kg(data_kg), milky, comprador,
-                                       balance_leche.factor_de(tambo))
+                                       balance_leche.factor_de(tambo), uso_interno=uso, con_tanque=tiene_milky)
     resultado.update({"desde": desde.isoformat(), "hasta": hasta.isoformat(),
+                      "camion_fuente": fuente,
+                      "camion_fuente_label": CAMION_FUENTES.get(fuente),
+                      "avisos": avisos,
                       "cicla_incompleto": cargas.get("incompleto", False),
                       "factor_defecto": balance_leche.FACTOR_DEFECTO,
                       "factor_densidad": round(balance_leche.FACTOR_DENSIDAD_TIPICO, 3)})
@@ -6034,15 +6075,22 @@ def _lineas_alerta_balance(tambo: str, registrar: bool = False) -> list:
     fuera de ±3 % en algún tramo, una sola vez por día y tramo (ver balance_leche.evaluar_alertas).
 
     `registrar=False` (botón "Probar") calcula lo mismo sin guardar qué se avisó: si no, probar
-    el mensaje "gastaría" el aviso y el ciclo real ya no lo mandaría. Sin credenciales de Milky
-    no hay balance: no se avisa nada (igual que la alerta de temperatura). Una fuente caída es
+    el mensaje "gastaría" el aviso y el ciclo real ya no lo mandaría. Un tambo CON Milky pero sin sus
+    credenciales no tiene balance: no se avisa nada (igual que la alerta de temperatura); uno SIN Milky
+    avisa el tramo sala -> camión si tiene despachos de DelPro o La Serenísima, y si no tiene ninguna
+    fuente de camión no dice nada (no es una falla). Una fuente caída es
     una línea de advertencia, nunca una excepción: no tiene que cortar las demás alertas."""
     usuario, password = cicla.credenciales()
-    if not (usuario and password and _tambo_con_milky(tambo)):
+    if _tambo_con_milky(tambo) and not (usuario and password):
         return []
     try:
         hoy = datetime.date.today()
-        balance = _balance_leche(tambo, hoy - datetime.timedelta(days=BALANCE_DIAS_DEFECTO), hoy)
+        try:
+            balance = _balance_leche(tambo, hoy - datetime.timedelta(days=BALANCE_DIAS_DEFECTO), hoy)
+        except BalanceError as exc:
+            if exc.status == 400:       # nada que comparar (sin Milky ni camión): no es una falla, no se avisa
+                return []
+            raise
         avisados = balance_leche.leer_avisados(tambo)
         eventos, nuevos = balance_leche.evaluar_alertas(balance["dias"], avisados)
         if registrar and nuevos != avisados:

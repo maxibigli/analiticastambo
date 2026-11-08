@@ -308,3 +308,100 @@ class TestRegistroAvisos(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCamionDesdeDelpro(unittest.TestCase):
+    """Tambo SIN caudalímetro: no hay tanque, y el camión sale de los despachos cargados en DelPro (o del
+    comprador). El tramo es sala -> camión, y a lo despachado se le suma la leche de uso interno, que sale
+    de la sala pero no va en el camión. Con tanque (La Ponderosa) nada de esto cambia."""
+
+    KG = [_kg("2026-10-20", 60000, 1500), _kg("2026-10-21", 61000, 1500), _kg("2026-10-22", 59000, 1500)]
+
+    def test_sin_tanque_compara_sala_con_camion_mas_uso_interno(self):
+        # kg x 1,02 = 61.200 / 62.220 / 60.180 litros esperados
+        camion = {"2026-10-20": 58000.0, "2026-10-21": 58900.0, "2026-10-22": 57000.0}
+        uso = {"2026-10-20": 3000.0, "2026-10-21": 3200.0, "2026-10-22": 3100.0}
+        r = bl.calcular(self.KG, {}, camion, 1.02, uso_interno=uso, con_tanque=False)
+        d = {x["fecha"]: x for x in r["dias"]}
+        self.assertFalse(r["tanque_disponible"])
+        self.assertEqual(d["2026-10-20"]["lts_uso_interno"], 3000.0)
+        self.assertEqual(d["2026-10-20"]["desvio_sala_camion_pct"], -0.3)     # 61000 / 61200 - 1
+        self.assertEqual(d["2026-10-21"]["desvio_sala_camion_pct"], -0.2)     # 62200 / 62220 - 1
+        self.assertIsNone(d["2026-10-20"]["desvio_sala_tanque_pct"])
+        self.assertIsNone(d["2026-10-20"]["desvio_tanque_camion_pct"])
+        self.assertEqual(r["totales"]["desvio_sala_camion_pct"], -0.2)
+        self.assertEqual(r["tramo_mayor"], "sala_camion")
+
+    def test_sin_uso_interno_cuenta_cero(self):
+        r = bl.calcular(self.KG, {}, {"2026-10-20": 61200.0}, 1.02, con_tanque=False)
+        self.assertEqual(r["dias"][0]["desvio_sala_camion_pct"], 0.0)
+        self.assertIsNone(r["dias"][0]["lts_uso_interno"])
+
+    def test_con_tanque_no_hay_tramo_sala_camion(self):
+        """La Ponderosa: hay Milky, el camión se compara contra el tanque como siempre."""
+        milky = {"2026-10-20": _milky(61000, 62000)}
+        r = bl.calcular(self.KG, milky, {"2026-10-20": 61000.0}, 1.02, uso_interno={"2026-10-20": 900.0})
+        self.assertTrue(r["tanque_disponible"])
+        self.assertIsNone(r["dias"][0]["desvio_sala_camion_pct"])
+        self.assertIsNone(r["totales"]["desvio_sala_camion_pct"])
+        self.assertEqual(r["dias"][0]["desvio_tanque_camion_pct"], 0.0)
+
+    def test_tanque_sin_cargas_en_el_rango_no_pasa_a_modo_sin_tanque(self):
+        """Un tambo CON Milky al que no le llegó ninguna carga no es un tambo sin caudalímetro."""
+        r = bl.calcular(self.KG, {}, {"2026-10-20": 61200.0}, 1.02)
+        self.assertFalse(r["tanque_disponible"])      # sin con_tanque, se deduce de que no hay cargas
+        r = bl.calcular(self.KG, {}, {"2026-10-20": 61200.0}, 1.02, con_tanque=True)
+        self.assertTrue(r["tanque_disponible"])
+        self.assertIsNone(r["dias"][0]["desvio_sala_camion_pct"])
+
+    def test_dia_sin_cerrar_no_tiene_desvio(self):
+        kg = self.KG + [_kg("2026-10-23", 95, 0)]
+        r = bl.calcular(kg, {}, {"2026-10-23": 58000.0}, 1.02, con_tanque=False)
+        ultimo = r["dias"][-1]
+        self.assertFalse(ultimo["cerrado"])
+        self.assertIsNone(ultimo["desvio_sala_camion_pct"])
+
+    def test_perdida_fuera_del_umbral_alerta(self):
+        camion = {"2026-10-20": 57000.0 - 4000, "2026-10-21": 59000.0, "2026-10-22": 57000.0}   # 20/10: -9,3 %
+        uso = {f: 3000.0 for f in camion}
+        r = bl.calcular(self.KG, {}, camion, 1.02, uso_interno=uso, con_tanque=False)
+        d = {x["fecha"]: x for x in r["dias"]}
+        self.assertTrue(d["2026-10-20"]["alerta_sala_camion"])
+        self.assertFalse(d["2026-10-21"]["alerta_sala_camion"])
+
+    def test_fecha_corrida_en_sala_camion(self):
+        """El remito de un día se cargó al día siguiente: -8 % y +8 % seguidos se compensan."""
+        camion = {"2026-10-20": 58000.0 - 4900, "2026-10-21": 59000.0 + 4900, "2026-10-22": 57000.0}
+        uso = {f: 3000.0 for f in camion}
+        r = bl.calcular(self.KG, {}, camion, 1.02, uso_interno=uso, con_tanque=False)
+        d = {x["fecha"]: x for x in r["dias"]}
+        for f in ("2026-10-20", "2026-10-21"):
+            self.assertTrue(d[f]["corrida_sala_camion"], f)
+            self.assertFalse(d[f]["alerta_sala_camion"], f)
+
+    def test_alerta_y_texto_del_tramo_sala_camion(self):
+        dias = [{"fecha": "2026-11-01", "desvio_sala_camion_pct": -6.2, "alerta_sala_camion": True,
+                 "corrida_sala_camion": False},
+                {"fecha": "2026-11-02", "desvio_sala_camion_pct": 0.3, "alerta_sala_camion": False,
+                 "corrida_sala_camion": False}]
+        eventos, nuevos = bl.evaluar_alertas(dias, {})
+        self.assertEqual([(e["tramo"], e["fecha"], e["desvio_pct"]) for e in eventos],
+                         [("sala_camion", "2026-11-01", -6.2)])
+        self.assertEqual(nuevos["sala_camion"], "2026-11-01")
+        self.assertEqual(bl.texto_alerta(eventos),
+                         ["⚖️ Balance de leche: sala → camión se desvió −6,2 % el 01/11 (umbral ±3 %)."])
+
+
+class TestEntradasDespachos(unittest.TestCase):
+    def test_litros_despachos_por_dia(self):
+        cargas = [{"fecha": "01/11/2026 16:20:00", "lts_cicla": 8040.0},
+                  {"fecha": "01/11/2026 16:30:00", "lts_cicla": 6000.0},
+                  {"fecha": "2/11/2026 16:20:00", "lts_cicla": 8032.0},
+                  {"fecha": "02/11/2026 17:00:00", "lts_cicla": None}]
+        self.assertEqual(bl.litros_despachos_por_dia(cargas), {"2026-11-01": 14040.0, "2026-11-02": 8032.0})
+
+    def test_uso_interno_por_dia(self):
+        uso = [{"fecha": "01/11/2026 08:50:00", "litros": 720.0, "uso": 0},
+               {"fecha": "01/11/2026 19:00:00", "litros": 80.0, "uso": 1},
+               {"fecha": "02/11/2026 08:50:00", "litros": None, "uso": 0}]
+        self.assertEqual(bl.uso_interno_por_dia(uso), {"2026-11-01": 800.0})

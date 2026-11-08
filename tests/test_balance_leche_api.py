@@ -49,6 +49,9 @@ class Base(unittest.TestCase):
                 (app.cicla, "credenciales", lambda: ("usuario", "clave")),
                 (app.cicla, "obtener_cargas", lambda *a, **k: (list(CARGAS), False)),
                 (app, "_laser_traer", lambda *a, **k: LASER),
+                # Por defecto el tambo no tiene despachos cargados en DelPro (`db.run_query` está simulado con kilos).
+                (app.despachos_delpro, "obtener_cargas", lambda *a, **k: ([], False)),
+                (app.despachos_delpro, "uso_interno", lambda *a, **k: []),
                 (app.db, "run_query", lambda *a, **k: DELPRO)):
             p = mock.patch.object(objeto, nombre, valor)
             p.start()
@@ -263,6 +266,163 @@ class TestAlerta(Base):
         with mock.patch.object(app, "_canales_disponibles", lambda: True),                 mock.patch.object(app, "_construir_mensaje_alertas", return_value=(None, None)) as armar:
             app._revisar_alertas_whatsapp()
         armar.assert_called_once_with(app.tambos.DEFAULT_TAMBO, registrar=True)
+
+
+# --- Camión desde los despachos de DelPro (tambos sin caudalímetro o sin La Serenísima) ----------------------
+# Los despachos son SIMULADOS (tests/simulacion_despachos.py, con la forma de San José) a partir de los kg reales.
+SIN_MILKY = "lamartina_local"        # no es el tambo por defecto y no declara caudalímetro: no tiene Milky
+KG_SIM = {f"2026-10-{d}": kg for d, kg in ((24, 66790.0), (25, 71116.0), (26, 68553.0), (27, 69125.0))}
+
+
+class BaseDespachos(Base):
+    def simular(self, **kw):
+        try:
+            from simulacion_despachos import simular_despachos   # unittest discover -s tests
+        except ImportError:
+            from tests.simulacion_despachos import simular_despachos   # unittest tests.test_...
+        cargas, uso = simular_despachos(KG_SIM, **kw)
+        self.llamadas = {"cargas": 0, "uso": 0}
+
+        def _cargas(*a, **k):
+            self.llamadas["cargas"] += 1
+            return list(cargas), False
+
+        def _uso(*a, **k):
+            self.llamadas["uso"] += 1
+            return list(uso)
+        for nombre, valor in (("obtener_cargas", _cargas), ("uso_interno", _uso)):
+            p = mock.patch.object(app.despachos_delpro, nombre, valor)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def get(self, tambo=SIN_MILKY):
+        return self.client.get("/api/balance/leche" + URL + "&tambo=" + tambo)
+
+
+class TestSinCaudalimetro(BaseDespachos):
+    """Sin Milky no hay tanque: el camión (despachos de DelPro) se compara directo con la sala."""
+
+    def test_un_dia_normal_da_cero_y_la_perdida_se_ve(self):
+        self.simular(perdidas={"2026-10-25": -9.0})
+        r = self.get()
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        d = r.get_json()
+        self.assertIs(d["tanque_disponible"], False)
+        self.assertEqual(d["camion_fuente"], "delpro")
+        dias = {x["fecha"]: x for x in d["dias"]}
+        for f in ("2026-10-24", "2026-10-26", "2026-10-27"):
+            self.assertLess(abs(dias[f]["desvio_sala_camion_pct"]), 1.5, f)
+            self.assertFalse(dias[f]["alerta_sala_camion"], f)
+        self.assertLess(dias["2026-10-25"]["desvio_sala_camion_pct"], -7)
+        self.assertTrue(dias["2026-10-25"]["alerta_sala_camion"])
+        self.assertIsNone(dias["2026-10-25"]["desvio_sala_tanque_pct"])
+        self.assertIsNotNone(dias["2026-10-25"]["lts_uso_interno"])
+        self.assertEqual(d["tramo_mayor"], "sala_camion")
+
+    def test_el_uso_interno_cuenta_en_el_camion(self):
+        """Sin sumarlo, cada día daría −5 %: es la leche de la guachera que sale de la sala y no va en el camión."""
+        self.simular()
+        d = self.get().get_json()
+        con = d["totales"]["desvio_sala_camion_pct"]
+        sin = round((d["totales"]["lts_despachado"] / d["totales"]["lts_delpro_camion"] - 1) * 100, 1)
+        self.assertLess(abs(con), 1.0)
+        self.assertLess(sin, -3.5)
+
+    def test_una_carga_corrida_de_dia_no_es_perdida(self):
+        self.simular(corridas={"2026-10-25": 5500.0})
+        dias = {x["fecha"]: x for x in self.get().get_json()["dias"]}
+        for f in ("2026-10-25", "2026-10-26"):
+            self.assertTrue(dias[f]["corrida_sala_camion"], f)
+            self.assertFalse(dias[f]["alerta_sala_camion"], f)
+
+    def test_sin_despachos_ni_comprador_es_un_error_claro(self):
+        p = mock.patch.object(app.despachos_delpro, "obtener_cargas", lambda *a, **k: ([], False))
+        p.start()
+        self.addCleanup(p.stop)
+        p = mock.patch.object(app.despachos_delpro, "uso_interno", lambda *a, **k: [])
+        p.start()
+        self.addCleanup(p.stop)
+        r = self.get()
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("despachos", r.get_json()["error"])
+
+    def test_falla_la_lectura_de_despachos(self):
+        p = mock.patch.object(app.despachos_delpro, "obtener_cargas",
+                              side_effect=app.despachos_delpro.DespachosError("sin red"))
+        p.start()
+        self.addCleanup(p.stop)
+        r = self.get()
+        self.assertEqual(r.status_code, 502)
+        self.assertIn("sin red", r.get_json()["error"])
+
+    def test_no_pide_credenciales_de_milky(self):
+        self.simular()
+        with mock.patch.object(app.cicla, "credenciales", lambda: (None, None)):
+            self.assertEqual(self.get().status_code, 200)
+
+
+class TestCamionConCaudalimetro(BaseDespachos):
+    """Con Milky, el camión sigue siendo tanque -> camión; solo cambia de dónde sale el comprador."""
+
+    def test_la_serenisima_configurada_manda_y_no_se_leen_los_despachos(self):
+        self.simular()
+        d = self.client.get("/api/balance/leche" + URL).get_json()
+        self.assertEqual(d["camion_fuente"], "la_serenisima")
+        self.assertEqual(self.llamadas, {"cargas": 0, "uso": 0})
+        self.assertEqual({x["fecha"]: x["desvio_tanque_camion_pct"] for x in d["dias"]}["2026-10-25"], 52.1)
+
+    def test_si_la_serenisima_falla_no_se_cambia_de_fuente_en_silencio(self):
+        self.simular()
+        with mock.patch.object(app, "_laser_traer", side_effect=RuntimeError("login vencido")):
+            d = self.client.get("/api/balance/leche" + URL).get_json()
+        self.assertIs(d["comprador_disponible"], False)
+        self.assertIsNone(d["camion_fuente"])
+        self.assertEqual(self.llamadas, {"cargas": 0, "uso": 0})
+
+    def test_sin_serenisima_el_camion_son_los_despachos_de_delpro(self):
+        self.simular()
+        with mock.patch.dict(os.environ, {"LASER_USUARIO": "", "LASER_PASSWORD": ""}):
+            d = self.client.get("/api/balance/leche" + URL).get_json()
+        self.assertIs(d["tanque_disponible"], True)
+        self.assertEqual(d["camion_fuente"], "delpro")
+        self.assertIs(d["comprador_disponible"], True)
+        dias = {x["fecha"]: x for x in d["dias"]}
+        self.assertIsNotNone(dias["2026-10-26"]["desvio_tanque_camion_pct"])
+        self.assertIsNone(dias["2026-10-26"]["desvio_sala_camion_pct"])     # con tanque no hay sala -> camión
+
+    def test_sin_serenisima_y_sin_despachos_el_balance_sale_igual(self):
+        with mock.patch.dict(os.environ, {"LASER_USUARIO": "", "LASER_PASSWORD": ""}), \
+                mock.patch.object(app.despachos_delpro, "obtener_cargas", lambda *a, **k: ([], False)), \
+                mock.patch.object(app.despachos_delpro, "uso_interno", lambda *a, **k: []):
+            d = self.client.get("/api/balance/leche" + URL).get_json()
+        self.assertIs(d["comprador_disponible"], False)
+        self.assertIsNone(d["camion_fuente"])
+
+    def test_despachos_caidos_con_milky_avisan_pero_no_cortan(self):
+        with mock.patch.dict(os.environ, {"LASER_USUARIO": "", "LASER_PASSWORD": ""}), \
+                mock.patch.object(app.despachos_delpro, "obtener_cargas",
+                                  side_effect=app.despachos_delpro.DespachosError("sin red")):
+            r = self.client.get("/api/balance/leche" + URL)
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertIs(d["comprador_disponible"], False)
+        self.assertTrue(any("sin red" in a for a in d["avisos"]), d["avisos"])
+
+
+class TestAlertaSinCaudalimetro(BaseDespachos):
+    def test_alerta_de_sala_a_camion(self):
+        # Sin registro previo solo se evalúa el último día evaluable (el 26/10: el 27/10 ya existe).
+        self.simular(perdidas={"2026-10-26": -9.0})
+        lineas = app._lineas_alerta_balance(SIN_MILKY, registrar=False)
+        self.assertEqual(len(lineas), 1, lineas)
+        self.assertIn("sala → camión", lineas[0])
+        self.assertIn("26/10", lineas[0])
+
+    def test_un_tambo_sin_nada_que_comparar_no_dice_nada(self):
+        with mock.patch.object(app.despachos_delpro, "obtener_cargas", lambda *a, **k: ([], False)), \
+                mock.patch.object(app.despachos_delpro, "uso_interno", lambda *a, **k: []):
+            self.assertEqual(app._lineas_alerta_balance(SIN_MILKY, registrar=True), [])
+        self.assertEqual(balance_leche.leer_avisados(SIN_MILKY), {})
 
 
 # Respuesta capturada ANTES de extraer `_cargas_cicla`/`_entregas_laser` de `api_entregas_comparar`.

@@ -3108,6 +3108,28 @@ tramo tanque → camión dejaba de alertar sin avisar (lo encontró el revisor f
 `/api/entregas/comparar` se refactorizó para compartir `_cargas_cicla` y `_entregas_laser` con el balance (misma
 caché); su respuesta no cambió (hay un test con la respuesta capturada antes del refactor).
 
+**Tambos sin caudalímetro: el camión desde los despachos de DelPro, tramo `sala_camion` (08/11/2026).**
+Sin Milky no hay tanque: el balance compara la sala DIRECTO con el camión. `_balance_leche` ya no exige Milky;
+`balance_leche.calcular(..., uso_interno=, con_tanque=)` agrega el tramo `sala_camion` SOLO cuando `con_tanque` es
+falso (con Milky el camión se compara contra la venta del tanque como siempre, y La Ponderosa no cambió). Fuente
+del camión (`_camion_balance`, y la respuesta trae `camion_fuente`): **1)** La Serenísima si el tambo la tiene y hay
+`LASER_*`; si falla NO se cambia a otra fuente en silencio (el mismo gráfico no puede significar cosas distintas según
+el día); **2)** si no, los despachos cargados en DelPro (`despachos_delpro.py`, menú Leche > Despachos de leche). Lo
+que sale de la sala pero NO va en el camión es la leche de **uso interno** (`MilkForInternalUsage`), y se SUMA al
+camión antes de comparar: sin eso cada día daría ~−5 % (en San José el uso interno era ~5 % de lo producido). Un
+tambo sin Milky y sin ninguna fuente de camión recibe un 400 que lo explica; si los despachos no se pueden leer, un
+tambo con Milky sigue funcionando (`avisos`) y uno sin Milky recibe un 502. La alerta (`_lineas_alerta_balance`)
+también corre para un tambo sin Milky, con el tramo "sala → camión"; un 400 ("nada que comparar") no es una falla y no avisa.
+
+**Lo que NO se puede afirmar todavía.** Los litros de DelPro son los tipeados del remito, no una medición, y el factor
+1,02 se midió con Milky en La Ponderosa: en un tambo sin tanque **no hay con qué calibrarlo**, y la pantalla lo dice.
+Ningún tambo al que tengamos acceso carga despachos hoy (San José los dejó en 10/2024, La Ponderosa local los tiene
+vacíos), así que el modo se probó solo con datos SIMULADOS: `tests/simulacion_despachos.py` genera despachos con la
+forma de San José (2 por día, "Tarde"/"Noche", uso interno de ~5 % en pasos de 20 L) a partir de los kg reales de
+sala, con una pérdida y una carga corrida a pedido. `factor_real` de la simulación es un supuesto: con el mismo
+factor que usa el balance, un día normal da ≈ 0 %. Se vio en el navegador con los kg reales de `ponderosa_local`
+(julio 2026): la pérdida del 15/07 sale en rojo, el 20 y 21/07 como fecha corrida y el 27/07 (parcial) sin cerrar.
+
 ## Panel de despliegue: variables de entorno + actualizar/iniciar/parar (08/11/2026)
 
 `panel_despliegue.py` (lanzador `iniciar_panel.bat`, uso en INSTALL.md §11). Pedido del tambo:

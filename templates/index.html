@@ -2024,7 +2024,7 @@
 
   <section class="card" id="balance-card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">🧮 Comparación de Cargas (sala → tanque → camión)</h2>
+      <h2 style="margin:0" id="balance-titulo">🧮 Comparación de Cargas (sala → tanque → camión)</h2>
       <span class="aviso">La misma leche en los tres sistemas de medición, por día · umbral ±3%.</span>
       <div class="controls" style="margin-left:auto">
         <label class="aviso" style="display:flex;align-items:center;gap:5px">Desde
@@ -2046,6 +2046,10 @@
       solo cuentan los días de DelPro ya cerrados. El umbral es ±3%. Un día se avisa recién cuando existe el
       siguiente, para distinguir una <b>fecha corrida</b> (una carga de medianoche que cada sistema asigna a otro día,
       no es leche perdida) de una pérdida real.
+      <br><b>Sin caudalímetro.</b> Si el tambo no tiene el de Milky, no hay tanque: el camión (los despachos cargados en
+      DelPro, o La Serenísima) se compara directo con la sala en un solo tramo, <b>sala → camión</b>. A lo entregado se le
+      suma la leche de uso interno (guachera, etc.), que sale de la sala pero no va en el camión. Los litros de DelPro son
+      los que se tipean del remito: sirven para ver cuánto falta entre la sala y el camión, pero no son una medición.
     </p>
     <div class="bal-factor">
       <label class="aviso" for="balance-factor">Factor de DelPro</label>
@@ -8066,13 +8070,13 @@ function balPct(v) {
 
 function balChip(dia, tramo) {
   const v = dia['desvio_' + tramo + '_pct'];
-  if (v == null) return '<span class="bal-chip bal-nd">' + (tramo === 'sala_tanque' && !dia.cerrado && dia.kg != null ? 'sin cerrar' : '—') + '</span>';
+  if (v == null) return '<span class="bal-chip bal-nd">' + ((tramo === 'sala_tanque' || tramo === 'sala_camion') && !dia.cerrado && dia.kg != null ? 'sin cerrar' : '—') + '</span>';
   if (dia['corrida_' + tramo])
     return `<span class="bal-chip bal-corrida" title="Dos días seguidos con desvío opuesto que se compensan: una carga cambió de día, no es leche perdida.">fecha corrida ${balPct(v)}</span>`;
   return `<span class="bal-chip ${dia['alerta_' + tramo] ? 'bal-alerta' : 'bal-ok'}">${balPct(v)}</span>`;
 }
 
-function graficaBalance(canvasId, chartRef, dias, umbral) {
+function graficaBalance(canvasId, chartRef, dias, umbral, sinTanque) {
   const etiquetas = dias.map(d => d.fecha.slice(5));
   const serie = (tramo, color, nombre) => ({
     label: nombre, data: dias.map(d => d['desvio_' + tramo + '_pct']),
@@ -8084,14 +8088,15 @@ function graficaBalance(canvasId, chartRef, dias, umbral) {
   const limite = v => ({ label: `${v > 0 ? '+' : '−'}${umbral} %`, data: dias.map(() => v), borderColor: css('--warning'),
     borderDash: [5, 4], borderWidth: 1.3, pointRadius: 0 });
   const opts = baseOpts(true);
-  opts.plugins.legend.labels.filter = item => item.datasetIndex < 2;
+  const series = sinTanque
+    ? [serie('sala_camion', SERIES[3], 'Sala → camión')]
+    : [serie('sala_tanque', SERIES[0], 'Sala → tanque'), serie('tanque_camion', SERIES[3], 'Tanque → camión')];
+  opts.plugins.legend.labels.filter = item => item.datasetIndex < series.length;
   opts.scales.y = { suggestedMin: -5, suggestedMax: 5, grid: { color: css('--grid') }, border: { display: false },
                     ticks: { callback: v => v + ' %' } };
   return dibujar(canvasId, chartRef, {
     type: 'line', options: opts,
-    data: { labels: etiquetas, datasets: [serie('sala_tanque', SERIES[0], 'Sala → tanque'),
-                                          serie('tanque_camion', SERIES[3], 'Tanque → camión'),
-                                          limite(umbral), limite(-umbral)] },
+    data: { labels: etiquetas, datasets: [...series, limite(umbral), limite(-umbral)] },
   });
 }
 
@@ -8101,19 +8106,27 @@ function pintarBalanceTarjetas(d) {
     `<div class="value">${valor == null ? '—' : fmt(valor) + ' L'}</div><div class="sub">${sub}</div></div>`;
   const paso = (v, nota) => `<div class="bal-paso"><span class="bal-chip ${v == null ? 'bal-nd' : (Math.abs(v) > d.umbral ? 'bal-alerta' : 'bal-ok')}">${balPct(v)}</span>→` +
     `<span class="aviso" style="font-size:11px;text-align:center">${nota}</span></div>`;
-  let html = '<div class="bal-cascada">' +
-    tile('Sala · DelPro', t.lts_delpro, `kg × ${balFactor(d.factor)} · solo días cerrados`) +
-    paso(t.desvio_sala_tanque_pct, 'período') +
-    tile('Tanque · Milky', t.lts_milky, 'venta + guachera, los mismos días');
-  if (d.comprador_disponible) {
-    html += paso(t.desvio_tanque_camion_pct, 'ventas vs. comprador') +
-      tile('Camión · La Serenísima', t.lts_comprador, `contra ${fmt(t.lts_venta)} L vendidos según Milky`);
+  const fuente = d.camion_fuente_label || 'La Serenísima';
+  let html = '<div class="bal-cascada">';
+  if (!d.tanque_disponible) {
+    // Sin caudalímetro: no hay tanque. El camión es lo entregado + la leche de uso interno (sale de la sala y no va en el camión).
+    html += tile('Sala · DelPro', t.lts_delpro_camion, `kg × ${balFactor(d.factor)} · solo días cerrados`) +
+      paso(t.desvio_sala_camion_pct, 'período') +
+      tile('Camión · ' + fuente, t.lts_camion, `${fmt(t.lts_despachado)} L entregados + ${fmt(t.lts_uso_interno)} L de uso interno`);
   } else {
-    html += '<div class="bal-paso"><span class="aviso">sin datos del comprador</span></div>';
+    html += tile('Sala · DelPro', t.lts_delpro, `kg × ${balFactor(d.factor)} · solo días cerrados`) +
+      paso(t.desvio_sala_tanque_pct, 'período') +
+      tile('Tanque · Milky', t.lts_milky, 'venta + guachera, los mismos días');
+    if (d.comprador_disponible) {
+      html += paso(t.desvio_tanque_camion_pct, 'ventas vs. comprador') +
+        tile('Camión · ' + fuente, t.lts_comprador, `contra ${fmt(t.lts_venta)} L vendidos según Milky`);
+    } else {
+      html += '<div class="bal-paso"><span class="aviso">sin datos del camión</span></div>';
+    }
   }
   html += '</div>';
   if (d.tramo_mayor) {
-    const nombre = d.tramo_mayor === 'sala_tanque' ? 'sala → tanque' : 'tanque → camión';
+    const nombre = { sala_tanque: 'sala → tanque', tanque_camion: 'tanque → camión', sala_camion: 'sala → camión' }[d.tramo_mayor];
     const v = d.totales['desvio_' + d.tramo_mayor + '_pct'];
     html += `<div class="aviso" style="margin-top:8px">El tramo que más se desvía en el período es <b>${nombre}</b> (${balPct(v)}).</div>`;
   }
@@ -8121,6 +8134,19 @@ function pintarBalanceTarjetas(d) {
 }
 
 function pintarBalanceTabla(d) {
+  if (!d.tanque_disponible) {
+    const filasSC = d.dias.slice().reverse().map(x =>
+      `<tr class="${x.cerrado || x.kg == null ? '' : 'bal-sin-cerrar'}"><td>${x.fecha.slice(8)}/${x.fecha.slice(5, 7)}</td>` +
+      `<td class="num">${x.lts_delpro == null ? '—' : fmt(x.lts_delpro)}</td>` +
+      `<td class="num">${x.lts_comprador == null ? '—' : fmt(Math.round(x.lts_comprador))}</td>` +
+      `<td class="num">${x.lts_uso_interno == null ? '—' : fmt(Math.round(x.lts_uso_interno))}</td>` +
+      `<td>${balChip(x, 'sala_camion')}</td></tr>`).join('');
+    document.getElementById('balance-tabla').innerHTML = d.dias.length
+      ? '<table class="lac-table"><thead><tr><th>Día</th><th class="num">DelPro (L)</th><th class="num">Entregado (L)</th>' +
+        '<th class="num">Uso interno (L)</th><th>Sala → camión</th></tr></thead><tbody>' + filasSC + '</tbody></table>'
+      : '';
+    return;
+  }
   const filas = d.dias.slice().reverse().map(x =>
     `<tr class="${x.cerrado || x.kg == null ? '' : 'bal-sin-cerrar'}"><td>${x.fecha.slice(8)}/${x.fecha.slice(5, 7)}</td>` +
     `<td class="num">${x.lts_delpro == null ? '—' : fmt(x.lts_delpro)}</td>` +
@@ -8145,7 +8171,7 @@ async function cargarBalance() {
   if (iDesde.value) params.set('desde', iDesde.value);
   if (iHasta.value) params.set('hasta', iHasta.value);
   balanceCargando = true; btn.disabled = true;
-  info.textContent = 'Consultando DelPro, Milky y La Serenísima…';
+  info.textContent = 'Consultando DelPro, el tanque y el camión…';
   try {
     const d = await pedirJSON('/api/balance/leche?' + params.toString());
     iDesde.value = d.desde; iHasta.value = d.hasta;
@@ -8153,17 +8179,24 @@ async function cargarBalance() {
     const dif = Math.round((d.factor / d.factor_densidad - 1) * 100);
     document.getElementById('balance-factor-nota').textContent =
       `Medido: ${balFactor(d.factor_defecto)} (17/10 al 02/11/2026). Por la densidad de la leche (≈1,03 kg/L) serían ≈${balFactor(d.factor_densidad)}: ` +
-      `DelPro queda ≈${dif}% por debajo de lo que miden Milky y el comprador, por una causa sin determinar.`;
-    chartBalance = graficaBalance('chart-balance', chartBalance, d.dias, d.umbral);
+      `DelPro queda ≈${dif}% por debajo de lo que miden Milky y el comprador, por una causa sin determinar.` +
+      (d.tanque_disponible ? '' : ' Ese factor se midió en un tambo con caudalímetro: sin tanque no hay con qué ' +
+        'calibrarlo acá; ajustalo cuando tengas unas semanas de despachos para comparar.');
+    document.getElementById('balance-titulo').textContent = '🧮 Comparación de Cargas (' +
+      (d.tanque_disponible ? 'sala → tanque → camión' : 'sala → camión') + ')';
+    chartBalance = graficaBalance('chart-balance', chartBalance, d.dias, d.umbral, !d.tanque_disponible);
     pintarBalanceTarjetas(d);
     pintarBalanceTabla(d);
     const cerrados = d.dias.filter(x => x.cerrado).length;
-    const alertas = d.dias.filter(x => x.alerta_sala_tanque || x.alerta_tanque_camion).length;
-    const corridas = d.dias.filter(x => x.corrida_sala_tanque || x.corrida_tanque_camion).length;
+    const alertas = d.dias.filter(x => x.alerta_sala_tanque || x.alerta_tanque_camion || x.alerta_sala_camion).length;
+    const corridas = d.dias.filter(x => x.corrida_sala_tanque || x.corrida_tanque_camion || x.corrida_sala_camion).length;
     info.textContent = `${cerrados} día(s) de DelPro cerrados entre ${d.desde} y ${d.hasta} · ${alertas} con desvío >${d.umbral}%` +
       (corridas ? ` · ${corridas} por fecha corrida` : '') + '.' +
-      (d.comprador_disponible ? '' : ' Sin datos de La Serenísima: solo se muestra sala → tanque.') +
-      (d.cicla_incompleto ? ' ⚠ CICLA puede estar incompleto para este rango.' : '');
+      (d.tanque_disponible ? '' : ' Sin caudalímetro: el camión se compara directo con la sala.') +
+      (d.camion_fuente === 'delpro' ? ' Camión: despachos cargados en DelPro (litros del remito, no una medición).' : '') +
+      (d.tanque_disponible && !d.comprador_disponible ? ' Sin datos del camión: solo se muestra sala → tanque.' : '') +
+      (d.cicla_incompleto ? ' ⚠ CICLA puede estar incompleto para este rango.' : '') +
+      (d.avisos || []).map(a => ' ⚠ ' + a).join('');
   } catch (e) {
     info.textContent = 'Error: ' + e.message;
   } finally {
