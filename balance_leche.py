@@ -186,11 +186,16 @@ def _marcar_corridas(dias: list, tramo: str, dif_ref: dict, umbral: float):
 
 
 def calcular(kg_dia: list, milky: dict, comprador, factor: float, umbral: float = UMBRAL_PCT,
-             uso_interno=None, con_tanque=None) -> dict:
+             uso_interno=None, con_tanque=None, precio_litro=None) -> dict:
     """Balance por día. `kg_dia`: [{"fecha","kg","vacas"}]; `milky`: salida de
     `litros_milky_por_dia`; `comprador`: salida de `litros_comprador_por_dia` o
     `litros_despachos_por_dia`, o None si no hay datos del camión. Un valor que no se puede
     calcular va en None.
+
+    `precio_litro` ($ por litro de leche, o None): con él cada día trae `valor_dif_camion`, el dinero
+    de la diferencia tanque -> camión. Es una ESTIMACIÓN que supone que esa diferencia se pudiera
+    recuperar, no plata perdida confirmada (puede ser la calibración del caudalímetro, una carga que
+    cambió de día, merma...). Sin precio queda en None: nunca se inventa uno.
 
     `con_tanque`: el tambo tiene caudalímetro (Milky). Si es False no hay tanque que medir y el
     camión se compara DIRECTO contra la sala (tramo `sala_camion`): a lo que salió en el camión se
@@ -220,12 +225,14 @@ def calcular(kg_dia: list, milky: dict, comprador, factor: float, umbral: float 
         lts_uso = uso.get(fecha)
 
         d_sala = d_camion = d_sc = None
+        lts_dif_camion = None
         if cerrado and lts_milky is not None and esperado:
             d_sala = _pct(lts_milky, esperado)
             dif_sala[fecha] = (lts_milky - esperado, esperado)
         if lts_venta is not None and lts_comprador:
             d_camion = _pct(lts_venta, lts_comprador)
-            dif_camion[fecha] = (lts_venta - lts_comprador, lts_comprador)
+            lts_dif_camion = lts_venta - lts_comprador       # + = el tanque vendió más de lo que el comprador reconoció
+            dif_camion[fecha] = (lts_dif_camion, lts_comprador)
         if not con_tanque and cerrado and lts_comprador and esperado:
             observado = lts_comprador + (lts_uso or 0.0)
             d_sc = _pct(observado, esperado)
@@ -237,6 +244,13 @@ def calcular(kg_dia: list, milky: dict, comprador, factor: float, umbral: float 
             "lts_delpro": round(esperado) if esperado is not None else None,
             "lts_milky": lts_milky, "lts_venta": lts_venta, "lts_comprador": lts_comprador,
             "lts_uso_interno": lts_uso,
+            # Lo que salió del tanque y NO fue a la usina (guachera y cualquier destino sin clasificar).
+            "lts_otros_destinos": ((round(lts_milky - lts_venta, 1) or 0.0)
+                                   if (lts_milky is not None and lts_venta is not None) else None),
+            # Diferencia tanque -> camión en litros, y lo que valdría (estimación, ver el docstring).
+            "lts_dif_camion": round(lts_dif_camion, 1) if lts_dif_camion is not None else None,
+            "valor_dif_camion": (round(lts_dif_camion * precio_litro)
+                                 if (lts_dif_camion is not None and precio_litro) else None),
             "desvio_sala_tanque_pct": d_sala, "desvio_tanque_camion_pct": d_camion,
             "desvio_sala_camion_pct": d_sc,
             "alerta_sala_tanque": d_sala is not None and abs(d_sala) > umbral,
@@ -261,12 +275,21 @@ def calcular(kg_dia: list, milky: dict, comprador, factor: float, umbral: float 
     candidatos = [(t, tr) for t, tr in ((t_sala, "sala_tanque"), (t_camion, "tanque_camion"),
                                         (t_sc, "sala_camion")) if t is not None]
     mayor = max(candidatos, key=lambda c: abs(c[0]))[1] if candidatos else None
+    # Diferencia tanque -> camión del período: la suma NETA de los días donde existe el par (las cargas que
+    # cambiaron de día se compensan solas). Otros destinos: todos los días con carga del tanque.
+    dif_total = sum(v[0] for v in dif_camion.values())
+    otros_total = sum(d["lts_otros_destinos"] for d in dias if d["lts_otros_destinos"] is not None)
+    tanque_total = sum(m["total"] for m in milky.values())
     return {
         "factor": factor, "umbral": umbral, "comprador_disponible": comprador is not None,
-        "tanque_disponible": bool(con_tanque),
+        "tanque_disponible": bool(con_tanque), "precio_litro": precio_litro or None,
         "piso_vacas": piso, "dias": dias,
         "totales": {"lts_delpro": round(esp_sala), "lts_milky": round(obs_sala),
                     "lts_venta": round(obs_camion), "lts_comprador": round(ref_camion),
+                    "lts_dif_camion": round(dif_total) if dif_camion else None,
+                    "valor_dif_camion": round(dif_total * precio_litro) if (dif_camion and precio_litro) else None,
+                    "lts_otros_destinos": round(otros_total) if milky else None,
+                    "pct_otros_destinos": round(otros_total / tanque_total * 100, 1) if (milky and tanque_total) else None,
                     "desvio_sala_tanque_pct": t_sala, "desvio_tanque_camion_pct": t_camion,
                     # Sala -> camión (tambo sin caudalímetro): los mismos días en los tres números.
                     "lts_delpro_camion": round(esp_sc), "lts_camion": round(obs_sc),

@@ -116,6 +116,85 @@ class TestCalcular(unittest.TestCase):
         self.assertEqual(r["tramo_mayor"], "sala_tanque")
 
 
+class TestPlataYOtrosDestinos(unittest.TestCase):
+    """Diferencia tanque -> camión valuada con el precio de la leche (una ESTIMACIÓN que supone que se pudiera
+    recuperar) y litros que salieron del tanque sin ir al comprador (guachera)."""
+
+    def test_diferencia_en_litros_y_en_plata(self):
+        r = bl.calcular([], {"2026-10-20": _milky(71000, 72500)}, {"2026-10-20": 70500}, 1.05, precio_litro=600)
+        d = r["dias"][0]
+        self.assertEqual(d["lts_dif_camion"], 500.0)          # el tanque vendió 500 L más de lo que se reconoció
+        self.assertEqual(d["valor_dif_camion"], 300000)
+        self.assertEqual(r["totales"]["lts_dif_camion"], 500)
+        self.assertEqual(r["totales"]["valor_dif_camion"], 300000)
+        self.assertEqual(r["precio_litro"], 600)
+
+    def test_el_comprador_reconoce_mas_da_negativo(self):
+        r = bl.calcular([], {"2026-10-20": _milky(70000)}, {"2026-10-20": 70200}, 1.05, precio_litro=500)
+        d = r["dias"][0]
+        self.assertEqual(d["lts_dif_camion"], -200.0)
+        self.assertEqual(d["valor_dif_camion"], -100000)
+
+    def test_sin_precio_no_se_inventa_plata(self):
+        for precio in (None, 0):
+            r = bl.calcular([], {"2026-10-20": _milky(71000)}, {"2026-10-20": 70500}, 1.05, precio_litro=precio)
+            self.assertEqual(r["dias"][0]["lts_dif_camion"], 500.0)     # los litros salen igual
+            self.assertIsNone(r["dias"][0]["valor_dif_camion"])
+            self.assertEqual(r["totales"]["lts_dif_camion"], 500)
+            self.assertIsNone(r["totales"]["valor_dif_camion"])
+            self.assertIsNone(r["precio_litro"])
+
+    def test_sin_comprador_no_hay_diferencia_pero_si_otros_destinos(self):
+        r = bl.calcular([], {"2026-10-20": _milky(71000, 72000)}, None, 1.05, precio_litro=600)
+        d = r["dias"][0]
+        self.assertIsNone(d["lts_dif_camion"])
+        self.assertIsNone(d["valor_dif_camion"])
+        self.assertIsNone(r["totales"]["lts_dif_camion"])
+        self.assertIsNone(r["totales"]["valor_dif_camion"])
+        self.assertEqual(d["lts_otros_destinos"], 1000.0)
+        self.assertEqual(r["totales"]["lts_otros_destinos"], 1000)
+
+    def test_dia_sin_dato_del_comprador_no_entra_en_la_diferencia(self):
+        milky = {"2026-10-20": _milky(70000), "2026-10-21": _milky(70000)}
+        r = bl.calcular([], milky, {"2026-10-20": 69000}, 1.05, precio_litro=100)
+        d = {x["fecha"]: x for x in r["dias"]}
+        self.assertIsNone(d["2026-10-21"]["lts_dif_camion"])
+        self.assertEqual(r["totales"]["lts_dif_camion"], 1000)          # solo el 20/10, que tiene el par
+        self.assertEqual(r["totales"]["valor_dif_camion"], 100000)
+
+    def test_fecha_corrida_se_compensa_en_el_total(self):
+        """25/26 de octubre reales: +24.890 L un día y -25.851 L el otro. En el período es -961 L, no 50.000 L."""
+        milky = {"2026-10-25": _milky(72690), "2026-10-26": _milky(69949)}
+        comprador = {"2026-10-25": 47800, "2026-10-26": 95800}
+        r = bl.calcular([], milky, comprador, 1.05, precio_litro=10)
+        self.assertEqual(r["totales"]["lts_dif_camion"], -961)
+        self.assertEqual(r["totales"]["valor_dif_camion"], -9610)
+        d = {x["fecha"]: x for x in r["dias"]}
+        self.assertEqual(d["2026-10-25"]["lts_dif_camion"], 24890.0)
+        self.assertIs(d["2026-10-25"]["corrida_tanque_camion"], True)
+
+    def test_otros_destinos_es_total_menos_venta(self):
+        milky = {"2026-10-20": _milky(1000, 1060), "2026-10-21": _milky(2000, 2000)}
+        r = bl.calcular([], milky, None, 1.05)
+        d = {x["fecha"]: x for x in r["dias"]}
+        self.assertEqual(d["2026-10-20"]["lts_otros_destinos"], 60.0)
+        self.assertEqual(d["2026-10-21"]["lts_otros_destinos"], 0.0)
+        self.assertEqual(r["totales"]["lts_otros_destinos"], 60)
+        self.assertEqual(r["totales"]["pct_otros_destinos"], 2.0)       # 60 / 3060 del tanque
+
+    def test_dia_sin_cargas_del_tanque_no_tiene_otros_destinos(self):
+        r = bl.calcular([_kg("2026-10-20", 70000, 1640)], {}, None, 1.05)
+        self.assertIsNone(r["dias"][0]["lts_otros_destinos"])
+        self.assertIsNone(r["totales"]["lts_otros_destinos"])
+        self.assertIsNone(r["totales"]["pct_otros_destinos"])
+
+    def test_sin_tanque_no_hay_otros_destinos(self):
+        r = bl.calcular([_kg("2026-10-20", 70000, 1640)], {}, {"2026-10-20": 71000}, 1.05, con_tanque=False)
+        self.assertIsNone(r["dias"][0]["lts_otros_destinos"])
+        self.assertIsNone(r["dias"][0]["lts_dif_camion"])
+        self.assertIsNone(r["totales"]["valor_dif_camion"])
+
+
 class TestEntradas(unittest.TestCase):
     def test_litros_milky_por_dia(self):
         cargas = [

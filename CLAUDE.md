@@ -3130,6 +3130,29 @@ sala, con una pérdida y una carga corrida a pedido. `factor_real` de la simulac
 factor que usa el balance, un día normal da ≈ 0 %. Se vio en el navegador con los kg reales de `ponderosa_local`
 (julio 2026): la pérdida del 15/07 sale en rojo, el 20 y 21/07 como fecha corrida y el 27/07 (parcial) sin cerrar.
 
+**Diferencia tanque → camión en plata + "otros destinos" (guachera) (08/11/2026).** Dos columnas más en la tabla
+(y dos tiles de resumen) de la tarjeta, solo con tanque (`tanque_disponible`); la de plata además pide comprador.
+- **Diferencia en $** = `lts_venta − lts_comprador` del día × precio de la leche. El pedido fue explícito: es una
+  **ESTIMACIÓN que supone que esa diferencia se pudiera recuperar**, no plata perdida confirmada (puede ser calibración
+  del caudalímetro, una carga que cambió de día, merma). La pantalla lo dice en la cabecera de la columna, en la
+  leyenda bajo los tiles y en la explicación de la tarjeta. Signo: **+** = el tanque vendió más de lo que reconoció el
+  comprador; **−** = el comprador reconoció más.
+- **El total del período es la suma NETA** de los días con par tanque+comprador (`totales.lts_dif_camion/valor_dif_camion`):
+  las fechas corridas se compensan solas (25/26-oct: +24.890 y −25.851 L son −961 L, no 50.000). Por eso las celdas de
+  un día en `corrida_tanque_camion` van en violeta con un `title` que dice que no es plata a recuperar.
+- **Precio**: `app._precio_leche_balance` lee la planilla de precios del tambo (`precios_alimentos.leer(ruta_precios)`,
+  `precio_litro`). Nunca lanza ni inventa un precio (regla de este archivo: sin precio no hay pesos): sin planilla, sin
+  la fila de leche o con precio 0 sale `precio_leche.valor = None` + `error`, los litros se muestran igual y la pantalla
+  pide cargar el precio. Si la planilla marca el precio como ESTIMADO (`leche_estimada`) se avisa en rojo junto a la plata.
+  La respuesta trae `precio_leche {valor, estimado, via, usd_litro, tipo_cambio, error}`.
+- **A otros destinos (guachera)** = `lts_milky − lts_venta` por día (`lts_otros_destinos`; lo que salió del tanque y no
+  se vendió al comprador: guachera y cualquier carga que Milky no marca como venta) y `pct_otros_destinos` = % de
+  lo que salió del tanque. No depende del comprador ni del precio. Es lo mismo que el "total − venta" que ya mostraba el
+  tile del tanque ("venta + guachera"), ahora abierto por día.
+- `calcular(..., precio_litro=)` es opcional: sin él nada de lo anterior cambia. Tests: `TestPlataYOtrosDestinos` y los
+  `test_*precio*` de `tests/test_balance_leche_api.py` (la `Base` simula una planilla SIN precio, así que las pruebas no
+  leen la planilla real de la PC). Visto en el navegador con datos de ejemplo (con precio estimado, y sin precio).
+
 ## Panel de despliegue: variables de entorno + actualizar/iniciar/parar (08/11/2026)
 
 `panel_despliegue.py` (lanzador `iniciar_panel.bat`, uso en INSTALL.md §11). Pedido del tambo:

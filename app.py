@@ -5737,6 +5737,22 @@ def _camion_balance(tambo: str, desde: datetime.date, hasta: datetime.date):
     return por_dia, "delpro", balance_leche.uso_interno_por_dia(data["uso"])
 
 
+def _precio_leche_balance(tambo: str) -> dict:
+    """Precio del litro de leche de la planilla de precios del tambo, para valuar la diferencia tanque -> camión
+    del Balance. Nunca lanza ni inventa un precio: sin planilla (o sin la fila de leche) `valor` es None y el
+    Balance sale igual, sin pesos. `estimado`: la planilla marca ese precio como ESTIMADO (mostrarlo junto a la cifra)."""
+    try:
+        pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
+    except Exception as exc:  # noqa: BLE001 - sin planilla legible no hay pesos, pero el balance sí
+        return {"valor": None, "estimado": False, "via": None, "usd_litro": None, "tipo_cambio": None,
+                "error": f"No se pudo leer la planilla de precios: {exc}"}
+    valor = pr.get("precio_litro")
+    return {"valor": valor if valor else None, "estimado": bool(pr.get("leche_estimada")),
+            "via": pr.get("leche_via"), "usd_litro": pr.get("leche_usd_litro"),
+            "tipo_cambio": pr.get("tipo_cambio"),
+            "error": None if valor else (pr.get("error") or "La planilla de precios no tiene el precio de la leche.")}
+
+
 def _balance_leche(tambo: str, desde: datetime.date, hasta: datetime.date) -> dict:
     """Balance sala -> tanque -> camión entre dos fechas (ver balance_leche.py). Lanza `BalanceError`.
 
@@ -5777,9 +5793,12 @@ def _balance_leche(tambo: str, desde: datetime.date, hasta: datetime.date) -> di
                            "despachos de leche cargados en DelPro (menú Leche > Despachos de leche).", 400)
 
     milky = balance_leche.litros_milky_por_dia(cargas["cargas"])
+    precio = _precio_leche_balance(tambo)
     resultado = balance_leche.calcular(balance_leche.filas_kg(data_kg), milky, comprador,
-                                       balance_leche.factor_de(tambo), uso_interno=uso, con_tanque=tiene_milky)
+                                       balance_leche.factor_de(tambo), uso_interno=uso, con_tanque=tiene_milky,
+                                       precio_litro=precio["valor"])
     resultado.update({"desde": desde.isoformat(), "hasta": hasta.isoformat(),
+                      "precio_leche": precio,
                       "camion_fuente": fuente,
                       "camion_fuente_label": CAMION_FUENTES.get(fuente),
                       "avisos": avisos,

@@ -52,6 +52,8 @@ class Base(unittest.TestCase):
                 # Por defecto el tambo no tiene despachos cargados en DelPro (`db.run_query` está simulado con kilos).
                 (app.despachos_delpro, "obtener_cargas", lambda *a, **k: ([], False)),
                 (app.despachos_delpro, "uso_interno", lambda *a, **k: []),
+                # Por defecto sin precio de la leche (no se lee la planilla real de esta PC): sin pesos.
+                (app.precios_alimentos, "leer", lambda *a, **k: {"precio_litro": None, "error": "sin planilla (prueba)"}),
                 (app.db, "run_query", lambda *a, **k: DELPRO)):
             p = mock.patch.object(objeto, nombre, valor)
             p.start()
@@ -156,6 +158,49 @@ class TestBalance(Base):
         self.assertEqual(malo.status_code, 400)
         self.assertIn("error", malo.get_json())
         self.assertEqual(self._get().get_json()["factor"], 1.06)    # no pisó lo guardado
+
+    def test_plata_de_la_diferencia_con_el_precio_de_la_planilla(self):
+        planilla = {"precio_litro": 500.0, "leche_estimada": True, "leche_via": "manual", "error": None}
+        with mock.patch.object(app.precios_alimentos, "leer", lambda *a, **k: planilla):
+            d = self._get().get_json()
+        self.assertEqual(d["precio_leche"]["valor"], 500.0)
+        self.assertIs(d["precio_leche"]["estimado"], True)          # la planilla lo marca ESTIMADO: se avisa en pantalla
+        self.assertEqual(d["precio_leche"]["via"], "manual")
+        self.assertIsNone(d["precio_leche"]["error"])
+        dias = {x["fecha"]: x for x in d["dias"]}
+        self.assertEqual(dias["2026-10-25"]["lts_dif_camion"], 24890.0)         # 72690 vendidos - 47800 reconocidos
+        self.assertEqual(dias["2026-10-25"]["valor_dif_camion"], 12445000)
+        self.assertEqual(dias["2026-10-26"]["valor_dif_camion"], -12925500)
+        # El 25 y el 26 se compensan (fecha corrida): el período neto es -894 L, no la suma de los valores absolutos.
+        self.assertEqual(d["totales"]["lts_dif_camion"], -894)
+        self.assertEqual(d["totales"]["valor_dif_camion"], -447000)
+        self.assertEqual(d["totales"]["lts_otros_destinos"], 7528)              # 1951 + 1859 + 1824 + 1894 de guachera
+        self.assertEqual(d["totales"]["pct_otros_destinos"], 2.6)
+
+    def test_sin_precio_en_la_planilla_no_inventa_pesos(self):
+        d = self._get().get_json()          # la Base simula una planilla sin precio
+        self.assertIsNone(d["precio_leche"]["valor"])
+        self.assertTrue(d["precio_leche"]["error"])
+        self.assertTrue(all(x["valor_dif_camion"] is None for x in d["dias"]))
+        self.assertIsNone(d["totales"]["valor_dif_camion"])
+        self.assertEqual(d["totales"]["lts_dif_camion"], -894)                  # los litros salen igual
+
+    def test_planilla_ilegible_no_corta_el_balance(self):
+        with mock.patch.object(app.precios_alimentos, "leer", side_effect=RuntimeError("archivo abierto en Excel")):
+            r = self._get()
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertIsNone(d["precio_leche"]["valor"])
+        self.assertIn("archivo abierto en Excel", d["precio_leche"]["error"])
+        self.assertIs(d["comprador_disponible"], True)
+
+    def test_planilla_con_precio_cero_es_sin_precio(self):
+        with mock.patch.object(app.precios_alimentos, "leer", lambda *a, **k: {"precio_litro": 0, "error": None}):
+            d = self._get().get_json()
+        self.assertIsNone(d["precio_leche"]["valor"])
+        self.assertTrue(d["precio_leche"]["error"])
+        self.assertIsNone(d["totales"]["valor_dif_camion"])
+
 
 
 class TestCacheVencida(Base):

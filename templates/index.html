@@ -2046,6 +2046,10 @@
       solo cuentan los días de DelPro ya cerrados. El umbral es ±3%. Un día se avisa recién cuando existe el
       siguiente, para distinguir una <b>fecha corrida</b> (una carga de medianoche que cada sistema asigna a otro día,
       no es leche perdida) de una pérdida real.
+      <br><b>Plata y otros destinos.</b> Con tanque y comprador, <b>Diferencia en $</b> multiplica los litros de diferencia entre lo
+      que vendió el tanque y lo que reconoció el comprador por el precio de la leche (el de ⚙ Configuración, o el de la planilla de precios): es una
+      <b>estimación que supone que esa diferencia se pudiera recuperar</b>, no una pérdida confirmada. <b>A otros destinos</b> son
+      los litros que salieron del tanque y no se vendieron al comprador (guachera y cargas que Milky no marca como venta).
       <br><b>Sin caudalímetro.</b> Si el tambo no tiene el de Milky, no hay tanque: el camión (los despachos cargados en
       DelPro, o La Serenísima) se compara directo con la sala en un solo tramo, <b>sala → camión</b>. A lo entregado se le
       suma la leche de uso interno (guachera, etc.), que sale de la sala pero no va en el camión. Los litros de DelPro son
@@ -8068,6 +8072,36 @@ function balPct(v) {
   return v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.abs(v)) + ' %';
 }
 
+// Pesos con signo y sin decimales (los centavos son ruido a esta escala). Se define acá y no se reusa `pesos`
+// (más abajo en este script) para no depender del orden en que se evalúa el archivo.
+function balPesos(v) {
+  return v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + '$' + Math.abs(v).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+}
+function balLitrosSig(v) {
+  return v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + fmt(Math.round(Math.abs(v))) + ' L';
+}
+
+// Celda "Diferencia tanque → camión, en plata": ESTIMACIÓN que supone que esa diferencia se pudiera recuperar.
+// Mismo color que el chip del tramo (desvío > umbral = rojo, fecha corrida = violeta) para que se lea junto.
+function balCeldaPlata(x, precio) {
+  if (x.lts_dif_camion == null) return '<td class="num"><span class="bal-nd">—</span></td>';
+  const estado = x.corrida_tanque_camion ? 'bal-corrida' : x.alerta_tanque_camion ? 'bal-alerta' : '';
+  const litros = `<div class="aviso" style="font-size:11px">${balLitrosSig(x.lts_dif_camion)}</div>`;
+  if (x.valor_dif_camion == null)      // sin precio no se inventa uno: solo los litros
+    return `<td class="num"><span class="bal-nd" title="${escHtml(precio.error || 'Sin precio de la leche')}">sin precio</span>${litros}</td>`;
+  const nota = x.corrida_tanque_camion
+    ? ' title="Fecha corrida: este día se compensa con el vecino (una carga que cada sistema asigna a otro día). No es plata a recuperar."'
+    : '';
+  return `<td class="num"><span class="bal-chip ${estado}"${nota}>${balPesos(x.valor_dif_camion)}</span>${litros}</td>`;
+}
+
+function balCeldaOtros(x) {
+  if (x.lts_otros_destinos == null) return '<td class="num"><span class="bal-nd">—</span></td>';
+  const pct = x.lts_milky ? x.lts_otros_destinos / x.lts_milky * 100 : null;
+  return `<td class="num">${fmt(Math.round(x.lts_otros_destinos))}` +
+    (pct == null ? '' : `<div class="aviso" style="font-size:11px">${fmt(pct)} % del tanque</div>`) + '</td>';
+}
+
 function balChip(dia, tramo) {
   const v = dia['desvio_' + tramo + '_pct'];
   if (v == null) return '<span class="bal-chip bal-nd">' + ((tramo === 'sala_tanque' || tramo === 'sala_camion') && !dia.cerrado && dia.kg != null ? 'sin cerrar' : '—') + '</span>';
@@ -8130,7 +8164,54 @@ function pintarBalanceTarjetas(d) {
     const v = d.totales['desvio_' + d.tramo_mayor + '_pct'];
     html += `<div class="aviso" style="margin-top:8px">El tramo que más se desvía en el período es <b>${nombre}</b> (${balPct(v)}).</div>`;
   }
+  if (d.tanque_disponible) html += balResumenPlata(d);
   document.getElementById('balance-cascada').innerHTML = html;
+}
+
+// Texto del precio de la leche con el que se valúa la diferencia ("$1.234 por litro (US$ 0,35 × cambio 1.200)").
+function balPrecioTxt(p) {
+  if (!p || !p.valor) return null;
+  const n = (v, dec) => Number(v).toLocaleString('es-AR', { maximumFractionDigits: dec });
+  return '$' + n(p.valor, 2) + ' por litro' +
+    (p.via === 'configuracion' ? ' (cargado en ⚙ Configuración)'
+      : p.via === 'usd' && typeof p.usd_litro === 'number' && typeof p.tipo_cambio === 'number'
+        ? ` (US$ ${n(p.usd_litro, 3)} × cambio ${n(p.tipo_cambio, 2)})` : '');
+}
+
+// Resumen del período en plata y en litros que no fueron al comprador, con la aclaración de que la plata es una
+// ESTIMACIÓN (supone que la diferencia tanque -> camión se pudiera recuperar). Sin precio no se inventa uno.
+function balResumenPlata(d) {
+  const t = d.totales, p = d.precio_leche || {}, precio = balPrecioTxt(p);
+  const tile = (titulo, valor, sub) => `<div class="tile"><div class="label">${titulo}</div>` +
+    `<div class="value">${valor}</div><div class="sub">${sub}</div></div>`;
+  let html = '<div class="bal-cascada" style="margin-top:12px">';
+  if (d.comprador_disponible) {
+    html += tile('Diferencia tanque → camión · estimación en $',
+      t.lts_dif_camion == null ? '—' : (t.valor_dif_camion == null ? balLitrosSig(t.lts_dif_camion) : balPesos(t.valor_dif_camion)),
+      t.lts_dif_camion == null ? 'sin días con tanque y comprador a la vez'
+        : (precio ? `${balLitrosSig(t.lts_dif_camion)} × ${precio}` : 'sin precio de la leche: se muestran los litros, no la plata'));
+  }
+  html += tile('A otros destinos · guachera',
+    t.lts_otros_destinos == null ? '—' : fmt(t.lts_otros_destinos) + ' L',
+    t.pct_otros_destinos == null ? 'sin cargas del tanque'
+      : `${fmt(t.pct_otros_destinos)} % de lo que salió del tanque no se vendió al comprador`);
+  html += '</div>';
+  if (d.comprador_disponible) {
+    html += '<div class="aviso" style="margin-top:8px"><b>Es una estimación.</b> La plata es la diferencia de litros entre lo que ' +
+      'vendió el tanque (caudalímetro de Milky) y lo que reconoció el comprador, por el precio de la leche, <b>suponiendo que esa diferencia ' +
+      'se pudiera recuperar</b>. No es plata perdida confirmada: puede ser la calibración del caudalímetro, una carga que cambió de día o merma. ' +
+      '<b>+</b> = el tanque vendió más de lo que se reconoció; <b>−</b> = el comprador reconoció más que el tanque.</div>';
+    if (precio && p.estimado) {
+      html += '<div class="aviso" style="margin-top:6px"><span class="bal-chip bal-alerta">Precio estimado</span>' +
+        `<b style="color:var(--critical)">El precio de la leche, ${escHtml(precio)}, está marcado como ESTIMADO en la planilla de precios: ` +
+        'la plata sale con ese valor aproximado.</b></div>';
+    } else if (!precio) {
+      html += '<div class="aviso" style="margin-top:6px;color:var(--critical)"><b>Sin precio de la leche:</b> ' +
+        `${escHtml((p.error || 'la planilla de precios no lo tiene').replace(/[.\s]+$/, ''))}. Se muestran solo los litros de diferencia; ` +
+        'cargá el precio de la leche en ⚙ Configuración (o en la planilla de precios del tambo) para ver la plata.</div>';
+    }
+  }
+  return html;
 }
 
 function pintarBalanceTabla(d) {
@@ -8153,11 +8234,19 @@ function pintarBalanceTabla(d) {
     `<td class="num">${x.lts_milky == null ? '—' : fmt(Math.round(x.lts_milky))}</td>` +
     (d.comprador_disponible ? `<td class="num">${x.lts_comprador == null ? '—' : fmt(Math.round(x.lts_comprador))}</td>` : '') +
     `<td>${balChip(x, 'sala_tanque')}</td>` +
-    (d.comprador_disponible ? `<td>${balChip(x, 'tanque_camion')}</td>` : '') + '</tr>').join('');
+    (d.comprador_disponible ? `<td>${balChip(x, 'tanque_camion')}</td>` : '') +
+    (d.comprador_disponible ? balCeldaPlata(x, d.precio_leche || {}) : '') +
+    balCeldaOtros(x) + '</tr>').join('');
   document.getElementById('balance-tabla').innerHTML = d.dias.length
     ? '<table class="lac-table"><thead><tr><th>Día</th><th class="num">DelPro (L)</th><th class="num">Milky (L)</th>' +
       (d.comprador_disponible ? '<th class="num">Comprador (L)</th>' : '') +
       '<th>Sala → tanque</th>' + (d.comprador_disponible ? '<th>Tanque → camión</th>' : '') +
+      (d.comprador_disponible
+        ? '<th class="num" title="Litros que el tanque vendió de más (+) o de menos (−) que lo que reconoció el comprador, por el precio de la leche. Es una ESTIMACIÓN que supone que esa diferencia se pudiera recuperar.">' +
+          'Diferencia en $<div class="aviso" style="font-size:11px;font-weight:400">estimada · si se recuperara</div></th>'
+        : '') +
+      '<th class="num" title="Lo que salió del tanque y no se vendió al comprador: guachera y cualquier carga que Milky no marca como venta.">' +
+      'A otros destinos<div class="aviso" style="font-size:11px;font-weight:400">guachera (L)</div></th>' +
       '</tr></thead><tbody>' + filas + '</tbody></table>'
     : '';
 }
