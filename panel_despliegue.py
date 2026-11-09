@@ -132,6 +132,8 @@ CATALOGO: tuple[Var, ...] = (
     Var("LASER_PASSWORD", "La Serenísima", True, "Contraseña del portal de La Serenísima."),
     Var("HASTEN_USUARIO", "Haasten (mixer)", False, "Usuario de Haasten (se escribe con UNA 'a')."),
     Var("HASTEN_PASSWORD", "Haasten (mixer)", True, "Contraseña de Haasten."),
+    Var("MIXERONE_USUARIO", "MixerOne (mixer)", False, "Usuario de MixerOne."),
+    Var("MIXERONE_PASSWORD", "MixerOne (mixer)", True, "Contraseña de MixerOne."),
     Var("SENSEHUB_USER_", "SenseHub (collares)", False, "Usuario del controlador. SENSEHUB_USER_<TAMBO>.", True),
     Var("SENSEHUB_PWD_", "SenseHub (collares)", True, "Contraseña del controlador. SENSEHUB_PWD_<TAMBO>.", True),
     Var("UPS_SNMP_COMMUNITY", "UPS (SNMP)", True,
