@@ -3661,6 +3661,33 @@
     </div>
     <details><summary>Ver SQL ejecutado</summary><pre id="res-sql"></pre></details>
   </section>
+
+  <section class="card" id="diag-card">
+    <h2 style="margin:0">🔎 ¿Por qué cambió la producción?</h2>
+    <span class="aviso">Elegí un día y el período contra el que lo querés comparar. Separa si faltaron vacas o si
+      rindió menos cada una, en qué grupos y ordeños se nota, si hubo cambios en el rodeo y si hizo calor.
+      Son <b>pistas, no un veredicto</b>. Solo lee la base; tarda entre unos segundos y un par de minutos.</span>
+    <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
+      <label class="aviso" style="display:flex;align-items:center;gap:5px">Día a analizar
+        <input type="date" id="diag-dia" style="padding:6px 8px">
+      </label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px">Comparar contra: desde
+        <input type="date" id="diag-desde" style="padding:6px 8px">
+      </label>
+      <label class="aviso" style="display:flex;align-items:center;gap:5px">hasta
+        <input type="date" id="diag-hasta" style="padding:6px 8px">
+      </label>
+      <button id="diag-analizar">Analizar</button>
+    </div>
+    <div class="aviso" id="diag-estado" style="margin-top:8px"></div>
+    <div id="diag-resultado" hidden>
+      <pre id="diag-informe" style="white-space:pre;overflow-x:auto;font-family:ui-monospace,Consolas,'Courier New',monospace;font-size:12.5px;line-height:1.45;margin-top:10px"></pre>
+      <div class="controls" style="margin-top:8px">
+        <button class="secundario" id="diag-copiar">Copiar informe</button>
+        <button class="secundario" onclick="window.print()">Imprimir / PDF</button>
+      </div>
+    </div>
+  </section>
   </div>
 
   <div class="page" id="page-configuracion" hidden>
@@ -8689,6 +8716,75 @@ function exportarCSV(columns, rows, filename) {
 document.getElementById('btn-csv').addEventListener('click', () => {
   if (ultimoResultado) exportarCSV(ultimoResultado.columns, ultimoResultado.rows, 'reporte_delpro.csv');
 });
+
+// --- ¿Por qué cambió la producción? (Consultas e IA) ----------------------------------
+// Un día contra un rango de comparación. El análisis tarda: el servidor lo corre en segundo plano
+// y acá se consulta cada 2 s hasta que termina. Ver diagnostico_baja.py.
+let diagTimer = null, diagTocoBase = false;
+function diagFecha(d) {   // AAAA-MM-DD en hora LOCAL (toISOString lo correría un día de noche)
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function diagSumarDias(iso, n) {
+  const [a, m, d] = iso.split('-').map(Number);
+  return diagFecha(new Date(a, m - 1, d + n));
+}
+function diagBaseSugerida() {   // los 7 días anteriores al analizado, salvo que la persona ya eligió otros
+  const dia = document.getElementById('diag-dia').value;
+  if (!dia || diagTocoBase) return;
+  document.getElementById('diag-desde').value = diagSumarDias(dia, -7);
+  document.getElementById('diag-hasta').value = diagSumarDias(dia, -1);
+}
+function diagEstado(msg, esError) {
+  const e = document.getElementById('diag-estado');
+  e.textContent = msg || ''; e.style.color = esError ? 'var(--critical)' : '';
+}
+async function diagConsultar(id, tambo) {
+  clearTimeout(diagTimer);
+  try {
+    const j = await pedirJSON('/api/diagnostico_baja/' + encodeURIComponent(id) + '?tambo=' + encodeURIComponent(tambo));
+    if (j.estado === 'calculando') {
+      diagEstado('Analizando… ' + j.segundos + ' s (las consultas pesadas a la base van de a una).');
+      diagTimer = setTimeout(() => diagConsultar(id, tambo), 2000);
+      return;
+    }
+    document.getElementById('diag-analizar').disabled = false;
+    if (j.estado === 'error') { diagEstado(j.error || 'No se pudo completar el análisis.', true); return; }
+    diagEstado('Listo en ' + j.segundos + ' s.');
+    document.getElementById('diag-informe').textContent = j.informe;
+    document.getElementById('diag-resultado').hidden = false;
+  } catch (e) {
+    document.getElementById('diag-analizar').disabled = false;
+    diagEstado(e.message, true);
+  }
+}
+document.getElementById('diag-analizar').addEventListener('click', async () => {
+  const dia = document.getElementById('diag-dia').value;
+  if (!dia) return diagEstado('Elegí el día a analizar.', true);
+  const b = document.getElementById('diag-analizar');
+  b.disabled = true;
+  document.getElementById('diag-resultado').hidden = true;
+  diagEstado('Iniciando el análisis…');
+  const tambo = tamboActual;
+  try {
+    const job = await pedirJSON('/api/diagnostico_baja?tambo=' + encodeURIComponent(tambo), {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dia, base_desde: document.getElementById('diag-desde').value,
+                             base_hasta: document.getElementById('diag-hasta').value, tambo }) });
+    diagConsultar(job.id, tambo);
+  } catch (e) { b.disabled = false; diagEstado(e.message, true); }
+});
+document.getElementById('diag-dia').addEventListener('change', diagBaseSugerida);
+['diag-desde', 'diag-hasta'].forEach(id =>
+  document.getElementById(id).addEventListener('change', () => { diagTocoBase = true; }));
+document.getElementById('diag-copiar').addEventListener('click', async () => {
+  const txt = document.getElementById('diag-informe').textContent;
+  try { await navigator.clipboard.writeText(txt); diagEstado('Informe copiado.'); }
+  catch (e) { diagEstado('No se pudo copiar: seleccioná el texto y copialo a mano.', true); }
+});
+(function diagInicial() {   // por defecto: ayer contra los 7 días anteriores
+  document.getElementById('diag-dia').value = diagSumarDias(diagFecha(new Date()), -1);
+  diagBaseSugerida();
+})();
 
 let ordenoData = null, ordenoTimer = null, ordenoReintento = null;
 let ordenoVista = 'rotativa';       // 'rotativa' (gráfica) | 'tabla'

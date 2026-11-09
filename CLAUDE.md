@@ -3163,6 +3163,20 @@ ilegible igual hay precio; sin precio configurado y planilla ilegible se lanza l
 distinto se borra el caché del tambo (`_olvidar_datos_de`): alimentación y rentabilidad cachean 6 horas el costo con el precio
 adentro y seguirían mostrando el viejo. A futuro el precio podría salir de una API; hoy lo carga el tambo.
 
+**¿Por qué cambió la producción? (09/11/2026).** Tarjeta en Consultas e IA: se elige UN día y el RANGO contra el que se
+compara (por defecto los 7 días anteriores; hasta 31 días, mínimo 3 distintos del analizado). La lógica es
+`diagnostico_baja.py` (la usa también el script de consola `diagnosticar_baja_produccion.py`, que acepta el rango como 3.º y
+4.º argumento). Es solo lectura y devuelve un INFORME DE TEXTO: 1) faltaron vacas o rindió menos cada una (descomposición en
+kg), 2) vacas ausentes y las que más cayeron, 3) por grupo, 4) por ordeño (hora, duración, vacas, caudal), 5) bocas,
+6) partos/cambios de grupo/bajas/tratamientos/retiros de leche, 7) ITH. Son pistas, no un veredicto; la ración (mixer, carro)
+no está en DelPro y se cruza a mano. Tarda (minutos en el SQL Express local; en prod no se midió): `/api/diagnostico_baja`
+(POST) lanza un hilo y devuelve el `id`; la pantalla consulta `/api/diagnostico_baja/<id>` cada 2 s. El mismo pedido en curso
+no se duplica. Lecciones que costaron un error cada una: (a) `db.run_query` CORTA en 5.000 filas sin avisar y los totales
+salían falsos: acá `corre` pide hasta 100.000 y aborta si `truncated`; (b) el rebaño se filtra por el grupo DEL DÍA
+(`AnimalDaily.AnimalGroup`), no por `BasicAnimal.[Group]` (el actual): tras cambios de grupo el actual deja afuera casi todo el
+rodeo; (c) una sección que falla dice "sin dato", nunca ceros, y si falla la lectura de producción el trabajo termina en
+error, no "listo" con un informe vacío; (d) los días incompletos (< 90 % de las vacas habituales) se sacan de la base.
+
 ## Panel de despliegue: variables de entorno + actualizar/iniciar/parar (08/11/2026)
 
 `panel_despliegue.py` (lanzador `iniciar_panel.bat`, uso en INSTALL.md §11). Pedido del tambo:

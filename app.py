@@ -33,6 +33,7 @@ import configuracion_tambo
 import correo
 import db
 import despachos_delpro
+import diagnostico_baja
 import clima
 import ficha_animal
 import flujos
@@ -5872,6 +5873,29 @@ def consulta():
         "titulo": item["titulo"], "grafica": item["grafica"],
         "sql": item["sql"].strip(), **data,
     })
+
+
+@app.post("/api/diagnostico_baja")
+def api_diagnostico_baja():
+    """Lanza en segundo plano el diagnóstico de producción (ver `diagnostico_baja.py`): un día contra un
+    rango de comparación. Tarda (consultas pesadas a DelPro), así que NO espera: devuelve el id del trabajo
+    y la pantalla consulta `/api/diagnostico_baja/<id>` hasta que esté listo. Solo lectura."""
+    tambo = _tambo_del_request()
+    cuerpo = request.get_json(silent=True) or {}
+    try:
+        job = diagnostico_baja.iniciar(tambo, cuerpo.get("dia"), cuerpo.get("base_desde"), cuerpo.get("base_hasta"))
+    except diagnostico_baja.DiagnosticoError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(job)
+
+
+@app.get("/api/diagnostico_baja/<job_id>")
+def api_diagnostico_baja_estado(job_id):
+    job = diagnostico_baja.estado(job_id)
+    if job is None:
+        return jsonify({"error": "No se encontró ese análisis (se reinició el servidor, o ya es muy viejo). "
+                                 "Volvé a pedirlo."}), 404
+    return jsonify(job)
 
 
 @app.post("/api/preguntar")
