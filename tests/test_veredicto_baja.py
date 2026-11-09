@@ -68,7 +68,7 @@ def _datos_informe_2():
 
 
 def _causa(v, clave):
-    return next(c for c in v["causas"] if c["clave"] == clave)
+    return next(c for c in v["sintomas"] + v["causas"] if c["clave"] == clave)
 
 
 class TestCasoReal(unittest.TestCase):
@@ -300,7 +300,7 @@ class TestAlimentacion(unittest.TestCase):
         d["alimentacion"] = _alimentacion()
         v = vb.veredicto(d)
         self.assertEqual(v["nivel"], "atencion")
-        self.assertIn("comida", " ".join(v["contexto"]).lower())
+        self.assertIn("la causa con más peso: la comida llegó tarde (posible)", " ".join(v["contexto"]).lower())
 
     def test_si_la_baja_es_clara_y_solo_la_comida_la_explica_la_apunta(self):
         d = _datos()
@@ -316,6 +316,116 @@ class TestAlimentacion(unittest.TestCase):
         v = vb.veredicto(d)
         self.assertEqual(v["nivel"], "posible")
         self.assertIn("comida", v["titular"].lower())
+
+
+class TestSintomasYCausas(unittest.TestCase):
+    """«Cada vaca rindió menos», «el 3.º ordeño concentra la diferencia» y «el grupo 5 rindió menos» son CÓMO SE VE la
+    baja, no POR QUÉ pasó. Si compiten como causas ganan siempre (son lo más fuerte que se mide) y tapan la causa."""
+
+    def setUp(self):
+        d = _datos_informe_2()
+        d["alimentacion"] = _alimentacion()
+        self.d = d
+        self.v = vb.veredicto(d)
+
+    def test_el_rinde_los_grupos_y_el_ordeno_son_sintomas_no_causas(self):
+        self.assertEqual({c["clave"] for c in self.v["sintomas"]}, {"rinde", "grupos", "ordeno"})
+        self.assertFalse({"rinde", "grupos", "ordeno"} & {c["clave"] for c in self.v["causas"]})
+
+    def test_las_causas_son_las_que_explican_el_por_que(self):
+        self.assertEqual({c["clave"] for c in self.v["causas"]},
+                         {"vacas", "equipo", "calor", "manejo", "alimentacion", "mezcla", "lecturas", "retiros"})
+
+    def test_una_baja_que_solo_muestra_sintomas_no_apunta_a_un_sintoma_como_causa(self):
+        d = _datos_informe_2()
+        d["resumen"].update(kg_d=64000.0, kg_b=69900.0, z_kg=-3.0)
+        d["alimentacion"] = None
+        d["eventos"]["cambio de grupo"] = {"dia": 20, "ayer": 14, "base": 21.9}       # nada más señala una causa
+        v = vb.veredicto(d)
+        self.assertEqual(v["nivel"], "sin_causa")
+        self.assertNotIn("cada vaca rindió menos", v["titular"].lower())
+        self.assertIn("cómo se ve", " ".join(v["contexto"]).lower())
+
+    def test_el_contexto_dice_como_se_ve_la_baja(self):
+        d = _datos_informe_2()
+        d["resumen"].update(kg_d=64000.0, kg_b=69900.0, z_kg=-3.0)
+        txt = " ".join(vb.veredicto(d)["contexto"])
+        self.assertIn("Cómo se ve", txt)
+        self.assertIn("Cada vaca rindió menos", txt)
+
+
+class TestPesoDeLasCausas(unittest.TestCase):
+    """El orden: primero el nivel de evidencia; a igual nivel, la causa que ENCAJA con el patrón de la baja (una baja
+    pareja en todo el rodeo apunta a algo que afecta a todo el rodeo, como la comida o el calor; una concentrada en
+    un grupo o un ordeño, a algo local); después el impacto en kg."""
+
+    def setUp(self):
+        self.d = _datos_informe_2()                  # 67 % de las vacas rindió menos y 4 de 5 grupos bajaron: parejo
+        self.d["alimentacion"] = _alimentacion()
+
+    def puestos(self, d=None):
+        v = vb.veredicto(d or self.d)
+        return {c["clave"]: c["puesto"] for c in v["causas"]}, v
+
+    def test_con_una_baja_pareja_la_comida_tardia_va_antes_que_los_cambios_de_grupo(self):
+        puestos, v = self.puestos()
+        self.assertEqual((puestos["alimentacion"], puestos["mezcla"]), (1, 2))
+        self.assertEqual(v["causas"][0]["clave"], "alimentacion")
+
+    def test_dice_por_que_va_primero(self):
+        c = vb.veredicto(self.d)["causas"][0]
+        self.assertIn("todo el rodeo", c["peso"])
+        self.assertIn(f"{round(1099 / 1673 * 100)} %", c["peso"])
+
+    def test_dice_por_que_pesa_menos_la_que_toca_a_pocas_vacas(self):
+        mezcla = next(c for c in vb.veredicto(self.d)["causas"] if c["clave"] == "mezcla")
+        self.assertIn("pocas", mezcla["peso"])
+
+    def test_con_una_baja_concentrada_gana_la_causa_local(self):
+        self.d["caidas"] = {"n_comunes": 1673, "n_menos": 520, "mediana": -0.1}          # solo 31 % rindió menos
+        self.d["grupos"] = [g | {"kg_d": g["kg_b"] * 1.0, "vacas_d": g["vacas_b"]} for g in self.d["grupos"]]
+        self.d["grupos"][0] |= {"kg_d": self.d["grupos"][0]["kg_b"] * 0.8}               # un solo grupo cae
+        puestos, _ = self.puestos()
+        self.assertLess(puestos["mezcla"], puestos["alimentacion"])
+
+    def test_la_evidencia_manda_sobre_el_patron(self):
+        """Una causa PROBABLE va antes que una posible aunque la posible encaje mejor con el patrón."""
+        self.d["eventos"]["tratamiento"] = {"dia": 13, "ayer": 127, "base": 31.7}
+        self.d["tratadas_ayer"] = {"n": 400, "delta_tratadas": -4.0, "delta_resto": -0.5, "efecto_kg": -1400.0,
+                                   "por_diagnostico": []}
+        puestos, v = self.puestos()
+        self.assertEqual(_causa(v, "manejo")["nivel"], "probable")
+        self.assertEqual(puestos["manejo"], 1)
+        self.assertEqual(puestos["alimentacion"], 2)
+
+    def test_las_descartadas_y_las_sin_dato_no_llevan_puesto(self):
+        v = vb.veredicto(self.d)
+        for c in v["causas"]:
+            if c["nivel"] in ("descartada", "sin_dato"):
+                self.assertIsNone(c["puesto"], c["clave"])
+            else:
+                self.assertIsInstance(c["puesto"], int, c["clave"])
+
+    def test_los_puestos_son_consecutivos_desde_1(self):
+        v = vb.veredicto(self.d)
+        puestos = sorted(c["puesto"] for c in v["causas"] if c["puesto"])
+        self.assertEqual(puestos, list(range(1, len(puestos) + 1)))
+
+    def test_sin_datos_para_saber_el_patron_ordena_sin_romper(self):
+        self.d["caidas"] = None
+        self.d["grupos"] = []
+        puestos, _ = self.puestos()
+        self.assertEqual(sorted(p for p in puestos.values() if p), [1, 2])
+
+    def test_si_el_rinde_no_bajo_no_hay_patron_que_encajar(self):
+        self.d["resumen"]["z_kv"] = 0.2
+        v = vb.veredicto(self.d)
+        self.assertTrue(all("patrón" not in c["peso"].lower() for c in v["causas"] if c["puesto"]))
+
+    def test_no_modifica_los_datos(self):
+        antes = copy.deepcopy(self.d)
+        vb.veredicto(self.d)
+        self.assertEqual(self.d, antes)
 
 
 class TestSinDatos(unittest.TestCase):

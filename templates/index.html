@@ -986,6 +986,15 @@
   .diag-causa-t { font-weight: 600; color: var(--text-primary); }
   .diag-causa ul { margin: 4px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: .9rem; line-height: 1.45; }
   .diag-revisar { margin-top: 4px; font-size: .88rem; color: var(--text-primary); }
+  .diag-ancho { grid-column: 1 / -1; }
+  .diag-chart-alto { height: 320px; }
+  .diag-grafico-cab { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; }
+  .diag-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  .diag-grafico .segmentado .seg { padding: 4px 11px; font-size: .82rem; }
+  .diag-leyenda { margin: 2px 0 0; font-size: .8rem; color: var(--muted); }
+  .diag-peso { margin-top: 3px; font-size: .84rem; color: var(--text-secondary); }
+  .diag-rank { font-size: 1.35rem; font-weight: 800; line-height: 1; color: var(--text-primary); margin-bottom: 5px;
+    font-variant-numeric: tabular-nums; }
   .diag-descartadas > summary { cursor: pointer; padding: 8px 0; color: var(--text-secondary); font-size: .92rem; }
   .diag-informe-det { margin-top: 12px; }
   .diag-informe-det > pre { white-space: pre; overflow-x: auto; font-family: ui-monospace, Consolas, 'Courier New', monospace;
@@ -3762,8 +3771,40 @@
           <div class="diag-grafico-t">Por ordeño <span>kg contra la base</span></div>
           <div class="diag-chart"><canvas id="diag-ch-ordenos"></canvas></div>
         </div>
+        <div class="diag-grafico diag-ancho" id="diag-linea-card">
+          <div class="diag-grafico-cab">
+            <div class="diag-grafico-t">Línea de tiempo <span>la producción día por día; el día analizado va resaltado y la base, sombreada</span></div>
+            <div class="diag-ctl">
+              <div class="segmentado" id="diag-serie">
+                <button class="seg" data-serie="total">Total</button>
+                <button class="seg activa" data-serie="grupos">Por rodeo</button>
+                <button class="seg" data-serie="sesiones">Por ordeño</button>
+              </div>
+              <div class="segmentado">
+                <button class="seg activa" data-medida="kg">kg</button>
+                <button class="seg" data-medida="kv">kg por vaca</button>
+              </div>
+            </div>
+          </div>
+          <div class="diag-chart diag-chart-alto"><canvas id="diag-ch-linea"></canvas></div>
+        </div>
+        <div class="diag-grafico diag-ancho" id="diag-barras-card">
+          <div class="diag-grafico-cab">
+            <div class="diag-grafico-t">Rodeos y ordeños <span>el día analizado contra el promedio de la base</span></div>
+            <div class="diag-ctl">
+              <div class="segmentado">
+                <button class="seg activa" data-medida="kg">kg</button>
+                <button class="seg" data-medida="kv">kg por vaca</button>
+              </div>
+            </div>
+          </div>
+          <div class="diag-leyenda">Barra clara: promedio de la base. Barra azul: el día analizado; roja si bajó 3 % o más, verde si subió 3 % o más.</div>
+          <div class="diag-chart diag-chart-alto"><canvas id="diag-ch-barras"></canvas></div>
+        </div>
       </div>
-      <div class="diag-subtitulo">Qué se midió y qué dice cada medición</div>
+      <div class="diag-subtitulo">Cómo se ve la baja <span style="font-weight:400;color:var(--muted);font-size:.85em">(lo medido: dónde está, no por qué pasó)</span></div>
+      <div id="diag-sintomas"></div>
+      <div class="diag-subtitulo">Posibles causas, de más a menos peso</div>
       <div id="diag-causas"></div>
       <details class="diag-informe-det">
         <summary>Ver el informe completo en texto</summary>
@@ -8867,6 +8908,13 @@ const DIAG_CAUSA = {
   sin_dato:   { rotulo: 'Sin dato', color: 'var(--muted)' },
   descartada: { rotulo: 'Descartada', color: 'var(--good)' },
 };
+// Los síntomas dicen DÓNDE se nota la baja, no su motivo: van con el color de acento y no con el de las causas.
+const DIAG_SINTOMA = {
+  probable:   { rotulo: 'Se nota mucho', color: 'var(--accent)' },
+  posible:    { rotulo: 'Se nota', color: 'var(--accent)' },
+  sin_dato:   { rotulo: 'Sin dato', color: 'var(--muted)' },
+  descartada: { rotulo: 'Sin señal', color: 'var(--good)' },
+};
 let diagCharts = {};
 
 function diagNum(n) { return typeof n === 'number' ? Math.round(n).toLocaleString('es-AR') : ''; }
@@ -8889,6 +8937,118 @@ function diagBarras(idCanvas, etiquetas, valores, horizontal) {
   });
 }
 
+// --- Línea de tiempo y barras verticales por rodeo y ordeño ---------------------------------------------------------
+let diagUltimoD = null;
+const diagVista = { serie: 'grupos', medida: 'kg' };
+const diagColor = k => SERIES[[0, 3, 4, 5, 6, 7, 1][k % 7]];      // la paleta sin el azul marino, que sobre fondo oscuro no se ve
+const diagFmt = (v, m) => v == null ? '—' : m === 'kv'
+  ? Number(v).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' kg/vaca' : diagNum(v) + ' kg';
+const diagEje = (m, v) => m === 'kv' ? Number(v).toLocaleString('es-AR', { maximumFractionDigits: 1 }) : Number(v).toLocaleString('es-AR');
+const diagSigno = x => (x >= 0 ? '+' : '') + (x * 100).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' %';
+
+// Una serie {kg:[], vacas:[]} en la medida elegida; un día sin dato queda vacío (un hueco, no un cero).
+function diagValores(s, medida) {
+  return s.kg.map((kg, i) => kg == null ? null : medida === 'kv' ? (s.vacas[i] ? kg / s.vacas[i] : null) : kg);
+}
+
+// Sombrea los días de la base y resalta el analizado, por detrás de las líneas.
+const diagFondo = { id: 'diagFondo', beforeDatasetsDraw(chart, _args, op) {
+  if (!op || !op.dias || op.dias.length < 2) return;
+  const { ctx, chartArea: a, scales: { x } } = chart;
+  const w = x.getPixelForValue(1) - x.getPixelForValue(0);
+  ctx.save();
+  op.dias.forEach((f, i) => {
+    const marca = f === op.dia ? ['--critical', 0.14] : op.base.includes(f) ? ['--accent', 0.07] : null;
+    if (!marca) return;
+    ctx.globalAlpha = marca[1]; ctx.fillStyle = css(marca[0]);
+    ctx.fillRect(x.getPixelForValue(i) - w / 2, a.top, w, a.bottom - a.top);
+  });
+  ctx.restore();
+} };
+
+function diagLinea(d) {
+  const tarjeta = document.getElementById('diag-linea-card'), id = 'diag-ch-linea';
+  if (diagCharts[id]) { diagCharts[id].destroy(); delete diagCharts[id]; }
+  const sr = d && d.serie;
+  tarjeta.hidden = !sr;
+  if (!sr) return;
+  const m = diagVista.medida;
+  const fuentes = diagVista.serie === 'total' ? [['Total del tambo', sr.total]]
+    : diagVista.serie === 'grupos' ? Object.entries(sr.grupos).map(([g, s]) => ['Grupo ' + g, s])
+    : Object.entries(sr.sesiones).map(([n, s]) => [n + '.º ordeño', s]);
+  const hoy = sr.dias.indexOf(sr.dia);
+  const etiquetas = sr.dias.map(f => new Date(f + 'T12:00:00')
+    .toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit' }));
+  const datasets = fuentes.map(([nombre, s], k) => {
+    const color = diagColor(k);
+    return { label: nombre, data: diagValores(s, m), borderColor: color, backgroundColor: color, borderWidth: 2,
+             tension: 0.2, spanGaps: false, pointHoverRadius: 8,
+             pointRadius: sr.dias.map((_f, i) => i === hoy ? 7 : 3),
+             pointBorderWidth: sr.dias.map((_f, i) => i === hoy ? 2 : 1),
+             pointBorderColor: sr.dias.map((_f, i) => i === hoy ? css('--text-primary') : color) };
+  });
+  if (diagVista.serie === 'total' && datasets.length) {          // el promedio de la base, para ver la distancia de un vistazo
+    const v = datasets[0].data.filter((x, i) => x != null && sr.base.includes(sr.dias[i]));
+    if (v.length) datasets.push({ label: 'Promedio de la base', data: sr.dias.map(() => v.reduce((a, b) => a + b, 0) / v.length),
+      borderColor: css('--muted'), borderDash: [6, 5], borderWidth: 1.5, pointRadius: 0, pointHoverRadius: 0 });
+  }
+  diagCharts[id] = new Chart(document.getElementById(id), {
+    type: 'line', data: { labels: etiquetas, datasets }, plugins: [diagFondo],
+    options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      plugins: { diagFondo: { dias: sr.dias, dia: sr.dia, base: sr.base },
+                 legend: { display: datasets.length > 1, position: 'bottom', labels: { usePointStyle: true, boxWidth: 8 } },
+                 tooltip: { callbacks: { label: c => ' ' + c.dataset.label + ': ' + diagFmt(c.parsed.y, m) } } },
+      scales: { x: { grid: { display: false }, border: { color: css('--baseline') } },
+                y: { grid: { color: css('--grid') }, border: { display: false },
+                     ticks: { callback: v => diagEje(m, v) } } } }
+  });
+}
+
+function diagBarrasV(d) {
+  const id = 'diag-ch-barras';
+  if (diagCharts[id]) { diagCharts[id].destroy(); delete diagCharts[id]; }
+  const m = diagVista.medida;
+  const val = (kg, vac) => m === 'kv' ? (vac ? kg / vac : null) : kg;
+  const grupos = (d.grupos || []).filter(g => g.vacas_b >= 20)
+    .sort((a, b) => String(a.grupo).localeCompare(String(b.grupo), 'es', { numeric: true }));
+  const ords = d.ordenos || [];
+  const filas = [
+    ...grupos.map(g => ({ et: 'Grupo ' + g.grupo, b: val(g.kg_b, g.vacas_b), d: val(g.kg_d, g.vacas_d) })),
+    ...(grupos.length && ords.length ? [{ et: '', b: null, d: null }] : []),     // un hueco entre los rodeos y los ordeños
+    ...ords.map(o => ({ et: o.sesion + '.º ordeño' + (o.ini_d ? ' · ' + o.ini_d : ''), b: val(o.kg_b, o.vacas_b), d: val(o.kg_d, o.vacas_d) })),
+  ];
+  const dif = f => (f.b && f.d != null) ? f.d / f.b - 1 : 0;
+  const rojo = css('--critical'), verde = css('--good');
+  diagCharts[id] = new Chart(document.getElementById(id), {
+    type: 'bar',
+    data: { labels: filas.map(f => f.et), datasets: [
+      { label: 'Promedio de la base', data: filas.map(f => f.b), backgroundColor: SERIES[1], borderRadius: 3 },
+      { label: 'Día analizado', data: filas.map(f => f.d), borderRadius: 3,
+        backgroundColor: filas.map(f => dif(f) <= -0.03 ? rojo : dif(f) >= 0.03 ? verde : SERIES[0]) } ] },
+    options: { responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false },
+                 tooltip: { callbacks: { label: c => ' ' + c.dataset.label + ': ' + diagFmt(c.parsed.y, m),
+                                         footer: it => { const f = filas[it[0].dataIndex]; return f && f.b ? 'Cambio: ' + diagSigno(dif(f)) : ''; } } } },
+      scales: { x: { grid: { display: false }, border: { color: css('--baseline') } },
+                y: { grid: { color: css('--grid') }, border: { display: false }, ticks: { callback: v => diagEje(m, v) } } } }
+  });
+}
+
+function diagGraficosTiempo() { if (diagUltimoD) { diagLinea(diagUltimoD); diagBarrasV(diagUltimoD); } }
+
+(function () {                                          // los selectores de la línea de tiempo y de las barras
+  document.querySelectorAll('#diag-card [data-medida]').forEach(b => b.addEventListener('click', () => {
+    diagVista.medida = b.dataset.medida;
+    document.querySelectorAll('#diag-card [data-medida]').forEach(x => x.classList.toggle('activa', x.dataset.medida === diagVista.medida));
+    diagGraficosTiempo();
+  }));
+  document.querySelectorAll('#diag-card [data-serie]').forEach(b => b.addEventListener('click', () => {
+    diagVista.serie = b.dataset.serie;
+    document.querySelectorAll('#diag-card [data-serie]').forEach(x => x.classList.toggle('activa', x.dataset.serie === diagVista.serie));
+    diagLinea(diagUltimoD);
+  }));
+})();
+
 function diagPintar(j) {
   const v = j.veredicto, d = j.datos || {};
   const caja = document.getElementById('diag-veredicto');
@@ -8897,6 +9057,7 @@ function diagPintar(j) {
       '<ul class="diag-contexto"><li>Revisá el informe de texto de abajo: dice qué faltó.</li></ul>';
     document.getElementById('diag-graficos').hidden = true;
     document.getElementById('diag-causas').innerHTML = '';
+    document.getElementById('diag-sintomas').innerHTML = '';
     document.querySelector('.diag-informe-det').open = true;
     return;
   }
@@ -8906,23 +9067,34 @@ function diagPintar(j) {
     `<div class="diag-titular">${escHtml(v.titular)}</div>` +
     '<ul class="diag-contexto">' + v.contexto.map(c => `<li>${escHtml(c)}</li>`).join('') + '</ul>';
 
-  // Causas: primero las que tienen señal; las descartadas quedan plegadas (se abren al imprimir).
-  const tarjeta = c => {
-    const t = DIAG_CAUSA[c.nivel] || DIAG_CAUSA.sin_dato;
-    return `<div class="diag-causa"><div><span class="diag-pill" style="color:${t.color}">${t.rotulo}</span></div><div>` +
+  // Cada medición es una tarjeta. Las causas llevan su puesto (1.º, 2.º...) y por qué ocupan ese lugar; los síntomas
+  // (rinde, grupo, ordeño) no compiten: son cómo se ve la baja. Las descartadas quedan plegadas (se abren al imprimir).
+  const tarjeta = (c, rotulos) => {
+    const t = rotulos[c.nivel] || rotulos.sin_dato;
+    const señal = c.nivel === 'probable' || c.nivel === 'posible';
+    return `<div class="diag-causa"><div>` +
+      (c.puesto ? `<div class="diag-rank">${c.puesto}.º</div>` : '') +
+      `<span class="diag-pill" style="color:${t.color}">${t.rotulo}</span></div><div>` +
       `<div class="diag-causa-t">${escHtml(c.titulo)}</div>` +
       '<ul>' + c.evidencia.map(e => `<li>${escHtml(e)}</li>`).join('') + '</ul>' +
-      (c.nivel === 'probable' || c.nivel === 'posible'
-        ? `<div class="diag-revisar"><b>Qué mirar:</b> ${escHtml(c.revisar)}</div>` : '') + '</div></div>';
+      (señal && c.revisar ? `<div class="diag-revisar"><b>Qué mirar:</b> ${escHtml(c.revisar)}</div>` : '') +
+      (c.peso ? `<div class="diag-peso"><b>Por qué este lugar:</b> ${escHtml(c.peso)}</div>` : '') + '</div></div>';
   };
-  const con = v.causas.filter(c => c.nivel === 'probable' || c.nivel === 'posible');
+  const hay = c => c.nivel === 'probable' || c.nivel === 'posible';
+  const sint = v.sintomas || [];
+  document.getElementById('diag-sintomas').innerHTML =
+    (sint.some(hay) ? sint.filter(hay).map(c => tarjeta(c, DIAG_SINTOMA)).join('')
+                    : '<div class="aviso">La baja no se concentra en un grupo ni en un ordeño, ni se nota en el rinde por vaca.</div>') +
+    (sint.some(c => !hay(c)) ? `<details class="diag-descartadas"><summary>Sin señal (${sint.filter(c => !hay(c)).length}): se midieron y no destacan</summary>` +
+      sint.filter(c => !hay(c)).map(c => tarjeta(c, DIAG_SINTOMA)).join('') + '</details>' : '');
+  const con = v.causas.filter(hay);
   const sin = v.causas.filter(c => c.nivel === 'sin_dato');
   const desc = v.causas.filter(c => c.nivel === 'descartada');
   document.getElementById('diag-causas').innerHTML =
-    (con.length ? con.map(tarjeta).join('') : '<div class="aviso">Ninguna medición muestra una señal.</div>') +
-    (sin.length ? sin.map(tarjeta).join('') : '') +
+    (con.length ? con.map(c => tarjeta(c, DIAG_CAUSA)).join('') : '<div class="aviso">Ninguna causa muestra una señal.</div>') +
+    (sin.length ? sin.map(c => tarjeta(c, DIAG_CAUSA)).join('') : '') +
     (desc.length ? `<details class="diag-descartadas"><summary>Descartadas (${desc.length}): se midieron y están normales</summary>` +
-      desc.map(tarjeta).join('') + '</details>' : '');
+      desc.map(c => tarjeta(c, DIAG_CAUSA)).join('') + '</details>' : '');
 
   // Gráficos
   const r = d.resumen;
@@ -8935,6 +9107,8 @@ function diagPintar(j) {
   const ords = d.ordenos || [];
   diagBarras('diag-ch-ordenos', ords.map(o => o.sesion + '.º' + (o.ini_d ? ' · ' + o.ini_d : '')),
              ords.map(o => o.kg_d - o.kg_b), false);
+  diagUltimoD = d;
+  diagGraficosTiempo();
 }
 
 // Al imprimir se abren las causas descartadas y el informe de texto, para que el PDF no salga con partes plegadas.

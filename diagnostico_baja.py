@@ -217,6 +217,52 @@ def _consumos_mixer(tambo, desde, hasta):
         return None, f"{type(exc).__name__}: {exc}"
 
 
+MIN_VACAS_SERIE = 20     # los rodeos de menos de 20 vacas en promedio no se dibujan en la línea de tiempo
+
+
+def _serie_por_dia(dias, dia, base_dias, por_dia, cow, ses):
+    """La producción día por día para la línea de tiempo: total, por rodeo y por ordeño.
+
+    Cada serie es una lista alineada con `dias`, con `None` en los días sin datos (un hueco, no un cero: una caída a
+    cero se leería como que no se ordeñó). El total es el de las vacas identificadas con lectura válida (igual que el
+    dashboard); los ordeños, en cambio, son todos los ordeños registrados (`sql_sesiones`), así que sus kg pueden
+    sumar más que el total."""
+    pos = {f: i for i, f in enumerate(dias)}
+
+    def vacia():
+        return {"kg": [None] * len(dias), "vacas": [None] * len(dias)}
+
+    total = vacia()
+    for f, v in por_dia.items():
+        if f in pos:
+            total["kg"][pos[f]], total["vacas"][pos[f]] = round(v["kg"]), v["vacas"]
+
+    por_grupo = defaultdict(lambda: defaultdict(lambda: [0, 0.0]))          # grupo -> fecha -> [vacas, kg]
+    for v in cow.values():
+        for f, r in v.items():
+            if f in pos:
+                por_grupo[r["grupo"]][f][0] += 1
+                por_grupo[r["grupo"]][f][1] += r["kg"]
+    grupos = {}
+    for g, dias_g in por_grupo.items():
+        if st.mean(n for n, _kg in dias_g.values()) < MIN_VACAS_SERIE:
+            continue
+        serie = vacia()
+        for f, (n, kg) in dias_g.items():
+            serie["kg"][pos[f]], serie["vacas"][pos[f]] = round(kg), n
+        grupos[str(g)] = serie
+
+    sesiones = {}
+    for fecha, sn, vacas, kg, *_resto in ses or []:
+        f = str(fecha)[:10]
+        if f in pos:
+            serie = sesiones.setdefault(str(sn), vacia())
+            serie["kg"][pos[f]], serie["vacas"][pos[f]] = round(float(kg or 0)), int(vacas)
+    return {"dias": list(dias), "dia": dia, "base": list(base_dias), "total": total,
+            "grupos": dict(sorted(grupos.items(), key=lambda kv: kv[0])),
+            "sesiones": dict(sorted(sesiones.items(), key=lambda kv: kv[0]))}
+
+
 TOPE_FILAS = 100_000   # db.run_query corta en 5.000 por defecto: acá hay una fila por vaca y día
 
 
@@ -759,6 +805,11 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
                 _p("   Otros días con comida tardía: " + ", ".join(
                     f"{t['fecha'][8:10]}/{t['fecha'][5:7]} ({hora_min(t['primera'])})" for t in b["tarde"][-6:])
                    + ". Mirá si en esos días también bajó la leche por vaca.")
+
+    # ---- serie por día: la línea de tiempo del navegador -------------------------------------------
+    d_ini, d_fin = datetime.date.fromisoformat(d0), datetime.date.fromisoformat(d1)
+    datos["serie"] = _serie_por_dia([(d_ini + datetime.timedelta(days=i)).isoformat()
+                                     for i in range((d_fin - d_ini).days + 1)], D, base_dias, por_dia, cow, ses)
 
     # ---- resumen ----------------------------------------------------------------------------
     titulo("RESUMEN (las pistas, no el veredicto)")

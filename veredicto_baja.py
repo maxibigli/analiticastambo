@@ -5,6 +5,9 @@ Es una función PURA sobre el dict `datos` que arma `diagnostico_baja.analizar` 
 así que se prueba sin nada conectado. Reglas simples y a la vista; ninguna es "inteligente": cada una
 compara una medición contra lo que el propio tambo viene dando y deja escrito en `evidencia` qué midió.
 
+Dos capas: `sintomas` (CÓMO SE VE la baja: el rinde por vaca, el grupo, el ordeño) y `causas` (POR QUÉ pasó,
+ordenadas de más a menos peso). Un síntoma nunca es el titular: dice dónde está el problema, no su motivo.
+
 Niveles de cada causa:
   probable   la medición es claramente anormal y alcanza para explicar buena parte de la diferencia
   posible    hay una señal, pero no alcanza para afirmarlo, o falta un dato para confirmarlo
@@ -47,6 +50,8 @@ MEZCLA_EXTRA = 15
 LECTURAS_PCT = 0.005
 RETIROS_VECES = 2.0
 RETIROS_EXTRA = 10
+PATRON_PAREJO_VACAS = 0.6    # la baja es «pareja» si al menos el 60 % de las vacas rindió menos que su promedio...
+PATRON_PAREJO_GRUPOS = 2 / 3  # ...y bajaron al menos dos tercios de los grupos grandes
 ALIM_RETRASO_MIN = 60    # minutos más tarde que la mediana de la primera comida: ya es una señal
 ALIM_KG_BAJO = 0.15      # se descargó al menos 15 % menos que la mediana de la historia, Y a 2 desvíos o más
 
@@ -416,20 +421,86 @@ def _alimentacion(d):
     return _causa("alimentacion", titulo, "descartada", ev)
 
 
-_CAUSAS = (_vacas, _rinde, _grupos, _ordeno, _equipo, _calor, _manejo, _alimentacion, _mezcla, _lecturas, _retiros)
+# Cómo se ve la baja (lo medido) y por qué pasó (las causas) son dos preguntas distintas. «Cada vaca rindió menos»,
+# «el 3.º ordeño concentra la diferencia» y «el grupo 5 rindió menos» son LO PRIMERO: dicen dónde está el problema, no
+# su motivo. Si compiten como causas ganan siempre —son lo más fuerte que se mide— y tapan la causa de verdad.
+_SINTOMAS = (_rinde, _grupos, _ordeno)
+_CAUSAS = (_vacas, _equipo, _calor, _manejo, _alimentacion, _mezcla, _lecturas, _retiros)
+
+# Qué tan extensa es cada causa: la comida y el calor le pegan a todo el rodeo a la vez; el resto toca a pocas vacas o a
+# un sector (las que faltaron, una boca, las tratadas, las que cambiaron de grupo, las lecturas, el descarte).
+_ALCANCE_RODEO = frozenset({"alimentacion", "calor"})
+
+
+def _patron(d):
+    """Cómo se reparte la baja: «parejo» (la mayoría de las vacas y de los grupos rindió menos) o «localizado» (se
+    concentra en una parte del rodeo). None si el rinde por vaca no bajó o falta el dato para saberlo."""
+    r, c = d["resumen"], d.get("caidas") or {}
+    z_kv = r.get("z_kv")
+    if z_kv is None or z_kv > -Z_NORMAL or not c.get("n_comunes"):
+        return None
+    pct = c["n_menos"] / c["n_comunes"]
+    grandes = [g for g in d.get("grupos") or [] if g["vacas_b"] >= MIN_VACAS_GRUPO and g["vacas_d"]]
+    bajaron = [g for g in grandes if g["kg_d"] / g["vacas_d"] < 0.99 * g["kg_b"] / g["vacas_b"]]
+    parejo = pct >= PATRON_PAREJO_VACAS and (not grandes or len(bajaron) / len(grandes) >= PATRON_PAREJO_GRUPOS)
+    return {"tipo": "parejo" if parejo else "localizado", "vacas_pct": round(pct * 100),
+            "grupos_bajaron": len(bajaron), "grupos": len(grandes)}
+
+
+def _encaja(c, patron):
+    """Una baja pareja la explica algo que afecta a todo el rodeo; una concentrada, algo local."""
+    if patron is None:
+        return True
+    return (c["clave"] in _ALCANCE_RODEO) == (patron["tipo"] == "parejo")
+
+
+def _por_que_ese_lugar(c, patron):
+    if patron is None:
+        return ("Probable: la medición es claramente anormal." if c["nivel"] == "probable"
+                else "Posible: hay una señal, pero no alcanza para afirmarlo.")
+    if patron["tipo"] == "parejo":
+        cuando = f"La baja es pareja: el {patron['vacas_pct']} % de las vacas rindió menos"
+        if patron["grupos"]:
+            cuando += f" y {patron['grupos_bajaron']} de {patron['grupos']} grupos bajaron"
+        return cuando + (", y esta causa afecta a todo el rodeo a la vez: encaja." if c["clave"] in _ALCANCE_RODEO
+                         else ", y esta causa toca a pocas vacas o a un sector: sola no alcanza para explicarla.")
+    cuando = f"La baja no es pareja: solo el {patron['vacas_pct']} % de las vacas rindió menos"
+    return cuando + (", y esta causa afectaría a todo el rodeo por igual: no explica algo concentrado."
+                     if c["clave"] in _ALCANCE_RODEO
+                     else ", se concentra en una parte del rodeo y esta causa es local: encaja.")
+
+
+def _ordenar(causas, patron):
+    """Las causas de más a menos peso: 1.º el nivel de evidencia (probable antes que posible); a igual nivel, la que
+    encaja con el patrón de la baja; después el impacto en kg (más negativo primero). Las probables y posibles llevan
+    `puesto` (1, 2, 3...) y `peso` (por qué ocupan ese lugar); las descartadas y sin dato, no."""
+    ordenadas = sorted(enumerate(causas), key=lambda ic: (_ORDEN[ic[1]["nivel"]], 0 if _encaja(ic[1], patron) else 1,
+                                                          ic[1]["impacto_kg"], ic[0]))
+    salida, puesto = [], 0
+    for _i, c in ordenadas:
+        if c["nivel"] in ("probable", "posible"):
+            puesto += 1
+            c = dict(c, puesto=puesto, peso=_por_que_ese_lugar(c, patron))
+        else:
+            c = dict(c, puesto=None, peso="")
+        salida.append(c)
+    return salida
 
 
 # --------------------------------------------------------------------------- veredicto
 def veredicto(datos: dict) -> dict:
-    """{titular, nivel, contexto[], causas[]} a partir de los datos del análisis. No modifica `datos`."""
+    """{titular, nivel, contexto[], sintomas[], causas[]} a partir de los datos del análisis. No modifica `datos`.
+
+    `sintomas`: cómo se ve la baja (el rinde por vaca, el grupo, el ordeño). `causas`: por qué pasó, ordenadas de más a
+    menos peso (ver `_ordenar`)."""
     r = datos["resumen"]
     diff = r["kg_d"] - r["kg_b"]
     z = r.get("z_kg") or 0.0
-    causas = [f(datos) for f in _CAUSAS]
-    causas.sort(key=lambda c: (_ORDEN[c["nivel"]], c["impacto_kg"]))      # impacto negativo = más peso primero
+    sintomas = sorted((f(datos) for f in _SINTOMAS), key=lambda c: (_ORDEN[c["nivel"]], c["impacto_kg"]))
+    causas = _ordenar([f(datos) for f in _CAUSAS], _patron(datos))
     contexto = []
 
-    rinde = next(c for c in causas if c["clave"] == "rinde")
+    rinde = next(c for c in sintomas if c["clave"] == "rinde")
     if (diff >= 0 or z > -Z_NORMAL) and rinde["nivel"] == "probable":
         # El total salió normal PORQUE se ordeñaron más vacas, pero cada una rindió claramente menos que lo habitual:
         # decir solo «dentro de lo normal» ocultaba justo lo que el dashboard marcaba en rojo (kg por vaca).
@@ -461,9 +532,14 @@ def veredicto(datos: dict) -> dict:
         else:
             nivel = "sin_causa"
             titular = (f"Bajó {_s(_pct(r['kg_d'], r['kg_b']), 1)} % ({_n(abs(z), 1)} desvíos) y nada de lo que mide "
-                       "DelPro lo explica.")
-            contexto.append("Revisá lo que DelPro no mide: la ración de ayer (mixer, carro, silo), el agua y el manejo "
-                            "del día anterior.")
+                       "el sistema lo explica.")
+            medido = next((c for c in causas if c["clave"] == "alimentacion"), {}).get("nivel") == "descartada"
+            contexto.append("Revisá lo que no se mide: la ración de ayer " + ("(carro, silo)" if medido else "(mixer, carro, silo)")
+                            + ", el agua y el manejo del día anterior.")
+        # Dónde se nota la baja: es lo primero que se ve, pero NO la causa.
+        senales = [s["titulo"] for s in sintomas if s["nivel"] in ("probable", "posible")]
+        if senales:
+            contexto.insert(0, "Cómo se ve: " + "; ".join(senales[:3]) + ".")
 
     ayer = r.get("ayer_kg")
     if ayer:
@@ -474,9 +550,12 @@ def veredicto(datos: dict) -> dict:
         elif p < 0:
             contexto.append(f"Contra ayer: {_s(p, 1)} % ({_n(ayer)} kg).")
     if nivel in ("normal", "atencion"):
-        notables = [c for c in causas if c["nivel"] in ("probable", "posible")
-                    and not (nivel == "atencion" and c["clave"] == "rinde")]
+        notables = [c for c in causas if c["nivel"] in ("probable", "posible")]
         if notables:
-            contexto.append("Aun así hay señales para mirar: " + "; ".join(c["titulo"] for c in notables[:3]) + ".")
+            primera = notables[0]
+            texto = f"La causa con más peso: {primera['titulo'][0].lower() + primera['titulo'][1:]} ({primera['nivel']})."
+            if len(notables) > 1:
+                texto += " También para mirar: " + "; ".join(c["titulo"][0].lower() + c["titulo"][1:] for c in notables[1:3]) + "."
+            contexto.append(texto)
     contexto.append("Son pistas a partir de lo que registra DelPro, no una certeza.")
-    return {"titular": titular, "nivel": nivel, "contexto": contexto, "causas": causas}
+    return {"titular": titular, "nivel": nivel, "contexto": contexto, "sintomas": sintomas, "causas": causas}

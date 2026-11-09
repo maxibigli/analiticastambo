@@ -3487,4 +3487,51 @@ diagnóstico y comparar). Si el mixer no registró nada ese día lo dice (puede 
 madrugada (antes de las 04:00) se cuenta en el día anterior: un viaje que arranca a las 23:50 no es el desayuno de ese día.
 
 Pruebas: `tests/test_alimentacion_dia.py` (16), `tests/test_veredicto_baja.py` (+13), `tests/test_diagnostico_baja.py` (+8, con el
-mixer reemplazado en todo el módulo: ninguna prueba sale a la red). Suite completa: 427 OK.
+mixer reemplazado en todo el módulo: ninguna prueba sale a la red). Suite completa: 450 OK.
+
+### El veredicto separa cómo se ve la baja de por qué pasó, y ordena las causas por peso (09/11/2026)
+
+Pedido del usuario al ver el veredicto del 07/11: el «PROBABLE» de arriba era «Cada vaca rindió menos», que es una
+**consecuencia, no una causa**, y la comida tardía (lo que más pesaba) aparecía cuarta. Ahora `veredicto_baja.veredicto` devuelve
+dos capas: `sintomas` (**cómo se ve**: el rinde por vaca, el grupo, el ordeño; dicen DÓNDE está la baja) y `causas` (**por qué pasó**:
+vacas que faltaron, bocas, calor, tratamientos, comida, cambios de grupo, lecturas, descarte). Un síntoma ya no puede ser el
+titular («Causa más probable: cada vaca rindió menos» deja de existir): si solo hay síntomas el nivel es `sin_causa` y el contexto
+dice «Cómo se ve: ...». La pantalla muestra «Cómo se ve la baja» (rótulo «Se nota», color de acento, no el de alarma) y debajo
+«Posibles causas, de más a menos peso» con el puesto (1.º, 2.º...) y «Por qué este lugar».
+
+**Cómo se ordenan las causas (`_ordenar`), reglas explícitas y no un puntaje inventado:**
+1. **El nivel de evidencia manda**: una causa probable va antes que cualquier posible.
+2. **A igual nivel, la que encaja con el patrón de la baja** (`_patron`): si es PAREJA (al menos 60 % de las vacas rindió menos y bajaron
+   al menos 2/3 de los grupos de 20 o más vacas) pesan más las causas que afectan a todo el rodeo a la vez (**comida y calor**,
+   `_ALCANCE_RODEO`); si está CONCENTRADA, las locales (las que faltaron, una boca, las tratadas, los cambios de grupo, lecturas,
+   descarte). Sin patrón (el rinde por vaca no bajó o falta el dato) no se reordena por esto.
+3. **Después el impacto en kg** (más negativo primero), y el orden fijo de `_CAUSAS` si empatan.
+Las probables y posibles llevan `puesto` y `peso` (el texto de por qué); las descartadas y sin dato, no. El caso real del 07/11 (66 %
+de las vacas rindió menos, 4 de 5 grupos bajaron): la comida tardía queda 1.º y los cambios de grupo 2.º.
+
+**Es un criterio de juicio, no una medición**: el orden dentro de un mismo nivel sale del encaje con el patrón, no de cuánta leche
+explica cada causa (eso solo se estima para vacas, tratamientos y lecturas). Si se ve que en algún caso real el orden no es el
+que el tambo espera, ajustar `_ALCANCE_RODEO` o `PATRON_PAREJO_*` (constantes al principio de `veredicto_baja.py`), no la lógica.
+
+### Línea de tiempo y barras verticales por rodeo y ordeño (09/11/2026)
+
+Pedido del usuario: ver la producción día por día, por rodeo y por ordeño, y otro gráfico de barras verticales con los distintos
+rodeos y ordeños. Dos tarjetas de ancho completo debajo de los tres gráficos de diferencias (`#diag-linea-card`,
+`#diag-barras-card`):
+
+- **Línea de tiempo** (`diagLinea`): una línea por rodeo, por ordeño o el total (selector «Total / Por rodeo / Por ordeño») en **kg
+  o kg por vaca** (selector compartido con las barras). Resalta el día analizado (punto grande, banda roja) y sombrea los días de la
+  base (`diagFondo`); en «Total» dibuja además el promedio de la base en línea punteada. Las etiquetas llevan el día de la semana
+  (el 07/11 fue sábado). Un día sin datos queda como hueco, **no como cero** (una caída a cero se leería como que no se ordeñó).
+- **Barras verticales** (`diagBarrasV`): por rodeo y por ordeño, el promedio de la base (barra clara) contra el día analizado (barra
+  azul; **roja si bajó 3 % o más, verde si subió 3 % o más**). Solo rodeos de 20 vacas o más, como los otros gráficos.
+
+**Datos nuevos: `datos["serie"]`** (`diagnostico_baja._serie_por_dia`): `dias` (de la primera fecha de la base al día analizado),
+`dia`, `base` (los días de la base realmente usados, sin los incompletos), y `total`/`grupos`/`sesiones`, cada una con `kg` y `vacas`
+alineadas con `dias`. Los rodeos de menos de 20 vacas en promedio no entran (`MIN_VACAS_SERIE`). **El total es el de las vacas
+identificadas con lectura válida (igual que el dashboard); los ordeños son todos los ordeños registrados (`sql_sesiones`), así que sus
+kg pueden sumar más que el total.** Sin ordeños (la consulta falló) `sesiones` queda `{}` y el resto sigue.
+
+Las líneas no usan el azul marino de la paleta (`diagColor`): sobre fondo oscuro no se ve. Pruebas: `TestSerieParaLaLineaDeTiempo`
+(9, en `tests/test_diagnostico_baja.py`). Los gráficos se revisaron en el navegador con una página armada con el CSS, el HTML y el JS
+reales de `index.html` y el análisis real (`dg.analizar` con datos sintéticos); no hay prueba automática del JavaScript.

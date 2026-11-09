@@ -358,6 +358,75 @@ class TestConsumosMixer(unittest.TestCase):
         self.assertIn("se cayó mixerone.net", motivo)
 
 
+class TestSerieParaLaLineaDeTiempo(unittest.TestCase):
+    """`datos["serie"]`: la producción día por día, total, por rodeo y por ordeño, para dibujar la línea de tiempo."""
+
+    DIAS = list(_fechas("2026-11-01", "2026-11-07"))
+
+    def _escenario(self, sesiones=True, kg_dia_g21=40.0):
+        # Rodeo 21: 30 vacas; rodeo 22: 10 vacas (chico: no se dibuja). El día analizado, el rodeo 21 rinde 40 en vez de 45.
+        por_dia = {f: [(i, 21, 45.0) for i in range(1, 31)] + [(100 + i, 22, 20.0) for i in range(1, 11)]
+                   for f in self.DIAS[:-1]}
+        por_dia["2026-11-07"] = [(i, 21, kg_dia_g21) for i in range(1, 31)] + [(100 + i, 22, 20.0) for i in range(1, 11)]
+        filas_ses = []
+        for f in self.DIAS:
+            for sn, kg in ((1, 400.0), (2, 500.0), (3, 450.0 if f != "2026-11-07" else 300.0)):
+                filas_ses.append([f, sn, 40, kg, datetime.datetime.fromisoformat(f + "T06:00:00"),
+                                  datetime.datetime.fromisoformat(f + "T09:00:00"), 5.0, 2.0])
+
+        def extra(sql):
+            if sesiones and "sm.SessionNo AS sesion" in sql:
+                return filas_ses
+            return None
+        return _analizar(_filas_vacas(por_dia), extra=extra)["datos"]["serie"]
+
+    def test_los_dias_cubren_el_periodo_de_la_base_y_el_dia_analizado(self):
+        serie = self._escenario()
+        self.assertEqual(serie["dias"], self.DIAS)
+        self.assertEqual(serie["dia"], "2026-11-07")
+
+    def test_dice_cuales_son_los_dias_de_la_base(self):
+        serie = self._escenario()
+        self.assertEqual(serie["base"], self.DIAS[:6])          # la base es 01 a 06/11; el 07 es el analizado
+
+    def test_el_total_por_dia_es_el_kg_de_vacas_identificadas(self):
+        t = self._escenario()["total"]
+        self.assertEqual(t["kg"][0], 30 * 45.0 + 10 * 20.0)
+        self.assertEqual(t["kg"][-1], 30 * 40.0 + 10 * 20.0)
+        self.assertEqual(t["vacas"], [40] * 7)
+
+    def test_un_dia_sin_produccion_queda_vacio_no_en_cero(self):
+        por_dia = {f: _rodeo(100, 40.0) for f in ("2026-11-01", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06",
+                                                  "2026-11-07")}
+        serie = _analizar(_filas_vacas(por_dia))["datos"]["serie"]
+        self.assertIsNone(serie["total"]["kg"][1])              # el 02/11 no hay nada: un hueco, no una caída a cero
+
+    def test_cada_rodeo_grande_tiene_su_serie(self):
+        g = self._escenario()["grupos"]
+        self.assertEqual(g["21"]["kg"][0], 30 * 45.0)
+        self.assertEqual(g["21"]["kg"][-1], 30 * 40.0)
+        self.assertEqual(g["21"]["vacas"][-1], 30)
+
+    def test_los_rodeos_chicos_no_entran(self):
+        self.assertNotIn("22", self._escenario()["grupos"])
+
+    def test_cada_ordeno_tiene_su_serie(self):
+        s = self._escenario()["sesiones"]
+        self.assertEqual(sorted(s), ["1", "2", "3"])
+        self.assertEqual(s["3"]["kg"][0], 450.0)
+        self.assertEqual(s["3"]["kg"][-1], 300.0)             # el ordeño que cayó el día analizado
+        self.assertEqual(s["3"]["vacas"][-1], 40)
+
+    def test_sin_la_consulta_de_ordenos_no_se_inventan(self):
+        serie = self._escenario(sesiones=False)
+        self.assertEqual(serie["sesiones"], {})
+        self.assertIn("21", serie["grupos"])                   # el resto de la serie sigue
+
+    def test_los_valores_son_json(self):
+        import json
+        json.dumps(self._escenario())
+
+
 class TestCruceDeTratadas(unittest.TestCase):
     def _escenario(self, baja_las_tratadas):
         por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-06")}
