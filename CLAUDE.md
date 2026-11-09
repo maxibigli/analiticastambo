@@ -3413,3 +3413,46 @@ archivos y `iniciar_ups_agente.bat`), lee la tarjeta cada 30 s y manda por HTTPS
 Puesta en marcha en el tambo: (1) en LactIA, variable `UPS_INGESTA_TOKEN` (panel de despliegue, iniciar_panel.bat) y reiniciar; (2) en la PC
 del tambo, `setx UPS_INGESTA_TOKEN` (el mismo) y `setx UPS_SNMP_COMMUNITY`; (3) `python ups_agente.py <IP> --sin-enviar --una-vez`
 para ver la lectura sin mandar nada; (4) completar IP/tambo/dirección en `iniciar_ups_agente.bat` y correrlo.
+
+## MixerOne: proveedor de alimentación conectado (09/11/2026)
+
+`proveedores/mixerone.py` reemplaza al cascarón «todavía no conectado». La app web de MixerOne
+(`https://mixerone.net/app/auth/login`) es una SPA Angular sobre una API REST con JSON en `https://mixerone.net/api/`; no hay
+documentación, las rutas se leyeron del JS público y se verificaron con la cuenta real. Detalle de rutas y campos en el
+encabezado del módulo. Resumen: `POST auth/loginuser` (HTTP **201**, no 200) → `access_token` + `associated_clients`;
+cabeceras `Authorization: Bearer` y **`clientid`**; viajes en `POST trips/GetByFilterPaginated` con `{startDate, endDate, page}`
+(`AAAA-MM-DD`, 25 por página).
+
+**Verificado contra el Excel «viajes» del 07/11/2026**: mismos 5 viajes de receta ALTA a rodeos 1 y 2 (09:52, 11:08, 11:48,
+16:09, 17:28), RODEO 1 = 28.850 kg y RODEO 2 = 17.125 kg. La API trae además los demás corrales (rodeos 3 y 5, enfermería,
+preparto, recría) y el **%MS de cada carga** (`food_ms`), que el Excel no tenía.
+
+**Variables de entorno** (panel de despliegue, grupo «MixerOne (mixer)»): `MIXERONE_USUARIO`, `MIXERONE_PASSWORD` y
+**`MIXERONE_CLIENTE_<TAMBO>`** (`MIXERONE_CLIENTE_PONDEROSA` = 623). **La del establecimiento es obligatoria y nunca se
+adivina**: la cuenta tiene cuatro (623 La Ponderosa, 629 Recría LP, 607 Don German, 613 San Benito) y San José también usa
+MixerOne; sin esa variable San José vería el mixer de La Ponderosa y cruzaría sus grupos contra otro tambo. Por eso
+`proveedores.de(tambo)` devuelve `mixerone.para(tambo)`, un proveedor ligado al tambo, y no el módulo suelto. Un tambo sin su
+variable informa el motivo (con los establecimientos de la cuenta) en vez de dar datos ajenos. Las credenciales se leen del
+registro de Windows si el proceso no las tiene (como Milky); **el panel las guarda a nivel de MÁQUINA**, `setx` común a nivel
+de usuario: las dos se ven.
+
+**Lo que MixerOne no da, y por eso va vacío en vez de inventado:** el mapeo corral ↔ grupo de DelPro (`indice_ordene`; se cae a
+coincidencia de nombre, que anda: «RODEO 1» ↔ «Rodeo 1»), los kg de MS por cabeza del corral, y un precio por kg confiable. La
+API trae `price` por alimento (18 de 59 cargados: cáscara de soja 225, expeller 465...) pero no se sabe si es por kg ni en qué
+moneda, así que `ingredientes()[i]["precio"]` es `None` y el valor crudo va en `precio_mixerone`. Los precios para el costo
+siguen saliendo de la planilla.
+
+**`operacion` = `trip_uuid`**: une las cargas de una tanda con sus descargas, que es lo que `alimentacion.ms_por_lote_dia` usa
+para saber la receta de cada descarga. La fecha de cada movimiento es el día del viaje con la hora del movimiento (la API no
+trae fecha en el detalle); una descarga con hora más de 6 h anterior al arranque del viaje pasó la medianoche y suma un día.
+La hora que informa la API es la LOCAL del tambo aunque el `created` lleve «Z».
+
+**SOLO LECTURA EN MIXERONE — REGLA EXPLÍCITA DEL TAMBO (09/11/2026): está prohibido escribir o modificar nada ahí.** El acceso
+que se pidió es de solo lectura. La API usa POST hasta para consultar, así que el método no sirve de freno: `_post` solo
+acepta las rutas de `RUTAS_DE_LECTURA` (login, viajes, corrales, alimentos, equipos) y rechaza cualquier otra antes de salir
+a la red. La API tiene rutas de escritura (`trips/delete-record`, `trips/insert-record`, `trips/UpdateFoodPriceTrip`,
+`corral/update`, `foods/update`...): NO se llaman nunca, ni «para probar». Sumar una consulta nueva exige agregar su ruta a esa
+lista a propósito, verificando que solo lee.
+
+Pruebas: `tests/test_mixerone.py` (34, sin red, con respuestas armadas igual que las reales; incluye el cruce con
+`alimentacion.ms_por_lote_dia` y `conciliacion.kg_por_lote` sin mocks de por medio). Suite completa: 386 OK.

@@ -37,8 +37,8 @@ el proveedor no lo tiene cargado — NUNCA 0, que se propagaría como un costo r
 #
 # San José usa MixerOne, no Haasten — declararlo acá evita que caiga al
 # defecto y termine comparando sus grupos contra el mixer de OTRO tambo
-# (ver proveedores/mixerone.py: la integración real queda para más adelante,
-# por ahora el módulo solo informa "no conectado" en vez de dar datos falsos).
+# (ver proveedores/mixerone.py: cada tambo apunta a SU establecimiento de MixerOne con
+# MIXERONE_CLIENTE_<TAMBO>; sin esa variable informa el motivo, nunca datos de otro tambo).
 POR_TAMBO: dict[str, str] = {"san_jose": "mixerone"}
 POR_DEFECTO = "haasten"
 
@@ -54,4 +54,6 @@ def de(tambo: str):
     if modulo is None:
         raise ValueError(f"Proveedor de alimentación desconocido: {nombre!r}")
     import importlib
-    return importlib.import_module(f".{modulo}", __name__)
+    mod = importlib.import_module(f".{modulo}", __name__)
+    # MixerOne puede tener VARIOS establecimientos en la misma cuenta: el proveedor se liga al tambo.
+    return mod.para(tambo) if modulo == "mixerone" else mod

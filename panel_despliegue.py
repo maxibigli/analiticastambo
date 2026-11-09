@@ -134,6 +134,10 @@ CATALOGO: tuple[Var, ...] = (
     Var("HASTEN_PASSWORD", "Haasten (mixer)", True, "Contraseña de Haasten."),
     Var("MIXERONE_USUARIO", "MixerOne (mixer)", False, "Usuario de MixerOne."),
     Var("MIXERONE_PASSWORD", "MixerOne (mixer)", True, "Contraseña de MixerOne."),
+    Var("MIXERONE_CLIENTE_", "MixerOne (mixer)", False,
+        "Id del establecimiento de MixerOne de cada tambo (la cuenta puede tener varios). "
+        "MIXERONE_CLIENTE_<TAMBO>, por ejemplo MIXERONE_CLIENTE_PONDEROSA = 623. Obligatoria: sin ella "
+        "ese tambo no recibe datos del mixer.", True),
     Var("SENSEHUB_USER_", "SenseHub (collares)", False, "Usuario del controlador. SENSEHUB_USER_<TAMBO>.", True),
     Var("SENSEHUB_PWD_", "SenseHub (collares)", True, "Contraseña del controlador. SENSEHUB_PWD_<TAMBO>.", True),
     Var("UPS_SNMP_COMMUNITY", "UPS (SNMP)", True,
