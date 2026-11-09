@@ -134,6 +134,10 @@ CATALOGO: tuple[Var, ...] = (
     Var("HASTEN_PASSWORD", "Haasten (mixer)", True, "Contraseña de Haasten."),
     Var("MIXERONE_USUARIO", "MixerOne (mixer)", False, "Usuario de MixerOne."),
     Var("MIXERONE_PASSWORD", "MixerOne (mixer)", True, "Contraseña de MixerOne."),
+    # Fila fija para La Ponderosa (se ve «sin definir» hasta cargarla); el resto de los tambos usan el prefijo.
+    Var("MIXERONE_CLIENTE_PONDEROSA", "MixerOne (mixer)", False,
+        "Id del establecimiento de La Ponderosa en MixerOne (en la cuenta actual: 623). Obligatoria: sin ella "
+        "La Ponderosa no recibe datos del mixer."),
     Var("MIXERONE_CLIENTE_", "MixerOne (mixer)", False,
         "Id del establecimiento de MixerOne de cada tambo (la cuenta puede tener varios). "
         "MIXERONE_CLIENTE_<TAMBO>, por ejemplo MIXERONE_CLIENTE_PONDEROSA = 623. Obligatoria: sin ella "
