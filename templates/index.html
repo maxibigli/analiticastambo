@@ -436,6 +436,28 @@
   .panel-alarmas .pa-aviso-tratar { color: var(--critical); font-weight: 700; }
   .panel-alarmas .pa-aviso-revisar { color: var(--warning); font-weight: 700; }
   .panel-alarmas .pa-aviso-liberar { color: var(--accent); font-weight: 700; }
+  /* Histórico gráfico de la vaca (prueba) */
+  #rotativa path[data-p], #rotativa circle[data-p], #rotativa-detalle .puesto-card[data-p] { cursor: pointer; }
+  #rotativa-detalle .puesto-card[data-p]:hover { border-color: var(--accent); }
+  .hv-fondo { position: fixed; inset: 0; z-index: 60; background: rgba(0,0,0,.55); display: flex; align-items: flex-start; justify-content: center; overflow: auto; padding: 24px 12px; }
+  .hv-fondo[hidden] { display: none; }
+  .hv-ventana { background: var(--card, var(--page)); color: var(--text-primary); border: 1px solid var(--border); border-radius: 12px; width: min(980px, 100%); padding: 16px 18px 20px; }
+  .hv-cab { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+  .hv-titulo { font-size: 18px; font-weight: 700; }
+  .hv-sub { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
+  .hv-cerrar { border: 1px solid var(--border); background: var(--page); color: var(--text-primary); border-radius: 8px; width: 34px; height: 34px; cursor: pointer; font-size: 15px; }
+  .hv-h { font-size: 13px; font-weight: 650; color: var(--accent); margin: 16px 0 6px; }
+  .hv-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .hv-chip { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 20px; background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--text-primary); }
+  .hv-chip.rep { background: color-mix(in srgb, var(--critical) 22%, transparent); }
+  .hv-graf { position: relative; height: 250px; }
+  .hv-graf.chico { height: 130px; }
+  .hv-leyenda { font-size: 11.5px; color: var(--text-secondary); display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 4px 0; }
+  .hv-tabla { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .hv-tabla th { text-align: left; color: var(--text-secondary); font-weight: 600; padding: 5px 8px; border-bottom: 1px solid var(--grid); }
+  .hv-tabla td { padding: 5px 8px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  .hv-tabla tr.vigente td { background: color-mix(in srgb, var(--warning) 12%, transparent); }
+  .hv-resumen { font-size: 13px; line-height: 1.55; }
   /* Snapshot en vivo de las cámaras de "Problemas podales" */
   .podal-cam-box {
     height: 180px; border: 1px solid var(--border); border-radius: 8px;
@@ -2171,6 +2193,16 @@
         <div class="rotativa-col">
           <div id="panel-alarmas"></div>
           <div id="rotativa-detalle"></div>
+        </div>
+      </div>
+      <!-- PRUEBA: histórico gráfico de la vaca (se abre al hacer clic en un puesto) -->
+      <div id="hv-fondo" class="hv-fondo" hidden>
+        <div class="hv-ventana" role="dialog" aria-modal="true" aria-labelledby="hv-titulo">
+          <div class="hv-cab">
+            <div><div id="hv-titulo" class="hv-titulo"></div><div id="hv-sub" class="hv-sub"></div></div>
+            <button type="button" id="hv-cerrar" class="hv-cerrar" aria-label="Cerrar">✕</button>
+          </div>
+          <div id="hv-cuerpo"></div>
         </div>
       </div>
     </div>
@@ -9226,7 +9258,7 @@ function renderRotativa() {
     const fila = porPuesto[p], foco = p >= desde && p <= hasta, c = colorPlaza(fila, idx);
     // Cuña (sector anular).
     const d = `M ${pt(a1, Ro)} A ${Ro} ${Ro} 0 0 1 ${pt(a2, Ro)} L ${pt(a2, Ri)} A ${Ri} ${Ri} 0 0 0 ${pt(a1, Ri)} Z`;
-    svg += `<path d="${d}" fill="${c.fill}" stroke="${foco ? css('--accent') : (oscuro ? '#1a1a19' : '#fff')}" stroke-width="${foco ? 2.5 : 1}"/>`;
+    svg += `<path ${fila ? `data-p="${p}"` : ''} d="${d}" fill="${c.fill}" stroke="${foco ? css('--accent') : (oscuro ? '#1a1a19' : '#fff')}" stroke-width="${foco ? 2.5 : 1}"/>`;
     // Número del puesto (chico, en el borde interno).
     svg += `<text x="${pt(a, Ri + 11).split(' ')[0]}" y="${+pt(a, Ri + 11).split(' ')[1] + 3}" text-anchor="middle" font-size="9" fill="${oscuro ? '#c3c2b7' : '#555'}" style="pointer-events:none">${p}</text>`;
     // RP de la vaca, en el medio de la cuña.
@@ -9238,7 +9270,7 @@ function renderRotativa() {
       const av = avisoDe(fila, idx);
       if (av) {
         const [mx, my] = pt(a, Ri + 22).split(' ').map(Number);
-        svg += `<circle cx="${mx}" cy="${my}" r="7" fill="${AVISO_COLOR[av.accion] || '#888'}" stroke="#fff" stroke-width="1.2"><title>${av.accion}${av.diag ? ' | ' + escHtml(av.diag) : ''}${av.trat ? ' | ' + escHtml(av.trat) : ''}</title></circle>` +
+        svg += `<circle data-p="${p}" cx="${mx}" cy="${my}" r="7" fill="${AVISO_COLOR[av.accion] || '#888'}" stroke="#fff" stroke-width="1.2"><title>${av.accion}${av.diag ? ' | ' + escHtml(av.diag) : ''}${av.trat ? ' | ' + escHtml(av.trat) : ''}</title></circle>` +
           `<text x="${mx}" y="${my + 3}" text-anchor="middle" font-size="9" font-weight="800" fill="#1b1b1b" style="pointer-events:none">${av.accion[0]}</text>`;
       }
       // Barra de progreso de ordeño en el borde externo (kg reales vs esperados).
@@ -9340,7 +9372,7 @@ function renderRotativaDetalle(porPuesto, idx, desde, hasta) {
     const kg = f[idx.produccion_kg] != null ? fmt(f[idx.produccion_kg]) + ' kg' : '—';
     const rp = f[idx.rp] === 0 ? 'sin ID' : fmt(f[idx.rp]);
     const parto = f[idx.ultimo_parto] ? ` · últ. parto ${f[idx.ultimo_parto]}` : '';
-    html += `<div class="puesto-card${filaConAlerta(f, idx) ? ' alerta' : ''}">
+    html += `<div class="puesto-card${filaConAlerta(f, idx) ? ' alerta' : ''}" data-p="${p}" title="Clic: histórico de la vaca">
       <div class="pnum">${p}</div>
       <div>
         <div class="prp">RP ${rp} ${chips.join(' ')}</div>
@@ -9358,6 +9390,182 @@ function renderRotativaDetalle(porPuesto, idx, desde, hasta) {
   }
   document.getElementById('rotativa-detalle').innerHTML = html;
 }
+
+// ---- Histórico gráfico de la vaca (PRUEBA DE CONCEPTO) -----------------------
+// Clic en un puesto de la rotativa → ventana con producción, tratamientos con
+// medicamentos, eventos reproductivos y células somáticas, todo sobre el mismo
+// eje de fechas para leerlo de corrido. Datos: /api/animal/historico.
+let hvChartProd = null, hvChartScc = null, hvSeq = 0;
+
+// Marcas verticales de eventos sobre el gráfico (una por evento, con forma y fila).
+Chart.register({
+  id: 'eventosVaca',
+  afterDatasetsDraw(chart, _args, opts) {
+    const ev = opts && opts.eventos;
+    if (!ev || !ev.length || !chart.scales.x) return;
+    const { ctx, chartArea, scales } = chart;
+    ctx.save();
+    ev.forEach(e => {
+      const x = scales.x.getPixelForValue(e.idx);
+      if (!(x >= chartArea.left && x <= chartArea.right)) return;
+      ctx.strokeStyle = e.color; ctx.globalAlpha = 0.35; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(x, chartArea.top); ctx.lineTo(x, chartArea.bottom); ctx.stroke();
+      ctx.globalAlpha = 1; ctx.setLineDash([]); ctx.fillStyle = e.color;
+      const y = chartArea.top + 8 + (e.fila || 0) * 15, r = 5;
+      ctx.beginPath();
+      if (e.forma === 'tri') { ctx.moveTo(x, y - r); ctx.lineTo(x + r, y + r); ctx.lineTo(x - r, y + r); ctx.closePath(); }
+      else if (e.forma === 'rombo') { ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); }
+      else if (e.forma === 'cuad') { ctx.rect(x - r + 1, y - r + 1, 2 * r - 2, 2 * r - 2); }
+      else { ctx.arc(x, y, r, 0, 2 * Math.PI); }
+      ctx.fill();
+    });
+    ctx.restore();
+  }
+});
+
+function hvDias(desdeISO, hastaISO) {
+  const out = []; let d = new Date(desdeISO + 'T00:00:00Z'); const h = new Date(hastaISO + 'T00:00:00Z');
+  while (d <= h) { out.push(d.toISOString().slice(0, 10)); d = new Date(d.getTime() + 864e5); }
+  return out;
+}
+const hvFechaCorta = iso => { const [a, m, d] = iso.split('-'); return `${d}/${m}/${a.slice(2)}`; };
+
+function cerrarHistorialVaca() {
+  document.getElementById('hv-fondo').hidden = true;
+  hvSeq++;
+  if (hvChartProd) { hvChartProd.destroy(); hvChartProd = null; }
+  if (hvChartScc) { hvChartScc.destroy(); hvChartScc = null; }
+}
+
+async function abrirHistorialVaca(p) {
+  if (!ordenoData || !ordenoData.rows) return;
+  const idx = Object.fromEntries(ordenoData.columns.map((c, i) => [c, i]));
+  const f = ordenoData.rows.find(r => r[idx.posicion] === p);
+  if (!f) return;
+  const rp = f[idx.rp];
+  const fondo = document.getElementById('hv-fondo'), cuerpo = document.getElementById('hv-cuerpo');
+  document.getElementById('hv-titulo').textContent = rp ? `Vaca RP ${rp} · puesto ${p}` : `Puesto ${p} · sin identificar`;
+  const sub = [f[idx.grupo] != null ? 'Grupo ' + f[idx.grupo] : null, f[idx.dias] != null ? f[idx.dias] + ' días en leche' : null, f[idx.reproductivo]]
+    .filter(x => x).join(' · ');
+  document.getElementById('hv-sub').textContent = sub;
+  fondo.hidden = false;
+  if (hvChartProd) { hvChartProd.destroy(); hvChartProd = null; }
+  if (hvChartScc) { hvChartScc.destroy(); hvChartScc = null; }
+  if (!rp) { cuerpo.innerHTML = '<div class="aviso">Esta vaca no fue identificada (sin ID): no hay historial para mostrar.</div>'; return; }
+  const mi = ++hvSeq;
+  cuerpo.innerHTML = '<div class="aviso">Cargando historial…</div>';
+  try {
+    const d = await pedirJSON(`/api/animal/historico?rp=${encodeURIComponent(rp)}&tambo=${encodeURIComponent(tamboActual)}`);
+    if (mi !== hvSeq) return;
+    hvPintar(d, avisoDe(f, idx));
+  } catch (e) {
+    if (mi !== hvSeq) return;
+    cuerpo.innerHTML = `<div class="aviso" style="color:var(--critical)">${e.calentando ? 'La base está ocupada, probá de nuevo en unos segundos.' : escHtml(e.message)}</div>`;
+  }
+}
+
+function hvPintar(d, av) {
+  const cuerpo = document.getElementById('hv-cuerpo');
+  const hoy = hoyISO();
+  const prod = d.produccion || [], trat = d.tratamientos || [], rep = d.reproduccion || [], ctrl = d.controles || [];
+  // Eje de fechas común: desde la primera producción conocida (o 1 año atrás) hasta hoy.
+  const desde = prod.length ? prod[0].fecha : menosDias(hoy, 365);
+  const labels = hvDias(desde, hoy);
+  const pos = Object.fromEntries(labels.map((l, i) => [l, i]));
+  const kg = new Array(labels.length).fill(null);
+  prod.forEach(r => { if (r.kg > 0 && pos[r.fecha] != null) kg[pos[r.fecha]] = r.kg; });
+
+  // Marcas de eventos (cada tipo con su forma/color/fila para que no se pisen).
+  const eventos = [];
+  const cCrit = css('--critical'), cAzul = '#42a5f5', cLila = '#b39ddb', cVerde = '#66bb6a', cGris = '#9e9e9e', cCian = '#26c6da';
+  trat.forEach(t => { if (pos[t.fecha] != null) eventos.push({ idx: pos[t.fecha], color: cCrit, forma: 'circ', fila: 0 }); });
+  rep.forEach(r => {
+    if (pos[r.fecha] == null) return;
+    const i = pos[r.fecha];
+    if (r.tipo === 'Inseminación') eventos.push({ idx: i, color: cAzul, forma: 'tri', fila: 1 });
+    else if (r.tipo === 'Celo') eventos.push({ idx: i, color: cLila, forma: 'rombo', fila: 1 });
+    else if (r.tipo === 'Control de gestación') eventos.push({ idx: i, color: String(r.detalle).includes('+') ? cVerde : cGris, forma: 'cuad', fila: 2 });
+    else if (r.tipo === 'Parto') eventos.push({ idx: i, color: cCian, forma: 'circ', fila: 2 });
+  });
+
+  // Recurrencia: mismo diagnóstico en el último año (dato clave para decidir).
+  const hace1a = menosDias(hoy, 365), conteo = {};
+  trat.forEach(t => { if (t.diagnostico && t.fecha >= hace1a) conteo[t.diagnostico] = (conteo[t.diagnostico] || 0) + 1; });
+  const chips = Object.entries(conteo).sort((a, b) => b[1] - a[1])
+    .map(([n, c]) => `<span class="hv-chip${c >= 3 ? ' rep' : ''}">${escHtml(n)} ×${c}</span>`).join('');
+
+  const ultimo = tipo => { const l = rep.filter(r => r.tipo === tipo); return l.length ? l[l.length - 1] : null; };
+  const partes = [];
+  const parto = ultimo('Parto'), ins = ultimo('Inseminación'), pg = ultimo('Control de gestación'), celo = ultimo('Celo');
+  if (parto) partes.push(`Último parto <b>${hvFechaCorta(parto.fecha)}</b>`);
+  if (ins) partes.push(`Última inseminación <b>${hvFechaCorta(ins.fecha)}</b> (${escHtml(ins.detalle)})`);
+  if (pg) partes.push(`Último control de gestación <b>${hvFechaCorta(pg.fecha)}</b>: ${escHtml(pg.detalle)}`);
+  if (celo) partes.push(`Último celo <b>${hvFechaCorta(celo.fecha)}</b>`);
+
+  const filasTrat = trat.map(t => {
+    const vig = (t.fin_tratamiento && t.fin_tratamiento >= hoy) || (t.fin_retiro && t.fin_retiro >= hoy);
+    return `<tr class="${vig ? 'vigente' : ''}"><td>${hvFechaCorta(t.fecha)}</td><td>${escHtml(t.diagnostico || '—')}</td>` +
+      `<td>${escHtml(t.tratamiento || '—')}</td><td>${escHtml(t.medicamentos || '—')}</td>` +
+      `<td>${t.fin_retiro ? hvFechaCorta(t.fin_retiro) : '—'}</td></tr>`;
+  }).join('');
+
+  cuerpo.innerHTML = `
+    ${av ? `<div class="aviso-trat ${av.clase}" style="margin-top:10px"><b>${av.accion}</b>${av.diag ? ' | ' + escHtml(av.diag) : ''}${av.trat ? ' | ' + escHtml(av.trat) : ''}${av.fin ? ` · retiro hasta ${av.fin}` : ''}</div>` : ''}
+    ${chips ? `<div class="hv-h">Diagnósticos del último año (3 o más = recurrente)</div><div class="hv-chips">${chips}</div>` : ''}
+    <div class="hv-h">Producción diaria (kg) y eventos</div>
+    <div class="hv-leyenda">
+      <span style="color:${cCrit}">● Tratamiento</span><span style="color:${cAzul}">▲ Inseminación</span>
+      <span style="color:${cLila}">◆ Celo</span><span style="color:${cVerde}">■ Gestación + </span>
+      <span style="color:${cGris}">■ Gestación −</span><span style="color:${cCian}">● Parto</span>
+    </div>
+    <div class="hv-graf"><canvas id="hv-canvas-prod"></canvas></div>
+    <div class="hv-h">Células somáticas por control lechero (miles/ml)</div>
+    <div class="hv-graf chico"><canvas id="hv-canvas-scc"></canvas></div>
+    ${partes.length ? `<div class="hv-h">Reproducción</div><div class="hv-resumen">${partes.join('<br>')}</div>` : ''}
+    <div class="hv-h">Tratamientos y medicamentos (30 meses)</div>
+    ${filasTrat ? `<div class="tabla-scroll" style="max-height:300px"><table class="hv-tabla"><thead><tr><th>Fecha</th><th>Diagnóstico</th><th>Tratamiento</th><th>Medicamentos aplicados</th><th>Retiro leche hasta</th></tr></thead><tbody>${filasTrat}</tbody></table></div>`
+      : '<div class="aviso">Sin tratamientos registrados en los últimos 30 meses.</div>'}`;
+
+  const ejeX = { grid: { display: false }, border: { color: css('--baseline') },
+    ticks: { maxTicksLimit: 10, maxRotation: 0, callback: (v, i) => hvFechaCorta(labels[i]) } };
+  const ejeY = { beginAtZero: true, grid: { color: css('--grid') }, border: { display: false } };
+  hvChartProd = new Chart(document.getElementById('hv-canvas-prod'), {
+    type: 'line',
+    data: { labels, datasets: [{ label: 'kg/día', data: kg, borderColor: css('--accent'), backgroundColor: css('--accent'),
+      borderWidth: 1.6, pointRadius: 0, tension: 0.2, spanGaps: false }] },
+    options: { responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { display: false }, eventosVaca: { eventos },
+        tooltip: { callbacks: { title: it => hvFechaCorta(labels[it[0].dataIndex]) } } },
+      scales: { x: ejeX, y: { ...ejeY, title: { display: true, text: 'kg/día' }, grace: '18%' } } }
+  });
+
+  const scc = new Array(labels.length).fill(null);
+  ctrl.forEach(c => { if (c.scc != null && pos[c.fecha] != null) scc[pos[c.fecha]] = c.scc; });
+  const colPunto = scc.map(v => v == null ? 'transparent' : v > 400 ? css('--critical') : v > 200 ? css('--warning') : css('--good'));
+  const linea = (v, col) => ({ data: new Array(labels.length).fill(v), borderColor: col, borderDash: [4, 4], borderWidth: 1, pointRadius: 0, label: '' + v });
+  hvChartScc = new Chart(document.getElementById('hv-canvas-scc'), {
+    type: 'line',
+    data: { labels, datasets: [
+      { label: 'RCS (miles/ml)', data: scc, borderColor: css('--text-secondary'), borderWidth: 1.4, pointRadius: 5,
+        pointBackgroundColor: colPunto, pointBorderColor: colPunto, spanGaps: true },
+      linea(200, css('--warning')), linea(400, css('--critical'))] },
+    options: { responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: { legend: { display: false }, tooltip: { filter: it => it.datasetIndex === 0,
+        callbacks: { title: it => hvFechaCorta(labels[it[0].dataIndex]) } } },
+      scales: { x: ejeX, y: ejeY } }
+  });
+}
+
+// Clic en un puesto (aro o tarjeta) → histórico de esa vaca. Delegado en el documento
+// porque el aro se vuelve a dibujar entero en cada refresco.
+document.addEventListener('click', e => {
+  const el = e.target.closest && e.target.closest('#rotativa [data-p], #rotativa-detalle [data-p]');
+  if (el) abrirHistorialVaca(Number(el.dataset.p));
+  else if (e.target.id === 'hv-fondo' || e.target.id === 'hv-cerrar') cerrarHistorialVaca();
+});
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !document.getElementById('hv-fondo').hidden) cerrarHistorialVaca();
+});
 
 const COLS_DETALLE = new Set(['diagnostico', 'tratamiento_det', 'droga_dosis', 'fin_tratamiento',
   'retiro_leche', 'no_faenar', 'ultimo_parto', 'ult_tratamiento', 'ult_tratamiento_fecha',
