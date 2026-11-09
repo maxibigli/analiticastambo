@@ -13,6 +13,7 @@ Niveles de cada causa:
 
 Nivel global (`nivel`):
   normal     la diferencia contra la base cae dentro de lo que el tambo varía solo (menos de 1 desvío) o no fue baja
+  atencion   el TOTAL es normal pero cada vaca rindió claramente menos (más vacas lo compensaron): no es un día normal
   claro      hubo una baja fuera de lo normal y una causa probable
   posible    hubo una baja fuera de lo normal y solo causas posibles
   sin_causa  hubo una baja fuera de lo normal y NADA de lo que mide DelPro la explica: mirar ración y manejo
@@ -36,6 +37,10 @@ MANEJO_VECES = 2.0       # tratamientos del día anterior >= 2 veces lo normal
 MANEJO_EXTRA = 30        # ... y al menos 30 más
 MANEJO_EFECTO_KG = -1.0  # las tratadas rinden al menos 1 kg menos que el resto: probable
 MANEJO_MIN_VACAS = 20
+MANEJO_PESO_PROBABLE = 0.5   # lo tratado explica la mitad de la baja del rinde por vaca...
+MANEJO_PESO_POSIBLE = 0.2    # ...o al menos una quinta parte
+MANEJO_PCT_PROBABLE = 0.01   # ...o por sí solo resta 1 % de la leche del día
+RINDE_MEDIANA_MIN = -0.5     # kg: si las vacas que estuvieron en los dos períodos no bajaron esto, es mezcla de vacas
 MEZCLA_VECES = 1.5
 MEZCLA_EXTRA = 15
 LECTURAS_PCT = 0.005
@@ -81,6 +86,9 @@ def _vacas(d):
         grupo = (a.get("por_grupo") or [{}])[0]
         extra = f", sobre todo del grupo {grupo['grupo']}" if grupo.get("grupo") is not None else ""
         ev.append(f"{n_aus} vacas habituales no se ordeñaron ese día ({_n(kg_aus)} kg que dejaron de entrar{extra}).")
+    if a.get("n_invalidas"):
+        ev.append(f"Otras {a['n_invalidas']} vacas habituales se ordeñaron pero con lectura no válida (unos "
+                  f"{_n(a.get('kg_invalidas', 0))} kg que sí fueron al tanque): no son vacas que faltaron.")
     diff = r["kg_d"] - r["kg_b"]
     pesa = -r["efecto_vacas"] / abs(diff) if diff < 0 and r["efecto_vacas"] < 0 else 0.0
     if z_vac is not None:
@@ -115,7 +123,17 @@ def _rinde(d):
         nivel = "posible"
     else:
         nivel = "descartada"
-    return _causa("rinde", "Cada vaca rindió menos" if nivel != "descartada" else "Rinde por vaca", nivel, ev,
+    titulo = "Cada vaca rindió menos" if nivel != "descartada" else "Rinde por vaca"
+    mediana = c.get("mediana")
+    if nivel != "descartada" and mediana is not None and mediana > RINDE_MEDIANA_MIN:
+        # El promedio por vaca puede bajar porque ENTRARON vacas de baja producción (recién paridas, retornadas de
+        # un tratamiento) sin que ninguna rinda menos. Si las vacas que estuvieron en los dos períodos rindieron casi
+        # igual que su propio promedio, el promedio general bajó por la mezcla, no por el rinde.
+        nivel, titulo = "posible", "El promedio por vaca bajó por la mezcla de vacas"
+        ev.append(f"Pero las vacas que estuvieron en los dos períodos rindieron casi igual que su promedio "
+                  f"(mediana {_s(mediana, 1)} kg): el promedio bajó por la mezcla de vacas que entraron, no porque "
+                  "cada una rinda menos.")
+    return _causa("rinde", titulo, nivel, ev,
                   impacto=min(0.0, r["efecto_rinde"]),
                   revisar="Si es parejo en todo el rodeo y no hay calor ni cambios de ordeño: ración de ayer (carro, "
                           "mixer, silo), agua, o algo que alteró el descanso/estrés de las vacas.")
@@ -251,18 +269,33 @@ def _manejo(d):
         ev.append("Falta confirmar si esas vacas rindieron menos que el resto: no se pudo cruzar por vaca.")
         return _causa("manejo", "Mucho trabajo sanitario el día anterior", "posible", ev,
                       revisar="Cuánto tiempo estuvieron fuera del corral y si perdieron un ordeño o comida.")
+    r = d["resumen"]
     dif = t["delta_tratadas"] - t["delta_resto"]
     ev.append(f"Las {t['n']} vacas tratadas rindieron {_s(t['delta_tratadas'], 1)} kg respecto de su promedio; "
               f"el resto del rodeo, {_s(t['delta_resto'], 1)} kg.")
     for p in (t.get("por_diagnostico") or [])[:3]:
         ev.append(f"{p['nombre']}: {p['n']} vacas, {_s(p['delta'], 1)} kg cada una.")
-    if dif <= MANEJO_EFECTO_KG:
-        ev.append(f"Efecto estimado: {_s(t['efecto_kg'])} kg en el día.")
+    # Que las tratadas rindan algo menos que el resto no alcanza: hay que ver cuánto PESA. El 07/11, 73 vacas tratadas
+    # -2,3 kg contra -1,0 del resto sumaban -98 kg de una baja de rinde de -2.297 kg (4 %): casi nada.
+    perdido = -r["efecto_rinde"] if r["efecto_rinde"] < 0 else abs(r["kg_d"] - r["kg_b"])
+    efecto = -t["efecto_kg"] if t["efecto_kg"] < 0 else 0.0
+    peso = efecto / perdido if perdido > 0 else 0.0
+    if dif <= MANEJO_EFECTO_KG and efecto > 0:
+        ev.append(f"Efecto estimado: {_s(t['efecto_kg'])} kg en el día, {peso * 100:.0f} % de lo que bajó el rinde por vaca.")
+    if dif <= MANEJO_EFECTO_KG and (peso >= MANEJO_PESO_PROBABLE or efecto >= MANEJO_PCT_PROBABLE * (r["kg_b"] or 1)):
         return _causa("manejo", "Las vacas tratadas ayer rindieron menos", "probable", ev,
                       impacto=t["efecto_kg"],
                       revisar="Cuánto tiempo estuvieron fuera del corral y si perdieron un ordeño o comida; "
                               "compensar con descanso y comida esos días.")
-    ev.append("Las tratadas rindieron como el resto: la actividad fue inusual pero no se nota en la leche.")
+    if dif <= MANEJO_EFECTO_KG and peso >= MANEJO_PESO_POSIBLE:
+        return _causa("manejo", "Las vacas tratadas ayer explican una parte de la baja", "posible", ev,
+                      impacto=t["efecto_kg"],
+                      revisar="Cuánto tiempo estuvieron fuera del corral y si perdieron un ordeño o comida.")
+    if dif <= MANEJO_EFECTO_KG:
+        ev.append(f"Las tratadas rindieron algo menos que el resto, pero explican solo {peso * 100:.0f} % de la baja: "
+                  "la causa principal está en otro lado.")
+    else:
+        ev.append("Las tratadas rindieron como el resto: la actividad fue inusual pero no se nota en la leche.")
     return _causa("manejo", "Manejo del día anterior", "descartada", ev)
 
 
@@ -320,7 +353,17 @@ def veredicto(datos: dict) -> dict:
     causas.sort(key=lambda c: (_ORDEN[c["nivel"]], c["impacto_kg"]))      # impacto negativo = más peso primero
     contexto = []
 
-    if diff >= 0 or z > -Z_NORMAL:
+    rinde = next(c for c in causas if c["clave"] == "rinde")
+    if (diff >= 0 or z > -Z_NORMAL) and rinde["nivel"] == "probable":
+        # El total salió normal PORQUE se ordeñaron más vacas, pero cada una rindió claramente menos que lo habitual:
+        # decir solo «dentro de lo normal» ocultaba justo lo que el dashboard marcaba en rojo (kg por vaca).
+        nivel = "atencion"
+        titular = (f"El total está normal ({_s(_pct(r['kg_d'], r['kg_b']), 1)} %), pero cada vaca rindió menos: "
+                   f"{_n(r['kv_d'], 1)} kg contra {_n(r['kv_b'], 1)} ({_s(_pct(r['kv_d'], r['kv_b']), 1)} %), a "
+                   f"{_n(abs(r['z_kv']), 1)} desvíos de lo habitual.")
+        if r["vac_d"] > r["vac_b"] * 1.02:
+            titular += f" Lo compensaron {_n(r['vac_d'] - r['vac_b'])} vacas más ordeñadas."
+    elif diff >= 0 or z > -Z_NORMAL:
         nivel = "normal"
         if diff >= 0:
             titular = (f"El día produjo más que la base: {_s(_pct(r['kg_d'], r['kg_b']), 1)} % "
@@ -354,8 +397,9 @@ def veredicto(datos: dict) -> dict:
                             "alto del período de comparación.")
         elif p < 0:
             contexto.append(f"Contra ayer: {_s(p, 1)} % ({_n(ayer)} kg).")
-    if nivel == "normal":
-        notables = [c for c in causas if c["nivel"] in ("probable", "posible")]
+    if nivel in ("normal", "atencion"):
+        notables = [c for c in causas if c["nivel"] in ("probable", "posible")
+                    and not (nivel == "atencion" and c["clave"] == "rinde")]
         if notables:
             contexto.append("Aun así hay señales para mirar: " + "; ".join(c["titulo"] for c in notables[:3]) + ".")
     contexto.append("Son pistas a partir de lo que registra DelPro, no una certeza.")

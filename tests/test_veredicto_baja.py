@@ -52,6 +52,21 @@ def _datos(**cambios):
     return d
 
 
+def _datos_informe_2():
+    """El informe REAL del 07/11/2026 con la comparación 28/10 a 06/11 (base de 10 días): el total salió normal
+    (+0,4 %) pero cada vaca rindió 3,2 % menos (4,3 desvíos) y lo compensaron 62 vacas más."""
+    d = _datos()
+    d["resumen"].update(kg_d=69225.0, kg_b=68919.0, vac_d=1712, vac_b=1650, kv_d=40.4, kv_b=41.8,
+                        efecto_vacas=2603.0, efecto_rinde=-2297.0, sd_kg=1507.0, z_kg=0.2, z_vac=1.7, z_kv=-4.3)
+    d["caidas"] = {"n_comunes": 1673, "n_menos": 1099, "mediana": -1.1}
+    d["ausentes"] = {"n": 12, "kg": 420.0, "n_invalidas": 51, "kg_invalidas": 1847.0,
+                     "por_grupo": [{"grupo": 2, "n": 13, "kg": 556.0}]}
+    d["tratadas_ayer"] = {"n": 73, "delta_tratadas": -2.3, "delta_resto": -1.0, "efecto_kg": -98.0,
+                          "por_diagnostico": [{"nombre": "Desvasado Correctivo", "n": 59, "delta": -1.3}]}
+    d["lecturas"] = {"inval_kg_d": 1428.0, "inval_kg_b": 2176.0, "sinid_kg_d": 0.0, "sinid_kg_b": 0.0}
+    return d
+
+
 def _causa(v, clave):
     return next(c for c in v["causas"] if c["clave"] == clave)
 
@@ -62,9 +77,22 @@ class TestCasoReal(unittest.TestCase):
     def setUp(self):
         self.v = vb.veredicto(_datos())
 
-    def test_la_baja_contra_la_base_es_normal_y_el_titular_lo_dice(self):
-        self.assertEqual(self.v["nivel"], "normal")
-        self.assertIn("dentro de lo normal", self.v["titular"].lower())
+    def test_si_el_rinde_por_vaca_es_normal_la_baja_se_dice_dentro_de_lo_normal(self):
+        d = _datos()
+        d["resumen"]["z_kv"] = -0.3
+        v = vb.veredicto(d)
+        self.assertEqual(v["nivel"], "normal")
+        self.assertIn("dentro de lo normal", v["titular"].lower())
+
+    def test_total_normal_pero_cada_vaca_rindio_menos_pide_atencion_y_lo_dice_en_el_titular(self):
+        """Lo que pasó el 07/11: el dashboard marcaba -1,3 kg por vaca; decir solo 'normal' ocultaba eso."""
+        v = vb.veredicto(_datos_informe_2())
+        self.assertEqual(v["nivel"], "atencion")
+        t = v["titular"]
+        self.assertIn("total", t.lower())
+        self.assertIn("cada vaca rindió menos", t)
+        self.assertIn("62 vacas más", t)                  # lo que compensó
+        self.assertNotIn("dentro de lo normal", t.lower())
 
     def test_aclara_que_contra_ayer_parece_mas_porque_ayer_fue_el_mejor_dia(self):
         txt = " ".join(self.v["contexto"])
@@ -88,6 +116,15 @@ class TestCasoReal(unittest.TestCase):
         self.assertEqual(c["nivel"], "posible")
         self.assertIn("3", c["titulo"])
 
+    def test_el_rinde_que_baja_solo_por_mezcla_de_vacas_no_es_que_cada_una_rinda_menos(self):
+        """El promedio por vaca puede bajar porque ENTRARON vacas de baja producción, sin que ninguna rinda menos."""
+        d = _datos()
+        d["resumen"]["z_kv"] = -3.0
+        d["caidas"] = {"n_comunes": 1700, "n_menos": 860, "mediana": -0.1}
+        c = _causa(vb.veredicto(d), "rinde")
+        self.assertEqual(c["nivel"], "posible")
+        self.assertTrue(any("mezcla" in e.lower() for e in c["evidencia"]))
+
     def test_los_tratamientos_del_dia_anterior_son_una_pista_a_confirmar(self):
         c = _causa(self.v, "manejo")
         self.assertEqual(c["nivel"], "posible")
@@ -102,11 +139,18 @@ class TestCasoReal(unittest.TestCase):
 
 class TestCruceDeTratadas(unittest.TestCase):
     def test_si_las_tratadas_bajaron_mas_que_el_resto_es_probable(self):
-        d = _datos(tratadas_ayer={"n": 110, "delta_tratadas": -3.1, "delta_resto": -0.2, "efecto_kg": -319.0,
-                                  "por_diagnostico": [{"nombre": "Desvasado Correctivo", "n": 98, "delta": -3.3}]})
+        d = _datos(tratadas_ayer={"n": 110, "delta_tratadas": -9.0, "delta_resto": -0.2, "efecto_kg": -968.0,
+                                  "por_diagnostico": [{"nombre": "Desvasado Correctivo", "n": 98, "delta": -9.3}]})
         c = _causa(vb.veredicto(d), "manejo")
         self.assertEqual(c["nivel"], "probable")
-        self.assertTrue(any("-319" in e or "319" in e for e in c["evidencia"]))
+        self.assertTrue(any("968" in e for e in c["evidencia"]))
+
+    def test_si_las_tratadas_bajaron_un_poco_mas_pero_explican_casi_nada_no_es_probable(self):
+        """07/11: 73 tratadas -2,3 kg contra -1,0 del resto = -98 kg sobre una baja de rinde de -2.297 kg (4 %)."""
+        c = _causa(vb.veredicto(_datos_informe_2()), "manejo")
+        self.assertEqual(c["nivel"], "descartada")
+        self.assertTrue(any("solo" in e.lower() and "%" in e for e in c["evidencia"]), c["evidencia"])
+        self.assertTrue(any("127" in e for e in c["evidencia"]))        # el hecho (127 tratamientos) sigue a la vista
 
     def test_si_las_tratadas_rindieron_igual_que_el_resto_se_descarta(self):
         d = _datos(tratadas_ayer={"n": 110, "delta_tratadas": -0.3, "delta_resto": -0.2, "efecto_kg": -11.0,
@@ -178,7 +222,7 @@ class TestSinDatos(unittest.TestCase):
 
     def test_dia_que_subio_no_se_presenta_como_baja(self):
         d = _datos()
-        d["resumen"].update(kg_d=72000.0, kg_b=70000.0, z_kg=2.1, efecto_vacas=500.0, efecto_rinde=1500.0)
+        d["resumen"].update(kg_d=72000.0, kg_b=70000.0, z_kg=2.1, z_kv=0.5, efecto_vacas=500.0, efecto_rinde=1500.0)
         v = vb.veredicto(d)
         self.assertEqual(v["nivel"], "normal")
         self.assertIn("más que la base", v["titular"])

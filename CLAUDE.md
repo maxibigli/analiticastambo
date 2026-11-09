@@ -3192,6 +3192,17 @@ desvíos): el veredicto lo dice en vez de inventar un culpable; (b) el informe s
 aparte; (c) ese día hubo 127 tratamientos contra 31,7 de lo normal (desvasado correctivo): el análisis cruza por vaca si las
 tratadas el día anterior rindieron menos que el resto (`datos["tratadas_ayer"]`), que es lo que separa "hubo trabajo sanitario"
 de "y eso bajó la leche"; (d) un grupo que cambió más de 10 % de tamaño no se marca por kg/vaca (es mezcla, no rinde).
+**Correcciones tras el 2.º informe real del 07/11** (base de 10 días: total +0,4 %, kg/vaca -3,2 % a 4,3 desvíos, 62 vacas más):
+(e) nivel global `atencion`: total normal pero cada vaca rindió claramente menos (lo compensaron más vacas); decir solo «dentro
+de lo normal» ocultaba lo que el dashboard marcaba en rojo; (f) el texto decía «pesa más: FALTARON VACAS» con 62 vacas MÁS:
+la etiqueta mira el SIGNO de cada efecto, no su tamaño; (g) las vacas de la base que hoy no figuran se separan en SIN REGISTRO (no
+se ordeñaron) y con lectura NO válida (se ordeñaron, DelPro no cerró el total: esa leche fue al tanque); mezclarlas inflaba
+«faltaron 63 vacas»; (h) el cruce de tratadas es `probable` solo si explica la mitad de la baja del rinde por vaca o resta 1 % de
+la leche (el 07/11: -98 kg de -2.297 = 4 %: descartada, aunque hubo 127 tratamientos); (i) «cada vaca rindió menos» pasa a
+`posible` si las vacas presentes en los dos períodos no bajaron (mediana > -0,5 kg): el promedio bajó por la MEZCLA de vacas que
+entraron, no por rinde. Conclusión de ese día: baja de rinde PAREJA en todo el rodeo (66 % de las vacas por debajo de su propio
+promedio, mediana -1,1 kg, también las no tratadas), sin calor (día más fresco), sin equipo y sin un grupo único: lo que queda por
+revisar es lo que DelPro no mide (ración del 06 y 07, agua, clima: lluvia/viento) y el ordeño de la tarde (caudal -5 %).
 
 **Dólar en ⚙ Configuración y botones "Buscar" (09/11/2026).** El precio de la leche se movió a ⚙ Configuración > "Precios de
 alimentos y de la leche", junto con el dólar (`tipo_cambio`, $ por US$). **El dólar configurado manda sobre el de la planilla

@@ -93,7 +93,7 @@ class TestInforme(unittest.TestCase):
         t = _informe(_filas_vacas(por_dia))
         self.assertIn("FALTARON VACAS", t)
         self.assertIn("-400 kg", t)                                      # 10 vacas x 40 kg
-        self.assertIn("que NO se ordeñaron el 2026-11-07: 10", t)
+        self.assertIn("SIN REGISTRO el 2026-11-07 (no se ordeñaron): 10", t)
         self.assertIn("comparado con 2026-11-01 a 2026-11-06", t)
 
     def test_rindio_menos_cada_vaca(self):
@@ -102,7 +102,7 @@ class TestInforme(unittest.TestCase):
         t = _informe(_filas_vacas(por_dia))
         self.assertIn("BAJÓ EL RINDE POR VACA", t)
         self.assertIn("-400 kg", t)
-        self.assertIn("que NO se ordeñaron el 2026-11-07: 0", t)
+        self.assertIn("SIN REGISTRO el 2026-11-07 (no se ordeñaron): 0", t)
 
     def test_un_dia_cortado_no_arrastra_la_base(self):
         por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-06")}
@@ -195,8 +195,33 @@ class TestCifrasComoElDashboard(unittest.TestCase):
         filas = [f for f in _filas_vacas(por_dia) if not (f[0] == "2026-11-07" and f[2] == 7)]
         filas.append(["2026-11-07", 1007, 7, 21, 150, 2, 4.0, 0])         # la vaca 7: total parcial, no válido
         r = _analizar(filas)
-        self.assertEqual(r["datos"]["ausentes"]["n"], 1)                   # figura como ausente, no como "cayó 36 kg"
+        a = r["datos"]["ausentes"]
+        # no figura como "no se ordeñó" ni como "cayó 36 kg": se ordeñó, pero DelPro no cerró el total del día
+        self.assertEqual((a["n"], a["n_invalidas"]), (0, 1))
+        self.assertAlmostEqual(a["kg_invalidas"], 40.0)
         self.assertEqual(r["datos"]["caidas"]["n_comunes"], 99)
+
+    def test_las_ausentes_separan_las_que_no_tienen_registro_de_las_de_lectura_no_valida(self):
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-07")}
+        filas = [f for f in _filas_vacas(por_dia) if not (f[0] == "2026-11-07" and f[2] <= 10)]   # 10 vacas faltan
+        filas += [["2026-11-07", 1000 + n, n, 21, 150, 2, 5.0, 0] for n in (1, 2, 3)]            # 3 de ellas: lectura no válida
+        r = _analizar(filas)
+        a = r["datos"]["ausentes"]
+        self.assertEqual((a["n"], a["n_invalidas"]), (7, 3))               # 7 sin registro: esas SÍ no se ordeñaron
+        self.assertIn("SIN REGISTRO", r["informe"])
+        self.assertIn("lectura NO válida", r["informe"])
+
+
+class TestEtiquetaDeLaCausa(unittest.TestCase):
+    def test_si_pasaron_mas_vacas_no_dice_que_faltaron(self):
+        """07/11: 62 vacas MÁS y cada una rindió menos; el informe decía «pesa más: FALTARON VACAS»."""
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-06")}
+        por_dia["2026-11-07"] = _rodeo(110, 36.0)
+        t = _informe(_filas_vacas(por_dia))
+        self.assertNotIn("pesa más: FALTARON", t)           # el título de la sección 1 sí dice «¿FALTARON VACAS…?»
+        self.assertNotIn("Pesa más: faltaron", t)           # ni el resumen del final
+        self.assertIn("BAJÓ EL RINDE POR VACA", t)
+        self.assertIn("MÁS VACAS", t)                       # y dice que las vacas de más compensaron
 
 
 class TestAnalizar(unittest.TestCase):

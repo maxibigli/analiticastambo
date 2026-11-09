@@ -348,6 +348,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     # además una vaca con total parcial (no válido) figuraba como "cayó 40 kg". Esas lecturas se cuentan aparte.
     por_dia = defaultdict(lambda: {"kg": 0.0, "vacas": 0})
     lect = defaultdict(lambda: {"inval_kg": 0.0, "inval_n": 0, "sinid_kg": 0.0})
+    inval_animales = defaultdict(set)    # fecha -> animales ordeñados ese día con total NO válido
     cow = defaultdict(dict)          # animal -> {fecha: fila}
     for fecha, animal, numero, grupo, dim, lact, kg, valido in filas:
         f = str(fecha)[:10]
@@ -355,6 +356,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         if not valido:
             lect[f]["inval_kg"] += kg
             lect[f]["inval_n"] += 1
+            inval_animales[f].add(animal)
             continue
         if not (numero and int(numero) > 0):
             lect[f]["sinid_kg"] += kg
@@ -397,7 +399,17 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     _p(f"\n   Descomposición de {signo(kg_d - kg_b)} kg frente a la base:")
     _p(f"     por cantidad de vacas ordeñadas:  {signo(efecto_vacas):>8} kg")
     _p(f"     por rinde de cada vaca:           {signo(efecto_rinde):>8} kg")
-    mayor = "FALTARON VACAS" if abs(efecto_vacas) > abs(efecto_rinde) else "BAJÓ EL RINDE POR VACA"
+    # Se mira el SIGNO de cada efecto: «faltaron vacas» solo si las vacas restan. Antes comparaba tamaños y el 07/11
+    # (62 vacas MÁS, cada una rindiendo menos) decía «pesa más: FALTARON VACAS».
+    if efecto_vacas < 0 and efecto_rinde < 0:
+        mayor = "FALTARON VACAS" if efecto_vacas <= efecto_rinde else "BAJÓ EL RINDE POR VACA"
+    elif efecto_vacas < 0:
+        mayor = "FALTARON VACAS"
+    elif efecto_rinde < 0:
+        mayor = ("BAJÓ EL RINDE POR VACA, y las MÁS VACAS ordeñadas lo compensaron" if efecto_vacas > 0
+                 else "BAJÓ EL RINDE POR VACA")
+    else:
+        mayor = "SUBIERON LAS VACAS Y EL RINDE" if efecto_vacas > 0 or efecto_rinde > 0 else "SIN CAMBIOS"
     _p(f"   -> pesa más: {mayor}")
     sd = st.pstdev(base_kg) if len(base_kg) > 1 else 0
     if sd:
@@ -429,20 +441,27 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     # ---- 2. vacas perdidas y vacas que bajaron ---------------------------------------------
     titulo("2. QUÉ VACAS SE PERDIERON Y CUÁLES BAJARON")
     en_base = {a: [v[d]["kg"] for d in base_dias if d in v] for a, v in cow.items()}
-    perdidas = [(a, st.mean(en_base[a])) for a, v in cow.items()
-                if D not in v and len(en_base[a]) >= 4]          # ordeñadas casi todos los días de la base
+    faltan_hoy = [(a, st.mean(en_base[a])) for a, v in cow.items()
+                  if D not in v and len(en_base[a]) >= 4]        # ordeñadas casi todos los días de la base
+    # Una vaca de la base que hoy no figura puede ser dos cosas MUY distintas: no tiene ningún registro (no se la
+    # ordeñó) o se la ordeñó pero DelPro dejó su total del día como NO válido (la leche existe y fue al tanque).
+    perdidas = sorted((x for x in faltan_hoy if x[0] not in inval_animales[D]), key=lambda x: -x[1])
+    invalidas = sorted((x for x in faltan_hoy if x[0] in inval_animales[D]), key=lambda x: -x[1])
     nuevas = [a for a, v in cow.items() if D in v and not en_base[a]]
-    perdidas.sort(key=lambda x: -x[1])
     kg_perdido = sum(k for _, k in perdidas)
-    _p(f"   Vacas habituales (≥4 de 7 días) que NO se ordeñaron el {D}: {len(perdidas)} "
-          f"= {f0(kg_perdido)} kg que dejaron de entrar.")
+    kg_invalidas = sum(k for _, k in invalidas)
+    _p(f"   Vacas habituales (≥4 de {n_base} días) SIN REGISTRO el {D} (no se ordeñaron): {len(perdidas)} "
+       f"= {f0(kg_perdido)} kg que dejaron de entrar.")
+    _p(f"   Otras {len(invalidas)} vacas habituales se ordeñaron pero con lectura NO válida (DelPro no cerró el total): "
+       f"unos {f0(kg_invalidas)} kg que sí fueron al tanque y no figuran en las cifras.")
     _p(f"   Vacas que aparecen el {D} y no estaban en la base: {len(nuevas)}")
     aus_grupo = defaultdict(lambda: [0, 0.0])
     for a, k in perdidas:
         g_ult = cow[a][sorted(cow[a])[-1]]["grupo"]
         aus_grupo[g_ult][0] += 1
         aus_grupo[g_ult][1] += k
-    datos["ausentes"] = {"n": len(perdidas), "kg": kg_perdido,
+    datos["ausentes"] = {"n": len(perdidas), "kg": kg_perdido, "n_invalidas": len(invalidas),
+                         "kg_invalidas": kg_invalidas,
                          "por_grupo": [{"grupo": g, "n": n, "kg": k}
                                        for g, (n, k) in sorted(aus_grupo.items(), key=lambda x: -x[1][1])]}
     if perdidas:
