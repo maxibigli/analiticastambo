@@ -3363,3 +3363,21 @@ SQL Server Express local con poca RAM — consultas pesadas necesitan
 `RESOURCE_SEMAPHORE`. Detalle completo en la memoria de Claude de este usuario
 (`delpro-entorno.md`, `delpro-deploy-produccion.md`) — son point-in-time,
 verificar contra el código actual antes de asumir vigentes.
+
+## UPS por SNMP (09/11/2026) — EN CURSO
+
+Pedido: monitorear la UPS del tambo en la parte IoT. Respuesta del tambo: **tarjeta de red (SNMP/web), trifásica**; quiere
+estado en la pestaña IoT, **históricos de tensión por fase y corriente (amperes)**, avisos por WhatsApp/Telegram (corte, batería
+baja, vuelta de la red) e historial de cortes. Marca/modelo/IP/community: todavía no se conocen.
+
+Hecho (solo lectura, no toca la UPS ni la base): `snmp_min.py` cliente SNMP v1/v2c propio (sin librerías: ninguna instalada;
+GET/GETNEXT/walk, sin SET ni v3; probado contra los bytes del estándar, un agente falso por UDP y un agente público real),
+`ups_snmp.py` interpreta la **UPS-MIB RFC 1628** (OIDs, columnas y unidades verificados contra el texto del RFC: tensión en V,
+corriente en décimas de A, frecuencia en décimas de Hz; los -1 son «no mide», no un valor) y `medir_ups.py <IP>`, que deja un
+`medicion_ups_<ip>_<fecha>.txt` (ignorado por git) con lo interpretado, los valores CRUDOS y la MIB propia del fabricante. La
+community es una credencial: variable `UPS_SNMP_COMMUNITY`, nunca en el informe ni en los errores.
+
+**No se adivinan OIDs ni escalas**: muchas tarjetas solo traen su MIB propia (APC 318, Eaton 534...) o se desvían del estándar.
+Siguiente paso: correr `python medir_ups.py <IP>` en una PC de la red de la UPS y comparar los crudos con la pantalla web de la
+tarjeta. Recién ahí: poller (proceso aparte como `iot_lavado.py`, SQLite `iot_sensores.db`), API, tarjeta con gráficos por fase y
+alertas por los canales que ya existen (WhatsApp/Telegram/correo).

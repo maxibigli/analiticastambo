@@ -134,6 +134,8 @@ CATALOGO: tuple[Var, ...] = (
     Var("HASTEN_PASSWORD", "Haasten (mixer)", True, "Contraseña de Haasten."),
     Var("SENSEHUB_USER_", "SenseHub (collares)", False, "Usuario del controlador. SENSEHUB_USER_<TAMBO>.", True),
     Var("SENSEHUB_PWD_", "SenseHub (collares)", True, "Contraseña del controlador. SENSEHUB_PWD_<TAMBO>.", True),
+    Var("UPS_SNMP_COMMUNITY", "UPS (SNMP)", True,
+        "Clave de lectura SNMP («community») de la tarjeta de red de la UPS; por defecto «public». La usa medir_ups.py."),
     Var("TELEGRAM_BOT_TOKEN", "Telegram", True, "Token del bot de Telegram."),
     Var("TELEGRAM_CHAT_ID", "Telegram", False, "Id del chat que recibe los avisos."),
     Var("SMTP_HOST", "Correo", False, "Servidor SMTP (ej. smtp.gmail.com)."),

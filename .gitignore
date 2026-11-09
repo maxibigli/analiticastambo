@@ -113,3 +113,6 @@ porlasdudas/
 # Último día ya evaluado por el "Balance de leche" para no repetir alertas (ver balance_leche.py).
 # Estado propio de cada instalación.
 balance_leche_avisos.json
+
+# Mediciones de la UPS por SNMP (medir_ups.py): llevan la IP y los datos de la tarjeta del tambo, no van al repo.
+medicion_ups_*.txt
