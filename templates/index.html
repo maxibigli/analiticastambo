@@ -3813,14 +3813,7 @@
       <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Usina láctea
         <select id="cfg-usina-lactea" style="padding:7px 8px"></select>
       </label>
-      <label class="aviso" style="display:flex;flex-direction:column;gap:3px">Precio de la leche ($ por litro)
-        <input type="text" inputmode="decimal" id="cfg-precio-leche" placeholder="vacío = el de la planilla"
-               style="width:170px;padding:7px 8px">
-      </label>
     </div>
-    <div class="aviso" style="margin-top:4px">El precio que cargues acá se usa en todo lo que valúa leche (Balance de leche,
-      Alimentación, Rentabilidad, informe de RCS) y manda sobre el de la planilla de precios, que suele venir marcado como
-      ESTIMADO. Vacío = se usa la planilla.</div>
 
     <div class="aviso" style="margin:16px 0 6px;font-weight:600">Alimentación</div>
     <div class="controls" style="flex-wrap:wrap;gap:14px">
@@ -3924,6 +3917,42 @@
         <span class="aviso" id="cfg-estado-precios"></span>
       </label>
     </div>
+
+    <div class="aviso" style="margin:16px 0 6px;font-weight:600">Precio de la leche y dólar</div>
+    <div class="controls" style="flex-wrap:wrap;gap:22px;align-items:flex-start">
+      <div style="display:flex;flex-direction:column;gap:4px;max-width:440px">
+        <label class="aviso" for="cfg-precio-leche">Precio de la leche ($ por litro)</label>
+        <div class="controls" style="gap:6px;flex-wrap:nowrap">
+          <input type="text" inputmode="decimal" id="cfg-precio-leche" placeholder="vacío = el de la planilla"
+                 style="width:170px;padding:7px 8px">
+          <button type="button" class="secundario" id="cfg-buscar-leche" title="Trae el precio nacional al productor de OCLA">Buscar en OCLA</button>
+        </div>
+        <span class="aviso" id="cfg-leche-info"></span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;max-width:520px">
+        <label class="aviso" for="cfg-tipo-cambio">Dólar ($ por US$)</label>
+        <div class="controls" style="gap:6px;flex-wrap:wrap">
+          <select id="cfg-dolar-tipo" title="Qué dólar traer" style="padding:7px 8px">
+            <option value="oficial">Oficial</option>
+            <option value="mayorista">Mayorista</option>
+            <option value="mep">MEP</option>
+            <option value="blue">Blue</option>
+          </select>
+          <input type="text" inputmode="decimal" id="cfg-tipo-cambio" placeholder="vacío = el de la planilla"
+                 style="width:150px;padding:7px 8px">
+          <button type="button" class="secundario" id="cfg-buscar-dolar" title="Trae la cotización de venta de DolarHoy">Buscar en DolarHoy</button>
+        </div>
+        <span class="aviso" id="cfg-dolar-info"></span>
+      </div>
+    </div>
+    <span class="aviso" style="display:block;margin-top:8px">
+      Lo que cargues acá manda sobre la planilla de precios. El <b>precio de la leche</b> se usa en todo lo que valúa leche
+      (Balance de leche, Alimentación, Rentabilidad, informe de RCS) y deja de figurar como «estimado». El <b>dólar</b> convierte
+      todo lo que la planilla tiene en dólares (insumos en USD por tonelada y la leche en USD por litro). Vacío = se usa la planilla.
+      «Buscar» solo trae el valor y lo muestra: <b>no se guarda hasta que apretés Guardar configuración</b>.
+      El precio de OCLA es el <b>promedio nacional</b> al productor, un dato de referencia: si tu usina te paga otro valor,
+      cargalo a mano.
+    </span>
     <span class="aviso" style="display:block;margin-top:8px">
       <b>Toros:</b> DelPro no trae valor genético (este rodeo no está genotipado), así que sale del
       catálogo del proveedor. Alimenta el índice de salud y la herencia de la Ficha Animal.
@@ -8253,9 +8282,9 @@ function balPrecioTxt(p) {
   if (!p || !p.valor) return null;
   const n = (v, dec) => Number(v).toLocaleString('es-AR', { maximumFractionDigits: dec });
   return '$' + n(p.valor, 2) + ' por litro' +
-    (p.via === 'configuracion' ? ' (cargado en ⚙ Configuración)'
+    (p.via === 'configuracion' ? ` (cargado en ⚙ Configuración${p.origen ? ': ' + escHtml(p.origen) : ''})`
       : p.via === 'usd' && typeof p.usd_litro === 'number' && typeof p.tipo_cambio === 'number'
-        ? ` (US$ ${n(p.usd_litro, 3)} × cambio ${n(p.tipo_cambio, 2)})` : '');
+        ? ` (US$ ${n(p.usd_litro, 3)} × cambio ${n(p.tipo_cambio, 2)}${p.origen ? ', ' + escHtml(p.origen) : ''})` : '');
 }
 
 // Resumen del período en plata y en litros que no fueron al comprador, con la aclaración de que la plata es una
@@ -14679,6 +14708,44 @@ function _llenarSelect(id, opciones, valorActual) {
     `<option value="${o.id}"${o.id === valorActual ? ' selected' : ''}>${o.label}</option>`).join('');
 }
 
+// --- Precio de la leche (OCLA) y dólar (DolarHoy): "Buscar" trae el valor y lo muestra; NO lo guarda -------------
+// El texto de origen ("OCLA SEP/2026") se guarda junto al valor para poder decir después de dónde salió; si la
+// persona vuelve a escribir el número a mano, el origen se borra (ya no es verdad).
+let cotizOrigen = { leche: '', dolar: '' };
+function cotizInfo(cual, html, nivel) {
+  const e = document.getElementById(cual === 'leche' ? 'cfg-leche-info' : 'cfg-dolar-info');
+  e.innerHTML = html || '';
+  e.style.color = nivel === 'error' ? 'var(--critical)' : nivel === 'aviso' ? 'var(--warning)' : '';
+}
+const cotizNum = v => Number(v).toLocaleString('es-AR', { useGrouping: false, maximumFractionDigits: 2 });
+async function cotizBuscar(cual) {
+  const esLeche = cual === 'leche';
+  const boton = document.getElementById(esLeche ? 'cfg-buscar-leche' : 'cfg-buscar-dolar');
+  const campo = document.getElementById(esLeche ? 'cfg-precio-leche' : 'cfg-tipo-cambio');
+  const url = esLeche ? '/api/cotizaciones/leche'
+    : '/api/cotizaciones/dolar?tipo=' + encodeURIComponent(document.getElementById('cfg-dolar-tipo').value);
+  boton.disabled = true;
+  cotizInfo(cual, esLeche ? 'Buscando en OCLA…' : 'Buscando en DolarHoy…');
+  try {
+    const r = await pedirJSON(url);
+    campo.value = cotizNum(r.valor);
+    cotizOrigen[cual] = r.origen || '';
+    const fuente = esLeche
+      ? `${escHtml(r.fuente)} · período ${escHtml(r.etiqueta)}`
+      : `${escHtml(r.fuente)} · ${escHtml(r.tipo_rotulo)}${r.actualizado ? ' · actualizado ' + escHtml(r.actualizado) : ''}`;
+    cotizInfo(cual, `<b>${cotizNum(r.valor)}</b> · ${fuente}. <b>Falta guardar.</b>` +
+      (r.aviso ? `<br><span style="color:var(--warning)">${escHtml(r.aviso)}</span>` : ''));
+  } catch (e) {
+    cotizInfo(cual, escHtml(e.message), 'error');
+  } finally {
+    boton.disabled = false;
+  }
+}
+document.getElementById('cfg-buscar-leche').addEventListener('click', () => cotizBuscar('leche'));
+document.getElementById('cfg-buscar-dolar').addEventListener('click', () => cotizBuscar('dolar'));
+document.getElementById('cfg-precio-leche').addEventListener('input', () => { cotizOrigen.leche = ''; cotizInfo('leche', ''); });
+document.getElementById('cfg-tipo-cambio').addEventListener('input', () => { cotizOrigen.dolar = ''; cotizInfo('dolar', ''); });
+
 async function cargarConfiguracion() {
   const estado = document.getElementById('config-estado');
   estado.textContent = 'Cargando…';
@@ -14708,6 +14775,10 @@ async function cargarConfiguracion() {
                   cfg.sistema_alimentacion || '');
     _llenarSelect('cfg-sala', [SIN_OVERRIDE, ...cat.sala], cfg.sala || '');
     document.getElementById('cfg-precio-leche').value = cfg.precio_leche == null ? '' : String(cfg.precio_leche).replace('.', ',');
+    document.getElementById('cfg-tipo-cambio').value = cfg.tipo_cambio == null ? '' : String(cfg.tipo_cambio).replace('.', ',');
+    cotizOrigen = { leche: cfg.precio_leche_origen || '', dolar: cfg.tipo_cambio_origen || '' };
+    cotizInfo('leche', cotizOrigen.leche ? 'Traído de: ' + cotizOrigen.leche : '');
+    cotizInfo('dolar', cotizOrigen.dolar ? 'Traído de: ' + cotizOrigen.dolar : '');
     document.getElementById('cfg-personas').value = cfg.personas || '';
     document.getElementById('cfg-arreo').value = cfg.arreo_min ?? '';
     document.getElementById('cfg-ordenos-dia').value = cfg.ordenos_dia ?? '';
@@ -15673,7 +15744,8 @@ function pintarEstadoArchivos(d) {
     // hay que decirlo acá y no dejar que la pantalla de Alimentación aparezca
     // vacía sin explicación.
     hp.push(pr.precio_litro
-      ? `leche $${Number(pr.precio_litro).toLocaleString('es-AR', {maximumFractionDigits: 2})}/litro`
+      ? `leche $${Number(pr.precio_litro).toLocaleString('es-AR', {maximumFractionDigits: 2})}/litro` +
+        (pr.leche_via === 'configuracion' ? ' (la de Configuración)' : '')
       : rojo('falta el precio de la leche: sin él no hay litros libres'));
     if (pr.tipo_cambio) hp.push(`TC $${Number(pr.tipo_cambio).toLocaleString('es-AR')}`);
     if (pr.aviso_estimado) hp.push(rojo('⚠ ' + escHtml(pr.aviso_estimado)));
@@ -15727,6 +15799,9 @@ document.getElementById('config-guardar').addEventListener('click', async () => 
     caudalimetro: document.getElementById('cfg-caudalimetro').value,
     usina_lactea: document.getElementById('cfg-usina-lactea').value,
     precio_leche: document.getElementById('cfg-precio-leche').value.trim() || null,
+    precio_leche_origen: document.getElementById('cfg-precio-leche').value.trim() ? (cotizOrigen.leche || null) : null,
+    tipo_cambio: document.getElementById('cfg-tipo-cambio').value.trim() || null,
+    tipo_cambio_origen: document.getElementById('cfg-tipo-cambio').value.trim() ? (cotizOrigen.dolar || null) : null,
     sistema_alimentacion: document.getElementById('cfg-sistema-alimentacion').value || null,
     sala: document.getElementById('cfg-sala').value || null,
     personas: numOrNull(document.getElementById('cfg-personas').value),

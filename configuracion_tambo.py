@@ -76,13 +76,21 @@ SALAS_LABEL = {"rotativa": "Rotativa", "convencional": "Convencional (espina de 
 # antes de copiar el archivo, y bloquear el guardado por eso sería molesto sin
 # necesidad — la pantalla informa el estado con `estado_rutas()`.
 _CAMPOS_TEXTO = ("nombre", "ip", "usuario", "contrasena", "base_datos", "ruta_toros", "ruta_precios",
-                 "sensehub_ip", "nvr_ip", "nvr_usuario", "nvr_contrasena", "nvr_plantilla")
+                 "sensehub_ip", "nvr_ip", "nvr_usuario", "nvr_contrasena", "nvr_plantilla",
+                 # De dónde salió el precio de la leche / el dólar cargado ("OCLA SEP/2026", "DolarHoy · oficial
+                 # (venta) · 09/11/26 01:03"): texto libre que se muestra junto al valor. Vacío si se cargó a mano.
+                 "precio_leche_origen", "tipo_cambio_origen")
 # El nombre de la base va DENTRO de la cadena de conexión (`DATABASE=...;`): un
 # `;` o un `=` colado ahí agregaría atributos de conexión que nadie pidió. Se
 # acepta solo lo que SQL Server permite en un nombre común.
 _RE_BASE_DATOS = re.compile(r"[A-Za-z0-9_.\-]{1,128}")
 _CAMPOS_BOOL = ("tiene_bcs", "tiene_podal")
-_CAMPOS_FLOAT = ("factor_kg_litros", "precio_leche")
+_CAMPOS_FLOAT = ("factor_kg_litros", "precio_leche", "tipo_cambio")
+# Estos dos, además, tienen que ser mayores que cero (un precio de 0 no es "gratis": es un dato que falta).
+_POSITIVOS = {
+    "precio_leche": "el precio por litro tiene que ser mayor que cero; dejalo vacío para usar el de la planilla de precios",
+    "tipo_cambio": "el tipo de cambio tiene que ser mayor que cero; dejalo vacío para usar el de la planilla de precios",
+}
 _CAMPOS_ENUM = {
     "sistema_actividad": SISTEMAS_ACTIVIDAD,
     "caudalimetro": CAUDALIMETROS,
@@ -205,6 +213,12 @@ DEFAULT = {
     # marcado ESTIMADO) en todo lo que valúa leche: Balance de leche, Alimentación, Rentabilidad, informe de RCS.
     # None = se usa la planilla, como siempre. Ver precios_alimentos.aplicar_precio_leche.
     "precio_leche": None,
+    "precio_leche_origen": None,
+    # Dólar ($ por US$) para todo lo que la planilla de precios convierte de dólares (insumos en USD/tonelada y la
+    # leche en USD/litro). Si está cargado MANDA sobre el de la planilla; None = el de la planilla. Ver
+    # precios_alimentos.aplicar_tipo_cambio. Se puede traer de DolarHoy desde la pantalla (cotizaciones_externas).
+    "tipo_cambio": None,
+    "tipo_cambio_origen": None,
 }
 
 # Nombres que se buscan cuando la ruta configurada es una CARPETA. Los de toros
@@ -356,9 +370,8 @@ def guardar(tambo_id: str, datos: dict) -> dict:
                     raise ValueError(f"Valor inválido para {clave}: {valor!r} (se espera un número)")
                 if not math.isfinite(numero):
                     raise ValueError(f"Valor inválido para {clave}: {valor!r} (se espera un número finito)")
-                if clave == "precio_leche" and numero <= 0:
-                    raise ValueError(f"Valor inválido para {clave}: {valor!r} (el precio por litro tiene que ser mayor "
-                                     "que cero; dejalo vacío para usar el de la planilla de precios)")
+                if clave in _POSITIVOS and numero <= 0:
+                    raise ValueError(f"Valor inválido para {clave}: {valor!r} ({_POSITIVOS[clave]})")
                 entrantes[clave] = numero
         elif clave in _CAMPOS_BOOL:
             entrantes[clave] = bool(valor)

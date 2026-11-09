@@ -32,6 +32,7 @@ import config_alertas
 import configuracion_tambo
 import correo
 import db
+import cotizaciones_externas
 import despachos_delpro
 import diagnostico_baja
 import clima
@@ -726,16 +727,18 @@ def _merito_ctx(tambo: str, herd=None):
 
 
 def _precios_del_tambo(tambo: str) -> dict:
-    """La planilla de precios del tambo con el precio de la leche de ⚙ Configuración (si lo cargó) por encima.
-    TODO lo que valúa leche pasa por acá: leer la planilla directo ignoraría el precio configurado."""
-    precio = configuracion_tambo.config_de(tambo).get("precio_leche")
+    """La planilla de precios del tambo con lo que cargó en ⚙ Configuración por encima: el dólar (convierte lo que
+    la planilla tiene en USD) y el precio de la leche en pesos (manda sobre todo lo demás para la leche).
+    TODO lo que valúa leche o insumos pasa por acá: leer la planilla directo ignoraría lo configurado."""
+    cfg = configuracion_tambo.config_de(tambo)
+    precio, tc = cfg.get("precio_leche"), cfg.get("tipo_cambio")
     try:
         pr = precios_alimentos.leer(configuracion_tambo.ruta_precios(tambo))
     except Exception:  # noqa: BLE001 - sin planilla legible, el precio configurado igual alcanza para la leche
         if not precio:
             raise
         pr = {"precios": {}, "precio_litro": None}
-    return precios_alimentos.aplicar_precio_leche(pr, precio)
+    return precios_alimentos.aplicar_precio_leche(precios_alimentos.aplicar_tipo_cambio(pr, tc), precio)
 
 
 def _costo_mixer(tambo: str, desde, hasta):
@@ -1602,7 +1605,7 @@ def _estado_archivos(tambo: str) -> dict:
         salida["genetica"] = {"error": str(exc)}
     try:
         salida["precios"] = precios_alimentos.resumen(
-            configuracion_tambo.ruta_precios(tambo))
+            configuracion_tambo.ruta_precios(tambo), datos=_precios_del_tambo(tambo))
     except Exception as exc:  # noqa: BLE001
         salida["precios"] = {"error": str(exc)}
     return salida
@@ -1660,7 +1663,8 @@ def api_guardar_configuracion():
     tambo = _tambo_del_request()
     datos = dict(request.json or {})
     base_anterior = tambos.conexion(tambo).get("database")
-    precio_anterior = configuracion_tambo.config_de(tambo).get("precio_leche")
+    cfg_anterior = configuracion_tambo.config_de(tambo)
+    precios_anteriores = (cfg_anterior.get("precio_leche"), cfg_anterior.get("tipo_cambio"))
     # Campo de UI, no de configuracion_tambo.guardar(): si el usuario no tocó
     # el campo contraseña (lo dejó en blanco a propósito, ver el frontend),
     # no hay que pisar la que ya estaba guardada con un vacío.
@@ -1672,9 +1676,10 @@ def api_guardar_configuracion():
         cfg = configuracion_tambo.guardar(tambo, datos)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    # Cambió la base: el caché describe la otra. Cambió el precio de la leche: Alimentación y Rentabilidad
-    # cachean 6 horas el costo con ese precio adentro y seguirían mostrando el viejo.
-    if tambos.conexion(tambo).get("database") != base_anterior or cfg.get("precio_leche") != precio_anterior:
+    # Cambió la base: el caché describe la otra. Cambió el precio de la leche o el dólar: Alimentación y
+    # Rentabilidad cachean 6 horas el costo con eso adentro y seguirían mostrando el valor viejo.
+    if (tambos.conexion(tambo).get("database") != base_anterior
+            or (cfg.get("precio_leche"), cfg.get("tipo_cambio")) != precios_anteriores):
         _olvidar_datos_de(tambo)
     cfg["contrasena_configurada"] = bool(cfg.pop("contrasena"))
     cfg["nvr_contrasena_configurada"] = bool(cfg.pop("nvr_contrasena"))
@@ -5765,8 +5770,14 @@ def _precio_leche_balance(tambo: str) -> dict:
         return {"valor": None, "estimado": False, "via": None, "usd_litro": None, "tipo_cambio": None,
                 "error": f"No se pudo leer la planilla de precios: {exc}"}
     valor = pr.get("precio_litro")
+    cfg = configuracion_tambo.config_de(tambo)
+    via = pr.get("leche_via")
+    # De dónde salió lo cargado en ⚙ Configuración ("OCLA SEP/2026", "DolarHoy · oficial (venta)"), si se trajo de
+    # internet; vacío si se tipeó a mano o si el precio viene de la planilla.
+    origen = (cfg.get("precio_leche_origen") if via == "configuracion"
+              else cfg.get("tipo_cambio_origen") if via == "usd" and cfg.get("tipo_cambio") else None)
     return {"valor": valor if valor else None, "estimado": bool(pr.get("leche_estimada")),
-            "via": pr.get("leche_via"), "usd_litro": pr.get("leche_usd_litro"),
+            "via": via, "usd_litro": pr.get("leche_usd_litro"), "origen": origen,
             "tipo_cambio": pr.get("tipo_cambio"),
             "error": None if valor else (pr.get("error") or "La planilla de precios no tiene el precio de la leche.")}
 
@@ -5873,6 +5884,29 @@ def consulta():
         "titulo": item["titulo"], "grafica": item["grafica"],
         "sql": item["sql"].strip(), **data,
     })
+
+
+@app.get("/api/cotizaciones/dolar")
+def api_cotizacion_dolar():
+    """Dólar de venta (DolarHoy, con DolarApi de respaldo) para que la pantalla lo cargue en ⚙ Configuración.
+    NO guarda nada: devuelve el valor y la persona decide si lo guarda. Las URLs son fijas (ver cotizaciones_externas)."""
+    tipo = (request.args.get("tipo") or "oficial").strip().lower()
+    if tipo not in cotizaciones_externas.TIPOS_DOLAR:
+        return jsonify({"error": f"Tipo de dólar desconocido: «{tipo}». Los posibles son: "
+                                 f"{', '.join(cotizaciones_externas.TIPOS_DOLAR)}."}), 400
+    try:
+        return jsonify(cotizaciones_externas.dolar(tipo))
+    except cotizaciones_externas.CotizacionError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+@app.get("/api/cotizaciones/leche")
+def api_cotizacion_leche():
+    """Precio nacional de la leche al productor ($/litro, OCLA) para cargarlo en ⚙ Configuración. No guarda nada."""
+    try:
+        return jsonify(cotizaciones_externas.precio_leche())
+    except cotizaciones_externas.CotizacionError as exc:
+        return jsonify({"error": str(exc)}), 502
 
 
 @app.post("/api/diagnostico_baja")

@@ -3193,6 +3193,28 @@ aparte; (c) ese día hubo 127 tratamientos contra 31,7 de lo normal (desvasado c
 tratadas el día anterior rindieron menos que el resto (`datos["tratadas_ayer"]`), que es lo que separa "hubo trabajo sanitario"
 de "y eso bajó la leche"; (d) un grupo que cambió más de 10 % de tamaño no se marca por kg/vaca (es mezcla, no rinde).
 
+**Dólar en ⚙ Configuración y botones "Buscar" (09/11/2026).** El precio de la leche se movió a ⚙ Configuración > "Precios de
+alimentos y de la leche", junto con el dólar (`tipo_cambio`, $ por US$). **El dólar configurado manda sobre el de la planilla
+en TODO lo que la planilla convierte de dólares**: insumos en USD/tonelada y leche en USD/litro
+(`precios_alimentos.aplicar_tipo_cambio`); lo cargado en pesos a mano no se toca y un precio de la leche en pesos configurado
+sigue mandando sobre todo. Orden en `app._precios_del_tambo`: planilla -> dólar -> precio de la leche. Cambiar cualquiera de
+los dos borra el caché del tambo. `precios_alimentos.resumen(ruta, datos=)` recibe esos mismos datos: la línea «leche $x · TC $y»
+de Configuración leía la planilla cruda y contradecía lo que regía (segundo punto de lectura que la prueba de "un solo lugar" no
+veía porque pasa por `resumen`). Cada valor guarda su **origen** (`precio_leche_origen`, `tipo_cambio_origen`: "OCLA SEP/2026",
+"DolarHoy · Dólar oficial (venta) · 09/11/26 01:07 AM"); escribir el número a mano lo borra, y el Balance lo muestra.
+
+`cotizaciones_externas.py` + `GET /api/cotizaciones/leche` y `/api/cotizaciones/dolar?tipo=` (oficial|mayorista|mep|blue):
+solo LEEN, a pedido (nunca solas), **no guardan nada** (el valor queda en el campo y se guarda con "Guardar configuración"),
+URLs fijas (sin SSRF), caché de 1 h, un error no se cachea. **Ninguna de las dos fuentes tiene API: se lee su HTML**, que
+puede cambiar sin aviso, por eso cada una tiene respaldo y se rechazan valores absurdos. Dólar: DolarHoy (tarjeta con
+`class="val"` o fila de la tabla "Cotizaciones"; Cloudflare lo deja pasar con un User-Agent identificado) y, si falla,
+**DolarApi** (`dolarapi.com/v1/dolares/{oficial|blue|bolsa|mayorista}`; pide citarla como fuente; el MEP es "bolsa"). Leche:
+**precio nacional al productor SIGLeA** del encabezado de la portada de OCLA ("SIGLeA (SEP/2026): $543,01 /litro"); respaldo, el
+Excel `BaseDeDatosOCLA.xlsx` hoja "Series Mensuales", **que OCLA actualiza muy atrasado** (el 09/11/2026 llegaba a junio: el
+código avisa los meses de atraso desde 3). Es un PROMEDIO NACIONAL: referencia, no lo que paga la usina del tambo. El precio
+al productor de los gráficos de OCLA son imágenes (no sirven para leer). Pedir de OCLA a un tambo que cobra otro valor y no
+avisarlo sería inventar un precio: por eso la pantalla muestra el período y que falta guardar.
+
 ## Panel de despliegue: variables de entorno + actualizar/iniciar/parar (08/11/2026)
 
 `panel_despliegue.py` (lanzador `iniciar_panel.bat`, uso en INSTALL.md §11). Pedido del tambo:

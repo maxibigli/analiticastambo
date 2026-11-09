@@ -231,20 +231,47 @@ def aplicar_precio_leche(datos: dict, precio) -> dict:
             "leche_estimada": False, "leche_usd_litro": None}
 
 
+def aplicar_tipo_cambio(datos: dict, tc) -> dict:
+    """La planilla de `leer()` recalculada con el dólar que el tambo cargó en ⚙ Configuración, si lo hay.
+
+    Ese dólar manda sobre el de la planilla en TODO lo que la planilla convierte de dólares: los insumos que
+    vienen en USD/tonelada y la leche en USD/litro. Lo que se cargó directo en pesos (`via` "manual") no se toca.
+    Devuelve una COPIA (`leer()` entrega el dato cacheado). Sin dólar configurado devuelve la planilla tal cual.
+
+    Límite: un insumo en USD que la planilla descartó por no tener ella misma un dólar no aparece en `precios`
+    y no se puede reconstruir acá; la planilla que genera la app siempre trae su dólar."""
+    if not tc:
+        return datos
+    tc = float(tc)
+    precios = {}
+    for clave, p in (datos.get("precios") or {}).items():
+        if p.get("via") == "usd" and p.get("usd_tn") is not None:
+            p = {**p, "precio_kg": p["usd_tn"] * tc / 1000.0}
+        precios[clave] = p
+    out = {**datos, "precios": precios, "tipo_cambio": tc}
+    usd_litro = datos.get("leche_usd_litro")
+    if usd_litro is not None and datos.get("leche_via") in ("usd", None):
+        out["precio_litro"], out["leche_via"] = usd_litro * tc, "usd"
+    return out
+
+
 def de(nombre, datos: dict = None) -> dict | None:
     """Precio de un ingrediente por su nombre, como lo escribe el mixer."""
     d = datos if datos is not None else leer()
     return (d.get("precios") or {}).get(_norm(nombre))
 
 
-def resumen(ruta: str = None) -> dict:
+def resumen(ruta: str = None, datos: dict = None) -> dict:
     """Estado de la planilla para la pantalla: cuántos precios hay, cuántos son
     ESTIMADOS y si falta el precio de la leche.
+
+    `datos`: la planilla ya leída y con lo de ⚙ Configuración aplicado (`app._precios_del_tambo`). Sin él se lee la
+    planilla tal cual está en el Excel, que NO es lo que rige si el tambo cargó su dólar o su precio de la leche.
 
     El aviso de estimados no es cosmético: sin él una pantalla de costos muestra
     plata inventada con la misma cara que la real, y alguien decide con eso.
     """
-    d = leer(ruta)
+    d = datos if datos is not None else leer(ruta)
     precios = d.get("precios") or {}
     estimados = [p for p in precios.values() if p.get("estimado")]
     faltan = []
@@ -269,5 +296,6 @@ def resumen(ruta: str = None) -> dict:
         "precio_litro": d.get("precio_litro"),
         "leche_usd_litro": d.get("leche_usd_litro"),
         "leche_estimada": d.get("leche_estimada"),
+        "leche_via": d.get("leche_via"),
         "falta": faltan or None,
     }
