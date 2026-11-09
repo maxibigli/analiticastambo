@@ -160,6 +160,115 @@ class TestInforme(unittest.TestCase):
         self.assertNotIn("parto     0", t)
 
 
+def _analizar(vacas, extra=None, dia=DIA, bd="2026-11-01", bh="2026-11-06", ith=None):
+    """`dg.analizar` con la base falsa; `extra(sql)` puede devolver las filas de otras consultas."""
+    def run_query(sql, validate=True, tambo="x", max_rows=5000):
+        s = " ".join(sql.split())
+        if "FROM AnimalDaily ad JOIN BasicAnimal b" in s:
+            return {"columns": [], "rows": vacas, "truncated": False}
+        filas = extra(s) if extra else None
+        return {"columns": [], "rows": filas or [], "truncated": False}
+
+    with mock.patch.object(dg.db, "run_query", run_query), mock.patch.object(dg, "ith_de", lambda dias: ith or {}):
+        return dg.analizar("t", dia, bd, bh)
+
+
+class TestCifrasComoElDashboard(unittest.TestCase):
+    """El dashboard cuenta solo vacas identificadas con lectura válida; si el informe cuenta otra cosa los
+    números no coinciden y nadie sabe cuál creer (el 07/11 daba 70.653 kg contra 69.225 del dashboard)."""
+
+    def test_las_lecturas_no_validas_y_las_sin_identificar_no_entran_al_total(self):
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-07")}
+        filas = _filas_vacas(por_dia)
+        # el 7/11: 5 vacas con lectura NO válida (3.000 kg en total) y una sin identificar (Number = 0)
+        filas += [["2026-11-07", 5000 + i, 500 + i, 21, 150, 2, 600.0, 0] for i in range(5)]
+        filas += [["2026-11-07", 9000, 0, 21, 150, 2, 30.0, 1]]
+        r = _analizar(filas)
+        res = r["datos"]["resumen"]
+        self.assertEqual(res["kg_d"], 4000.0)
+        self.assertEqual(res["vac_d"], 100)
+        lec = r["datos"]["lecturas"]
+        self.assertEqual((lec["inval_kg_d"], lec["inval_n_d"], lec["sinid_kg_d"]), (3000.0, 5, 30.0))
+
+    def test_una_vaca_con_lectura_no_valida_no_se_cuenta_como_vaca_que_cayo(self):
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-07")}
+        filas = [f for f in _filas_vacas(por_dia) if not (f[0] == "2026-11-07" and f[2] == 7)]
+        filas.append(["2026-11-07", 1007, 7, 21, 150, 2, 4.0, 0])         # la vaca 7: total parcial, no válido
+        r = _analizar(filas)
+        self.assertEqual(r["datos"]["ausentes"]["n"], 1)                   # figura como ausente, no como "cayó 36 kg"
+        self.assertEqual(r["datos"]["caidas"]["n_comunes"], 99)
+
+
+class TestAnalizar(unittest.TestCase):
+    def test_devuelve_informe_datos_y_veredicto(self):
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-06")}
+        por_dia["2026-11-07"] = _rodeo(100, 40.0, hasta_vaca=90)
+        r = _analizar(_filas_vacas(por_dia))
+        self.assertIn("FALTARON VACAS", r["informe"])
+        self.assertEqual(r["datos"]["ausentes"]["n"], 10)
+        self.assertEqual(r["veredicto"]["causas"][0]["clave"], "vacas")
+        self.assertEqual(r["veredicto"]["causas"][0]["nivel"], "probable")
+
+    def test_trae_lo_necesario_para_los_graficos(self):
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-07")}
+        r = _analizar(_filas_vacas(por_dia))
+        res = r["datos"]["resumen"]
+        self.assertEqual(round(res["kg_b"] + res["efecto_vacas"] + res["efecto_rinde"]), round(res["kg_d"]))
+        self.assertEqual(r["datos"]["grupos"][0]["grupo"], 21)
+
+    def test_sin_desvio_en_la_base_una_diferencia_no_divide_por_cero(self):
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-06")}
+        por_dia["2026-11-07"] = _rodeo(100, 36.0)
+        r = _analizar(_filas_vacas(por_dia))                               # base idéntica todos los días: desvío 0
+        self.assertLess(r["datos"]["resumen"]["z_kg"], -2)
+
+
+class TestCruceDeTratadas(unittest.TestCase):
+    def _escenario(self, baja_las_tratadas):
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-06")}
+        por_dia["2026-11-07"] = [(i, 21, (35.0 if i <= 40 and baja_las_tratadas else 40.0)) for i in range(1, 101)]
+        ev = [["2026-11-06", "tratamiento", "Desvasado Correctivo", 40]] + \
+             [[f, "tratamiento", "Desvasado Correctivo", 2] for f in _fechas("2026-11-01", "2026-11-05")]
+
+        def extra(s):
+            if "EventCalving" in s:
+                return ev
+            if "DiagnosisTreatmentEvent" in s and "AS animal" in s:
+                return [[1000 + i, "Desvasado Correctivo"] for i in range(1, 41)]        # las vacas 1..40 el 06/11
+            return []
+        return _analizar(_filas_vacas(por_dia), extra)
+
+    def test_si_las_tratadas_bajaron_el_cruce_lo_mide_y_el_veredicto_lo_marca(self):
+        r = self._escenario(True)
+        t = r["datos"]["tratadas_ayer"]
+        self.assertEqual(t["n"], 40)
+        self.assertAlmostEqual(t["delta_tratadas"], -5.0)
+        self.assertAlmostEqual(t["delta_resto"], 0.0)
+        self.assertAlmostEqual(t["efecto_kg"], -200.0)
+        manejo = next(c for c in r["veredicto"]["causas"] if c["clave"] == "manejo")
+        self.assertEqual(manejo["nivel"], "probable")
+
+    def test_si_las_tratadas_rindieron_igual_se_descarta(self):
+        r = self._escenario(False)
+        manejo = next(c for c in r["veredicto"]["causas"] if c["clave"] == "manejo")
+        self.assertEqual(manejo["nivel"], "descartada")
+
+    def test_si_falla_la_consulta_de_tratadas_no_se_inventa_un_cruce(self):
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-07")}
+
+        def run_query(sql, validate=True, tambo="x", max_rows=5000):
+            s = " ".join(sql.split())
+            if "FROM AnimalDaily ad JOIN BasicAnimal b" in s:
+                return {"columns": [], "rows": _filas_vacas(por_dia), "truncated": False}
+            if "DiagnosisTreatmentEvent" in s and "AS animal" in s:
+                raise RuntimeError("timeout")
+            return {"columns": [], "rows": [], "truncated": False}
+
+        with mock.patch.object(dg.db, "run_query", run_query), mock.patch.object(dg, "ith_de", lambda d: {}):
+            r = dg.analizar("t", DIA, "2026-11-01", "2026-11-06")
+        self.assertIsNone(r["datos"]["tratadas_ayer"])
+
+
 class TestSegundoPlano(unittest.TestCase):
     def setUp(self):
         dg._JOBS.clear()
@@ -179,6 +288,13 @@ class TestSegundoPlano(unittest.TestCase):
             self.assertIn(job["estado"], ("calculando", "listo"))
             j = self._esperar(job["id"])
         self.assertEqual((j["estado"], j["informe"], j["error"]), ("listo", "INFORME", None))
+
+    def test_el_job_guarda_el_veredicto_y_los_datos_de_los_graficos(self):
+        res = {"informe": "TXT", "datos": {"resumen": {"kg_d": 1}}, "veredicto": {"titular": "T", "nivel": "normal"}}
+        with mock.patch.object(dg, "analizar", return_value=res):
+            job = dg.iniciar("t", "2026-11-07", "2026-11-01", "2026-11-06")
+            j = self._esperar(job["id"])
+        self.assertEqual((j["informe"], j["veredicto"]["titular"], j["datos"]["resumen"]["kg_d"]), ("TXT", "T", 1))
 
     def test_el_mismo_pedido_en_curso_no_se_duplica(self):
         liberar = __import__("threading").Event()
@@ -232,6 +348,19 @@ class TestApi(unittest.TestCase):
                     break
                 time.sleep(0.02)
         self.assertEqual((j["estado"], j["informe"]), ("listo", "INFORME"))
+
+    def test_el_veredicto_llega_a_la_pantalla_por_la_api(self):
+        res = {"informe": "TXT", "datos": {"grupos": []},
+               "veredicto": {"titular": "Dentro de lo normal", "nivel": "normal", "contexto": [], "causas": []}}
+        with mock.patch.object(dg, "analizar", return_value=res):
+            job = self.client.post("/api/diagnostico_baja?tambo=lamartina_local", json={"dia": "2026-11-07"}).get_json()
+            for _ in range(100):
+                j = self.client.get(f"/api/diagnostico_baja/{job['id']}").get_json()
+                if j["estado"] != "calculando":
+                    break
+                time.sleep(0.02)
+        self.assertEqual(j["veredicto"]["nivel"], "normal")
+        self.assertEqual(j["datos"], {"grupos": []})
 
     def test_fechas_invalidas_son_400_con_el_motivo(self):
         r = self.client.post("/api/diagnostico_baja", json={"dia": "2026-11-07", "base_desde": "2026-11-06",

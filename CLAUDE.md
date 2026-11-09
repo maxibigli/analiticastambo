@@ -3177,6 +3177,22 @@ salían falsos: acá `corre` pide hasta 100.000 y aborta si `truncated`; (b) el 
 rodeo; (c) una sección que falla dice "sin dato", nunca ceros, y si falla la lectura de producción el trabajo termina en
 error, no "listo" con un informe vacío; (d) los días incompletos (< 90 % de las vacas habituales) se sacan de la base.
 
+**Veredicto gráfico (09/11/2026).** Encima del informe de texto, la tarjeta muestra un titular con semáforo, tres gráficos
+(de dónde sale la diferencia, por grupo, por ordeño) y las causas con su evidencia. `diagnostico_baja.analizar` devuelve
+`informe` + `datos` (lo medido) + `veredicto`; el veredicto es `veredicto_baja.veredicto(datos)`, una función PURA (se prueba
+sin base) con reglas y umbrales a la vista al principio del módulo. Niveles de cada causa: probable / posible / descartada /
+sin_dato (una sección que falló NO se descarta). Nivel global: `normal` (la diferencia está dentro de 1 desvío de lo que el
+tambo varía solo, o no fue baja), `claro`, `posible` o `sin_causa` (baja real que nada de lo medido explica: se manda a revisar
+ración/agua/manejo, que DelPro no mide). Causas: vacas ausentes, rinde por vaca (desvíos del kg/vaca de la base), grupo,
+ordeño (reparto y corrimiento de horario), bocas, calor (ITH), manejo del día anterior, mezcla por cambios de grupo, lecturas
+no válidas y leche de descarte. **Casos reales que dieron forma a las reglas** (La Ponderosa, 07/11/2026): (a) la "baja
+considerable" del dashboard (-1,8 %) era contra el 06/11, el día más alto del período; contra la semana era -1,0 % (0,7
+desvíos): el veredicto lo dice en vez de inventar un culpable; (b) el informe sumaba lecturas no válidas y sin identificar
+(70.653 kg) y el dashboard no (69.225 kg): ahora las cifras salen con la definición del dashboard y esas lecturas se muestran
+aparte; (c) ese día hubo 127 tratamientos contra 31,7 de lo normal (desvasado correctivo): el análisis cruza por vaca si las
+tratadas el día anterior rindieron menos que el resto (`datos["tratadas_ayer"]`), que es lo que separa "hubo trabajo sanitario"
+de "y eso bajó la leche"; (d) un grupo que cambió más de 10 % de tamaño no se marca por kg/vaca (es mezcla, no rinde).
+
 ## Panel de despliegue: variables de entorno + actualizar/iniciar/parar (08/11/2026)
 
 `panel_despliegue.py` (lanzador `iniciar_panel.bat`, uso en INSTALL.md §11). Pedido del tambo:

@@ -57,6 +57,19 @@ def _p(texto=""):
 
 def _texto():
     return "\n".join(_salida.lineas)
+
+
+def _z(valor, serie):
+    """Cuántos desvíos está `valor` de lo que dio la serie (con signo). Una base sin ninguna variación (todos los
+    días iguales, solo pasa con datos de prueba) no puede dividir por cero: cualquier diferencia cuenta como enorme."""
+    if len(serie) < 2:
+        return 0.0
+    media, sd = st.mean(serie), st.pstdev(serie)
+    if sd < 1e-9:
+        return 0.0 if abs(valor - media) < 1e-9 else (9.9 if valor > media else -9.9)
+    return (valor - media) / sd
+
+
 LIMITE = 12          # filas por lista
 UMBRAL_GRUPO = 0.0   # se muestran todos los grupos, ordenados por aporte a la caída
 
@@ -143,6 +156,20 @@ def sql_eventos(d0, d1, tambo):
       LEFT JOIN TextLookupItem tn ON tn.OID = dg.DiagnosisName
       WHERE a.GCRecord IS NULL AND a.DateAndTime >= '{d0}' AND a.DateAndTime < DATEADD(day, 1, '{d1}') AND {f}
       GROUP BY CAST(a.DateAndTime AS date), LEFT(tn.ItemValue, 80)
+    OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 15)
+    """
+
+
+def sql_tratadas(dia, tambo):
+    """Una fila por tratamiento registrado ESE día (el día anterior al analizado): vaca y diagnóstico. Sirve para
+    cruzar quién fue tratada contra cuánto rindió al día siguiente."""
+    f = rebano.filtro_por_animal("a.BasicAnimal", rebano.por_defecto(tambo))
+    return f"""
+    SELECT a.BasicAnimal AS animal, LEFT(tn.ItemValue, 80) AS detalle
+      FROM DiagnosisTreatmentEvent e JOIN AbstractAnimalEvent a ON a.OID = e.OID
+      LEFT JOIN Diagnosis dg ON dg.OID = e.Diagnosis
+      LEFT JOIN TextLookupItem tn ON tn.OID = dg.DiagnosisName
+      WHERE a.GCRecord IS NULL AND a.DateAndTime >= '{dia}' AND a.DateAndTime < DATEADD(day, 1, '{dia}') AND {f}
     OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 15)
     """
 
@@ -293,6 +320,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     """El informe como texto. Puede tardar (consultas pesadas a DelPro): correrlo en segundo plano."""
     dia, base_desde, base_hasta = validar(dia, base_desde, base_hasta)
     _salida.lineas = []
+    datos = _salida.datos = {"dia": dia.isoformat(), "tambo": tambo}
     ayer = dia - datetime.timedelta(days=1)
     base_dias = [(base_desde + datetime.timedelta(days=i)).isoformat()
                  for i in range((base_hasta - base_desde).days + 1)]
@@ -315,15 +343,25 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     if not filas:
         _p("   Sin datos de producción para el período. Revisá la fecha y el tambo.")
         return _texto()
+    # MISMA definición que el dashboard (resumen.py): solo vacas IDENTIFICADAS con lectura VÁLIDA. Sumar también las
+    # no válidas y las sin identificar daba 70.653 kg contra los 69.225 que muestra el dashboard el mismo día, y
+    # además una vaca con total parcial (no válido) figuraba como "cayó 40 kg". Esas lecturas se cuentan aparte.
     por_dia = defaultdict(lambda: {"kg": 0.0, "vacas": 0})
+    lect = defaultdict(lambda: {"inval_kg": 0.0, "inval_n": 0, "sinid_kg": 0.0})
     cow = defaultdict(dict)          # animal -> {fecha: fila}
     for fecha, animal, numero, grupo, dim, lact, kg, valido in filas:
         f = str(fecha)[:10]
         kg = float(kg or 0)
+        if not valido:
+            lect[f]["inval_kg"] += kg
+            lect[f]["inval_n"] += 1
+            continue
+        if not (numero and int(numero) > 0):
+            lect[f]["sinid_kg"] += kg
+            continue
         por_dia[f]["kg"] += kg
-        if numero and int(numero) > 0:
-            por_dia[f]["vacas"] += 1
-        cow[animal][f] = {"kg": kg, "numero": int(numero or 0), "grupo": grupo, "dim": dim, "lact": lact}
+        por_dia[f]["vacas"] += 1
+        cow[animal][f] = {"kg": kg, "numero": int(numero), "grupo": grupo, "dim": dim, "lact": lact}
     if D not in por_dia:
         _p(f"   No hay producción registrada el {D}.")
         return _texto()
@@ -367,6 +405,26 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         _p(f"   Variación normal de la base: ±{f0(sd)} kg (1 desvío). La diferencia es de {z:.1f} desvíos"
               + (" -> dentro de lo que varía normalmente." if z < 1 else
                  " -> fuera de lo normal." if z >= 2 else "."))
+    kv_serie = [por_dia[d]["kg"] / max(por_dia[d]["vacas"], 1) for d in base_dias]
+    ayer_kg = por_dia[A]["kg"] if A in por_dia else None
+    datos["base"] = {"desde": base_desde.isoformat(), "hasta": base_hasta.isoformat(), "dias": n_base,
+                     "excluidos": sorted(incompletos)}
+    datos["resumen"] = {
+        "kg_d": kg_d, "kg_b": kg_b, "vac_d": vac_d, "vac_b": vac_b, "kv_d": kv_d, "kv_b": kv_b,
+        "efecto_vacas": efecto_vacas, "efecto_rinde": efecto_rinde, "sd_kg": sd,
+        "z_kg": _z(kg_d, base_kg), "z_vac": _z(vac_d, base_vac), "z_kv": _z(kv_d, kv_serie),
+        "ayer_kg": ayer_kg, "ayer_vacas": por_dia[A]["vacas"] if A in por_dia else None,
+        "ayer_es_maximo": bool(ayer_kg is not None and ayer_kg >= max(base_kg)),
+    }
+
+    def _lec(campo):
+        return st.mean(lect[d][campo] for d in base_dias)
+    datos["lecturas"] = {"inval_kg_d": lect[D]["inval_kg"], "inval_kg_b": _lec("inval_kg"),
+                         "inval_n_d": lect[D]["inval_n"], "inval_n_b": _lec("inval_n"),
+                         "sinid_kg_d": lect[D]["sinid_kg"], "sinid_kg_b": _lec("sinid_kg")}
+    _p(f"   Lecturas no válidas: {f0(lect[D]['inval_kg'])} kg en {lect[D]['inval_n']} vacas (base {f0(_lec('inval_kg'))} kg); "
+       f"sin identificar: {f0(lect[D]['sinid_kg'])} kg (base {f0(_lec('sinid_kg'))}). "
+       "No entran en las cifras de arriba (igual que el dashboard).")
 
     # ---- 2. vacas perdidas y vacas que bajaron ---------------------------------------------
     titulo("2. QUÉ VACAS SE PERDIERON Y CUÁLES BAJARON")
@@ -379,6 +437,14 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     _p(f"   Vacas habituales (≥4 de 7 días) que NO se ordeñaron el {D}: {len(perdidas)} "
           f"= {f0(kg_perdido)} kg que dejaron de entrar.")
     _p(f"   Vacas que aparecen el {D} y no estaban en la base: {len(nuevas)}")
+    aus_grupo = defaultdict(lambda: [0, 0.0])
+    for a, k in perdidas:
+        g_ult = cow[a][sorted(cow[a])[-1]]["grupo"]
+        aus_grupo[g_ult][0] += 1
+        aus_grupo[g_ult][1] += k
+    datos["ausentes"] = {"n": len(perdidas), "kg": kg_perdido,
+                         "por_grupo": [{"grupo": g, "n": n, "kg": k}
+                                       for g, (n, k) in sorted(aus_grupo.items(), key=lambda x: -x[1][1])]}
     if perdidas:
         _p(f"   {'vaca':>8}{'grupo':>8}{'DIM':>6}{'kg/día base':>13}  último día ordeñada")
         for a, k in perdidas[:LIMITE]:
@@ -401,6 +467,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     _p(f"\n   De las vacas ordeñadas los dos períodos: {len(sub)} de {len(comunes)} dieron menos que su promedio;"
           f" suman {signo(sum(c[1] for c in comunes))} kg netos.")
     dist = sorted(c[1] for c in comunes)
+    datos["caidas"] = {"n_comunes": len(comunes), "n_menos": len(sub), "mediana": st.median(dist) if dist else 0.0}
     if dist:
         _p(f"   Mediana de cambio por vaca: {signo(st.median(dist), 1)} kg  "
               f"(si es ~0 la caída viene de pocas vacas; si es negativa, bajó el rodeo entero)")
@@ -426,6 +493,8 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         nb, kb = g_b[g][0] / n_base, g_b[g][1] / n_base
         filasg.append((g, nd, nb, kd, kb, kd - kb))
     filasg.sort(key=lambda x: x[5])
+    datos["grupos"] = [{"grupo": g, "vacas_d": nd, "vacas_b": nb, "kg_d": kd, "kg_b": kb, "delta_kg": dk}
+                       for g, nd, nb, kd, kb, dk in filasg]
     _p(f"   {'grupo':>7}{'vacas día':>11}{'vacas base':>12}{'kg día':>10}{'kg base':>10}{'cambio kg':>11}{'kg/vaca d':>11}{'kg/vaca b':>11}")
     for g, nd, nb, kd, kb, dk in filasg[:LIMITE]:
         _p(f"   {str(g):>7}{nd:>11}{f1(nb):>12}{f0(kd):>10}{f0(kb):>10}{signo(dk):>11}"
@@ -443,7 +512,9 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     # ---- 4. por ordeño ----------------------------------------------------------------------
     titulo("4. ¿EN QUÉ ORDEÑO, Y A QUÉ HORA?")
     ses = corre(sql_sesiones(d0, d1, tambo), tambo)
+    datos["ordenos"] = None             # None = no se pudo leer (el veredicto lo trata como "sin dato")
     if ses:
+        ordenos = []
         s_d, s_b = {}, defaultdict(list)
         for fecha, sn, v, kg, ini, fin, cond, cau in ses:
             f = str(fecha)[:10]
@@ -467,6 +538,9 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
             ini_b = st.mean(x["ini"].hour * 60 + x["ini"].minute for x in b if x["ini"]) if b else 0
             ibh = f"{int(ini_b // 60):02d}:{int(ini_b % 60):02d}" if b else "--:--"
             cau_b = st.mean(x["cau"] for x in b) if b else 0
+            ordenos.append({"sesion": sn, "vacas_d": d["vacas"], "vacas_b": bv, "kg_d": d["kg"], "kg_b": bk,
+                            "ini_d": hora(d["ini"]) if d["ini"] else None, "ini_b": ibh if b else None,
+                            "dur_d": dur_d, "dur_b": dur_b, "cau_d": d["cau"], "cau_b": cau_b})
             _p(f"   {sn:>7}{d['vacas']:>8}{f0(bv):>8}{f0(d['kg']):>9}{f0(bk):>9}{signo(d['kg'] - bk):>9}"
                   f"{hora(d['ini']):>8}{hora(d['fin']):>7}{dur_d:>8.1f}{dur_b:>10.1f}{d['cau']:>8.2f}{cau_b:>7.2f}")
             if b:
@@ -481,12 +555,14 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
                     notas.append("caudal por vaca más bajo (rinde/ritmo)")
                 if notas:
                     _p(f"           -> {'; '.join(notas)}")
+        datos["ordenos"] = ordenos
         _p("   (inicio/fin = primer y último registro de ese ordeño; sesiones sin número fijo en tambos\n"
               "    de 2 ordeños pueden aparecer como 1 y 2, y las de 3 como 1, 2 y 3.)")
 
     # ---- 5. bocas ---------------------------------------------------------------------------
     titulo("5. ¿ALGUNA BOCA O UNIDAD DE ORDEÑE CAÍDA?")
     bocas = corre(sql_bocas(d0, d1, tambo), tambo)
+    datos["bocas"] = None
     if bocas:
         b_d, b_b = {}, defaultdict(list)
         for fecha, boca, n, kg in bocas:
@@ -508,6 +584,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         for boca, nd, nb, kd, kb, r in rel[:LIMITE]:
             _p(f"   {str(boca):>7}{nd:>13}{nb:>8.1f}{f0(kd):>9}{f0(kb):>9}{r:>10.2f}")
         malas = [x for x in rel if x[5] < 0.6]
+        datos["bocas"] = {"medidas": len(rel), "caidas": [{"boca": x[0], "ratio": x[5]} for x in malas]}
         if malas:
             _p(f"   -> {len(malas)} boca(s) rindieron menos de 60 % de lo normal: revisar unidad/pulsación/lector")
         else:
@@ -525,13 +602,16 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         if tipo == "tratamiento":
             trat[detalle or "(sin nombre)"][f] += int(n)
     _p(f"   {'evento':>18}{'día':>6}{'ayer':>6}{'prom base/día':>15}")
+    datos["eventos"] = {}
     for tipo in ("parto", "cambio de grupo", "baja", "tratamiento"):
         # Si la consulta falló NO se muestran ceros: un cero inventado parece "no pasó nada".
         if (bj if tipo == "baja" else ev) is None:
             _p(f"   {tipo:>18}{'sin dato':>27}")
+            datos["eventos"][tipo] = None
             continue
         v = por_tipo.get(tipo, {})
         base = sum(v.get(d, 0) for d in base_dias) / n_base
+        datos["eventos"][tipo] = {"dia": v.get(D, 0), "ayer": v.get(A, 0), "base": base}
         flag = "  <- sube" if v.get(D, 0) > max(2 * base, base + 5) else ""
         _p(f"   {tipo:>18}{v.get(D, 0):>6}{v.get(A, 0):>6}{base:>15.1f}{flag}")
     sube = sorted(((sum(v.get(d, 0) for d in (D, A)), k, v.get(D, 0), sum(v.get(d, 0) for d in base_dias) / n_base)
@@ -540,11 +620,48 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         _p("   Diagnósticos tratados ayer y el día (día / prom base):")
         for _, k, n, b in sube:
             _p(f"     {k:<50}{n:>4} / {b:.1f}")
+    datos["tratamientos_ayer"] = sorted(
+        ({"nombre": k, "ayer": v.get(A, 0), "base": sum(v.get(d, 0) for d in base_dias) / n_base}
+         for k, v in trat.items()), key=lambda x: -x["ayer"])[:6]
+
+    # Cruce por vaca: ¿las que se trataron AYER rindieron menos HOY que el resto? Es lo que separa "hubo mucho
+    # trabajo sanitario" (un dato) de "y eso bajó la leche" (una causa).
+    datos["tratadas_ayer"] = None
+    tr = corre(sql_tratadas(A, tambo), tambo)
+    if tr:
+        tratadas = defaultdict(set)
+        for animal, detalle in tr:
+            tratadas[animal].add(detalle or "(sin nombre)")
+        d_t, d_r, por_diag = [], [], defaultdict(list)
+        for a, v in cow.items():
+            if D in v and len(en_base[a]) >= 4:
+                dl = v[D]["kg"] - st.mean(en_base[a])
+                if a in tratadas:
+                    d_t.append(dl)
+                    for nombre in tratadas[a]:
+                        por_diag[nombre].append(dl)
+                else:
+                    d_r.append(dl)
+        if d_t and d_r:
+            m_t, m_r = st.mean(d_t), st.mean(d_r)
+            datos["tratadas_ayer"] = {
+                "n": len(d_t), "delta_tratadas": m_t, "delta_resto": m_r, "efecto_kg": (m_t - m_r) * len(d_t),
+                "por_diagnostico": [{"nombre": k, "n": len(x), "delta": st.mean(x)}
+                                    for k, x in sorted(por_diag.items(), key=lambda kv: -len(kv[1]))[:5]]}
+            _p(f"\n   Cruce por vaca: las {len(d_t)} vacas tratadas ayer rindieron {signo(m_t, 1)} kg respecto de su promedio;"
+               f" las otras {len(d_r)}, {signo(m_r, 1)} kg.  Efecto estimado de lo tratado: {signo((m_t - m_r) * len(d_t))} kg.")
+            for k, x in sorted(por_diag.items(), key=lambda kv: -len(kv[1]))[:5]:
+                _p(f"     {k:<50}{len(x):>4} vacas, {signo(st.mean(x), 1)} kg cada una")
+            _p("   (Ojo: una vaca con mastitis ya venía rindiendo menos; mirá cada diagnóstico por separado.)")
+    elif tr is not None:
+        _p("   Cruce por vaca: ayer no se registraron tratamientos.")
     ret = corre(sql_retiro(d0, d1, tambo), tambo)
+    datos["retiros"] = None
     if ret is None:
         _p("   Vacas con retiro/descarte de leche: sin dato.")
     else:
         rv = {str(f)[:10]: int(v) for f, v in ret}
+        datos["retiros"] = {"dia": rv.get(D, 0), "base": sum(rv.get(d, 0) for d in base_dias) / n_base}
         _p(f"   Vacas con retiro/descarte de leche registrado ese día: {rv.get(D, 0)} "
            f"(base {sum(rv.get(d, 0) for d in base_dias) / n_base:.1f}/día). "
            "Esa leche puede no ir al tanque aunque sí figure en DelPro.")
@@ -552,6 +669,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     # ---- 7. clima ---------------------------------------------------------------------------
     titulo("7. ESTRÉS CALÓRICO (ITH) — ¿HIZO CALOR?")
     ith = ith_de(base_dias + [A, D])
+    datos["ith"] = None
     if ith:
         _p(f"   {'fecha':>12}{'ITH máx':>9}{'ITH prom':>10}   (>=68 estrés leve, >=72 moderado, >=80 severo)")
         for d in sorted(ith)[-9:]:
@@ -560,6 +678,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         mx_d = ith.get(D, {}).get("max")
         mx_b = [ith[d]["max"] for d in base_dias if d in ith]
         if mx_d is not None and mx_b:
+            datos["ith"] = {"max_d": mx_d, "max_b": st.mean(mx_b), "serie": {d: ith[d] for d in sorted(ith)}}
             _p(f"   -> ITH máx {mx_d} vs {st.mean(mx_b):.1f} de base: "
                   + ("dentro de lo normal." if mx_d - st.mean(mx_b) < 3 else "MÁS CALUROSO que la base."))
     else:
@@ -575,6 +694,15 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     _p("   si está repartida en todo el rodeo y el ITH subió, apunta a calor; si el rodeo entero rinde menos\n"
           "   sin cambios de vacas ni de clima, mirá ración/alimentación (carro, mixer) de ayer.")
     return _texto()
+
+
+def analizar(tambo, dia, base_desde=None, base_hasta=None) -> dict:
+    """Todo el análisis: `informe` (texto), `datos` (lo medido, para los gráficos) y `veredicto` (qué causa apuntar)."""
+    import veredicto_baja
+    texto = generar(tambo, dia, base_desde, base_hasta)
+    datos = getattr(_salida, "datos", {})
+    veredicto = veredicto_baja.veredicto(datos) if "resumen" in datos else None
+    return {"informe": texto, "datos": datos, "veredicto": veredicto}
 
 
 # --------------------------------------------------------------------------- en segundo plano
@@ -593,7 +721,8 @@ def iniciar(tambo, dia, base_desde=None, base_hasta=None) -> dict:
             if j["clave"] == clave and j["estado"] == "calculando":
                 return _vista(j)
         job = {"id": uuid.uuid4().hex[:12], "clave": clave, "estado": "calculando",
-               "informe": None, "error": None, "inicio": time.time(), "fin": None}
+               "informe": None, "datos": None, "veredicto": None, "error": None,
+               "inicio": time.time(), "fin": None}
         _JOBS[job["id"]] = job
         terminados = [k for k, v in _JOBS.items() if v["estado"] != "calculando"]
         while len(_JOBS) > _MAX_JOBS and terminados:
@@ -601,15 +730,19 @@ def iniciar(tambo, dia, base_desde=None, base_hasta=None) -> dict:
 
     def worker():
         try:
-            informe = generar(tambo, dia, bd, bh)
+            r = analizar(tambo, dia, bd, bh)
+            informe, datos, veredicto = r["informe"], r["datos"], r["veredicto"]
             estado_, error = "listo", None
         except DiagnosticoError as exc:
-            informe, estado_, error = None, "error", str(exc)
+            informe = datos = veredicto = None
+            estado_, error = "error", str(exc)
         except Exception as exc:  # noqa: BLE001 - el usuario ve el motivo
-            informe, estado_ = None, "error"
+            informe = datos = veredicto = None
+            estado_ = "error"
             error = f"No se pudo completar el análisis: {type(exc).__name__}: {str(exc)[:200]}"
         with _JOBS_LOCK:
-            job.update(informe=informe, estado=estado_, error=error, fin=time.time())
+            job.update(informe=informe, datos=datos, veredicto=veredicto, estado=estado_, error=error,
+                       fin=time.time())
 
     threading.Thread(target=worker, daemon=True).start()
     return _vista(job)
@@ -617,7 +750,8 @@ def iniciar(tambo, dia, base_desde=None, base_hasta=None) -> dict:
 
 def _vista(job: dict) -> dict:
     fin = job["fin"] or time.time()
-    return {"id": job["id"], "estado": job["estado"], "informe": job["informe"], "error": job["error"],
+    return {"id": job["id"], "estado": job["estado"], "informe": job["informe"], "datos": job["datos"],
+            "veredicto": job["veredicto"], "error": job["error"],
             "segundos": round(fin - job["inicio"])}
 
 
