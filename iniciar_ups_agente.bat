@@ -15,9 +15,9 @@ REM ===========================================================
 cd /d "%~dp0"
 
 REM --- Completar con los datos del tambo (no son secretos) ----
-set UPS_IP=192.168.1.50
+set UPS_IP=192.168.102.230
 set TAMBO=ponderosa
-set DIRECCION_LACTIA=https://completar-con-la-direccion-de-LactIA
+set DIRECCION_LACTIA=https://www.analiticastambo.com
 REM -------------------------------------------------------------
 
 set PY=python
