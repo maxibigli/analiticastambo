@@ -37,6 +37,7 @@ import despachos_delpro
 import diagnostico_baja
 import clima
 import ficha_animal
+import historial_animal
 import flujos
 import genetica
 import herencia
@@ -3407,6 +3408,32 @@ def api_animal_ficha():
         "herencia": herencia_arbol,
         "genetica_aviso": aviso_gen,
     })
+
+
+@app.get("/api/animal/historico")
+def api_animal_historico():
+    """PRUEBA DE CONCEPTO: histórico gráfico de una vaca para el operario de la
+    sala (tratamientos con medicamentos, producción, eventos reproductivos,
+    controles lecheros). Liviano y SIN restricción de rol a propósito: lo abre
+    quien trabaja en la rotativa, no solo el admin. Solo lectura."""
+    tambo = _tambo_del_request()
+    rp_raw = request.args.get("rp", "").strip()
+    if not rp_raw.isdigit() or int(rp_raw) <= 0:
+        return jsonify({"error": "RP inválido (la vaca sin identificar no tiene historial)."}), 400
+    rp = int(rp_raw)
+
+    def filas(d):
+        return [dict(zip(d["columns"], r)) for r in d["rows"]]
+
+    try:
+        trat = db.run_query(historial_animal.sql_tratamientos(rp), tambo=tambo)
+        prod = db.run_query(historial_animal.sql_produccion(rp), tambo=tambo)
+        repro = db.run_query(historial_animal.sql_reproduccion(rp), tambo=tambo)
+        ctrl = db.run_query(historial_animal.sql_controles(rp), tambo=tambo)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"No se pudo consultar la base: {exc}"}), 502
+    return jsonify({"rp": rp, "tratamientos": filas(trat), "produccion": filas(prod),
+                    "reproduccion": filas(repro), "controles": filas(ctrl)})
 
 
 @app.get("/api/predefinidas")
