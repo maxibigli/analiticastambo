@@ -14,6 +14,7 @@ from flask import (Flask, Response, jsonify, make_response, redirect,
                    render_template, request, send_from_directory, session, url_for)
 
 import datetime
+import hmac
 
 import os
 
@@ -76,6 +77,7 @@ import sensehub
 import simulador
 import tablero
 import tambos
+import ups_registro
 import telegram_bot
 import whatsapp
 import whatsapp_ia
@@ -110,6 +112,9 @@ _RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla", "/api/iot
                     "/api/iot/pantalla/io", "/api/iot/pantalla/actuador", "/api/iot/pantalla/lavado",
                     "/api/iot/pantalla/lavado/iniciar", "/api/iot/pantalla/lavado/cancelar",
                     "/api/iot/pantalla/voz",
+                    # La UPS del tambo: el agente de la PC del tambo EMPUJA las lecturas. Sin sesión, pero NO abierta:
+                    # exige el token de UPS_INGESTA_TOKEN (ver `api_ups_ingesta`).
+                    "/api/ups/ingesta",
                     # Modo televisor: una pantalla colgada en el tambo no puede
                     # iniciar sesión. NO quedan abiertas: las dos exigen el
                     # token de `pantalla_tv.py` (ver `_tv_autorizado`), y si
@@ -2608,6 +2613,85 @@ def api_salud_atencion_v2():
                         "aviso_simulado": gen["aviso_simulado"],
                         "escala": gen["escala"], "error": gen["error"],
                     }})
+
+
+# --- UPS del tambo ---------------------------------------------------------
+# La tarjeta de red de la UPS está dentro de la red del tambo, sin IP pública ni puertos abiertos: el AGENTE
+# (`ups_agente.py`, en una PC del tambo) la lee por SNMP y EMPUJA las lecturas por HTTPS hacia acá. Nada entra al tambo.
+# Se guardan en `ups.db` (ver `ups_registro.py`).
+_UPS_TOKEN_MIN = 20            # un token corto se adivina: si es más corto, la recepción queda apagada
+_UPS_MAX_BYTES = 1_000_000
+_UPS_PODA_CADA_S = 24 * 3600
+_ups_ultima_poda = [0.0]
+
+
+def _ups_token() -> str:
+    t = os.environ.get("UPS_INGESTA_TOKEN", "")
+    return t if len(t) >= _UPS_TOKEN_MIN else ""
+
+
+@app.post("/api/ups/ingesta")
+def api_ups_ingesta():
+    """Recibe un lote de lecturas del agente. Autoriza SOLO con `Authorization: Bearer <UPS_INGESTA_TOKEN>`."""
+    token = _ups_token()
+    if not token:
+        return jsonify({"error": "La recepción de la UPS no está configurada en LactIA: falta la variable "
+                                 f"UPS_INGESTA_TOKEN (de al menos {_UPS_TOKEN_MIN} caracteres)."}), 503
+    clave_intentos = "ups:" + auth.ip_cliente()        # contador propio: un agente mal configurado no bloquea el login
+    if auth.login_bloqueado(clave_intentos):
+        return jsonify({"error": "Demasiados intentos con un token incorrecto. Esperá unos minutos."}), 429
+    cab = request.headers.get("Authorization", "")
+    candidato = cab[7:].strip() if cab.startswith("Bearer ") else ""
+    if not candidato or not hmac.compare_digest(candidato.encode("utf-8"), token.encode("utf-8")):
+        auth.registrar_intento_fallido(clave_intentos)
+        return jsonify({"error": "Token inválido."}), 401
+    auth.limpiar_intentos(clave_intentos)
+    request.max_content_length = _UPS_MAX_BYTES        # también corta un cuerpo sin Content-Length (chunked)
+    if (request.content_length or 0) > _UPS_MAX_BYTES:
+        return jsonify({"error": "El pedido es demasiado grande."}), 413
+    cuerpo = request.get_json(silent=True)
+    if not isinstance(cuerpo, dict):
+        return jsonify({"error": "El cuerpo tiene que ser un JSON {tambo, lecturas}."}), 400
+    tambo = cuerpo.get("tambo")
+    if not isinstance(tambo, str) or not tambos.existe(tambo):        # sin caer al tambo por defecto: ver _tambo_del_request
+        return jsonify({"error": "Tambo desconocido."}), 400
+    try:
+        r = ups_registro.guardar(tambo, cuerpo.get("lecturas"))
+    except ups_registro.IngestaError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if time.time() - _ups_ultima_poda[0] > _UPS_PODA_CADA_S:
+        _ups_ultima_poda[0] = time.time()
+        ups_registro.podar()
+    return jsonify(r)
+
+
+@app.get("/api/ups/estado")
+@auth.requiere_rol("admin")
+def api_ups_estado():
+    """Lo último que se sabe de la UPS y si sigue siendo actual (`sin_datos` = el agente dejó de reportar)."""
+    return jsonify(ups_registro.estado(_tambo_del_request()))
+
+
+@app.get("/api/ups/historico")
+@auth.requiere_rol("admin")
+def api_ups_historico():
+    """Lecturas de las últimas `horas` (por defecto 24, máximo 90 días), reducidas a unos 300 puntos."""
+    try:
+        horas = float(request.args.get("horas", 24))
+    except ValueError:
+        return jsonify({"error": "«horas» tiene que ser un número."}), 400
+    if not 0 < horas <= 24 * 90:
+        return jsonify({"error": "«horas» tiene que estar entre 0 y 2160 (90 días)."}), 400
+    hasta = datetime.datetime.now(datetime.timezone.utc)
+    desde = hasta - datetime.timedelta(hours=horas)
+    f = "%Y-%m-%dT%H:%M:%SZ"
+    return jsonify({"lecturas": ups_registro.historico(_tambo_del_request(), desde.strftime(f), hasta.strftime(f))})
+
+
+@app.get("/api/ups/cortes")
+@auth.requiere_rol("admin")
+def api_ups_cortes():
+    return jsonify({"cortes": ups_registro.cortes(_tambo_del_request())})
 
 
 # --- Monitoreo IoT en tiempo real (gateway M300: lavado/barrido + sensores) -

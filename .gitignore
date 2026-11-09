@@ -116,3 +116,11 @@ balance_leche_avisos.json
 
 # Mediciones de la UPS por SNMP (medir_ups.py): llevan la IP y los datos de la tarjeta del tambo, no van al repo.
 medicion_ups_*.txt
+
+# UPS: lecturas recibidas del agente del tambo (ups_registro.py) y la cola local del agente (ups_agente.py).
+ups.db
+ups.db-wal
+ups.db-shm
+ups_cola.db
+ups_cola.db-wal
+ups_cola.db-shm

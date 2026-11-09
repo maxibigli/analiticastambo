@@ -3381,3 +3381,35 @@ community es una credencial: variable `UPS_SNMP_COMMUNITY`, nunca en el informe 
 Siguiente paso: correr `python medir_ups.py <IP>` en una PC de la red de la UPS y comparar los crudos con la pantalla web de la
 tarjeta. Recién ahí: poller (proceso aparte como `iot_lavado.py`, SQLite `iot_sensores.db`), API, tarjeta con gráficos por fase y
 alertas por los canales que ya existen (WhatsApp/Telegram/correo).
+
+### UPS: el agente del tambo EMPUJA las lecturas (sin puertos abiertos) — 09/11/2026
+
+La tarjeta de la UPS está en la red del tambo, sin IP pública. Decisión: la conexión va siempre **de adentro hacia afuera**.
+`ups_agente.py` corre en una PC del tambo (solo biblioteca estándar + `snmp_min.py` + `ups_snmp.py`: se copian esos tres
+archivos y `iniciar_ups_agente.bat`), lee la tarjeta cada 30 s y manda por HTTPS a `POST /api/ups/ingesta`. No recibe nada.
+
+* **Cola local** (`ups_cola.db`, SQLite): sin internet las lecturas se acumulan y salen EN ORDEN al volver; sobrevive a
+  reiniciar el agente/PC; tope 20.000 (descarta las MÁS viejas). Manda de a 100 y corta en el primer lote que falla.
+* **Tarjeta muda ≠ agente muerto**: si la tarjeta no responde (o no expone RFC 1628) se manda una lectura `{ts, error}` — así
+  LactIA distingue «la UPS no contesta» de «no llega nada» (`estado()['sin_datos']`: sin lecturas hace > 180 s = agente
+  apagado, sin internet o corte de luz).
+* **Seguridad**: token `UPS_INGESTA_TOKEN` (≥ 20 caracteres; si es más corto la recepción queda APAGADA con 503), comparación
+  con `hmac.compare_digest`, `Authorization: Bearer`, 5 intentos malos = 429 con contador PROPIO (`ups:<ip>`, no bloquea el
+  login de las personas). Cuerpo máx. 1 MB, lote máx. 200 lecturas. El agente exige `https://` salvo localhost/IP privada/
+  nombre de PC sin puntos. El token y la community nunca van en mensajes de error ni en `repr`. La ruta `/api/ups/ingesta` está
+  en `_RUTAS_PUBLICAS` (sin sesión) pero NO abierta: sin token válido responde 401.
+* **Servidor** (`ups_registro.py`, `ups.db` fuera del repo): horas en UTC y se EXIGE zona horaria (sin zona, del futuro > 10 min
+  o ilegible = rechazada, no tira el lote). Idempotente (clave tambo+hora: el reintento no duplica). Guarda la lectura
+  compactada (sin identidad/config). Reconstruye **cortes** (la salida pasa a batería → abre; vuelve a red → cierra; guarda carga
+  mínima y segundos) solo con lecturas EN ORDEN. Poda lecturas > 90 días (los cortes se conservan).
+* **Tambo de la ingesta**: se valida con `tambos.existe` (NO `resolver`: caer silenciosamente al tambo por defecto es el bug que
+  documenta `_tambo_del_request`).
+* Consultas (rol admin): `GET /api/ups/estado`, `/api/ups/historico?horas=` (≤ 90 días, ~300 puntos), `/api/ups/cortes`.
+* **Falta** (a propósito, hasta ver datos reales y validar las escalas contra la pantalla web de la tarjeta): tarjeta con
+  gráficos por fase en la pestaña IoT y avisos por WhatsApp/Telegram (corte, batería baja, vuelta de la red, «sin datos»).
+* Pruebas: `tests/test_ups_registro.py`, `test_ups_agente.py` (incluye cadena real tarjeta SNMP falsa → agente → HTTP →
+  servidor falso), `test_ups_api.py`.
+
+Puesta en marcha en el tambo: (1) en LactIA, variable `UPS_INGESTA_TOKEN` (panel de despliegue, iniciar_panel.bat) y reiniciar; (2) en la PC
+del tambo, `setx UPS_INGESTA_TOKEN` (el mismo) y `setx UPS_SNMP_COMMUNITY`; (3) `python ups_agente.py <IP> --sin-enviar --una-vez`
+para ver la lectura sin mandar nada; (4) completar IP/tambo/dirección en `iniciar_ups_agente.bat` y correrlo.

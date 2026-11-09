@@ -136,6 +136,9 @@ CATALOGO: tuple[Var, ...] = (
     Var("SENSEHUB_PWD_", "SenseHub (collares)", True, "Contraseña del controlador. SENSEHUB_PWD_<TAMBO>.", True),
     Var("UPS_SNMP_COMMUNITY", "UPS (SNMP)", True,
         "Clave de lectura SNMP («community») de la tarjeta de red de la UPS; por defecto «public». La usa medir_ups.py."),
+    Var("UPS_INGESTA_TOKEN", "UPS (SNMP)", True,
+        "Clave con la que el agente de la PC del tambo (ups_agente.py) entrega las lecturas de la UPS a LactIA. "
+        "Mínimo 20 caracteres; tiene que ser la misma en las dos puntas."),
     Var("TELEGRAM_BOT_TOKEN", "Telegram", True, "Token del bot de Telegram."),
     Var("TELEGRAM_CHAT_ID", "Telegram", False, "Id del chat que recibe los avisos."),
     Var("SMTP_HOST", "Correo", False, "Servidor SMTP (ej. smtp.gmail.com)."),
