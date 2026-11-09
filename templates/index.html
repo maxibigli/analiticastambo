@@ -427,6 +427,15 @@
   .chip.rojo { background: color-mix(in srgb, var(--critical) 18%, transparent); color: var(--critical); }
   .chip.ambar { background: color-mix(in srgb, var(--warning) 22%, transparent); color: var(--warning); }
   .chip.violeta { background: color-mix(in srgb, var(--violeta) 20%, transparent); color: var(--violeta); }
+  /* Aviso estilo D+ Advisor: Tratar / Revisar / Liberar | diagnóstico | tratamiento */
+  .aviso-trat { margin-top: 5px; padding: 4px 9px; border-radius: 7px; font-size: 12px; border-left: 4px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .aviso-trat b { font-weight: 700; }
+  .aviso-trat.tratar { border-left-color: var(--critical); background: color-mix(in srgb, var(--critical) 14%, transparent); }
+  .aviso-trat.revisar { border-left-color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, transparent); }
+  .aviso-trat.liberar { border-left-color: var(--accent); }
+  .panel-alarmas .pa-aviso-tratar { color: var(--critical); font-weight: 700; }
+  .panel-alarmas .pa-aviso-revisar { color: var(--warning); font-weight: 700; }
+  .panel-alarmas .pa-aviso-liberar { color: var(--accent); font-weight: 700; }
   /* Snapshot en vivo de las cámaras de "Problemas podales" */
   .podal-cam-box {
     height: 180px; border: 1px solid var(--border); border-radius: 8px;
@@ -9119,7 +9128,18 @@ function colorPlaza(f, idx) {
   return { fill: oscuro ? '#43a047' : '#57a24a', txt: '#fff' };               // OK
 }
 
-// Panel central estilo DeLaval con pestañas Alarmas / Ordeño.
+// Aviso de tratamiento como lo muestra D+ Advisor: Tratar / Revisar / Liberar.
+// Tratar = tratamiento vigente · Revisar = en retiro de leche · Liberar = retiro vencido hace <24 h.
+const AVISO_COLOR = { Tratar: '#e53935', Revisar: '#f6bf26', Liberar: '#29b6f6' };
+function avisoDe(f, idx) {
+  if (!f || idx.aviso_accion === undefined || !f[idx.aviso_accion]) return null;
+  const accion = f[idx.aviso_accion];
+  const diag = f[idx.aviso_diag] || '', trat = f[idx.aviso_trat] || '';
+  return { accion, clase: accion.toLowerCase(), diag, trat,
+           fin: f[idx.aviso_fin_retiro] || null };
+}
+
+// Panel central estilo DeLaval con pestañas Alarmas / Ordeño / Tratar.
 let panelTab = 'alarmas';
 
 function pintarPanelAlarmas(porPuesto, idx, N) {
@@ -9138,9 +9158,26 @@ function pintarPanelAlarmas(porPuesto, idx, N) {
     const bp = bajaProduccion(f, idx);
     ordeno.push({ p, rp: f[idx.rp], kg: f[idx.real_kg], pct: bp && bp.pct != null ? bp.pct : null, baja: bp && bp.baja });
   }
+  // Tratar / Revisar / Liberar (réplica de D+ Advisor): Tratar primero, después Revisar, después Liberar.
+  const ordenAviso = { Tratar: 0, Revisar: 1, Liberar: 2 };
+  const tratar = [];
+  for (let p = 1; p <= N; p++) {
+    const av = avisoDe(porPuesto[p], idx);
+    if (av) tratar.push({ p, rp: porPuesto[p][idx.rp], av });
+  }
+  tratar.sort((a, b) => ordenAviso[a.av.accion] - ordenAviso[b.av.accion] || a.p - b.p);
 
   let cuerpo;
-  if (panelTab === 'alarmas') {
+  if (panelTab === 'tratar') {
+    cuerpo = tratar.length
+      ? `<div class="pa-scroll"><table><thead><tr><th>Plaza</th><th>Animal</th><th>Aviso</th></tr></thead><tbody>` +
+        tratar.map(x => {
+          const detalle = [x.av.diag, x.av.trat].filter(y => y).map(escHtml).join(' | ');
+          return `<tr><td class="pa-plaza">${x.p}</td><td>${x.rp === 0 ? 'sin ID' : fmt(x.rp)}</td>` +
+            `<td><span class="pa-aviso-${x.av.clase}">${x.av.accion}</span>${detalle ? ' | ' + detalle : ''}</td></tr>`;
+        }).join('') + `</tbody></table></div>`
+      : `<div class="pa-vacio">Ninguna vaca de la plataforma para tratar, revisar o liberar. ✔</div>`;
+  } else if (panelTab === 'alarmas') {
     cuerpo = alarmas.length
       ? `<div class="pa-scroll"><table><thead><tr><th>Plaza</th><th>Animal</th><th>Alarma</th></tr></thead><tbody>` +
         alarmas.map(x => `<tr><td class="pa-plaza">${x.p}</td><td>${x.rp === 0 ? 'sin ID' : fmt(x.rp)}</td><td class="pa-alarma">${x.a}</td></tr>`).join('') +
@@ -9159,7 +9196,7 @@ function pintarPanelAlarmas(porPuesto, idx, N) {
   const tab = (id, txt, n) =>
     `<button class="pa-tab${panelTab === id ? ' activa' : ''}" data-tab="${id}">${txt}${n != null ? ' (' + n + ')' : ''}</button>`;
   cont.innerHTML = `<div class="panel-alarmas">
-    <div class="pa-tabs">${tab('alarmas', 'Alarmas', alarmas.length)}${tab('ordeno', 'Ordeño', ordeno.length)}</div>
+    <div class="pa-tabs">${tab('alarmas', 'Alarmas', alarmas.length)}${tab('ordeno', 'Ordeño', ordeno.length)}${idx.aviso_accion !== undefined ? tab('tratar', 'Tratar', tratar.length) : ''}</div>
     ${cuerpo}
   </div>`;
   cont.querySelectorAll('.pa-tab').forEach(b => b.addEventListener('click', () => {
@@ -9197,6 +9234,13 @@ function renderRotativa() {
       const [rx, ry] = pt(a, (Ri + Ro) / 2 + 4).split(' ').map(Number);
       const rp = fila[idx.rp] === 0 ? '?' : fila[idx.rp];
       svg += `<text x="${rx}" y="${ry + 4}" text-anchor="middle" font-size="12" font-weight="700" fill="${c.txt}" style="pointer-events:none">${rp}</text>`;
+      // Marca Tratar / Revisar / Liberar (D+ Advisor): círculo con inicial, junto al borde interno.
+      const av = avisoDe(fila, idx);
+      if (av) {
+        const [mx, my] = pt(a, Ri + 22).split(' ').map(Number);
+        svg += `<circle cx="${mx}" cy="${my}" r="7" fill="${AVISO_COLOR[av.accion] || '#888'}" stroke="#fff" stroke-width="1.2"><title>${av.accion}${av.diag ? ' | ' + escHtml(av.diag) : ''}${av.trat ? ' | ' + escHtml(av.trat) : ''}</title></circle>` +
+          `<text x="${mx}" y="${my + 3}" text-anchor="middle" font-size="9" font-weight="800" fill="#1b1b1b" style="pointer-events:none">${av.accion[0]}</text>`;
+      }
       // Barra de progreso de ordeño en el borde externo (kg reales vs esperados).
       const real = fila[idx.real_kg];
       if (real != null && real > 0) {
@@ -9300,6 +9344,10 @@ function renderRotativaDetalle(porPuesto, idx, desde, hasta) {
       <div class="pnum">${p}</div>
       <div>
         <div class="prp">RP ${rp} ${chips.join(' ')}</div>
+        ${(() => { const av = avisoDe(f, idx); if (!av) return '';
+          const det = [av.diag, av.trat].filter(x => x).map(escHtml).join(' | ');
+          const fin = av.fin ? ` · retiro hasta ${av.fin} (${diasTxt(av.fin)})` : '';
+          return `<div class="aviso-trat ${av.clase}"><b>${av.accion}</b>${det ? ' | ' + det : ''}${fin}</div>`; })()}
         <div class="pmeta">Grupo ${fmt(f[idx.grupo])} · ${fmt(f[idx.dias])} días · ${kg} · ${f[idx.reproductivo]}${parto}</div>
         ${lineaProduccion(f, idx)}
         ${saludUbre(f, idx)}
@@ -9314,7 +9362,8 @@ function renderRotativaDetalle(porPuesto, idx, desde, hasta) {
 const COLS_DETALLE = new Set(['diagnostico', 'tratamiento_det', 'droga_dosis', 'fin_tratamiento',
   'retiro_leche', 'no_faenar', 'ultimo_parto', 'ult_tratamiento', 'ult_tratamiento_fecha',
   'separar', 'desliz', 'patadas', 'bloqueos', 'recoloc', 'ordenos_dia',
-  'real_kg', 'esperada_kg', 'a_baja', 'a_cond', 'a_sangre', 'a_retirada']);
+  'real_kg', 'esperada_kg', 'a_baja', 'a_cond', 'a_sangre', 'a_retirada',
+  'aviso_diag', 'aviso_trat', 'aviso_fin_retiro']);
 
 // Total de incidencias del equipo en el día para un puesto.
 function incidenciasTotal(f, idx) {

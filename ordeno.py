@@ -16,6 +16,8 @@ Notas de datos DelPro:
 - "Apartar" = CMSManualSorting con SortArea definido.
 - Tratamientos: DiagnosisTreatmentEvent (Treatment.Name, Diagnosis.Description,
   MilkWithholdEndDate = retiro leche, NotSlaughterEndDate = no faenar).
+- Aviso Tratar/Revisar/Liberar (columnas aviso_*): réplica de D+ Advisor, ver CTE `aviso`.
+  Usa DumpMilkEndDate (fin del retiro de leche que D+ Advisor lee), no MilkWithholdEndDate.
 - Drogas del tratamiento (protocolo): Treatment → TreatmentDrugUsage → DrugUsage
   (Dosage, Drug.Name) + DrugParameters.ApplicationMethod → TextLookupItem (vía).
   Herencia XPO: TreatmentDrugUsage.OID = DrugUsage.OID.
@@ -94,6 +96,34 @@ _CTES_COMUNES = f"""
       JOIN Treatment tr ON tr.OID = e.Treatment
       WHERE a.GCRecord IS NULL AND a.DateAndTime >= DATEADD(month, -24, GETDATE())
         AND tr.Name IS NOT NULL AND tr.Name <> 'N/A'
+    ),
+    -- Aviso estilo D+ Advisor (Tratar / Revisar / Liberar). Misma regla que la
+    -- consulta 'treatments.active' de ese programa:
+    --   Tratar  = tratamiento vigente (no detenido)
+    --   Revisar = terminó el tratamiento pero sigue el retiro de leche (DumpMilkEndDate)
+    --   Liberar = el retiro de leche venció en las últimas 24 h
+    -- Es APARTE de `trat`: esa define 'tratamiento = Sí' (color ámbar, filtros), y
+    -- una vaca "a liberar" ya tiene la leche apta, así que no debe pintarse como tratada.
+    aviso AS (
+      SELECT a.BasicAnimal,
+             COALESCE(NULLIF(LTRIM(RTRIM(tn.ItemValue)), ''),
+                      NULLIF(LTRIM(RTRIM(dg.Description)), '')) AS diagnostico,
+             tr.Name AS tratamiento_nombre,
+             e.DumpMilkEndDate,
+             CASE WHEN ISNULL(e.IsTreatmentStopped, 0) = 0 AND e.TreatmentEndDate >= GETDATE() THEN 'Tratar'
+                  WHEN e.DumpMilkEndDate >= GETDATE() THEN 'Revisar'
+                  ELSE 'Liberar' END AS accion,
+             ROW_NUMBER() OVER (PARTITION BY a.BasicAnimal ORDER BY
+               CASE WHEN ISNULL(e.IsTreatmentStopped, 0) = 0 AND e.TreatmentEndDate >= GETDATE() THEN 0
+                    WHEN e.DumpMilkEndDate >= GETDATE() THEN 1 ELSE 2 END,
+               a.DateAndTime DESC) rn
+      FROM DiagnosisTreatmentEvent e JOIN AbstractAnimalEvent a ON a.OID = e.OID
+      LEFT JOIN Diagnosis dg ON dg.OID = e.Diagnosis
+      LEFT JOIN TextLookupItem tn ON tn.OID = dg.DiagnosisName
+      LEFT JOIN Treatment tr ON tr.OID = e.Treatment
+      WHERE a.GCRecord IS NULL
+        AND ((ISNULL(e.IsTreatmentStopped, 0) = 0 AND e.TreatmentEndDate >= GETDATE())
+             OR e.DumpMilkEndDate >= DATEADD(DAY, -1, GETDATE()))
     ),
     apart AS (SELECT Animal FROM CMSManualSorting WHERE SortArea IS NOT NULL)
 """
@@ -177,7 +207,11 @@ def _select_tail(src, alias):
       CAST(r.LastLactationChangeDate AS date) AS ultimo_parto,
       ut.ult_nombre AS ult_tratamiento,
       ut.ult_fecha AS ult_tratamiento_fecha,
-      CASE WHEN a2.Animal IS NOT NULL THEN 'Sí' ELSE '' END AS separar
+      CASE WHEN a2.Animal IS NOT NULL THEN 'Sí' ELSE '' END AS separar,
+      av.accion AS aviso_accion,
+      av.diagnostico AS aviso_diag,
+      av.tratamiento_nombre AS aviso_trat,
+      CAST(av.DumpMilkEndDate AS date) AS aviso_fin_retiro
     FROM {src} {alias}
     JOIN BasicAnimal b ON b.OID = {alias}.Animal
     LEFT JOIN AnimalReproductionInfo r ON r.Animal = {alias}.Animal AND r.GCRecord IS NULL
@@ -186,6 +220,7 @@ def _select_tail(src, alias):
     LEFT JOIN drogas dr2 ON dr2.trat_oid = t.trat_oid
     LEFT JOIN scc sc ON sc.Animal = {alias}.Animal AND sc.rn = 1
     LEFT JOIN ult_trat ut ON ut.BasicAnimal = {alias}.Animal AND ut.rn = 1
+    LEFT JOIN aviso av ON av.BasicAnimal = {alias}.Animal AND av.rn = 1
     LEFT JOIN apart a2 ON a2.Animal = {alias}.Animal
     WHERE {alias}.rn = 1
 """
