@@ -206,6 +206,118 @@ class TestBajaReal(unittest.TestCase):
         self.assertTrue(any("17:10" in e for e in c["evidencia"]))
 
 
+def _alimentacion(dia=None, ayer=None, tarde=None, **base):
+    """Lo que mide `alimentacion_dia.evaluar`. Por defecto, el 07/11 real de La Ponderosa: la primera comida a las
+    09:52 contra las 06:30 previstas y la 07:04 que es lo normal (168 minutos tarde, a 11 desvíos)."""
+    normal = {"fecha": "2026-11-06", "primera": 7 * 60 + 10, "ultima": 17 * 60 + 49, "viajes": 5, "kg": 69385.0,
+              "ciclo": "06:30", "retraso": 6, "z": 0.4, "kg_z": -1.7}
+    tarde_dia = {"fecha": "2026-11-07", "primera": 9 * 60 + 52, "ultima": 19 * 60 + 2, "viajes": 5, "kg": 85305.0,
+                 "ciclo": "06:30", "retraso": 168, "z": 11.2, "kg_z": 0.9}
+    return {"dia": tarde_dia if dia is None else dia, "ayer": normal if ayer is None else ayer,
+            "base": {"dias": 36, "primera_med": 7 * 60 + 4, "primera_sd": 15.0, "kg_med": 79740.0, "kg_sd": 5600.0,
+                     "tarde": [{"fecha": "2026-10-24", "primera": 9 * 60 + 14},
+                               {"fecha": "2026-10-29", "primera": 8 * 60 + 47}] if tarde is None else tarde, **base}}
+
+
+class TestAlimentacion(unittest.TestCase):
+    """La comida del mixer: la hora a la que llegó, no solo cuánto se dio. Nunca pasa de «posible»: la API da el
+    horario, no cuánta leche costó, y un solo día no alcanza para afirmar causa."""
+
+    def causa(self, **kw):
+        return _causa(vb.veredicto(_datos(alimentacion=_alimentacion(**kw))), "alimentacion")
+
+    def test_la_primera_comida_muy_tardia_es_una_causa_posible(self):
+        c = self.causa()
+        self.assertEqual(c["nivel"], "posible")
+        self.assertIn("tarde", c["titulo"].lower())
+        txt = " ".join(c["evidencia"])
+        self.assertIn("09:52", txt)
+        self.assertIn("07:04", txt)
+        self.assertIn("2 h 48", txt)               # 168 minutos
+
+    def test_nunca_pasa_de_posible_ni_con_una_comida_tardisima(self):
+        tardisima = _alimentacion()["dia"] | {"primera": 13 * 60, "retraso": 356, "z": 23.7}
+        self.assertEqual(self.causa(dia=tardisima)["nivel"], "posible")
+
+    def test_dice_cuales_fueron_los_otros_dias_con_comida_tardia(self):
+        txt = " ".join(self.causa()["evidencia"])
+        self.assertIn("24/10", txt)
+        self.assertIn("29/10", txt)
+        self.assertIn("rinde", txt.lower())        # invita a mirar si ESOS días también bajó la leche
+
+    def test_si_nunca_hubo_otra_comida_asi_de_tardia_lo_dice(self):
+        txt = " ".join(self.causa(tarde=[])["evidencia"])
+        self.assertIn("ninguna otra", txt.lower())
+
+    def test_un_dia_normal_se_descarta(self):
+        normal = _alimentacion()["ayer"] | {"fecha": "2026-11-07"}
+        c = self.causa(dia=normal)
+        self.assertEqual(c["nivel"], "descartada")
+
+    def test_una_demora_corta_no_es_una_senal(self):
+        corta = _alimentacion()["ayer"] | {"retraso": 40, "z": 2.7}      # 40 min: notable en desvíos, no en horas
+        self.assertEqual(self.causa(dia=corta)["nivel"], "descartada")
+
+    def test_una_demora_larga_pero_dentro_de_lo_que_varia_ese_tambo_no_es_una_senal(self):
+        ruidoso = _alimentacion()["ayer"] | {"retraso": 75, "z": 1.2}
+        self.assertEqual(self.causa(dia=ruidoso)["nivel"], "descartada")
+
+    def test_la_comida_tardia_de_ayer_tambien_cuenta(self):
+        ayer_tarde = _alimentacion()["dia"] | {"fecha": "2026-11-06"}
+        normal = _alimentacion()["ayer"] | {"fecha": "2026-11-07"}
+        c = self.causa(dia=normal, ayer=ayer_tarde)
+        self.assertEqual(c["nivel"], "posible")
+        self.assertIn("ayer", c["titulo"].lower())
+
+    def test_menos_comida_de_la_habitual_es_una_causa_posible(self):
+        poca = _alimentacion()["ayer"] | {"fecha": "2026-11-07", "kg": 60000.0, "kg_z": -3.5}   # 25 % menos que la mediana
+        c = self.causa(dia=poca)
+        self.assertEqual(c["nivel"], "posible")
+        self.assertIn("menos comida", c["titulo"].lower())
+
+    def test_un_dia_algo_mas_flojo_pero_dentro_de_lo_que_varia_no_es_una_senal(self):
+        """Los kg del día varían ±15 % en días normales (66 a 89 mil en octubre): 13 % menos no dice nada."""
+        flojo = _alimentacion()["ayer"] | {"fecha": "2026-11-07", "kg": 69385.0, "kg_z": -1.7}
+        self.assertEqual(self.causa(dia=flojo)["nivel"], "descartada")
+
+    def test_una_caida_de_kg_en_desvios_pero_chica_en_porcentaje_tampoco(self):
+        chico = _alimentacion()["ayer"] | {"fecha": "2026-11-07", "kg": 75000.0, "kg_z": -2.5}
+        self.assertEqual(self.causa(dia=chico)["nivel"], "descartada")
+
+    def test_sin_comidas_registradas_ese_dia_no_se_descarta(self):
+        normal = _alimentacion()["ayer"]
+        c = _causa(vb.veredicto(_datos(alimentacion=dict(_alimentacion(ayer=normal), dia=None))), "alimentacion")
+        self.assertEqual(c["nivel"], "sin_dato")
+        self.assertIn("no registró", " ".join(c["evidencia"]).lower())
+
+    def test_sin_el_dato_del_mixer_figura_sin_dato(self):
+        for datos in (_datos(), _datos(alimentacion=None)):
+            c = _causa(vb.veredicto(datos), "alimentacion")
+            self.assertEqual(c["nivel"], "sin_dato")
+
+    def test_en_el_caso_del_07_11_el_veredicto_la_nombra_como_senal_para_mirar(self):
+        d = _datos_informe_2()
+        d["alimentacion"] = _alimentacion()
+        v = vb.veredicto(d)
+        self.assertEqual(v["nivel"], "atencion")
+        self.assertIn("comida", " ".join(v["contexto"]).lower())
+
+    def test_si_la_baja_es_clara_y_solo_la_comida_la_explica_la_apunta(self):
+        d = _datos()
+        d["resumen"].update(kg_d=64000.0, kg_b=69900.0, z_kg=-3.0, z_kv=-0.5, z_vac=-0.2, efecto_vacas=-2900.0,
+                            efecto_rinde=-3000.0)
+        d["ausentes"] = {"n": 0, "kg": 0.0}
+        d["caidas"] = {"n_comunes": 1700, "n_menos": 900, "mediana": -0.2}
+        d["grupos"] = []
+        d["ordenos"] = None
+        d["eventos"]["tratamiento"] = {"dia": 13, "ayer": 30, "base": 31.7}
+        d["tratamientos_ayer"] = []
+        d["alimentacion"] = _alimentacion()
+        v = vb.veredicto(d)
+        self.assertEqual(v["nivel"], "posible")
+        self.assertIn("comida", v["titular"].lower())
+
+
 class TestSinDatos(unittest.TestCase):
     def test_seccion_que_fallo_figura_sin_dato_no_descartada(self):
         d = _datos(ith=None, bocas=None, ordenos=None)

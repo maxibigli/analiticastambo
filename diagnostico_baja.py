@@ -41,6 +41,9 @@ import rebano
 DIAS_BASE = 7            # base por defecto: los 7 días anteriores al analizado
 MAX_DIAS_BASE = 31       # más que esto trae demasiadas filas y tarda sin aportar
 MIN_DIAS_BASE = 3
+# Días de comidas del mixer que se piden para saber cuál es la hora «normal» de la primera comida. Es más que la base
+# de producción a propósito: 7 días son pocos para una mediana de horarios, y con 30 un día tardío suelto no la mueve.
+HISTORIA_MIXER_DIAS = 30
 
 
 class DiagnosticoError(Exception):
@@ -200,6 +203,20 @@ def sql_retiro(d0, d1, tambo):
 
 
 # --------------------------------------------------------------------------- utilidades
+def _consumos_mixer(tambo, desde, hasta):
+    """(consumos del proveedor de alimentación, motivo). Sin proveedor conectado o con un error devuelve
+    `(None, por qué)`: la comida es UNA sección del informe y no puede tumbar el resto."""
+    try:
+        import proveedores
+        prov = proveedores.de(tambo)
+        ok, motivo = prov.disponible()
+        if not ok:
+            return None, motivo
+        return prov.consumos(desde, hasta), ""
+    except Exception as exc:  # noqa: BLE001
+        return None, f"{type(exc).__name__}: {exc}"
+
+
 TOPE_FILAS = 100_000   # db.run_query corta en 5.000 por defecto: acá hay una fila por vaca y día
 
 
@@ -246,6 +263,12 @@ def _dt(x):
         return datetime.datetime.fromisoformat(str(x)[:26])
     except ValueError:
         return None
+
+
+def hora_min(minutos):
+    """Minutos desde la medianoche -> «HH:MM» (pasadas las 24:00 vuelve a empezar)."""
+    m = int(minutos) % (24 * 60)
+    return f"{m // 60:02d}:{m % 60:02d}"
 
 
 def hora(dt):
@@ -702,6 +725,40 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
                   + ("dentro de lo normal." if mx_d - st.mean(mx_b) < 3 else "MÁS CALUROSO que la base."))
     else:
         _p("   No se pudo obtener el clima (sin internet o la API no tiene esos días). Nada que concluir.")
+
+    # ---- 8. alimentación -----------------------------------------------------------------------
+    titulo("8. ALIMENTACIÓN — ¿LLEGÓ A HORA LA COMIDA DEL MIXER?")
+    datos["alimentacion"] = None
+    cons, motivo = _consumos_mixer(tambo, dia - datetime.timedelta(days=HISTORIA_MIXER_DIAS), dia)
+    if cons is None:
+        _p(f"   Sin dato: {motivo or 'no se pudo leer el mixer.'}")
+    else:
+        import alimentacion_dia
+        ev = alimentacion_dia.evaluar(cons, dia)
+        if ev is None:
+            _p(f"   Sin historia suficiente de comidas del mixer (hacen falta al menos {alimentacion_dia.MIN_HISTORIA} "
+               "días registrados antes de ayer) para saber a qué hora es lo normal.")
+        else:
+            datos["alimentacion"] = ev
+            serie = alimentacion_dia.por_dia(cons)
+            b = ev["base"]
+            _p(f"   {'fecha':>12}{'1.ª comida':>12}{'última':>9}{'viajes':>8}{'kg':>9}   "
+               f"(lo normal: primera a las {hora_min(b['primera_med'])} ± {b['primera_sd']:.0f} min)")
+            for f in sorted(serie)[-9:]:
+                v = serie[f]
+                marca = " <- día analizado" if f == D else " <- ayer" if f == A else ""
+                tarde = "  TARDE" if v["primera"] - b["primera_med"] >= 60 and f in (D, A) else ""
+                _p(f"   {f:>12}{hora_min(v['primera']):>12}{hora_min(v['ultima']):>9}{v['viajes']:>8}{f0(v['kg']):>9}{marca}{tarde}")
+            for nombre, x in (("el día analizado", ev["dia"]), ("ayer", ev["ayer"])):
+                if x is None:
+                    _p(f"   -> El mixer no registró comidas {nombre}.")
+                else:
+                    _p(f"   -> Primera comida de {nombre}: {hora_min(x['primera'])}, {x['retraso']:+d} min contra lo normal "
+                       f"({x['z']:+.1f} desvíos).")
+            if b["tarde"]:
+                _p("   Otros días con comida tardía: " + ", ".join(
+                    f"{t['fecha'][8:10]}/{t['fecha'][5:7]} ({hora_min(t['primera'])})" for t in b["tarde"][-6:])
+                   + ". Mirá si en esos días también bajó la leche por vaca.")
 
     # ---- resumen ----------------------------------------------------------------------------
     titulo("RESUMEN (las pistas, no el veredicto)")

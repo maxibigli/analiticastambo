@@ -3456,3 +3456,35 @@ lista a propósito, verificando que solo lee.
 
 Pruebas: `tests/test_mixerone.py` (34, sin red, con respuestas armadas igual que las reales; incluye el cruce con
 `alimentacion.ms_por_lote_dia` y `conciliacion.kg_por_lote` sin mocks de por medio). Suite completa: 386 OK.
+
+## Diagnóstico de baja: la comida del mixer como causa (09/11/2026)
+
+El veredicto ahora mira **a qué hora llegó la primera comida del día a los rodeos de ordeñe** (`alimentacion_dia.py`, sección 8
+del informe, causa `alimentacion` en `veredicto_baja._alimentacion`). Sale de los viajes de MixerOne, así que solo existe si el
+tambo tiene un proveedor conectado; si no, la causa figura «Sin dato» con el motivo (nunca se descarta lo que no se midió).
+
+**Qué se mide y por qué eso (medido sobre 70 días de La Ponderosa, 1/9 al 9/11/2026):** la primera comida es casi siempre entre
+06:55 y 07:15 (mediana 07:04); hay días tardíos sueltos (07/10 08:33, 15/10 08:29, 24/10 09:14, 29/10 08:47, 09/11 09:08) y
+**el 07/11 fue el más tardío de todos: 09:52, 2 h 48 después de lo normal, a 11 desvíos**. Los kg totales no explican nada (el
+07/11 se descargaron 85.305 kg, por encima de la mediana de 79.740) y el hueco máximo entre comidas tampoco distingue (el 07/11
+fue el más CORTO del mes): lo único que separa un día de otro es la hora de la primera.
+
+**Cómo se decide:** se compara contra la MEDIANA de los 30 días anteriores (`HISTORIA_MIXER_DIAS`; más que la base de producción
+a propósito: 7 días son pocos para una mediana de horarios) con un desvío robusto (MAD, piso de 15 min): los días tardíos son los
+valores raros y con promedio y desvío común se taparían a sí mismos. Señal = **al menos 60 min tarde (`ALIM_RETRASO_MIN`) y a 2 o más
+desvíos**, el día analizado o ayer. Los kg del día solo cuentan si bajan 15 % o más **y** a 2 desvíos (los kg varían ±15 % entre
+días normales: un umbral fijo de 10 % daba falsas alarmas). Validado contra 40 días reales: marca los 6 días tardíos y ningún día
+normal.
+
+**NUNCA pasa de «posible», a propósito:** el mixer da la hora y los kg, no cuánta leche costó, y con un día solo no se puede
+afirmar causa. Lo que hace es nombrar los OTROS días con comida tardía para que se mire si en esos días también bajó el rinde por
+vaca: esa es la prueba que falta (en el 07/11 mismo, los otros 5 días tardíos de octubre y noviembre se pueden correr en el
+diagnóstico y comparar). Si el mixer no registró nada ese día lo dice (puede ser que el equipo no haya transmitido) y queda
+«sin dato», no «descartada».
+
+**Qué rodeos cuentan:** los de la etapa «Ordeñe» que informa el proveedor (`etapa`, nuevo en `proveedores/mixerone.py`, junto con
+`ciclo` = la hora prevista de la comida). Si el proveedor no la informa (Haasten) cuentan todas las descargas. Una descarga de
+madrugada (antes de las 04:00) se cuenta en el día anterior: un viaje que arranca a las 23:50 no es el desayuno de ese día.
+
+Pruebas: `tests/test_alimentacion_dia.py` (16), `tests/test_veredicto_baja.py` (+13), `tests/test_diagnostico_baja.py` (+8, con el
+mixer reemplazado en todo el módulo: ninguna prueba sale a la red). Suite completa: 427 OK.

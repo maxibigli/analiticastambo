@@ -17,7 +17,8 @@ Nivel global (`nivel`):
   claro      hubo una baja fuera de lo normal y una causa probable
   posible    hubo una baja fuera de lo normal y solo causas posibles
   sin_causa  hubo una baja fuera de lo normal y NADA de lo que mide DelPro la explica: mirar ración y manejo
-Lo que DelPro no mide (mixer, carro, agua, estrés) queda fuera de este veredicto, y se avisa.
+Lo que DelPro no mide (carro, agua, estrés) queda fuera de este veredicto, y se avisa. La comida del mixer SÍ entra
+cuando hay un proveedor conectado (MixerOne): ver `_alimentacion` y `alimentacion_dia.py`.
 """
 
 # Umbrales. Están acá arriba para poder discutirlos y cambiarlos sin leer la lógica.
@@ -46,6 +47,8 @@ MEZCLA_EXTRA = 15
 LECTURAS_PCT = 0.005
 RETIROS_VECES = 2.0
 RETIROS_EXTRA = 10
+ALIM_RETRASO_MIN = 60    # minutos más tarde que la mediana de la primera comida: ya es una señal
+ALIM_KG_BAJO = 0.15      # se descargó al menos 15 % menos que la mediana de la historia, Y a 2 desvíos o más
 
 _ORDEN = {"probable": 0, "posible": 1, "sin_dato": 2, "descartada": 3}
 
@@ -340,7 +343,80 @@ def _retiros(d):
                   [f"{r['dia']} vacas con retiro contra {_n(r['base'], 1)} de lo normal."])
 
 
-_CAUSAS = (_vacas, _rinde, _grupos, _ordeno, _equipo, _calor, _manejo, _mezcla, _lecturas, _retiros)
+def _hhmm(minutos):
+    m = int(minutos) % (24 * 60)
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def _dur(minutos):
+    h, m = divmod(int(abs(minutos)), 60)
+    return f"{h} h {m:02d} min" if h else f"{m} min"
+
+
+def _dm(iso):
+    return f"{iso[8:10]}/{iso[5:7]}"
+
+
+def _alimentacion(d):
+    """La comida del mixer: a qué hora llegó la primera del día y cuánto se descargó, contra lo normal de ese tambo.
+
+    NUNCA pasa de «posible»: el mixer da el horario y los kg, no cuánta leche costó, y con un día solo no se puede
+    afirmar causa. Lo que sí hace es nombrar los OTROS días con comida tardía, para que se mire si en ellos también
+    bajó el rinde por vaca: esa es la prueba que le falta."""
+    titulo = "Alimentación (mixer)"
+    a = d.get("alimentacion")
+    if not a or not a.get("base"):
+        return _causa("alimentacion", titulo, "sin_dato",
+                      ["No se pudo leer lo que dio el mixer (proveedor sin conexión o sin comidas registradas en la "
+                       "historia de esos días)."])
+    base, dia, ayer = a["base"], a.get("dia"), a.get("ayer")
+    if dia is None and ayer is None:
+        return _causa("alimentacion", titulo, "sin_dato",
+                      ["El mixer no registró comidas ni ese día ni el anterior (puede ser que el equipo no haya "
+                       "transmitido): no se puede evaluar la comida."])
+
+    def linea(x, nombre):
+        previsto = f", previsto {x['ciclo']}" if x.get("ciclo") else ""
+        cuando = "después" if x["retraso"] >= 0 else "antes"
+        return (f"{nombre}: la primera comida fue a las {_hhmm(x['primera'])}{previsto}; lo habitual es "
+                f"{_hhmm(base['primera_med'])} ({_dur(x['retraso'])} {cuando}, a {_n(abs(x['z']), 1)} desvíos). "
+                f"Se descargaron {_n(x['kg'])} kg en {x['viajes']} viajes (lo habitual: {_n(base['kg_med'])} kg).")
+
+    def tarde(x):
+        return bool(x) and x["retraso"] >= ALIM_RETRASO_MIN and x["z"] >= Z_FUERTE
+
+    def poca(x):
+        return bool(x) and x["kg_z"] <= -Z_FUERTE and x["kg"] <= (1 - ALIM_KG_BAJO) * base["kg_med"]
+
+    ev = [linea(dia, "Ese día")] if dia else [
+        "El mixer no registró comidas ese día (puede ser que el equipo no haya transmitido): no se puede evaluar "
+        "la comida de ese mismo día."]
+    if ayer:
+        ev.append(linea(ayer, "Ayer"))
+    if tarde(dia) or tarde(ayer):
+        quien = "La comida llegó tarde" if tarde(dia) else "La comida de ayer llegó tarde"
+        otros = base.get("tarde") or []
+        if otros:
+            ev.append(f"Otros días con comida tardía en los últimos {base['dias']} días: "
+                      + ", ".join(f"{_dm(t['fecha'])} ({_hhmm(t['primera'])})" for t in otros[-6:])
+                      + ". Mirá si en esos días también bajó el rinde por vaca: si no, esta hora sola no alcanza para "
+                        "explicar la baja.")
+        else:
+            ev.append(f"En los últimos {base['dias']} días no hubo ninguna otra comida así de tardía: no hay con qué "
+                      "comparar si la leche bajó otros días por lo mismo.")
+        return _causa("alimentacion", quien, "posible", ev,
+                      revisar="Qué pasó en el mixer esa mañana (turno, falla del equipo, falta de algún insumo, "
+                              "cambio de personal) y si las vacas comieron más tarde o directamente menos.")
+    if poca(dia) or poca(ayer):
+        return _causa("alimentacion", "Se dio menos comida de la habitual" if poca(dia)
+                      else "Ayer se dio menos comida de la habitual", "posible", ev,
+                      revisar="Qué se cargó y descargó ese día en el mixer y si hubo corrales que quedaron sin comida.")
+    if dia is None:
+        return _causa("alimentacion", titulo, "sin_dato", ev)
+    return _causa("alimentacion", titulo, "descartada", ev)
+
+
+_CAUSAS = (_vacas, _rinde, _grupos, _ordeno, _equipo, _calor, _manejo, _alimentacion, _mezcla, _lecturas, _retiros)
 
 
 # --------------------------------------------------------------------------- veredicto

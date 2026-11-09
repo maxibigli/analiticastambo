@@ -314,6 +314,10 @@ def consumos(desde, hasta, tambo=None) -> dict:
                     "operacion": operacion,
                     "usuario": d.get("operator"),
                     "equipo": d.get("device_id"),
+                    # Lo que MixerOne sabe del viaje y Haasten no: la etapa («Ordeñe», «Secas», «Recría») y la
+                    # hora a la que estaba PREVISTA la comida. El diagnóstico de producción los usa.
+                    "etapa": (v.get("growth_stage") or "").strip() or None,
+                    "ciclo": (d.get("feedCycle") or "").strip() or None,
                 })
             elif d.get("action") == "Carga":
                 ms = d.get("food_ms")
@@ -327,6 +331,7 @@ def consumos(desde, hasta, tambo=None) -> dict:
                     "operacion": operacion,
                     "usuario": d.get("operator"),
                     "equipo": d.get("device_id"),
+                    "etapa": (v.get("growth_stage") or "").strip() or None,
                 })
     return salida
 

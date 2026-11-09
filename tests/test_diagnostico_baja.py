@@ -17,6 +17,16 @@ app._warmup = lambda *a, **k: None   # el calentamiento de caché consultaría l
 HOY = datetime.date(2026, 11, 8)
 DIA = datetime.date(2026, 11, 7)
 
+_parche_mixer = mock.patch.object(dg, "_consumos_mixer", lambda tambo, desde, hasta: (None, "sin mixer en la prueba"))
+
+
+def setUpModule():
+    _parche_mixer.start()
+
+
+def tearDownModule():
+    _parche_mixer.stop()
+
 
 def _fechas(desde, hasta):
     d = datetime.date.fromisoformat(desde)
@@ -246,6 +256,106 @@ class TestAnalizar(unittest.TestCase):
         por_dia["2026-11-07"] = _rodeo(100, 36.0)
         r = _analizar(_filas_vacas(por_dia))                               # base idéntica todos los días: desvío 0
         self.assertLess(r["datos"]["resumen"]["z_kg"], -2)
+
+
+def _consumos_mixer(primera_del_dia="09:52", dias=range(1, 7)):
+    """Comidas de MixerOne: del 01 al 06/11 la primera es a las 07:00 y el día analizado, a `primera_del_dia`."""
+    desc = []
+    for n in dias:
+        f = f"2026-11-{n:02d}"
+        desc += [{"fecha": f"{f}T07:0{n % 5}:00", "lote": "RODEO 1", "kg": 9000.0, "operacion": f"{f}-a", "etapa": "Ordeñe",
+                  "ciclo": "06:30"},
+                 {"fecha": f"{f}T16:00:00", "lote": "RODEO 1", "kg": 9000.0, "operacion": f"{f}-b", "etapa": "Ordeñe",
+                  "ciclo": "15:30"}]
+    desc += [{"fecha": f"2026-11-07T{primera_del_dia}:00", "lote": "RODEO 1", "kg": 9000.0, "operacion": "d-a",
+              "etapa": "Ordeñe", "ciclo": "06:30"},
+             {"fecha": "2026-11-07T16:00:00", "lote": "RODEO 1", "kg": 9000.0, "operacion": "d-b", "etapa": "Ordeñe",
+              "ciclo": "15:30"}]
+    return {"descargas": desc, "cargas": []}
+
+
+class TestAlimentacionEnElInforme(unittest.TestCase):
+    """Sección 8: la hora de la comida del mixer, contra lo normal de ese tambo."""
+
+    def _correr(self, consumos, motivo="no disponible"):
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-06")}
+        por_dia["2026-11-07"] = _rodeo(100, 38.0)
+        with mock.patch.object(dg, "_consumos_mixer", lambda tambo, desde, hasta: (consumos, motivo)):
+            return _analizar(_filas_vacas(por_dia))
+
+    def test_la_comida_tardia_aparece_en_el_informe_y_en_el_veredicto(self):
+        r = self._correr(_consumos_mixer())
+        self.assertIn("ALIMENTACIÓN", r["informe"])
+        self.assertIn("09:52", r["informe"])
+        a = r["datos"]["alimentacion"]
+        self.assertEqual(a["dia"]["primera"], 9 * 60 + 52)
+        self.assertGreater(a["dia"]["retraso"], 120)
+        causa = next(c for c in r["veredicto"]["causas"] if c["clave"] == "alimentacion")
+        self.assertEqual(causa["nivel"], "posible")
+
+    def test_un_dia_normal_se_descarta(self):
+        r = self._correr(_consumos_mixer(primera_del_dia="07:03"))
+        causa = next(c for c in r["veredicto"]["causas"] if c["clave"] == "alimentacion")
+        self.assertEqual(causa["nivel"], "descartada")
+
+    def test_pide_al_mixer_30_dias_de_historia_hasta_el_dia_analizado(self):
+        pedidos = []
+
+        def falso(tambo, desde, hasta):
+            pedidos.append((tambo, desde, hasta))
+            return None, "x"
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-07")}
+        with mock.patch.object(dg, "_consumos_mixer", falso):
+            _analizar(_filas_vacas(por_dia))
+        self.assertEqual(pedidos, [("t", DIA - datetime.timedelta(days=dg.HISTORIA_MIXER_DIAS), DIA)])
+        self.assertEqual(dg.HISTORIA_MIXER_DIAS, 30)
+
+    def test_sin_mixer_dice_por_que_y_el_veredicto_lo_marca_sin_dato(self):
+        r = self._correr(None, motivo="MixerOne no está conectado para este tambo")
+        self.assertIn("ALIMENTACIÓN", r["informe"])
+        self.assertIn("MixerOne no está conectado", r["informe"])
+        self.assertIsNone(r["datos"]["alimentacion"])
+        causa = next(c for c in r["veredicto"]["causas"] if c["clave"] == "alimentacion")
+        self.assertEqual(causa["nivel"], "sin_dato")
+
+    def test_con_poca_historia_no_inventa_lo_normal(self):
+        r = self._correr(_consumos_mixer(dias=range(5, 7)))
+        self.assertIsNone(r["datos"]["alimentacion"])
+        self.assertIn("historia", r["informe"].lower())
+
+
+class TestConsumosMixer(unittest.TestCase):
+    """`_consumos_mixer` no rompe el informe: sin proveedor o con un error, devuelve el motivo."""
+
+    def _llamar(self, prov):
+        _parche_mixer.stop()
+        try:
+            with mock.patch("proveedores.de", return_value=prov):
+                return dg._consumos_mixer("ponderosa", DIA - datetime.timedelta(days=30), DIA)
+        finally:
+            _parche_mixer.start()
+
+    def test_con_el_proveedor_conectado_devuelve_los_consumos(self):
+        class P:
+            def disponible(self): return True, ""
+            def consumos(self, d, h): return {"descargas": [1], "cargas": []}
+        c, motivo = self._llamar(P())
+        self.assertEqual(c, {"descargas": [1], "cargas": []})
+
+    def test_si_el_proveedor_no_esta_disponible_devuelve_el_motivo(self):
+        class P:
+            def disponible(self): return False, "Falta la variable MIXERONE_CLIENTE_PONDEROSA"
+        c, motivo = self._llamar(P())
+        self.assertIsNone(c)
+        self.assertIn("MIXERONE_CLIENTE_PONDEROSA", motivo)
+
+    def test_un_error_del_proveedor_no_tumba_el_informe(self):
+        class P:
+            def disponible(self): return True, ""
+            def consumos(self, d, h): raise RuntimeError("se cayó mixerone.net")
+        c, motivo = self._llamar(P())
+        self.assertIsNone(c)
+        self.assertIn("se cayó mixerone.net", motivo)
 
 
 class TestCruceDeTratadas(unittest.TestCase):

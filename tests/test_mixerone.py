@@ -29,9 +29,9 @@ def carga(hora, comida, kg, teo, ms, receta="ALTA"):
             "heads": None, "corral": None}
 
 
-def descarga(hora, corral, kg, cabezas=None, receta="ALTA"):
+def descarga(hora, corral, kg, cabezas=None, receta="ALTA", ciclo="07:30"):
     return {"id": 2, "action": "Descarga", "operator": "Daniel Monteros", "kg_real": kg, "kg_theoretical": kg,
-            "hour": hora, "corral": corral, "corral_id": 11416, "recipe": receta,
+            "hour": hora, "corral": corral, "corral_id": 11416, "recipe": receta, "feedCycle": ciclo,
             "device_id": "d45e78491da9680d", "heads": cabezas, "food": None}
 
 
@@ -300,6 +300,12 @@ class TestConsumos(Base):
         self.assertEqual((maiz["kg"], maiz["ms_pct"], maiz["receta"], maiz["operacion"]),
                          (1000, 40, "ALTA", "viaje-1"))
         self.assertIsNone(maiz["precio"])
+
+    def test_cada_movimiento_trae_la_etapa_y_la_hora_prevista_del_viaje(self):
+        c = self.consumos()
+        d = c["descargas"][0]
+        self.assertEqual((d["etapa"], d["ciclo"]), ("Ordeñe", "07:30"))
+        self.assertTrue(all(x["etapa"] == "Ordeñe" for x in c["cargas"]))
 
     def test_la_fecha_junta_el_dia_del_viaje_con_la_hora_de_la_descarga(self):
         d = self.consumos()["descargas"]
