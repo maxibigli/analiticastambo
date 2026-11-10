@@ -100,6 +100,21 @@ INDICADORES = [
                   "una relación física: no depende de los precios."),
     },
     {
+        "clave": "retraso_comida",
+        "nombre": "Retraso de la primera comida",
+        "unidad": "min", "decimales": 0,
+        # Los umbrales salen de lo MEDIDO en La Ponderosa (1/10 al 9/11/2026), no de un manual: la primera comida cae
+        # entre 06:55 y 07:15 (desvío de media hora) y los días tardíos (08:29 a 09:52, de 85 a 168 min sobre lo
+        # habitual) son los que acompañaron bajas de producción. 60 min es el mismo corte que usa el diagnóstico de
+        # baja (`veredicto_baja.ALIM_RETRASO_MIN`). Se ajustan por tambo desde ⚙ Configuración.
+        "direccion": "bajo_mejor", "verde": 30, "rojo": 60,
+        "fuente": "mixer", "pagina": "consultas", "ancla": "diag-card",
+        "destino": "Consultas e IA › Diagnóstico de baja de producción",
+        "grupo": "Alimentación",
+        "ayuda": ("Cuántos minutos se atrasó la primera comida del último día contra lo habitual de este tambo "
+                  "(la mediana de los últimos 30 días). Sale del mixer; si se adelantó vale 0. Solo con MixerOne."),
+    },
+    {
         "clave": "rutina_score",
         "nombre": "Calificación de la última rutina",
         "unidad": "/100", "decimales": 0,

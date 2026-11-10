@@ -3582,3 +3582,37 @@ la hoja) y se arregló con dos cosas, ambas necesarias:
 imprime en tema claro y ahí sale bien. Si algún día hace falta, la salida es forzar `data-theme=light` en `beforeprint` y redibujar con
 `Chart.defaults.animation = false` (un gráfico animándose se imprime a medio dibujar). Pruebas: `TestImpresionDelDiagnostico` (4; cuidan las
 reglas del código, no el resultado en papel: eso se mira imprimiendo).
+
+## Alimentación con MixerOne: qué lo alimenta y qué no (10/11/2026)
+
+**Las cuatro pestañas de Alimentación (Conciliación, Eficiencia de conversión, Litros libres, Conversión histórica) y las tres tarjetas
+del Tablero que salen de ellas (costo por litro, litros libres, conversión) NO se reescribieron para MixerOne: ya pedían el mixer por la
+interfaz común de `proveedores/`.** MixerOne cumple ese contrato, así que alcanza con elegirlo. Medido contra La Ponderosa (623, solo lectura,
+4 semanas hasta el 09/11): 684 descargas y 3.244 cargas, 0 kg sin receta, %MS por receta coherente (ALTA 49,9, BAJA 51,5, preparto vacas 40,9,
+recría 90,1) y 23,0 a 25,8 kg de MS por cabeza y día en los rodeos de ordeñe (Haasten daba 22 a 25).
+
+**Por qué hoy aparecen vacías: `configuracion_tambos.json` de La Ponderosa dice `sistema_alimentacion: "haasten"`** y Haasten no recibe datos
+desde el 20/08/2026. Ese archivo es propio de cada instalación (está en `.gitignore`): se cambia en SERVER-DELPRO desde ⚙ Configuración, no con
+un `git pull`. **El mapeo lote ↔ grupo (`conciliacion_grupos.json`, también por instalación) está guardado con los nombres de Haasten** («Rodeo 1»,
+«Enfermeria»): hay que rehacerlo con los de MixerOne. `conciliacion.sugerir` empareja por nombre normalizado y por número, así que «RODEO 1» a
+«RODEO 5» salen sugeridos; «R9 ENFERMERIA», «SECAS», «VACA/VAQ PREPARTO» y «RECRIA LP» se eligen a mano (MixerOne no declara `indice_ordene`).
+Referencia de ids de grupo de DelPro usados con Haasten: Rodeo 1→2, 2→3, 3→4, 4→5, 5→21, Enfermería→25, Secas→13, Preparto Vacas→19,
+Preparto Vaquillonas→34, Recría→31 (confirmarlos en la pantalla antes de guardar). RODEO 4 de MixerOne declara 227 cabezas contra ~120 en
+«Rodeo 4 - Baja» de DelPro: la conciliación lo va a marcar «revisar», y su MS por cabeza sale baja (9,3) calculada con las cabezas del corral.
+
+**Tarjeta nueva del Tablero: «Retraso de la primera comida»** (`tablero.INDICADORES["retraso_comida"]`, grupo Alimentación). Valor = minutos
+que se atrasó la primera comida del ÚLTIMO día con comida contra la mediana de los 30 días anteriores (`alimentacion_dia.ultima_comida`); si se
+adelantó vale 0. Verde ≤ 30 min, rojo ≥ 60 (`veredicto_baja.ALIM_RETRASO_MIN`, el mismo corte del diagnóstico de baja; salen de lo medido, se ajustan
+por tambo). Lleva al diagnóstico de baja (`ancla: diag-card`). **Solo existe con un proveedor que informe la etapa (MixerOne)**: con Haasten, sin
+etapa, la tarjeta dice por qué no hay número en vez de contar las descargas de recría como si fueran de ordeñe. No toca la base: sale del mixer por
+HTTP, se cachea 10 min (`TABLERO_COMIDA_TTL_S`) y se refresca en un hilo (`_refrescar_comida_async`); con la lectura vieja se sigue mostrando el
+último valor mientras se actualiza. Con datos reales (lunes 09/11/2026): primera comida 09:08 contra 07:04 habitual = 124 min, rojo.
+
+**LO QUE SE MIDIÓ Y NO SE USÓ, para no volver a intentarlo (70 días de La Ponderosa):**
+  * **La hora prevista del ciclo (`feedCycle`) NO sirve como vara de puntualidad.** Es una etiqueta gruesa (06:30 o 07:30, 09:30, 10:00...): el retraso
+    de la primera descarga contra ella da entre −36 y +39 minutos TODOS los días, normales o tardíos, y el de todas las descargas del día tiene
+    mediana de 128 minutos. Por eso la tarjeta compara contra la propia historia del tambo y no contra el ciclo. (`ciclo` se sigue guardando.)
+  * **El desvío de la ración (kg reales contra teóricos) es plano:** por día, de −4,2 % a +2,0 % con mediana +0,4 %; por descarga hay valores sueltos
+    de −100 % y +130 % (un corral sin comida o doble), que son ruido para un semáforo. No se armó tarjeta. Si un rodeo puntual preocupa, está
+    `kg_theoretical` / `kg_percentage_difference` en cada descarga de la API (el proveedor todavía no los pasa).
+  * **El puntaje del operario (`score`, `score_result`) es BIEN casi siempre** (9,0 a 10): casi no varía, tampoco da tarjeta.

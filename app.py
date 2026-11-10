@@ -21,6 +21,7 @@ import os
 import agente
 import ai
 import alimentacion
+import alimentacion_dia
 import auth
 import balance_leche
 import bitacora
@@ -1004,6 +1005,29 @@ def _calentar_alimentacion(tambo: str, herd):
             _refreshing.discard(key)
 
 
+TABLERO_COMIDA_TTL_S = 600
+
+
+def _refrescar_comida_async(tambo: str):
+    """Lee el mixer en un hilo y deja `{comida}` o `{falta}` en el caché del tablero. Una sola lectura a la vez."""
+    key = f"{tambo}:tablero_comida"
+    with _cache_lock:
+        if key in _refreshing:
+            return
+        _refreshing.add(key)
+
+    def run():
+        try:
+            _cache_set(key, alimentacion_dia.desde_el_proveedor(proveedores.de(tambo), datetime.date.today()))
+        except Exception as exc:  # noqa: BLE001
+            _cache_set(key, {"falta": f"No se pudo leer el mixer: {exc}"})
+        finally:
+            with _cache_lock:
+                _refreshing.discard(key)
+
+    threading.Thread(target=run, daemon=True).start()
+
+
 def _dias_completos(sesiones: list, ordenos_dia: int | None) -> tuple[list, int]:
     """Saca de `sesiones` los días INCOMPLETOS. Devuelve (sesiones, n_excluidos).
 
@@ -1102,6 +1126,24 @@ def _valores_tablero(tambo: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         for c in ("costo_litro", "litros_libres_pct", "conversion"):
             poner(c, falta=f"Error al leer Alimentación: {exc}")
+
+    # --- Alimentación: hora de la primera comida (MixerOne) -----------------
+    # No usa la base: sale del mixer por HTTP. Se sirve lo último que se leyó y, si está viejo (o no hay), se
+    # refresca en segundo plano: la hora de la comida cambia cada día y un caché eterno mostraría la de la semana pasada.
+    try:
+        k = f"{tambo}:tablero_comida"
+        data, fresco = _cache_get(k, allow_stale=True, ttl=TABLERO_COMIDA_TTL_S)
+        if not fresco:
+            _refrescar_comida_async(tambo)
+        if data is None:
+            poner("retraso_comida", calculando=True, falta="Leyendo la comida del mixer…")
+        elif data.get("comida"):
+            valor, detalle = alimentacion_dia.para_el_tablero(data["comida"])
+            poner("retraso_comida", valor, detalle=detalle)
+        else:
+            poner("retraso_comida", falta=data.get("falta") or "Sin dato de comida.")
+    except Exception as exc:  # noqa: BLE001
+        poner("retraso_comida", falta=f"Error al leer la comida: {exc}")
 
     # --- Rendimiento de sala: horas de ordeño e identificación --------------
     # Mismo rango por defecto que /api/rutina/rendimiento (la última semana).

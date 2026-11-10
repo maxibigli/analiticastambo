@@ -82,6 +82,74 @@ def _fila(fecha, d, med, sd, kg_med, kg_sd):
             "kg_z": round((d["kg"] - kg_med) / kg_sd, 1)}
 
 
+def ultima_comida(consumos):
+    """La tarjeta del dashboard: la primera comida del ÚLTIMO día con comida contra lo habitual, o None si no se puede.
+
+    {fecha, primera, habitual, retraso, base_dias}, con `primera`/`habitual` en minutos desde la medianoche y `retraso`
+    en minutos (negativo si se comió antes de lo habitual). Se mide contra la propia historia del tambo (mediana de los
+    demás días, ver `evaluar`) y NO contra la hora prevista del ciclo (`ciclo`): medido en La Ponderosa, esa etiqueta es
+    gruesa (06:30 o 07:30) y daba retrasos de -36 a +39 minutos todos los días, normales o no.
+
+    Sin la etapa («Ordeñe») no se sabe qué descarga es de un rodeo de ordeñe, y contarlas todas daría la hora de la
+    recría o de las secas: ahí no se mide, en vez de mostrar un número que parece de ordeñe y no lo es.
+    """
+    descargas = (consumos or {}).get("descargas") or []
+    if not any(d.get("etapa") for d in descargas):
+        return None
+    dias = por_dia(consumos)
+    if not dias:
+        return None
+    ultimo = max(dias)
+    r = evaluar(consumos, datetime.date.fromisoformat(ultimo))
+    fila = r and r["dia"]
+    if not fila:
+        return None
+    return {"fecha": ultimo, "primera": fila["primera"], "habitual": r["base"]["primera_med"],
+            "retraso": fila["retraso"], "base_dias": r["base"]["dias"]}
+
+
+HISTORIA_DIAS = 30      # días de comida que se piden para saber qué es «lo habitual» del tambo
+
+
+def desde_el_proveedor(prov, hoy) -> dict:
+    """`{"comida": ultima_comida}` o `{"falta": "por qué no se puede"}`. Nunca levanta: el dashboard no puede caerse
+    porque el mixer no responda, y una tarjeta sin número tiene que decir qué falta en vez de quedar en blanco."""
+    ok, motivo = prov.disponible()
+    if not ok:
+        return {"falta": motivo}
+    try:
+        c = prov.consumos(hoy - datetime.timedelta(days=HISTORIA_DIAS), hoy)
+    except Exception as exc:  # noqa: BLE001
+        return {"falta": f"No se pudo leer el mixer ({type(exc).__name__}: {exc})"}
+    descargas = (c or {}).get("descargas") or []
+    if not descargas:
+        return {"falta": f"{prov.NOMBRE} no tiene descargas en los últimos {HISTORIA_DIAS} días."}
+    if not any(d.get("etapa") for d in descargas):
+        return {"falta": f"{prov.NOMBRE} no informa a qué etapa va cada comida: la hora de la primera comida de "
+                         f"ordeñe solo se mide con MixerOne."}
+    r = ultima_comida(c)
+    if r is None:
+        return {"falta": f"Todavía no hay historia suficiente (hacen falta al menos {MIN_HISTORIA} días con comida "
+                         f"de ordeñe) para saber qué es lo habitual."}
+    return {"comida": r}
+
+
+def _hhmm(minutos) -> str:
+    m = int(minutos) % (24 * 60)
+    return f"{m // 60:02d}:{m % 60:02d}"
+
+
+def para_el_tablero(r) -> tuple:
+    """(valor, detalle) de la tarjeta a partir de `ultima_comida`.
+
+    El valor es «cuánto se atrasó»: comer antes de lo habitual vale 0 (no es una falla, y un número negativo en un
+    semáforo se leería como un dato raro). El detalle nombra el día con su fecha: la tarjeta se mira días después.
+    """
+    fecha = veredicto_baja.fecha_larga(r["fecha"])
+    detalle = f"Primera comida a las {_hhmm(r['primera'])} el {fecha}; lo habitual es {_hhmm(r['habitual'])}"
+    return max(0, r["retraso"]), detalle
+
+
 def evaluar(consumos, dia, base_dias=None):
     """Datos para el veredicto: la comida del día analizado y la de ayer contra la historia, o None si no hay con qué.
 

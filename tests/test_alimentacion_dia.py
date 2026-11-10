@@ -140,5 +140,113 @@ class TestEvaluar(unittest.TestCase):
         self.assertNotIn("2026-11-06", fechas)
 
 
+class TestUltimaComida(unittest.TestCase):
+    """La tarjeta del dashboard: la primera comida del último día con comida, contra lo habitual del tambo."""
+
+    def con_dia(self, hhmm, dia=DIA):
+        c = consumos(*historia())
+        if hhmm:
+            c["descargas"].append(descarga(dia, hhmm))
+        return c
+
+    def test_el_ultimo_dia_con_comida_contra_la_mediana_de_la_historia(self):
+        r = ad.ultima_comida(self.con_dia("09:52"))
+        self.assertEqual(r["fecha"], "2026-11-07")
+        self.assertEqual((r["primera"], r["habitual"], r["retraso"]), (9 * 60 + 52, 7 * 60 + 4, 168))
+        self.assertEqual(r["base_dias"], 10)
+
+    def test_un_dia_normal_da_un_retraso_chico(self):
+        r = ad.ultima_comida(self.con_dia("07:10"))
+        self.assertEqual(r["retraso"], 6)
+
+    def test_comer_antes_de_lo_habitual_da_negativo_y_no_se_oculta(self):
+        self.assertEqual(ad.ultima_comida(self.con_dia("06:30"))["retraso"], -34)
+
+    def test_sin_comida_hoy_vale_el_ultimo_dia_que_hubo(self):
+        r = ad.ultima_comida(self.con_dia(None))
+        self.assertEqual(r["fecha"], "2026-11-05")      # el último de la historia
+
+    def test_si_el_proveedor_no_informa_la_etapa_no_se_mide(self):
+        """Sin etapa no se sabe qué descarga es de un rodeo de ordeñe: contar todas daría la hora de la recría."""
+        c = {"descargas": [dict(d, etapa=None) for d in self.con_dia("09:52")["descargas"]], "cargas": []}
+        self.assertIsNone(ad.ultima_comida(c))
+
+    def test_con_poca_historia_no_se_mide(self):
+        c = consumos(*historia(["07:00"] * 3))
+        c["descargas"].append(descarga(DIA, "09:52"))
+        self.assertIsNone(ad.ultima_comida(c))
+
+    def test_sin_nada_no_se_mide(self):
+        self.assertIsNone(ad.ultima_comida({"descargas": [], "cargas": []}))
+        self.assertIsNone(ad.ultima_comida(None))
+
+
+class TestParaElTablero(unittest.TestCase):
+    def test_valor_y_detalle_con_la_fecha_concreta(self):
+        r = {"fecha": "2026-11-07", "primera": 9 * 60 + 52, "habitual": 7 * 60 + 4, "retraso": 168, "base_dias": 30}
+        valor, detalle = ad.para_el_tablero(r)
+        self.assertEqual(valor, 168)
+        self.assertIn("sábado 07/11", detalle)
+        self.assertIn("09:52", detalle)
+        self.assertIn("07:04", detalle)
+        for palabra in ("ayer", "hoy", "ese día", "anoche"):
+            self.assertNotIn(palabra, detalle.lower())
+
+    def test_comer_antes_de_lo_habitual_no_es_un_problema_y_vale_cero(self):
+        """El semáforo es de «cuánto se atrasó»: adelantarse no puede pintar rojo ni verse como un número negativo."""
+        r = {"fecha": "2026-11-06", "primera": 6 * 60 + 30, "habitual": 7 * 60 + 4, "retraso": -34, "base_dias": 30}
+        valor, detalle = ad.para_el_tablero(r)
+        self.assertEqual(valor, 0)
+        self.assertIn("06:30", detalle)
+
+
+class ProveedorFalso:
+    NOMBRE = "MixerOne"
+
+    def __init__(self, consumos=None, disponible=(True, ""), error=None):
+        self._consumos, self._disponible, self._error = consumos, disponible, error
+        self.pedidos = []
+
+    def disponible(self):
+        return self._disponible
+
+    def consumos(self, desde, hasta):
+        self.pedidos.append((desde, hasta))
+        if self._error:
+            raise self._error
+        return self._consumos
+
+
+class TestDesdeElProveedor(unittest.TestCase):
+    HOY = datetime.date(2026, 11, 9)
+
+    def test_trae_los_ultimos_treinta_dias_y_da_la_comida(self):
+        c = consumos(*historia(), descarga(DIA, "09:52"))
+        prov = ProveedorFalso(c)
+        r = ad.desde_el_proveedor(prov, self.HOY)
+        self.assertEqual(r["comida"]["retraso"], 168)
+        self.assertNotIn("falta", r)
+        self.assertEqual(prov.pedidos, [(self.HOY - datetime.timedelta(days=30), self.HOY)])
+
+    def test_sin_proveedor_conectado_dice_el_motivo(self):
+        r = ad.desde_el_proveedor(ProveedorFalso(disponible=(False, "Falta la variable X")), self.HOY)
+        self.assertEqual(r, {"falta": "Falta la variable X"})
+
+    def test_si_el_mixer_falla_el_motivo_viaja_y_no_se_propaga_el_error(self):
+        r = ad.desde_el_proveedor(ProveedorFalso(error=RuntimeError("HTTP 500")), self.HOY)
+        self.assertIn("HTTP 500", r["falta"])
+
+    def test_un_proveedor_que_no_informa_la_etapa_lo_nombra(self):
+        prov = ProveedorFalso({"descargas": [dict(d, etapa=None) for d in historia()], "cargas": []})
+        prov.NOMBRE = "Haasten"
+        r = ad.desde_el_proveedor(prov, self.HOY)
+        self.assertIn("Haasten", r["falta"])
+        self.assertIn("MixerOne", r["falta"])
+
+    def test_con_poca_historia_lo_dice(self):
+        prov = ProveedorFalso(consumos(*historia(["07:00"] * 3)))
+        self.assertIn("historia", ad.desde_el_proveedor(prov, self.HOY)["falta"])
+
+
 if __name__ == "__main__":
     unittest.main()
