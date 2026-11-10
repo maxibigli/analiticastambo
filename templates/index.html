@@ -13979,7 +13979,7 @@ function pintarDiagnosticoPrecios(dg) {
 }
 
 function pintarConversion() {
-  const d = cvDatos, r = d.resumen || {}, cob = d.cobertura || {}, ec = d.economia || {};
+  const d = cvDatos, r = d.resumen || {}, cob = d.cobertura || {};
   const conv = r.conversion_tambo;
   // El número solo no dice nada: se lo ubica contra las referencias de la
   // industria para vacas de alta producción.
@@ -14000,37 +14000,10 @@ function pintarConversion() {
   ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
     `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
 
-  // Economía. Va en su propia fila de tarjetas y solo si hay precios: si no,
-  // una sola tarjeta explica qué falta en vez de mostrar cuatro guiones.
-  // El aviso de precios estimados va ACÁ, arriba de las tarjetas, no solo en el
-  // diagnóstico del final: son pesos inventados con la misma cara que los
-  // reales, y las tarjetas es lo que la gente mira. Mismo criterio que el aviso
-  // de datos genéticos simulados en la tarjeta de atención de vacas.
-  const avisoPr = ((d.diagnostico || {}).precios || {}).aviso_estimado;
-  document.getElementById('cv-aviso-precios').innerHTML = avisoPr
-    ? `<span class="chip rojo">Estimado</span> <b style="color:var(--critical)">${escHtml(avisoPr)}</b>`
-    : '';
-
-  const cvEc = document.getElementById('cv-kpis-economia');
-  if (ec.hay_costo) {
-    cvEc.innerHTML = [
-      ['Litros libres', litros(ec.litros_libres),
-        `de ${litros(ec.kg_leche_vaca_dia)} · ${ec.pct_litros_libres}% queda después del alimento`],
-      ['Para pagar el alimento', litros(ec.litros_para_pagar),
-        `a ${pesos(ec.precio_litro)} el litro`],
-      ['Costo de la ración', pesos(ec.costo_vaca_dia) + '/vaca/día',
-        `${pesos(ec.costo_por_litro)} por litro producido`],
-      ['Sobre cuántas vacas', fmt(ec.vacas),
-        `${ec.grupos_con_costo} de ${ec.grupos_confiables} grupo(s) valorizados`],
-    ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
-      `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
-  } else {
-    cvEc.innerHTML = `<div class="tile" style="grid-column:1/-1;border-top-color:var(--muted)">
-      <div class="label">Litros libres</div>
-      <div class="value" style="font-size:15px">Sin datos</div>
-      <div class="label">${escHtml(ec.falta || 'Falta la planilla de precios.')}
-        Se carga en ⚙ Configuración.</div></div>`;
-  }
+  // La economía (litros libres, costo, aviso de precios estimados) vive en su propia
+  // pestaña, «Litros libres» (pintarLitrosLibres). Acá NO se toca: esos elementos ya no
+  // existen en esta pestaña y escribirles cortaba la función entera antes de dibujar el
+  // gráfico y las tablas de abajo ("Cannot set properties of null (setting 'innerHTML')").
 
   const g = d.grupos || [];
   // Al gráfico van SOLO los confiables. Un grupo con descargas incompletas
