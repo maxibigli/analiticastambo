@@ -1787,7 +1787,7 @@
         dentro de su propia categoría, esté dando igual o más que antes. Este gráfico separa esas dos
         cosas: cuántas vacas hay de cada lactancia, y cuánto da cada categoría por separado.
         <br><b>L1</b> es primera lactancia (vacas de primera cría), <b>L2</b> segunda, <b>L3+</b>
-        tercera o más. Sale de <code>AnimalDaily</code>, no depende de las descargas de Haasten:
+        tercera o más. Sale de <code>AnimalDaily</code>, no depende de las descargas del mixer:
         una semana puede estar completa acá aunque en los gráficos de arriba esté marcada parcial.
       </p>
       <div class="chart-box" style="height:260px;margin-top:8px"><canvas id="chart-ch-lact-vacas"></canvas></div>
@@ -1823,7 +1823,7 @@
       <p class="explica" style="margin-top:12px">
         <b>Qué mide.</b> Cuántos <b>kg de sólidos</b> (grasa + proteína) produce el rodeo por cada
         <b>kg de materia seca</b> que come. Es una relación física: no necesita precios, y por eso
-        se puede calcular hoy aunque los ingredientes de Haasten estén sin precio cargado.
+        se puede calcular hoy aunque los ingredientes del mixer no tengan un precio confiable.
         <br><b>Es una medida de GRUPO, no de vaca.</b> El TMR se entrega al corral y no hay
         comederos individuales: a todas las vacas de un grupo se les imputa <b>la misma</b> materia
         seca. Entonces, dentro de un mismo corral, ordenar por conversión es ordenar por kg de
@@ -1872,10 +1872,10 @@
         para que el litro deje plata.
         <br><b>Solo descuenta el alimento.</b> No hay mano de obra, sanidad, amortizaciones ni
         estructura. Es el «litros libres de alimentación» de siempre, no la rentabilidad del tambo.
-        <br><b>De dónde salen los precios.</b> Los 70 ingredientes del mixer vienen con
-        <b>precio 0</b> —nadie los cargó del lado de Haasten— y la usina publica litros y sólidos
-        pero no importes. O sea que ninguno de los dos precios que hace falta está en un sistema
-        conectado: los carga el tambo en una planilla, y la ruta se define en ⚙ Configuración. El
+        <br><b>De dónde salen los precios.</b> Los ingredientes del mixer no traen un precio con
+        unidad confiable y la usina publica litros y sólidos pero no importes. O sea que ninguno
+        de los dos precios que hace falta está en un sistema conectado: los carga el tambo en una
+        planilla (los ingredientes en USD por tonelada), y la ruta se define en ⚙ Configuración. El
         precio de la leche va en esa misma planilla.
         <br><b>El costo por vaca es un reparto, no una medición.</b> El TMR se entrega al corral: a
         todas las vacas del grupo se les imputa el mismo costo. Sirve para comparar <b>grupos entre
@@ -13774,7 +13774,7 @@ function concPintar(sucio) {
     return `<tr>
       <td><b>${f.lote}</b>${f.en_proveedor ? '' : ' <span class="chip ambar">ya no está en el proveedor</span>'}
         ${f.en_uso === false ? ' <span class="chip rojo">sin descargas</span>' : ''}
-        ${f.indice_ordene != null ? `<div class="aviso">Haasten lo asocia al grupo N° ${f.indice_ordene}</div>` : ''}</td>
+        ${f.indice_ordene != null ? `<div class="aviso">${escHtml((d.proveedor || {}).nombre || 'El mixer')} lo asocia al grupo N° ${f.indice_ordene}</div>` : ''}</td>
       <td class="aviso">${f.categoria || '—'}</td>
       <td class="num">${f.cabezas_proveedor == null ? '—' : fmt(f.cabezas_proveedor)}</td>
       <td class="num">${f.kg_ms_cabeza == null ? '—' : fmt(f.kg_ms_cabeza)}</td>
@@ -13807,9 +13807,10 @@ function concPintar(sucio) {
       <td class="num">${fmt(g.cabezas)}</td>
       <td>${g.es_ordene ? '<span class="chip violeta">ordeñe</span>' : ''}</td>
       <td>${lote ? lote : '<span class="aviso">sin asignar</span>'}</td>
-      <td><label class="aviso" style="display:flex;align-items:center;gap:5px">
+      <td><label class="aviso" style="display:flex;align-items:center;gap:5px"
+          title="${lote ? 'Un grupo no puede tener lote y a la vez no alimentarse desde acá: al tildarlo se le saca el lote ' + escHtml(lote) + '.' : 'Este grupo no come del mixer (por ejemplo, pastoreo): no se le reclama lote.'}">
         <input type="checkbox" class="conc-silenciar" data-oid="${g.oid}"
-          ${silenciado ? 'checked' : ''}${lote ? ' disabled' : ''}> no se alimenta desde acá
+          ${silenciado ? 'checked' : ''}> no se alimenta desde acá${lote ? ' <span class="aviso">(le saca el lote)</span>' : ''}
       </label></td></tr>`;
   };
   const grupos = (d.grupos || []).slice().sort((a, b) => a.numero - b.numero);
@@ -13856,6 +13857,11 @@ document.getElementById('conc-tabla-grupos').addEventListener('change', (ev) => 
   const lista = new Set(concMapeo.grupos_sin_alimentacion || []);
   c.checked ? lista.add(oid) : lista.delete(oid);
   concMapeo.grupos_sin_alimentacion = [...lista];
+  // Las dos cosas se excluyen (el servidor rechaza un grupo con lote que además «no se alimenta
+  // desde acá»): al tildarlo se lo saca del lote que tuviera, igual que asignarle un lote lo saca
+  // de esta lista (`concAsignar`). Antes la casilla quedaba deshabilitada y no había forma de
+  // tildarla sin desasignar el lote a mano primero.
+  if (c.checked) concMapeo.lotes.forEach(l => { l.grupos = (l.grupos || []).filter(o => o !== oid); });
   concPintar(true);
 });
 
@@ -13947,8 +13953,8 @@ function pintarDiagnosticoPrecios(dg) {
   const cob = Object.entries(dg.cobertura_precios || {});
   const flojas = cob.filter(([, p]) => p < 95);
   const faltan = dg.ingredientes_sin_precio || [];
-  let h = `<br><br><b>De dónde sale el costo.</b> Los ingredientes del mixer vienen con precio 0
-    en Haasten, así que los precios salen de la planilla del tambo
+  let h = `<br><br><b>De dónde sale el costo.</b> Los ingredientes del mixer no traen un precio
+    con unidad confiable, así que los precios salen de la planilla del tambo
     (<b>${escHtml(pr.archivo || '—')}</b>): ${pr.insumos || 0} insumos`;
   if (pr.precio_litro) {
     h += `, leche a <b>${pesos(pr.precio_litro)}</b> el litro`;
@@ -14033,7 +14039,7 @@ function pintarConversion() {
     ? `<div class="aviso" style="padding:6px 0"><span class="chip rojo">Sin analizar</span>
         <b>${fmt(fuera.reduce((s, x) => s + x.cabezas, 0))} vacas en ordeñe</b> quedan afuera del
         indicador. No es un problema del cálculo: son datos de alimentación que faltan en
-        Haasten.</div>` +
+        el mixer.</div>` +
       fuera.map(x => `<div class="aviso" style="padding:4px 0 4px 18px">
         <b>${x.grupo}</b> (${fmt(x.cabezas)} cabezas): ${x.motivo}</div>`).join('')
     : '';
@@ -14075,7 +14081,7 @@ function pintarConversion() {
   const dg = d.diagnostico || {};
   const recetas = Object.entries(dg.recetas || {});
   document.getElementById('cv-diagnostico').innerHTML =
-    `<b>De dónde sale la materia seca.</b> Haasten no la entrega calculada: se saca del %MS de ` +
+    `<b>De dónde sale la materia seca.</b> El mixer no la entrega calculada: se saca del %MS de ` +
     `cada receta (kg de ingrediente × su %MS) aplicado a los kg descargados a cada lote. ` +
     `%MS por receta del período: ` +
     recetas.map(([n, p]) => `${n} <b>${p}%</b>`).join(' · ') + '.' +
@@ -14323,7 +14329,7 @@ function pintarConversionHistorica() {
       junto con los <b>kg de materia seca cargados</b> (r = ${fmtDec(dg.corr_ms)}) y casi nada con
       los <b>litros producidos</b> (r = ${fmtDec(dg.corr_leche)}). Cuando el gráfico sube, en
       general no es que las vacas rindieran más: es que se registró menos comida.</div>
-      <div style="margin-top:6px">Se arregla del lado de Haasten, no acá: hay que registrar todas
+      <div style="margin-top:6px">Se arregla del lado del mixer, no acá: hay que registrar todas
       las descargas de todos los lotes, todos los días. Mientras tanto, mirá el nivel general y la
       comparación entre lotes, no el sube-y-baja semana a semana.</div>
     </div>`;

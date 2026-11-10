@@ -374,7 +374,7 @@ def sugerir(grupos: list, lotes: list, ya_asignados: set) -> list:
             # justo con el que Haasten dice relacionarse.
             if indice is not None and g["numero"] == indice:
                 candidatos.append((g, "indice_proveedor",
-                                   f"Haasten declara este lote como el grupo N° {indice} "
+                                   f"El mixer declara este lote como el grupo N° {indice} "
                                    f"de DelPro ({g['nombre']})"))
                 continue
             norm_g = _normalizar(g["nombre"])
