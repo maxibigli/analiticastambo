@@ -486,6 +486,69 @@ class TestRodeosPorNombre(unittest.TestCase):
             dg.sql_rodeos(["21", "1); DROP TABLE x --"])
 
 
+class TestFechasConcretasEnElInforme(unittest.TestCase):
+    """El informe se lee días después: lleva las fechas (sábado 07/11, viernes 06/11), nunca «ayer» ni «ese día»."""
+
+    def _informe(self):
+        por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-06")}
+        por_dia["2026-11-07"] = _rodeo(100, 36.0)
+        ev = [["2026-11-06", "tratamiento", "Desvasado Correctivo", 40]] + \
+             [[f, "tratamiento", "Desvasado Correctivo", 2] for f in _fechas("2026-11-01", "2026-11-05")]
+
+        def extra(s):
+            if "EventCalving" in s:
+                return ev
+            if "DiagnosisTreatmentEvent" in s and "AS animal" in s:
+                return [[1000 + i, "Desvasado Correctivo"] for i in range(1, 41)]
+            return None
+        return _analizar(_filas_vacas(por_dia), extra=extra)["informe"]
+
+    def test_no_dice_ayer(self):
+        import re
+        t = self._informe()
+        self.assertIsNone(re.search(r"(?i)\bayer\b", t), [l for l in t.splitlines() if re.search(r"(?i)\bayer\b", l)])
+        self.assertIsNone(re.search(r"(?i)\bese día\b", t), [l for l in t.splitlines() if re.search(r"(?i)\bese día\b", l)])
+
+    def test_la_comparacion_con_el_dia_anterior_lleva_su_fecha(self):
+        t = self._informe()
+        self.assertIn("viernes 06/11", t)
+        self.assertIn("sábado 07/11", t)
+
+    def test_la_tabla_de_eventos_encabeza_sus_columnas_con_las_fechas(self):
+        linea = next(l for l in self._informe().splitlines() if "prom base/día" in l)
+        self.assertIn("07/11", linea)
+        self.assertIn("06/11", linea)
+
+    def test_el_cruce_de_tratadas_nombra_el_dia(self):
+        self.assertIn("vacas tratadas el viernes 06/11", self._informe())
+
+
+class TestImpresionDelDiagnostico(unittest.TestCase):
+    """La hoja es más angosta que la pantalla: los gráficos se dibujan al ancho de la pantalla y se desbordaban de su tarjeta (se
+    cortaba «sáb 07-11» y «3.º ordeño»). Se probó imprimiendo la página real con el navegador; esto cuida que las reglas sigan."""
+
+    @classmethod
+    def setUpClass(cls):
+        import pathlib
+        cls.html = (pathlib.Path(__file__).resolve().parent.parent / "templates" / "index.html").read_text(encoding="utf-8")
+        i = cls.html.index("@media print {")
+        cls.css_impresion = cls.html[i:cls.html.index("\n  }\n", i)]
+
+    def test_los_graficos_se_achican_al_ancho_de_su_tarjeta(self):
+        self.assertIn(".diag-chart canvas { width: 100% !important; height: auto !important", self.css_impresion)
+        self.assertIn(".diag-chart { height: auto !important; }", self.css_impresion)
+
+    def test_al_imprimir_el_diagnostico_se_oculta_el_resto_de_consultas(self):
+        self.assertIn("body.imprime-diag #page-consultas > :not(#diag-card) { display: none !important; }", self.css_impresion)
+
+    def test_los_graficos_se_redibujan_al_tamano_de_la_hoja_y_vuelven_a_la_pantalla(self):
+        self.assertRegex(self.html, r"beforeprint[\s\S]{0,1400}c\.resize\(w, h\)")
+        self.assertRegex(self.html, r"afterprint[\s\S]{0,400}c\.resize\(\)")
+
+    def test_solo_se_oculta_lo_demas_si_lo_que_se_ve_es_el_diagnostico(self):
+        self.assertIn("document.getElementById('resultado').hidden", self.html)      # la respuesta de una consulta se sigue imprimiendo
+
+
 class TestCruceDeTratadas(unittest.TestCase):
     def _escenario(self, baja_las_tratadas):
         por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-06")}

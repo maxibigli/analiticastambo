@@ -420,6 +420,12 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
                  for i in range((base_hasta - base_desde).days + 1)]
     base_dias = [d for d in base_dias if d != dia.isoformat()]
     D, A = dia.isoformat(), ayer.isoformat()
+    # Un informe se lee días después: nada de «ayer» ni «ese día», siempre la fecha con el día de la semana.
+    import veredicto_baja as _vb
+    FD, FA = _vb.fecha_larga(D), _vb.fecha_larga(A)
+
+    def dm(f):
+        return f"{f[8:10]}/{f[5:7]}"
     d0 = min(base_desde, dia, ayer).isoformat()
     d1 = max(base_hasta, dia).isoformat()
 
@@ -495,7 +501,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     _p(f"   {'kg totales':22}{f0(kg_d):>12}{f0(kg_b):>16}{signo(kg_d - kg_b):>9} ({pct(kg_d, kg_b):+.1f} %)")
     _p(f"   {'vacas con leche':22}{f0(vac_d):>12}{f0(vac_b):>16}{signo(vac_d - vac_b):>9} ({pct(vac_d, vac_b):+.1f} %)")
     _p(f"   {'kg por vaca':22}{f1(kv_d):>12}{f1(kv_b):>16}{signo(kv_d - kv_b, 1):>9} ({pct(kv_d, kv_b):+.1f} %)")
-    _p(f"   {'ayer':22}{f0(por_dia[A]['kg']) if A in por_dia else '--':>12}"
+    _p(f"   {FA:22}{f0(por_dia[A]['kg']) if A in por_dia else '--':>12}"
           f"{'(' + str(por_dia[A]['vacas']) + ' vacas)' if A in por_dia else '':>16}")
     efecto_vacas = (vac_d - vac_b) * kv_b
     efecto_rinde = vac_d * (kv_d - kv_b)
@@ -653,7 +659,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         for sn in sorted(set(s_d) | set(s_b)):
             d, b = s_d.get(sn), s_b.get(sn, [])
             if not d:
-                _p(f"   {sn:>7}  (no hay registros ese día; en la base sí: {len(b)} días)")
+                _p(f"   {sn:>7}  (no hay registros el {FD}; en la base sí: {len(b)} días)")
                 continue
             bv = st.mean(x["vacas"] for x in b) if b else 0
             bk = st.mean(x["kg"] for x in b) if b else 0
@@ -725,7 +731,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         por_tipo[tipo][f] += int(n)
         if tipo == "tratamiento":
             trat[detalle or "(sin nombre)"][f] += int(n)
-    _p(f"   {'evento':>18}{'día':>6}{'ayer':>6}{'prom base/día':>15}")
+    _p(f"   {'evento':>18}{dm(D):>6}{dm(A):>6}{'prom base/día':>15}")
     datos["eventos"] = {}
     for tipo in ("parto", "cambio de grupo", "baja", "tratamiento"):
         # Si la consulta falló NO se muestran ceros: un cero inventado parece "no pasó nada".
@@ -741,7 +747,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     sube = sorted(((sum(v.get(d, 0) for d in (D, A)), k, v.get(D, 0), sum(v.get(d, 0) for d in base_dias) / n_base)
                    for k, v in trat.items()), reverse=True)[:6]
     if sube:
-        _p("   Diagnósticos tratados ayer y el día (día / prom base):")
+        _p(f"   Diagnósticos tratados el {FA} y el {FD} (cantidad el {dm(D)} / promedio de la base):")
         for _, k, n, b in sube:
             _p(f"     {k:<50}{n:>4} / {b:.1f}")
     datos["tratamientos_ayer"] = sorted(
@@ -772,13 +778,13 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
                 "n": len(d_t), "delta_tratadas": m_t, "delta_resto": m_r, "efecto_kg": (m_t - m_r) * len(d_t),
                 "por_diagnostico": [{"nombre": k, "n": len(x), "delta": st.mean(x)}
                                     for k, x in sorted(por_diag.items(), key=lambda kv: -len(kv[1]))[:5]]}
-            _p(f"\n   Cruce por vaca: las {len(d_t)} vacas tratadas ayer rindieron {signo(m_t, 1)} kg respecto de su promedio;"
+            _p(f"\n   Cruce por vaca: las {len(d_t)} vacas tratadas el {FA} rindieron {signo(m_t, 1)} kg respecto de su promedio;"
                f" las otras {len(d_r)}, {signo(m_r, 1)} kg.  Efecto estimado de lo tratado: {signo((m_t - m_r) * len(d_t))} kg.")
             for k, x in sorted(por_diag.items(), key=lambda kv: -len(kv[1]))[:5]:
                 _p(f"     {k:<50}{len(x):>4} vacas, {signo(st.mean(x), 1)} kg cada una")
             _p("   (Ojo: una vaca con mastitis ya venía rindiendo menos; mirá cada diagnóstico por separado.)")
     elif tr is not None:
-        _p("   Cruce por vaca: ayer no se registraron tratamientos.")
+        _p(f"   Cruce por vaca: el {FA} no se registraron tratamientos.")
     ret = corre(sql_retiro(d0, d1, tambo), tambo)
     datos["retiros"] = None
     if ret is None:
@@ -786,7 +792,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     else:
         rv = {str(f)[:10]: int(v) for f, v in ret}
         datos["retiros"] = {"dia": rv.get(D, 0), "base": sum(rv.get(d, 0) for d in base_dias) / n_base}
-        _p(f"   Vacas con retiro/descarte de leche registrado ese día: {rv.get(D, 0)} "
+        _p(f"   Vacas con retiro/descarte de leche registrado el {FD}: {rv.get(D, 0)} "
            f"(base {sum(rv.get(d, 0) for d in base_dias) / n_base:.1f}/día). "
            "Esa leche puede no ir al tanque aunque sí figure en DelPro.")
 
@@ -819,7 +825,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         ev = alimentacion_dia.evaluar(cons, dia)
         if ev is None:
             _p(f"   Sin historia suficiente de comidas del mixer (hacen falta al menos {alimentacion_dia.MIN_HISTORIA} "
-               "días registrados antes de ayer) para saber a qué hora es lo normal.")
+               f"días registrados antes del {FA}) para saber a qué hora es lo normal.")
         else:
             datos["alimentacion"] = ev
             serie = alimentacion_dia.por_dia(cons)
@@ -828,10 +834,10 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
                f"(lo normal: primera a las {hora_min(b['primera_med'])} ± {b['primera_sd']:.0f} min)")
             for f in sorted(serie)[-9:]:
                 v = serie[f]
-                marca = " <- día analizado" if f == D else " <- ayer" if f == A else ""
+                marca = " <- día analizado" if f == D else " <- día anterior" if f == A else ""
                 tarde = "  TARDE" if v["primera"] - b["primera_med"] >= 60 and f in (D, A) else ""
                 _p(f"   {f:>12}{hora_min(v['primera']):>12}{hora_min(v['ultima']):>9}{v['viajes']:>8}{f0(v['kg']):>9}{marca}{tarde}")
-            for nombre, x in (("el día analizado", ev["dia"]), ("ayer", ev["ayer"])):
+            for nombre, x in ((f"el {FD}", ev["dia"]), (f"el {FA}", ev["ayer"])):
                 if x is None:
                     _p(f"   -> El mixer no registró comidas {nombre}.")
                 else:
@@ -855,7 +861,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         _p(f"   {len(perdidas)} vacas habituales no se ordeñaron ({f0(kg_perdido)} kg).")
     _p("   Mirá las secciones 3 y 4: si la caída está en un rodeo o en un ordeño, ahí está la pista de manejo;")
     _p("   si está repartida en todo el rodeo y el ITH subió, apunta a calor; si el rodeo entero rinde menos\n"
-          "   sin cambios de vacas ni de clima, mirá ración/alimentación (carro, mixer) de ayer.")
+          f"   sin cambios de vacas ni de clima, mirá ración/alimentación (carro, mixer) del {FA}.")
     return _texto()
 
 

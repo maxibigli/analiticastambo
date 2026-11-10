@@ -3550,3 +3550,35 @@ palabra «grupo»: «Rodeo 5 rindió mucho menos por vaca», «La caída se conc
 avisa: no se inventa un nombre ni se muestra el OID como si fuera el número de rodeo. Dos OID con el mismo nombre se sumarían como
 uno (no pasa dentro de un mismo tambo: la consulta ya está filtrada por rebaño). El resto de las pantallas de LactIA sigue diciendo
 «Grupo» donde corresponde a DelPro (ficha de la vaca, tablas); esto solo cambió en el diagnóstico de baja.
+
+### Las fechas son concretas: nunca «ayer» ni «ese día» (09/11/2026)
+
+Un informe se lee días después de analizado, y «ayer» se entendía como el día anterior a HOY (08/11) cuando el análisis hablaba del
+anterior al analizado (06/11). Ahora el veredicto y el informe de texto llevan **la fecha con el día de la semana**: «El sábado 07/11»,
+«El viernes 06/11», «La comida del sábado 07/11 llegó tarde», «Las vacas tratadas el viernes 06/11 rindieron menos», «Contra el viernes
+06/11 la baja parece mayor». Ayudantes: `veredicto_baja.fecha_larga` («sábado 07/11») y `fecha_corta` («sáb 24/10», para las listas de
+días tardíos: así se ve si caen en fin de semana); `veredicto_baja._dias(datos)` devuelve (día analizado, día anterior) ya escritos.
+Las columnas de la tabla de eventos se encabezan con `07/11` y `06/11` en vez de «día» y «ayer». Las claves internas de los datos
+(`ayer`, `tratadas_ayer`, `ayer_kg`) no cambian: son nombres de código, no texto. **Regla para todo texto nuevo del diagnóstico:** si
+nombra un día, que sea por su fecha; hay pruebas que fallan si aparecen «ayer», «ese día», «esa mañana» o «el día anterior»
+(`TestFechasConcretas`, `TestFechasConcretasEnElInforme`). Suite completa: 479 OK.
+
+### Impresión del diagnóstico: gráficos al ancho de la hoja y solo el informe (09/11/2026)
+
+El PDF que sacó el tambo (Ctrl+P desde una pantalla ancha) tenía **los gráficos desbordados y cortados por la derecha** y además imprimía
+toda la pantalla («Preguntale a LactIA», «Consultas y reportes»). Causa: Chart.js dibuja cada gráfico al ancho de la PANTALLA y fija ese
+tamaño en el lienzo; la hoja es más angosta, así que el lienzo se sale de su tarjeta. Se reprodujo imprimiendo la página real con Edge
+(`msedge --headless=new --window-size=1500,1000 --print-to-pdf`; con la ventana chica NO se ve, porque los lienzos nacen más angostos que
+la hoja) y se arregló con dos cosas, ambas necesarias:
+- **CSS de impresión**: `.diag-chart { height: auto }` y `.diag-chart canvas { width: 100%; height: auto }` achican el lienzo al ancho de su
+  tarjeta conservando la proporción (red de seguridad).
+- **`beforeprint`**: cada gráfico visible se redibuja a un tamaño de hoja (`c.resize(w, h)`: 680x300 los de ancho completo, 320x210 los chicos)
+  para que los textos no salgan diminutos, y `afterprint` los devuelve al tamaño de pantalla (`c.resize()`).
+- **Solo el informe**: si lo que se ve en Consultas es el diagnóstico (y no la respuesta de una consulta, `#resultado`), `beforeprint` pone
+  `body.imprime-diag` y el CSS oculta las demás tarjetas de la página. El encabezado con el tambo se deja a propósito: sin él el informe no
+  dice de qué tambo es.
+
+**Lo que NO se tocó:** el tema. En tema oscuro el papel sale oscuro (o con letras claras sobre blanco si no se imprimen los fondos); el tambo
+imprime en tema claro y ahí sale bien. Si algún día hace falta, la salida es forzar `data-theme=light` en `beforeprint` y redibujar con
+`Chart.defaults.animation = false` (un gráfico animándose se imprime a medio dibujar). Pruebas: `TestImpresionDelDiagnostico` (4; cuidan las
+reglas del código, no el resultado en papel: eso se mira imprimiendo).

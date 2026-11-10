@@ -24,6 +24,8 @@ Lo que DelPro no mide (carro, agua, estrés) queda fuera de este veredicto, y se
 cuando hay un proveedor conectado (MixerOne): ver `_alimentacion` y `alimentacion_dia.py`.
 """
 
+import datetime
+
 # Umbrales. Están acá arriba para poder discutirlos y cambiarlos sin leer la lógica.
 Z_NORMAL = 1.0           # menos de 1 desvío de la base = variación normal del tambo
 Z_FUERTE = 2.0           # 2 desvíos o más = claramente fuera de lo normal
@@ -57,6 +59,29 @@ ALIM_KG_BAJO = 0.15      # se descargó al menos 15 % menos que la mediana de la
 
 _ORDEN = {"probable": 0, "posible": 1, "sin_dato": 2, "descartada": 3}
 
+_DIAS_SEMANA = ("lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo")
+
+
+def fecha_larga(iso):
+    """«sábado 07/11». Un informe se lee días después de analizado: «ayer» o «ese día» no dicen cuál, la fecha sí."""
+    d = datetime.date.fromisoformat(str(iso)[:10])
+    return f"{_DIAS_SEMANA[d.weekday()]} {d:%d/%m}"
+
+
+def fecha_corta(iso):
+    """«sáb 24/10»."""
+    d = datetime.date.fromisoformat(str(iso)[:10])
+    return f"{_DIAS_SEMANA[d.weekday()][:3]} {d:%d/%m}"
+
+
+def _dias(d):
+    """(día analizado, día anterior) escritos con su fecha: «sábado 07/11», «viernes 06/11»."""
+    dia = d.get("dia")
+    if not dia:
+        return "día analizado", "día anterior al analizado"
+    anterior = datetime.date.fromisoformat(str(dia)[:10]) - datetime.timedelta(days=1)
+    return fecha_larga(dia), fecha_larga(anterior.isoformat())
+
 
 # --------------------------------------------------------------------------- formato
 def _n(x, dec=0):
@@ -89,11 +114,12 @@ def _vacas(d):
     ev = []
     z_vac = r.get("z_vac")
     n_aus, kg_aus = a.get("n", 0), a.get("kg", 0.0)
+    hoy, _ = _dias(d)
     ev.append(f"{_n(r['vac_d'])} vacas ordeñadas contra {_n(r['vac_b'])} de la base ({_s(r['vac_d'] - r['vac_b'])}).")
     if n_aus:
         grupo = (a.get("por_grupo") or [{}])[0]
         extra = f", sobre todo de {grupo['grupo']}" if grupo.get("grupo") is not None else ""
-        ev.append(f"{n_aus} vacas habituales no se ordeñaron ese día ({_n(kg_aus)} kg que dejaron de entrar{extra}).")
+        ev.append(f"{n_aus} vacas habituales no se ordeñaron el {hoy} ({_n(kg_aus)} kg que dejaron de entrar{extra}).")
     if a.get("n_invalidas"):
         ev.append(f"Otras {a['n_invalidas']} vacas habituales se ordeñaron pero con lectura no válida (unos "
                   f"{_n(a.get('kg_invalidas', 0))} kg que sí fueron al tanque): no son vacas que faltaron.")
@@ -143,7 +169,7 @@ def _rinde(d):
                   "cada una rinda menos.")
     return _causa("rinde", titulo, nivel, ev,
                   impacto=min(0.0, r["efecto_rinde"]),
-                  revisar="Si es parejo en todo el rodeo y no hay calor ni cambios de ordeño: ración de ayer (carro, "
+                  revisar=f"Si es parejo en todo el rodeo y no hay calor ni cambios de ordeño: ración del {_dias(d)[1]} (carro, "
                           "mixer, silo), agua, o algo que alteró el descanso/estrés de las vacas.")
 
 
@@ -186,7 +212,7 @@ def _grupos(d):
 def _ordeno(d):
     ords = d.get("ordenos")
     if ords is None:
-        return _causa("ordeno", "Por ordeño", "sin_dato", ["No se pudieron leer los ordeños de ese día."])
+        return _causa("ordeno", "Por ordeño", "sin_dato", [f"No se pudieron leer los ordeños del {_dias(d)[0]}."])
     r = d["resumen"]
     kg_b = r["kg_b"] or 1.0
     filas = []
@@ -224,7 +250,7 @@ def _ordeno(d):
     titulo = f"El {o['sesion']}.º ordeño concentra la diferencia" if nivel != "descartada" else "Por ordeño"
     return _causa("ordeno", titulo, nivel, ev, impacto=delta,
                   revisar="Intervalo con el ordeño anterior, hora de entrada de las vacas, si algo demoró la sala "
-                          "(lavado, falla, cambio de turno) y la rutina de esa tarde.")
+                          "(lavado, falla, cambio de turno) y la rutina de ese ordeño.")
 
 
 def _equipo(d):
@@ -256,26 +282,27 @@ def _calor(d):
     else:
         nivel = "descartada"
     return _causa("calor", "Estrés calórico" if nivel != "descartada" else "Calor", nivel, ev,
-                  revisar="Sombra, ventilación y aspersión de esa tarde; el calor pega más a las vacas de alta producción.")
+                  revisar=f"Sombra, ventilación y aspersión de la tarde del {_dias(d)[0]}; el calor pega más a las vacas de alta producción.")
 
 
 def _manejo(d):
     e = (d.get("eventos") or {}).get("tratamiento")
+    f_ayer = _dias(d)[1]
     if not e:
-        return _causa("manejo", "Manejo del día anterior", "sin_dato", ["No se pudieron leer los tratamientos."])
+        return _causa("manejo", f"Manejo del {f_ayer}", "sin_dato", ["No se pudieron leer los tratamientos."])
     ayer, base = e["ayer"], e["base"]
     inusual = ayer >= MANEJO_VECES * max(base, 1) and ayer - base >= MANEJO_EXTRA
     if not inusual:
-        return _causa("manejo", "Manejo del día anterior", "descartada",
-                      [f"Tratamientos de ayer: {ayer} contra {_n(base, 1)} de lo normal."])
+        return _causa("manejo", f"Manejo del {f_ayer}", "descartada",
+                      [f"Tratamientos del {f_ayer}: {ayer} contra {_n(base, 1)} de lo normal."])
     top = (d.get("tratamientos_ayer") or [{}])[0]
     detalle = f" (sobre todo {top['nombre']}: {top['ayer']})" if top.get("nombre") else ""
-    ev = [f"Ayer hubo {ayer} tratamientos contra {_n(base, 1)} de lo normal{detalle}: sacar vacas del corral, "
+    ev = [f"El {f_ayer} hubo {ayer} tratamientos contra {_n(base, 1)} de lo normal{detalle}: sacar vacas del corral, "
           "inmovilizarlas o hacerlas esperar suele bajar la leche del día siguiente."]
     t = d.get("tratadas_ayer")
     if not t or t.get("n", 0) < MANEJO_MIN_VACAS:
         ev.append("Falta confirmar si esas vacas rindieron menos que el resto: no se pudo cruzar por vaca.")
-        return _causa("manejo", "Mucho trabajo sanitario el día anterior", "posible", ev,
+        return _causa("manejo", f"Mucho trabajo sanitario el {f_ayer}", "posible", ev,
                       revisar="Cuánto tiempo estuvieron fuera del corral y si perdieron un ordeño o comida.")
     r = d["resumen"]
     dif = t["delta_tratadas"] - t["delta_resto"]
@@ -291,12 +318,12 @@ def _manejo(d):
     if dif <= MANEJO_EFECTO_KG and efecto > 0:
         ev.append(f"Efecto estimado: {_s(t['efecto_kg'])} kg en el día, {peso * 100:.0f} % de lo que bajó el rinde por vaca.")
     if dif <= MANEJO_EFECTO_KG and (peso >= MANEJO_PESO_PROBABLE or efecto >= MANEJO_PCT_PROBABLE * (r["kg_b"] or 1)):
-        return _causa("manejo", "Las vacas tratadas ayer rindieron menos", "probable", ev,
+        return _causa("manejo", f"Las vacas tratadas el {f_ayer} rindieron menos", "probable", ev,
                       impacto=t["efecto_kg"],
                       revisar="Cuánto tiempo estuvieron fuera del corral y si perdieron un ordeño o comida; "
                               "compensar con descanso y comida esos días.")
     if dif <= MANEJO_EFECTO_KG and peso >= MANEJO_PESO_POSIBLE:
-        return _causa("manejo", "Las vacas tratadas ayer explican una parte de la baja", "posible", ev,
+        return _causa("manejo", f"Las vacas tratadas el {f_ayer} explican una parte de la baja", "posible", ev,
                       impacto=t["efecto_kg"],
                       revisar="Cuánto tiempo estuvieron fuera del corral y si perdieron un ordeño o comida.")
     if dif <= MANEJO_EFECTO_KG:
@@ -304,7 +331,7 @@ def _manejo(d):
                   "la causa principal está en otro lado.")
     else:
         ev.append("Las tratadas rindieron como el resto: la actividad fue inusual pero no se nota en la leche.")
-    return _causa("manejo", "Manejo del día anterior", "descartada", ev)
+    return _causa("manejo", f"Manejo del {f_ayer}", "descartada", ev)
 
 
 def _mezcla(d):
@@ -358,10 +385,6 @@ def _dur(minutos):
     return f"{h} h {m:02d} min" if h else f"{m} min"
 
 
-def _dm(iso):
-    return f"{iso[8:10]}/{iso[5:7]}"
-
-
 def _alimentacion(d):
     """La comida del mixer: a qué hora llegó la primera del día y cuánto se descargó, contra lo normal de ese tambo.
 
@@ -375,9 +398,12 @@ def _alimentacion(d):
                       ["No se pudo leer lo que dio el mixer (proveedor sin conexión o sin comidas registradas en la "
                        "historia de esos días)."])
     base, dia, ayer = a["base"], a.get("dia"), a.get("ayer")
+    hoy_t, ayer_t = _dias(d)
+    f_dia = fecha_larga(dia["fecha"]) if dia and dia.get("fecha") else hoy_t       # las fechas de los días medidos
+    f_ayer = fecha_larga(ayer["fecha"]) if ayer and ayer.get("fecha") else ayer_t
     if dia is None and ayer is None:
         return _causa("alimentacion", titulo, "sin_dato",
-                      ["El mixer no registró comidas ni ese día ni el anterior (puede ser que el equipo no haya "
+                      [f"El mixer no registró comidas ni el {hoy_t} ni el {ayer_t} (puede ser que el equipo no haya "
                        "transmitido): no se puede evaluar la comida."])
 
     def linea(x, nombre):
@@ -393,29 +419,30 @@ def _alimentacion(d):
     def poca(x):
         return bool(x) and x["kg_z"] <= -Z_FUERTE and x["kg"] <= (1 - ALIM_KG_BAJO) * base["kg_med"]
 
-    ev = [linea(dia, "Ese día")] if dia else [
-        "El mixer no registró comidas ese día (puede ser que el equipo no haya transmitido): no se puede evaluar "
-        "la comida de ese mismo día."]
+    ev = [linea(dia, f"El {f_dia}")] if dia else [
+        f"El mixer no registró comidas el {hoy_t} (puede ser que el equipo no haya transmitido): no se puede evaluar "
+        f"la comida del {hoy_t}."]
     if ayer:
-        ev.append(linea(ayer, "Ayer"))
+        ev.append(linea(ayer, f"El {f_ayer}"))
     if tarde(dia) or tarde(ayer):
-        quien = "La comida llegó tarde" if tarde(dia) else "La comida de ayer llegó tarde"
+        d_tarde = f_dia if tarde(dia) else f_ayer
+        quien = f"La comida del {d_tarde} llegó tarde"
         otros = base.get("tarde") or []
         if otros:
             ev.append(f"Otros días con comida tardía en los últimos {base['dias']} días: "
-                      + ", ".join(f"{_dm(t['fecha'])} ({_hhmm(t['primera'])})" for t in otros[-6:])
+                      + ", ".join(f"{fecha_corta(t['fecha'])} ({_hhmm(t['primera'])})" for t in otros[-6:])
                       + ". Mirá si en esos días también bajó el rinde por vaca: si no, esta hora sola no alcanza para "
                         "explicar la baja.")
         else:
             ev.append(f"En los últimos {base['dias']} días no hubo ninguna otra comida así de tardía: no hay con qué "
                       "comparar si la leche bajó otros días por lo mismo.")
         return _causa("alimentacion", quien, "posible", ev,
-                      revisar="Qué pasó en el mixer esa mañana (turno, falla del equipo, falta de algún insumo, "
+                      revisar=f"Qué pasó en el mixer la mañana del {d_tarde} (turno, falla del equipo, falta de algún insumo, "
                               "cambio de personal) y si las vacas comieron más tarde o directamente menos.")
     if poca(dia) or poca(ayer):
-        return _causa("alimentacion", "Se dio menos comida de la habitual" if poca(dia)
-                      else "Ayer se dio menos comida de la habitual", "posible", ev,
-                      revisar="Qué se cargó y descargó ese día en el mixer y si hubo corrales que quedaron sin comida.")
+        d_poca = f_dia if poca(dia) else f_ayer
+        return _causa("alimentacion", f"El {d_poca} se dio menos comida de la habitual", "posible", ev,
+                      revisar=f"Qué se cargó y descargó el {d_poca} en el mixer y si hubo corrales que quedaron sin comida.")
     if dia is None:
         return _causa("alimentacion", titulo, "sin_dato", ev)
     return _causa("alimentacion", titulo, "descartada", ev)
@@ -534,8 +561,10 @@ def veredicto(datos: dict) -> dict:
             titular = (f"Bajó {_s(_pct(r['kg_d'], r['kg_b']), 1)} % ({_n(abs(z), 1)} desvíos) y nada de lo que mide "
                        "el sistema lo explica.")
             medido = next((c for c in causas if c["clave"] == "alimentacion"), {}).get("nivel") == "descartada"
-            contexto.append("Revisá lo que no se mide: la ración de ayer " + ("(carro, silo)" if medido else "(mixer, carro, silo)")
-                            + ", el agua y el manejo del día anterior.")
+            f_ayer_ctx = _dias(datos)[1]
+            contexto.append(f"Revisá lo que no se mide: la ración del {f_ayer_ctx} "
+                            + ("(carro, silo)" if medido else "(mixer, carro, silo)")
+                            + f", el agua y el manejo del {f_ayer_ctx}.")
         # Dónde se nota la baja: es lo primero que se ve, pero NO la causa.
         senales = [s["titulo"] for s in sintomas if s["nivel"] in ("probable", "posible")]
         if senales:
@@ -545,10 +574,10 @@ def veredicto(datos: dict) -> dict:
     if ayer:
         p = _pct(r["kg_d"], ayer)
         if r.get("ayer_es_maximo") and p < 0:
-            contexto.append(f"Contra ayer la baja parece mayor ({_s(p, 1)} %) porque ayer ({_n(ayer)} kg) fue el día más "
+            contexto.append(f"Contra el {_dias(datos)[1]} la baja parece mayor ({_s(p, 1)} %) porque el {_dias(datos)[1]} ({_n(ayer)} kg) fue el día más "
                             "alto del período de comparación.")
         elif p < 0:
-            contexto.append(f"Contra ayer: {_s(p, 1)} % ({_n(ayer)} kg).")
+            contexto.append(f"Contra el {_dias(datos)[1]}: {_s(p, 1)} % ({_n(ayer)} kg).")
     if nivel in ("normal", "atencion"):
         notables = [c for c in causas if c["nivel"] in ("probable", "posible")]
         if notables:

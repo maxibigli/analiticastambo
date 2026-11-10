@@ -1007,6 +1007,13 @@
     .diag-informe-det > pre { white-space: pre-wrap; overflow: visible; font-size: 10.5px; }
     .diag-grafico, .diag-causa { break-inside: avoid; }
     body { background: #fff; }
+    /* Los gráficos se dibujan al ancho de la PANTALLA y la hoja es más angosta: sin esto se desbordaban de su tarjeta y se
+       cortaban por la derecha. Se achican al ancho de su tarjeta conservando la proporción. */
+    .diag-chart { height: auto !important; }
+    .diag-chart canvas { width: 100% !important; height: auto !important; max-width: 100%; }
+    .diag-grafico { min-width: 0; overflow: hidden; }
+    /* Al imprimir el diagnóstico, solo el informe: no «Preguntale a LactIA» ni el resto de las tarjetas de Consultas. */
+    body.imprime-diag #page-consultas > :not(#diag-card) { display: none !important; }
   }
 </style>
 </head>
@@ -9114,10 +9121,23 @@ function diagPintar(j) {
 // Al imprimir se abren las causas descartadas y el informe de texto, para que el PDF no salga con partes plegadas.
 (function () {
   const cerrados = [];
+  // Tamaño en la hoja de cada gráfico, en px: los de ancho completo ocupan la hoja; los chicos, la mitad.
+  const enHoja = c => c.canvas.closest('.diag-ancho') ? [680, 300] : [320, 210];
+  const visibles = () => Object.values(diagCharts).filter(c => c.canvas && c.canvas.offsetParent);
   window.addEventListener('beforeprint', () => {
     document.querySelectorAll('.diag-descartadas, .diag-informe-det').forEach(el => { if (!el.open) { el.open = true; cerrados.push(el); } });
+    // Si lo que se ve en Consultas es el diagnóstico (y no la respuesta de una consulta), se imprime solo el informe.
+    const pagina = document.getElementById('page-consultas');
+    const soloInforme = pagina && !pagina.hidden && !document.getElementById('diag-resultado').hidden
+      && document.getElementById('resultado').hidden;
+    document.body.classList.toggle('imprime-diag', !!soloInforme);
+    visibles().forEach(c => { const [w, h] = enHoja(c); c.resize(w, h); });     // se redibujan al tamaño de la hoja
   });
-  window.addEventListener('afterprint', () => { while (cerrados.length) cerrados.pop().open = false; });
+  window.addEventListener('afterprint', () => {
+    while (cerrados.length) cerrados.pop().open = false;
+    document.body.classList.remove('imprime-diag');
+    visibles().forEach(c => c.resize());                                         // y vuelven al de la pantalla
+  });
 })();
 
 async function diagConsultar(id, tambo) {

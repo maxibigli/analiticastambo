@@ -7,6 +7,7 @@ concentraba la diferencia y el día anterior había tenido 127 tratamientos cont
     C:\\Python314\\python.exe -m unittest tests.test_veredicto_baja -v
 """
 import copy
+import re
 import unittest
 
 import veredicto_baja as vb
@@ -94,9 +95,9 @@ class TestCasoReal(unittest.TestCase):
         self.assertIn("62 vacas más", t)                  # lo que compensó
         self.assertNotIn("dentro de lo normal", t.lower())
 
-    def test_aclara_que_contra_ayer_parece_mas_porque_ayer_fue_el_mejor_dia(self):
+    def test_aclara_que_contra_el_dia_anterior_parece_mas_porque_ese_dia_fue_el_mejor(self):
         txt = " ".join(self.v["contexto"])
-        self.assertIn("ayer", txt.lower())
+        self.assertIn("viernes 06/11", txt)
         self.assertIn("más alto", txt.lower())
 
     def test_el_calor_se_descarta_con_su_motivo(self):
@@ -267,7 +268,7 @@ class TestAlimentacion(unittest.TestCase):
         normal = _alimentacion()["ayer"] | {"fecha": "2026-11-07"}
         c = self.causa(dia=normal, ayer=ayer_tarde)
         self.assertEqual(c["nivel"], "posible")
-        self.assertIn("ayer", c["titulo"].lower())
+        self.assertIn("viernes 06/11", c["titulo"])
 
     def test_menos_comida_de_la_habitual_es_una_causa_posible(self):
         poca = _alimentacion()["ayer"] | {"fecha": "2026-11-07", "kg": 60000.0, "kg_z": -3.5}   # 25 % menos que la mediana
@@ -300,7 +301,7 @@ class TestAlimentacion(unittest.TestCase):
         d["alimentacion"] = _alimentacion()
         v = vb.veredicto(d)
         self.assertEqual(v["nivel"], "atencion")
-        self.assertIn("la causa con más peso: la comida llegó tarde (posible)", " ".join(v["contexto"]).lower())
+        self.assertIn("la causa con más peso: la comida del sábado 07/11 llegó tarde (posible)", " ".join(v["contexto"]).lower())
 
     def test_si_la_baja_es_clara_y_solo_la_comida_la_explica_la_apunta(self):
         d = _datos()
@@ -467,6 +468,81 @@ class TestRodeosPorNombre(unittest.TestCase):
         d["ausentes"] = {"n": 150, "kg": 6200.0, "por_grupo": [{"grupo": "Rodeo 4 - Baja", "n": 140, "kg": 5800.0}]}
         txt = " ".join(next(c for c in vb.veredicto(d)["causas"] if c["clave"] == "vacas")["evidencia"])
         self.assertIn("sobre todo de Rodeo 4 - Baja", txt)
+
+
+class TestFechasConcretas(unittest.TestCase):
+    """Un informe se lee días después de analizado: «ayer», «ese día» o «el día anterior» no dicen cuál. Todo lleva la FECHA,
+    con el día de la semana (el día analizado del caso real es el sábado 07/11 y el anterior, el viernes 06/11)."""
+
+    RELATIVAS = re.compile(r"\b(ayer|ese día|esa mañana|ese mismo día|el día anterior|del día anterior|ni el anterior)\b", re.I)
+
+    def _veredicto_con_todo(self):
+        d = _datos_informe_2()
+        d["alimentacion"] = _alimentacion()
+        d["tratadas_ayer"] = {"n": 400, "delta_tratadas": -4.0, "delta_resto": -0.5, "efecto_kg": -1400.0,
+                              "por_diagnostico": [{"nombre": "Desvasado Correctivo", "n": 59, "delta": -1.3}]}
+        d["eventos"]["tratamiento"] = {"dia": 13, "ayer": 127, "base": 31.7}
+        return vb.veredicto(d)
+
+    def _textos(self, v):
+        out = [v["titular"]] + v["contexto"]
+        for c in v["sintomas"] + v["causas"]:
+            out += [c["titulo"], c["revisar"], c.get("peso", "")] + c["evidencia"]
+        return out
+
+    def test_ningun_texto_usa_ayer_ni_ese_dia(self):
+        for texto in self._textos(self._veredicto_con_todo()):
+            self.assertIsNone(self.RELATIVAS.search(texto), texto)
+
+    def test_tampoco_cuando_no_hay_comidas_ni_tratamientos(self):
+        d = _datos()
+        d["alimentacion"] = dict(_alimentacion(), dia=None, ayer=None)
+        d["tratadas_ayer"] = None
+        for texto in self._textos(vb.veredicto(d)):
+            self.assertIsNone(self.RELATIVAS.search(texto), texto)
+
+    def test_la_comida_dice_que_dias_son(self):
+        c = _causa(self._veredicto_con_todo(), "alimentacion")
+        txt = " ".join(c["evidencia"])
+        self.assertIn("El sábado 07/11: la primera comida fue a las 09:52", txt)
+        self.assertIn("El viernes 06/11: la primera comida fue a las 07:10", txt)
+        self.assertEqual(c["titulo"], "La comida del sábado 07/11 llegó tarde")
+
+    def test_la_comida_tardia_del_dia_anterior_lleva_su_fecha(self):
+        ayer_tarde = _alimentacion()["dia"] | {"fecha": "2026-11-06"}
+        normal = _alimentacion()["ayer"] | {"fecha": "2026-11-07"}
+        d = _datos(alimentacion=_alimentacion(dia=normal, ayer=ayer_tarde))
+        self.assertEqual(_causa(vb.veredicto(d), "alimentacion")["titulo"], "La comida del viernes 06/11 llegó tarde")
+
+    def test_los_otros_dias_con_comida_tardia_llevan_el_dia_de_la_semana(self):
+        txt = " ".join(_causa(self._veredicto_con_todo(), "alimentacion")["evidencia"])
+        self.assertIn("sáb 24/10 (09:14)", txt)
+        self.assertIn("jue 29/10 (08:47)", txt)
+
+    def test_el_manejo_dice_el_dia_de_los_tratamientos(self):
+        v = self._veredicto_con_todo()
+        m = _causa(v, "manejo")
+        self.assertEqual(m["titulo"], "Las vacas tratadas el viernes 06/11 rindieron menos")
+        self.assertIn("El viernes 06/11 hubo 127 tratamientos", " ".join(m["evidencia"]))
+
+    def test_la_comparacion_con_el_dia_anterior_nombra_la_fecha(self):
+        txt = " ".join(vb.veredicto(_datos())["contexto"])
+        self.assertIn("Contra el viernes 06/11 la baja parece mayor", txt)
+        self.assertIn("porque el viernes 06/11 (70.484 kg) fue el día más alto", txt)
+
+    def test_lo_que_no_se_mide_dice_de_que_dia(self):
+        d = _datos_informe_2()
+        d["resumen"].update(kg_d=64000.0, kg_b=69900.0, z_kg=-3.0)
+        d["eventos"]["cambio de grupo"] = {"dia": 20, "ayer": 14, "base": 21.9}
+        txt = " ".join(vb.veredicto(d)["contexto"])
+        self.assertIn("la ración del viernes 06/11", txt)
+        self.assertIn("el manejo del viernes 06/11", txt)
+
+    def test_el_fin_de_semana_y_los_meses_se_escriben_bien(self):
+        self.assertEqual(vb.fecha_larga("2026-11-07"), "sábado 07/11")
+        self.assertEqual(vb.fecha_larga("2026-11-09"), "lunes 09/11")
+        self.assertEqual(vb.fecha_larga("2026-10-29"), "jueves 29/10")
+        self.assertEqual(vb.fecha_corta("2026-10-24"), "sáb 24/10")
 
 
 class TestSinDatos(unittest.TestCase):
