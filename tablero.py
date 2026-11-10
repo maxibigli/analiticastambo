@@ -191,7 +191,9 @@ INDICADORES = [
         "unidad": "l/h", "decimales": 1,
         "direccion": "alto_mejor", "verde": 4500, "rojo": 3000,
         "fuente": "rendimiento", "pagina": "rendimiento",
-        "destino": "Rendimiento Sala",
+        "destino": "Rendimiento Sala › litros por hora",
+        # Al hacer clic la pantalla baja sola hasta el gráfico de ordeños y litros por hora.
+        "ancla": "rend-throughput",
         "grupo": "Ordeño",
         "ayuda": "Producción de la sala por hora de funcionamiento, promedio simple entre sesiones.",
     },
