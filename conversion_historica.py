@@ -49,6 +49,7 @@ indicador mensual de sólidos tiene apenas 4 puntos — se muestra, pero como
 import datetime
 
 import alimentacion
+import conciliacion
 import rebano
 
 # Arranque de los datos de alimentación. Antes de esta fecha no hay con qué
@@ -381,6 +382,11 @@ def armar(prod_dia, ms_lote_dia: dict, lote_de_grupo: dict,
     peor cargadas — al revés de la realidad.
     """
     costo_lote_dia = costo_lote_dia or {}
+    # Mismo motivo que en `alimentacion.analizar`: el mapeo guardado puede venir con los nombres
+    # de otro proveedor y las descargas se cruzan por nombre.
+    lote_de_grupo = conciliacion.alinear_lotes(
+        lote_de_grupo, {(l or "").strip() for (l, _f) in ms_lote_dia}
+        | {(l or "").strip() for (l, _f) in costo_lote_dia})
     # Un lote entra a la conversión solo si TODOS sus grupos son de ordeñe. Si
     # comparte lote con un grupo que no ordeña, su comida no es atribuible a
     # leche y el lote entero queda afuera.

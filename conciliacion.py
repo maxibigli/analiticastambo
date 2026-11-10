@@ -262,6 +262,37 @@ def guardar_mapeo(tambo: str, datos: dict, usuario: str = None, ahora: str = Non
     return mapeo_de(tambo)
 
 
+def clave_lote(nombre) -> str:
+    """El nombre de un lote para COMPARAR: sin tildes, sin mayúsculas, sin espacios de más.
+    («Enfermería » y «ENFERMERIA» son el mismo lote.) No quita sufijos ni signos: «Rodeo 2» y
+    «Rodeo 12» tienen que seguir siendo distintos."""
+    s = unicodedata.normalize("NFKD", str(nombre or ""))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return " ".join(s.casefold().split())
+
+
+def alinear_lotes(lote_de_grupo: dict, nombres_proveedor) -> dict:
+    """{oid: lote} con cada nombre llevado a como lo escribe el PROVEEDOR.
+
+    Los lotes se cruzan por nombre exacto con lo que descargó el mixer. Un mapeo guardado con
+    los nombres de Haasten («Rodeo 2») no encontraba una sola descarga de MixerOne («RODEO 2»):
+    medido en La Ponderosa, Rodeo 2, 3, 5 y 9 (1.105 vacas) quedaban «sin descargas».
+
+    El nombre exacto gana siempre. Si no hay exacto, se usa el único lote del proveedor que se
+    llama igual salvo mayúsculas/tildes/espacios; si hay dos candidatos (o ninguno) el nombre se
+    deja como está: elegir uno sería imputarle la comida de un corral a otro.
+    """
+    exactos = set(nombres_proveedor)
+    por_clave = collections.defaultdict(list)
+    for n in exactos:
+        por_clave[clave_lote(n)].append(n)
+    salida = {}
+    for oid, lote in lote_de_grupo.items():
+        candidatos = por_clave.get(clave_lote(lote), [])
+        salida[oid] = lote if lote in exactos or len(candidatos) != 1 else candidatos[0]
+    return salida
+
+
 def lote_de_grupo(tambo: str) -> dict:
     """{oid_grupo: nombre_de_lote}. Es la puerta de entrada para las pantallas
     de costo: con esto saben a qué lote imputarle cada animal."""
@@ -426,6 +457,12 @@ def analizar(grupos: list, lotes: list, mapeo: dict, kg_lote: dict = None) -> di
     """
     umbral_pct = mapeo.get("umbral_pct", UMBRAL_PCT)
     umbral_cabezas = mapeo.get("umbral_cabezas", UMBRAL_CABEZAS)
+    # Un mapeo guardado con los nombres de otro proveedor («Rodeo 2») se lee con los del actual
+    # («RODEO 2»): si no, cada lote aparecería dos veces, uno «ya no está» y otro «sin grupo».
+    entradas = mapeo.get("lotes") or []
+    alineados = alinear_lotes({i: e["lote"] for i, e in enumerate(entradas)},
+                              {(l.get("lote") or "").strip() for l in lotes})
+    mapeo = {**mapeo, "lotes": [{**e, "lote": alineados[i]} for i, e in enumerate(entradas)]}
     por_oid = {g["oid"]: g for g in grupos}
     silenciados = set(mapeo.get("grupos_sin_alimentacion") or [])
 

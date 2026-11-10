@@ -3616,3 +3616,17 @@ HTTP, se cachea 10 min (`TABLERO_COMIDA_TTL_S`) y se refresca en un hilo (`_refr
     de −100 % y +130 % (un corral sin comida o doble), que son ruido para un semáforo. No se armó tarjeta. Si un rodeo puntual preocupa, está
     `kg_theoretical` / `kg_percentage_difference` en cada descarga de la API (el proveedor todavía no los pasa).
   * **El puntaje del operario (`score`, `score_result`) es BIEN casi siempre** (9,0 a 10): casi no varía, tampoco da tarjeta.
+
+### Al pasar un tambo de proveedor, las pantallas quedaban vacías por el nombre de los lotes (10/11/2026)
+
+Las tres pantallas de costo (Eficiencia de conversión, Litros libres, Conversión histórica) cruzan lo que descargó el mixer con los grupos de DelPro por **nombre
+EXACTO de lote**. La conciliación guardada de La Ponderosa tenía los nombres de Haasten («Rodeo 2») y MixerOne escribe «RODEO 2»: Rodeo 2, 3, 5 y 9 (1.105 vacas)
+quedaban «sin descargas» aunque MixerOne tenía 29 días de comida de cada uno, y Conversión histórica daba 0 semanas. `conciliacion.alinear_lotes` lleva el nombre
+guardado al que escribe el proveedor (sin mayúsculas, tildes ni espacios de más; si dos lotes del proveedor dan igual NO adivina) y lo usan `alimentacion.analizar`,
+`conversion_historica.armar` y `conciliacion.analizar`. No migra el archivo guardado: se aplica al leerlo. Enfermería sigue pidiendo mapeo a mano (`Rodeo 9` ↔ `R9 ENFERMERIA`).
+
+**El costo tampoco se calcula si la planilla de precios tiene los nombres del proveedor anterior.** Se busca cada ingrediente por nombre normalizado y una receta solo
+se valoriza si la planilla cubre el 95 % de sus kg. Medido (28 días): la planilla tenía `silo de maiz`, `harina soja`, `gr maiz humedo`…; MixerOne manda `Silo Maiz 1 24-25`,
+`Harina de Soja`, `Maiz Grano Humedo bunker 2 25-26`… y la cobertura daba 0 % a 19 %, así que ninguna receta tenía costo. El cartel decía «No hay planilla de precios
+cargada»; ahora (`alimentacion._falta_planilla`) distingue «no hay planilla» de «hay planilla pero no figuran los ingredientes del mixer», y nombra los que más pesan.
+Se arregla cargando esos ingredientes en la planilla con el nombre del mixer; no se emparejan por parecido (un precio mal asignado es peor que ninguno).

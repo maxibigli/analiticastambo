@@ -71,6 +71,7 @@ recetas por debajo de `COBERTURA_MIN` no reportan costo.
 import collections
 import datetime
 
+import conciliacion
 import rebano
 
 # Referencias de la industria para vacas de alta producción, para que el número
@@ -323,6 +324,23 @@ def _filas(data) -> list:
     return [{c: f[i] for c, i in idx.items()} for f in data["rows"]]
 
 
+def _falta_planilla(diagnostico) -> str:
+    """Por qué no hay costo cuando ninguna receta se pudo valorizar.
+
+    Son dos situaciones distintas que se arreglan distinto: no hay planilla (o está vacía), o hay
+    planilla pero sus nombres no son los de los ingredientes que manda el mixer (típico al cambiar
+    de proveedor: Haasten escribe «silo de maiz» y MixerOne «Silo Maiz 1 24-25»)."""
+    dg = diagnostico or {}
+    insumos = (dg.get("precios") or {}).get("insumos") or 0
+    sin_precio = dg.get("ingredientes_sin_precio") or []
+    if not insumos or not sin_precio:
+        return "No hay planilla de precios cargada, o no tiene ningún precio."
+    principales = ", ".join(f"«{x['ingrediente']}»" for x in sin_precio[:4])
+    return (f"La planilla tiene {insumos} insumos, pero los ingredientes que usa el mixer no figuran "
+            f"en ella con ese nombre (los que más pesan: {principales}), y el costo solo se calcula "
+            f"si la planilla cubre al menos el {round(COBERTURA_MIN * 100)} % de la ración de cada receta.")
+
+
 def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
              lote_de_grupo: dict, diagnostico: dict = None,
              costo_lote_dia: dict = None, precio_litro: float = None) -> dict:
@@ -338,6 +356,10 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
         costo en pesos pero NO litros libres.
     """
     costo_lote_dia = costo_lote_dia or {}
+    # El mapeo puede tener los nombres de otro proveedor («Rodeo 2» de Haasten, «RODEO 2» de
+    # MixerOne): se lo lleva a como los escribe el proveedor actual antes de cruzar por nombre.
+    lote_de_grupo = conciliacion.alinear_lotes(
+        lote_de_grupo, {l for (l, _f) in ms_lote_dia} | {l for (l, _f) in costo_lote_dia})
     info = {g["oid"]: g for g in grupos}
     # Se suman por grupo solo los días en que HAY las dos cosas: producción y
     # descarga. Un día sin descarga registrada no es un día de ayuno, es un
@@ -550,7 +572,7 @@ def analizar(prod_dia, prod_vaca, solidos, ms_lote_dia: dict, grupos: list,
         # equivocado. Los tres casos son distintos y se arreglan en pantallas
         # distintas (planilla / conciliación de grupos / planilla otra vez).
         "falta": None if costo_tambo is not None else (
-            "No hay planilla de precios cargada, o no tiene ningún precio."
+            _falta_planilla(diagnostico)
             if not costo_lote_dia else
             "Ningún grupo de ordeñe tiene lote asignado: hay que mapearlos en "
             "la conciliación de grupos." if not filas_grupo else
