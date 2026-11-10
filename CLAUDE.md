@@ -3487,7 +3487,7 @@ diagnóstico y comparar). Si el mixer no registró nada ese día lo dice (puede 
 madrugada (antes de las 04:00) se cuenta en el día anterior: un viaje que arranca a las 23:50 no es el desayuno de ese día.
 
 Pruebas: `tests/test_alimentacion_dia.py` (16), `tests/test_veredicto_baja.py` (+13), `tests/test_diagnostico_baja.py` (+8, con el
-mixer reemplazado en todo el módulo: ninguna prueba sale a la red). Suite completa: 450 OK.
+mixer reemplazado en todo el módulo: ninguna prueba sale a la red). Suite completa: 459 OK.
 
 ### El veredicto separa cómo se ve la baja de por qué pasó, y ordena las causas por peso (09/11/2026)
 
@@ -3528,10 +3528,25 @@ rodeos y ordeños. Dos tarjetas de ancho completo debajo de los tres gráficos d
 
 **Datos nuevos: `datos["serie"]`** (`diagnostico_baja._serie_por_dia`): `dias` (de la primera fecha de la base al día analizado),
 `dia`, `base` (los días de la base realmente usados, sin los incompletos), y `total`/`grupos`/`sesiones`, cada una con `kg` y `vacas`
-alineadas con `dias`. Los rodeos de menos de 20 vacas en promedio no entran (`MIN_VACAS_SERIE`). **El total es el de las vacas
+alineadas con `dias`; `grupos` y `sesiones` son LISTAS (un objeto JSON no garantiza el orden y el color de cada rodeo tiene que ser siempre el mismo): `grupos` = `[{nombre, numero, kg, vacas}]` ordenada por el número de rodeo de DelPro, `sesiones` = `[{sesion, kg, vacas}]`. Los rodeos de menos de 20 vacas en promedio no entran (`MIN_VACAS_SERIE`). **El total es el de las vacas
 identificadas con lectura válida (igual que el dashboard); los ordeños son todos los ordeños registrados (`sql_sesiones`), así que sus
 kg pueden sumar más que el total.** Sin ordeños (la consulta falló) `sesiones` queda `{}` y el resto sigue.
 
 Las líneas no usan el azul marino de la paleta (`diagColor`): sobre fondo oscuro no se ve. Pruebas: `TestSerieParaLaLineaDeTiempo`
 (9, en `tests/test_diagnostico_baja.py`). Los gráficos se revisaron en el navegador con una página armada con el CSS, el HTML y el JS
 reales de `index.html` y el análisis real (`dg.analizar` con datos sintéticos); no hay prueba automática del JavaScript.
+
+### Todo el análisis habla de RODEOS, con el nombre que les da DelPro (09/11/2026)
+
+El diagnóstico decía «Grupo 21», «grupo 25»: el OID interno de `AnimalDaily.AnimalGroup`, que **no es el número que ve el tambo** (el
+tablero muestra «Rodeo 1», «Rodeo 4 - Baja», «Rodeo 9»). Ahora `diagnostico_baja._nombres_de_rodeos` lee el nombre y el número de
+`AbstractGroup` (`sql_rodeos`, con los OID que aparecen en los datos, validados como enteros porque van pegados al SQL) y el rodeo
+pasa a ser su NOMBRE desde que se leen las filas: el informe, los datos (`datos["grupos"][i]["grupo"]` es el nombre; se agregó
+`numero` para ordenar), el veredicto y los gráficos dicen «Rodeo 3», no «el grupo 21». Los textos del veredicto ya no llevan la
+palabra «grupo»: «Rodeo 5 rindió mucho menos por vaca», «La caída se concentra en Rodeo 3», «Mucho movimiento entre rodeos»,
+«cambios de rodeo» (la clave interna del evento sigue siendo `cambio de grupo`).
+
+**Si no se pueden leer los nombres** (la consulta falla o no devuelve nada) el rodeo figura como **«Rodeo (id N)»** y el informe lo
+avisa: no se inventa un nombre ni se muestra el OID como si fuera el número de rodeo. Dos OID con el mismo nombre se sumarían como
+uno (no pasa dentro de un mismo tambo: la consulta ya está filtrada por rebaño). El resto de las pantallas de LactIA sigue diciendo
+«Grupo» donde corresponde a DelPro (ficha de la vaca, tablas); esto solo cambió en el diagnóstico de baja.

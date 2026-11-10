@@ -3741,7 +3741,7 @@
   <section class="card" id="diag-card">
     <h2 style="margin:0">🔎 ¿Por qué cambió la producción?</h2>
     <span class="aviso">Elegí un día y el período contra el que lo querés comparar. Separa si faltaron vacas o si
-      rindió menos cada una, en qué grupos y ordeños se nota, si hubo cambios en el rodeo y si hizo calor.
+      rindió menos cada una, en qué rodeos y ordeños se nota, si hubo cambios en el rodeo y si hizo calor.
       Son <b>pistas, no un veredicto</b>. Solo lee la base; tarda entre unos segundos y un par de minutos.</span>
     <div class="controls" style="margin-top:12px;gap:10px;flex-wrap:wrap;align-items:center">
       <label class="aviso" style="display:flex;align-items:center;gap:5px">Día a analizar
@@ -3764,7 +3764,7 @@
           <div class="diag-chart"><canvas id="diag-ch-cascada"></canvas></div>
         </div>
         <div class="diag-grafico">
-          <div class="diag-grafico-t">Por grupo <span>kg contra la base</span></div>
+          <div class="diag-grafico-t">Por rodeo <span>kg contra la base</span></div>
           <div class="diag-chart"><canvas id="diag-ch-grupos"></canvas></div>
         </div>
         <div class="diag-grafico">
@@ -8919,7 +8919,7 @@ let diagCharts = {};
 
 function diagNum(n) { return typeof n === 'number' ? Math.round(n).toLocaleString('es-AR') : ''; }
 
-// Barras de kg contra la base: rojo si bajó, verde si subió. `horizontal` para los grupos (nombres largos).
+// Barras de kg contra la base: rojo si bajó, verde si subió. `horizontal` para los rodeos (nombres largos).
 function diagBarras(idCanvas, etiquetas, valores, horizontal) {
   if (diagCharts[idCanvas]) diagCharts[idCanvas].destroy();
   const rojo = css('--critical'), verde = css('--good'), eje = horizontal ? 'x' : 'y';
@@ -8974,8 +8974,8 @@ function diagLinea(d) {
   if (!sr) return;
   const m = diagVista.medida;
   const fuentes = diagVista.serie === 'total' ? [['Total del tambo', sr.total]]
-    : diagVista.serie === 'grupos' ? Object.entries(sr.grupos).map(([g, s]) => ['Grupo ' + g, s])
-    : Object.entries(sr.sesiones).map(([n, s]) => [n + '.º ordeño', s]);
+    : diagVista.serie === 'grupos' ? sr.grupos.map(g => [g.nombre, g])
+    : sr.sesiones.map(s => [s.sesion + '.º ordeño', s]);
   const hoy = sr.dias.indexOf(sr.dia);
   const etiquetas = sr.dias.map(f => new Date(f + 'T12:00:00')
     .toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit' }));
@@ -9010,10 +9010,10 @@ function diagBarrasV(d) {
   const m = diagVista.medida;
   const val = (kg, vac) => m === 'kv' ? (vac ? kg / vac : null) : kg;
   const grupos = (d.grupos || []).filter(g => g.vacas_b >= 20)
-    .sort((a, b) => String(a.grupo).localeCompare(String(b.grupo), 'es', { numeric: true }));
+    .sort((a, b) => (a.numero ?? 1e9) - (b.numero ?? 1e9) || String(a.grupo).localeCompare(String(b.grupo), 'es', { numeric: true }));
   const ords = d.ordenos || [];
   const filas = [
-    ...grupos.map(g => ({ et: 'Grupo ' + g.grupo, b: val(g.kg_b, g.vacas_b), d: val(g.kg_d, g.vacas_d) })),
+    ...grupos.map(g => ({ et: g.grupo, b: val(g.kg_b, g.vacas_b), d: val(g.kg_d, g.vacas_d) })),
     ...(grupos.length && ords.length ? [{ et: '', b: null, d: null }] : []),     // un hueco entre los rodeos y los ordeños
     ...ords.map(o => ({ et: o.sesion + '.º ordeño' + (o.ini_d ? ' · ' + o.ini_d : ''), b: val(o.kg_b, o.vacas_b), d: val(o.kg_d, o.vacas_d) })),
   ];
@@ -9068,7 +9068,7 @@ function diagPintar(j) {
     '<ul class="diag-contexto">' + v.contexto.map(c => `<li>${escHtml(c)}</li>`).join('') + '</ul>';
 
   // Cada medición es una tarjeta. Las causas llevan su puesto (1.º, 2.º...) y por qué ocupan ese lugar; los síntomas
-  // (rinde, grupo, ordeño) no compiten: son cómo se ve la baja. Las descartadas quedan plegadas (se abren al imprimir).
+  // (rinde, rodeo, ordeño) no compiten: son cómo se ve la baja. Las descartadas quedan plegadas (se abren al imprimir).
   const tarjeta = (c, rotulos) => {
     const t = rotulos[c.nivel] || rotulos.sin_dato;
     const señal = c.nivel === 'probable' || c.nivel === 'posible';
@@ -9084,7 +9084,7 @@ function diagPintar(j) {
   const sint = v.sintomas || [];
   document.getElementById('diag-sintomas').innerHTML =
     (sint.some(hay) ? sint.filter(hay).map(c => tarjeta(c, DIAG_SINTOMA)).join('')
-                    : '<div class="aviso">La baja no se concentra en un grupo ni en un ordeño, ni se nota en el rinde por vaca.</div>') +
+                    : '<div class="aviso">La baja no se concentra en un rodeo ni en un ordeño, ni se nota en el rinde por vaca.</div>') +
     (sint.some(c => !hay(c)) ? `<details class="diag-descartadas"><summary>Sin señal (${sint.filter(c => !hay(c)).length}): se midieron y no destacan</summary>` +
       sint.filter(c => !hay(c)).map(c => tarjeta(c, DIAG_SINTOMA)).join('') + '</details>' : '');
   const con = v.causas.filter(hay);
@@ -9103,7 +9103,7 @@ function diagPintar(j) {
                [r.efecto_vacas, r.efecto_rinde, r.kg_d - r.kg_b], false);
   }
   const grupos = (d.grupos || []).filter(g => g.vacas_b >= 20).sort((a, b) => a.delta_kg - b.delta_kg);
-  diagBarras('diag-ch-grupos', grupos.map(g => 'Grupo ' + g.grupo), grupos.map(g => g.delta_kg), true);
+  diagBarras('diag-ch-grupos', grupos.map(g => g.grupo), grupos.map(g => g.delta_kg), true);
   const ords = d.ordenos || [];
   diagBarras('diag-ch-ordenos', ords.map(o => o.sesion + '.º' + (o.ini_d ? ' · ' + o.ini_d : '')),
              ords.map(o => o.kg_d - o.kg_b), false);

@@ -5,11 +5,11 @@ Compara un día contra los 7 días anteriores (la "base") y descompone la caída
 separar las causas de manejo más comunes:
 
   1. ¿Faltaron vacas o rindió menos cada una?   (vacas ordeñadas vs kg por vaca)
-  2. ¿Qué vacas se perdieron del ordeñe y cuáles bajaron? (listas, con grupo y DIM)
-  3. ¿En qué grupo(s) se concentra la caída?
+  2. ¿Qué vacas se perdieron del ordeñe y cuáles bajaron? (listas, con rodeo y DIM)
+  3. ¿En qué rodeo(s) se concentra la caída?
   4. ¿En qué ordeño (sesión) y a qué hora? Horario corrido, ordeño corto, vacas que no pasaron.
   5. ¿Alguna bajada de bocas/unidades puntuales? (equipo)
-  6. ¿Cambió la mezcla del rodeo? (parto reciente, secado, cambios de grupo, bajas, tratamientos)
+  6. ¿Cambió la mezcla del rodeo? (parto reciente, secado, cambios de rodeo, bajas, tratamientos)
   7. ¿Hubo estrés calórico (ITH) ese día o el anterior?
 
 Corre donde la app llega a DelPro (SERVER-DELPRO). No escribe nada ni imprime credenciales.
@@ -102,6 +102,28 @@ def sql_vacas(d0, d1, tambo):
       AND ad.Date >= '{d0}' AND ad.Date <= '{d1}' AND {filtro}
     OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 15)
     """
+
+
+def sql_rodeos(oids):
+    """El nombre y el número que DelPro MUESTRA para cada rodeo. `AnimalDaily.AnimalGroup` trae el OID interno (21, 25),
+    que no es lo que ve el tambo («Rodeo 3», «Rodeo 4 - Baja»): sale de `AbstractGroup`, que comparte OID con el grupo.
+    Los OID se validan como enteros porque van pegados al SQL."""
+    ids = ", ".join(str(int(o)) for o in sorted(set(oids)))
+    return (f"SELECT g.OID, g.Name, g.Number FROM AbstractGroup g "
+            f"WHERE g.GCRecord IS NULL AND g.OID IN ({ids})")
+
+
+def _nombres_de_rodeos(tambo, oids):
+    """({oid: (nombre, número)}, se_leyeron). Si la consulta falla o no devuelve nada, `{}` y False: el informe usa
+    «Rodeo (id N)» en vez de inventar un nombre, y lo avisa."""
+    oids = {o for o in oids if o is not None}
+    if not oids:
+        return {}, True
+    filas = corre(sql_rodeos(oids), tambo)
+    if not filas:
+        return {}, False
+    return {int(o): ((str(n).strip() if n else None), (int(num) if num is not None else None))
+            for o, n, num in filas}, True
 
 
 def sql_sesiones(d0, d1, tambo):
@@ -220,7 +242,7 @@ def _consumos_mixer(tambo, desde, hasta):
 MIN_VACAS_SERIE = 20     # los rodeos de menos de 20 vacas en promedio no se dibujan en la línea de tiempo
 
 
-def _serie_por_dia(dias, dia, base_dias, por_dia, cow, ses):
+def _serie_por_dia(dias, dia, base_dias, por_dia, cow, ses, numeros=None):
     """La producción día por día para la línea de tiempo: total, por rodeo y por ordeño.
 
     Cada serie es una lista alineada con `dias`, con `None` en los días sin datos (un hueco, no un cero: una caída a
@@ -237,30 +259,33 @@ def _serie_por_dia(dias, dia, base_dias, por_dia, cow, ses):
         if f in pos:
             total["kg"][pos[f]], total["vacas"][pos[f]] = round(v["kg"]), v["vacas"]
 
-    por_grupo = defaultdict(lambda: defaultdict(lambda: [0, 0.0]))          # grupo -> fecha -> [vacas, kg]
+    por_grupo = defaultdict(lambda: defaultdict(lambda: [0, 0.0]))          # rodeo -> fecha -> [vacas, kg]
     for v in cow.values():
         for f, r in v.items():
             if f in pos:
                 por_grupo[r["grupo"]][f][0] += 1
                 por_grupo[r["grupo"]][f][1] += r["kg"]
-    grupos = {}
+    numeros = numeros or {}
+    grupos = []
     for g, dias_g in por_grupo.items():
         if st.mean(n for n, _kg in dias_g.values()) < MIN_VACAS_SERIE:
             continue
         serie = vacia()
         for f, (n, kg) in dias_g.items():
             serie["kg"][pos[f]], serie["vacas"][pos[f]] = round(kg), n
-        grupos[str(g)] = serie
+        grupos.append({"nombre": str(g), "numero": numeros.get(g), **serie})
+    # En el orden en que DelPro numera los rodeos (los sin número, al final): como lista, porque un objeto JSON no
+    # garantiza el orden y el color de cada rodeo tiene que ser siempre el mismo.
+    grupos.sort(key=lambda x: (x["numero"] is None, x["numero"] or 0, x["nombre"]))
 
     sesiones = {}
     for fecha, sn, vacas, kg, *_resto in ses or []:
         f = str(fecha)[:10]
         if f in pos:
-            serie = sesiones.setdefault(str(sn), vacia())
+            serie = sesiones.setdefault(sn, vacia())
             serie["kg"][pos[f]], serie["vacas"][pos[f]] = round(float(kg or 0)), int(vacas)
-    return {"dias": list(dias), "dia": dia, "base": list(base_dias), "total": total,
-            "grupos": dict(sorted(grupos.items(), key=lambda kv: kv[0])),
-            "sesiones": dict(sorted(sesiones.items(), key=lambda kv: kv[0]))}
+    return {"dias": list(dias), "dia": dia, "base": list(base_dias), "total": total, "grupos": grupos,
+            "sesiones": [{"sesion": sn, **serie} for sn, serie in sorted(sesiones.items(), key=lambda kv: kv[0])]}
 
 
 TOPE_FILAS = 100_000   # db.run_query corta en 5.000 por defecto: acá hay una fila por vaca y día
@@ -415,6 +440,15 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     # MISMA definición que el dashboard (resumen.py): solo vacas IDENTIFICADAS con lectura VÁLIDA. Sumar también las
     # no válidas y las sin identificar daba 70.653 kg contra los 69.225 que muestra el dashboard el mismo día, y
     # además una vaca con total parcial (no válido) figuraba como "cayó 40 kg". Esas lecturas se cuentan aparte.
+    nombres, nombres_ok = _nombres_de_rodeos(tambo, {f[3] for f in filas})
+    numero_de = {}                      # nombre del rodeo -> número que le da DelPro (para ordenarlos)
+
+    def rodeo(oid):
+        n = nombres.get(oid)
+        nombre = n[0] if n and n[0] else f"Rodeo (id {oid})"
+        numero_de.setdefault(nombre, n[1] if n else None)
+        return nombre
+
     por_dia = defaultdict(lambda: {"kg": 0.0, "vacas": 0})
     lect = defaultdict(lambda: {"inval_kg": 0.0, "inval_n": 0, "sinid_kg": 0.0})
     inval_animales = defaultdict(set)    # fecha -> animales ordeñados ese día con total NO válido
@@ -432,7 +466,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
             continue
         por_dia[f]["kg"] += kg
         por_dia[f]["vacas"] += 1
-        cow[animal][f] = {"kg": kg, "numero": int(numero), "grupo": grupo, "dim": dim, "lact": lact}
+        cow[animal][f] = {"kg": kg, "numero": int(numero), "grupo": rodeo(grupo), "dim": dim, "lact": lact}
     if D not in por_dia:
         _p(f"   No hay producción registrada el {D}.")
         return _texto()
@@ -534,20 +568,20 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
                          "por_grupo": [{"grupo": g, "n": n, "kg": k}
                                        for g, (n, k) in sorted(aus_grupo.items(), key=lambda x: -x[1][1])]}
     if perdidas:
-        _p(f"   {'vaca':>8}{'grupo':>8}{'DIM':>6}{'kg/día base':>13}  último día ordeñada")
+        _p(f"   {'vaca':>8}  {'rodeo':<16}{'DIM':>6}{'kg/día base':>13}  último día ordeñada")
         for a, k in perdidas[:LIMITE]:
             fechas = sorted(cow[a])
             ult = fechas[-1] if fechas else "--"
             ref = cow[a][ult]
-            _p(f"   {ref['numero']:>8}{str(ref['grupo']):>8}{str(ref['dim']):>6}{f1(k):>13}  {ult}")
+            _p(f"   {ref['numero']:>8}  {str(ref['grupo']):<16}{str(ref['dim']):>6}{f1(k):>13}  {ult}")
         por_grp = defaultdict(lambda: [0, 0.0])
         for a, k in perdidas:
             ult = sorted(cow[a])[-1]
             g = cow[a][ult]["grupo"]
             por_grp[g][0] += 1
             por_grp[g][1] += k
-        _p("   Las ausentes por grupo: " + ", ".join(
-            f"grupo {g}: {n} vacas / {f0(k)} kg" for g, (n, k) in sorted(por_grp.items(), key=lambda x: -x[1][1])[:6]))
+        _p("   Las ausentes por rodeo: " + ", ".join(
+            f"{g}: {n} vacas / {f0(k)} kg" for g, (n, k) in sorted(por_grp.items(), key=lambda x: -x[1][1])[:6]))
     comunes = [(a, v[D]["kg"] - st.mean(en_base[a]), st.mean(en_base[a])) for a, v in cow.items()
                if D in v and len(en_base[a]) >= 4]
     caidas = sorted(comunes, key=lambda x: x[1])
@@ -559,13 +593,15 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     if dist:
         _p(f"   Mediana de cambio por vaca: {signo(st.median(dist), 1)} kg  "
               f"(si es ~0 la caída viene de pocas vacas; si es negativa, bajó el rodeo entero)")
-    _p(f"   {'vaca':>8}{'grupo':>8}{'DIM':>6}{'base kg':>10}{'día kg':>9}{'cambio':>9}")
+    _p(f"   {'vaca':>8}  {'rodeo':<16}{'DIM':>6}{'base kg':>10}{'día kg':>9}{'cambio':>9}")
     for a, dif, kb in caidas[:LIMITE]:
         r = cow[a][D]
-        _p(f"   {r['numero']:>8}{str(r['grupo']):>8}{str(r['dim']):>6}{f1(kb):>10}{f1(r['kg']):>9}{signo(dif, 1):>9}")
+        _p(f"   {r['numero']:>8}  {str(r['grupo']):<16}{str(r['dim']):>6}{f1(kb):>10}{f1(r['kg']):>9}{signo(dif, 1):>9}")
 
-    # ---- 3. por grupo -----------------------------------------------------------------------
-    titulo("3. EN QUÉ GRUPOS SE CONCENTRA LA CAÍDA")
+    # ---- 3. por rodeo -----------------------------------------------------------------------
+    titulo("3. EN QUÉ RODEOS SE CONCENTRA LA CAÍDA")
+    if not nombres_ok:
+        _p("   (No se pudieron leer los nombres de los rodeos: se muestran con su identificador interno.)")
     g_d, g_b = defaultdict(lambda: [0, 0.0]), defaultdict(lambda: [0.0, 0.0])
     for a, v in cow.items():
         for f, r in v.items():
@@ -581,21 +617,21 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
         nb, kb = g_b[g][0] / n_base, g_b[g][1] / n_base
         filasg.append((g, nd, nb, kd, kb, kd - kb))
     filasg.sort(key=lambda x: x[5])
-    datos["grupos"] = [{"grupo": g, "vacas_d": nd, "vacas_b": nb, "kg_d": kd, "kg_b": kb, "delta_kg": dk}
-                       for g, nd, nb, kd, kb, dk in filasg]
-    _p(f"   {'grupo':>7}{'vacas día':>11}{'vacas base':>12}{'kg día':>10}{'kg base':>10}{'cambio kg':>11}{'kg/vaca d':>11}{'kg/vaca b':>11}")
+    datos["grupos"] = [{"grupo": g, "numero": numero_de.get(g), "vacas_d": nd, "vacas_b": nb, "kg_d": kd, "kg_b": kb,
+                        "delta_kg": dk} for g, nd, nb, kd, kb, dk in filasg]
+    _p(f"   {'rodeo':<16}{'vacas día':>11}{'vacas base':>12}{'kg día':>10}{'kg base':>10}{'cambio kg':>11}{'kg/vaca d':>11}{'kg/vaca b':>11}")
     for g, nd, nb, kd, kb, dk in filasg[:LIMITE]:
-        _p(f"   {str(g):>7}{nd:>11}{f1(nb):>12}{f0(kd):>10}{f0(kb):>10}{signo(dk):>11}"
+        _p(f"   {str(g):<16}{nd:>11}{f1(nb):>12}{f0(kd):>10}{f0(kb):>10}{signo(dk):>11}"
               f"{f1(kd / nd) if nd else '--':>11}{f1(kb / nb) if nb else '--':>11}")
-    grandes = [x for x in filasg if x[2] >= 20]          # los grupos de 1 a 5 vacas no explican nada
+    grandes = [x for x in filasg if x[2] >= 20]          # los rodeos de 1 a 5 vacas no explican nada
     bajan = [x for x in grandes if x[5] < 0]
     tot_neg = sum(x[5] for x in bajan)
     if bajan and tot_neg:
         top = bajan[0]
-        _p(f"   -> de los grupos de 20 vacas o más, el grupo {top[0]} explica "
+        _p(f"   -> de los rodeos de 20 vacas o más, {top[0]} explica "
               f"{top[5] / tot_neg * 100:.0f} % de lo que cayó entre los que bajaron ({signo(top[5])} kg)")
     elif grandes:
-        _p("   -> ningún grupo de 20 vacas o más produjo menos que su base: la diferencia no está en un grupo")
+        _p("   -> ningún rodeo de 20 vacas o más produjo menos que su base: la diferencia no está en un rodeo")
 
     # ---- 4. por ordeño ----------------------------------------------------------------------
     titulo("4. ¿EN QUÉ ORDEÑO, Y A QUÉ HORA?")
@@ -694,14 +730,14 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     for tipo in ("parto", "cambio de grupo", "baja", "tratamiento"):
         # Si la consulta falló NO se muestran ceros: un cero inventado parece "no pasó nada".
         if (bj if tipo == "baja" else ev) is None:
-            _p(f"   {tipo:>18}{'sin dato':>27}")
+            _p(f"   {tipo.replace('grupo', 'rodeo'):>18}{'sin dato':>27}")
             datos["eventos"][tipo] = None
             continue
         v = por_tipo.get(tipo, {})
         base = sum(v.get(d, 0) for d in base_dias) / n_base
         datos["eventos"][tipo] = {"dia": v.get(D, 0), "ayer": v.get(A, 0), "base": base}
         flag = "  <- sube" if v.get(D, 0) > max(2 * base, base + 5) else ""
-        _p(f"   {tipo:>18}{v.get(D, 0):>6}{v.get(A, 0):>6}{base:>15.1f}{flag}")
+        _p(f"   {tipo.replace('grupo', 'rodeo'):>18}{v.get(D, 0):>6}{v.get(A, 0):>6}{base:>15.1f}{flag}")
     sube = sorted(((sum(v.get(d, 0) for d in (D, A)), k, v.get(D, 0), sum(v.get(d, 0) for d in base_dias) / n_base)
                    for k, v in trat.items()), reverse=True)[:6]
     if sube:
@@ -809,7 +845,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     # ---- serie por día: la línea de tiempo del navegador -------------------------------------------
     d_ini, d_fin = datetime.date.fromisoformat(d0), datetime.date.fromisoformat(d1)
     datos["serie"] = _serie_por_dia([(d_ini + datetime.timedelta(days=i)).isoformat()
-                                     for i in range((d_fin - d_ini).days + 1)], D, base_dias, por_dia, cow, ses)
+                                     for i in range((d_fin - d_ini).days + 1)], D, base_dias, por_dia, cow, ses, numero_de)
 
     # ---- resumen ----------------------------------------------------------------------------
     titulo("RESUMEN (las pistas, no el veredicto)")
@@ -817,7 +853,7 @@ def generar(tambo, dia, base_desde=None, base_hasta=None) -> str:
     _p(f"   Pesa más: {mayor.lower()}  (vacas {signo(efecto_vacas)} kg, rinde {signo(efecto_rinde)} kg).")
     if perdidas:
         _p(f"   {len(perdidas)} vacas habituales no se ordeñaron ({f0(kg_perdido)} kg).")
-    _p("   Mirá las secciones 3 y 4: si la caída está en un grupo o en un ordeño, ahí está la pista de manejo;")
+    _p("   Mirá las secciones 3 y 4: si la caída está en un rodeo o en un ordeño, ahí está la pista de manejo;")
     _p("   si está repartida en todo el rodeo y el ITH subió, apunta a calor; si el rodeo entero rinde menos\n"
           "   sin cambios de vacas ni de clima, mirá ración/alimentación (carro, mixer) de ayer.")
     return _texto()

@@ -5,7 +5,7 @@ Es una función PURA sobre el dict `datos` que arma `diagnostico_baja.analizar` 
 así que se prueba sin nada conectado. Reglas simples y a la vista; ninguna es "inteligente": cada una
 compara una medición contra lo que el propio tambo viene dando y deja escrito en `evidencia` qué midió.
 
-Dos capas: `sintomas` (CÓMO SE VE la baja: el rinde por vaca, el grupo, el ordeño) y `causas` (POR QUÉ pasó,
+Dos capas: `sintomas` (CÓMO SE VE la baja: el rinde por vaca, el rodeo, el ordeño) y `causas` (POR QUÉ pasó,
 ordenadas de más a menos peso). Un síntoma nunca es el titular: dice dónde está el problema, no su motivo.
 
 Niveles de cada causa:
@@ -92,7 +92,7 @@ def _vacas(d):
     ev.append(f"{_n(r['vac_d'])} vacas ordeñadas contra {_n(r['vac_b'])} de la base ({_s(r['vac_d'] - r['vac_b'])}).")
     if n_aus:
         grupo = (a.get("por_grupo") or [{}])[0]
-        extra = f", sobre todo del grupo {grupo['grupo']}" if grupo.get("grupo") is not None else ""
+        extra = f", sobre todo de {grupo['grupo']}" if grupo.get("grupo") is not None else ""
         ev.append(f"{n_aus} vacas habituales no se ordeñaron ese día ({_n(kg_aus)} kg que dejaron de entrar{extra}).")
     if a.get("n_invalidas"):
         ev.append(f"Otras {a['n_invalidas']} vacas habituales se ordeñaron pero con lectura no válida (unos "
@@ -152,7 +152,7 @@ def _grupos(d):
     kg_b = r["kg_b"] or 1.0
     grandes = [g for g in (d.get("grupos") or []) if g["vacas_b"] >= MIN_VACAS_GRUPO]
     if not grandes:
-        return _causa("grupos", "Por grupo", "sin_dato", ["No hay grupos de 20 vacas o más para comparar."])
+        return _causa("grupos", "Por rodeo", "sin_dato", ["No hay rodeos de 20 vacas o más para comparar."])
     bajan = sorted((g for g in grandes if g["delta_kg"] < 0), key=lambda g: g["delta_kg"])
     total_neg = sum(g["delta_kg"] for g in bajan)
     # Un grupo que cambió más de 10 % de tamaño no se marca por kg por vaca: entraron o salieron vacas y su
@@ -165,22 +165,22 @@ def _grupos(d):
     for g in (atipicos + [x for x in bajan if x not in atipicos])[:3]:
         kv_b = g["kg_b"] / g["vacas_b"] if g["vacas_b"] else 0
         kv_d = g["kg_d"] / g["vacas_d"] if g["vacas_d"] else 0
-        ev.append(f"Grupo {g['grupo']}: {_s(g['delta_kg'])} kg; kg por vaca {_n(kv_b, 1)} -> {_n(kv_d, 1)} "
+        ev.append(f"{g['grupo']}: {_s(g['delta_kg'])} kg; kg por vaca {_n(kv_b, 1)} -> {_n(kv_d, 1)} "
                   f"({_s(_pct(kv_d, kv_b), 1)} %).")
     share = (bajan[0]["delta_kg"] / total_neg) if bajan and total_neg else 0.0
     if bajan and share >= 0.7 and -bajan[0]["delta_kg"] >= 0.01 * kg_b:
-        nivel, titulo = "probable", f"La caída se concentra en el grupo {bajan[0]['grupo']}"
-        ev.insert(0, f"El grupo {bajan[0]['grupo']} explica {share * 100:.0f} % de lo que bajó entre los grupos que bajaron.")
+        nivel, titulo = "probable", f"La caída se concentra en {bajan[0]['grupo']}"
+        ev.insert(0, f"{bajan[0]['grupo']} explica {share * 100:.0f} % de lo que bajó entre los rodeos que bajaron.")
     elif atipicos:
         a = atipicos[0]
-        nivel, titulo = "posible", f"El grupo {a['grupo']} rindió mucho menos por vaca"
+        nivel, titulo = "posible", f"{a['grupo']} rindió mucho menos por vaca"
     elif bajan and share >= 0.5 and -bajan[0]["delta_kg"] >= 0.005 * kg_b:
-        nivel, titulo = "posible", f"Se nota sobre todo en el grupo {bajan[0]['grupo']}"
+        nivel, titulo = "posible", f"Se nota sobre todo en {bajan[0]['grupo']}"
     else:
-        nivel, titulo = "descartada", "Por grupo"
-        ev.insert(0, "La diferencia está repartida entre varios grupos, sin uno que la explique.")
+        nivel, titulo = "descartada", "Por rodeo"
+        ev.insert(0, "La diferencia está repartida entre varios rodeos, sin uno que la explique.")
     return _causa("grupos", titulo, nivel, ev, impacto=bajan[0]["delta_kg"] if bajan else 0.0,
-                  revisar="Qué tienen en común esas vacas: lote, corral, ración del lote, cambios de grupo recientes.")
+                  revisar="Qué tienen en común esas vacas: lote, corral, ración del lote, cambios de rodeo recientes.")
 
 
 def _ordeno(d):
@@ -310,16 +310,16 @@ def _manejo(d):
 def _mezcla(d):
     e = (d.get("eventos") or {}).get("cambio de grupo")
     if not e:
-        return _causa("mezcla", "Cambios de grupo", "sin_dato", ["No se pudieron leer los cambios de grupo."])
+        return _causa("mezcla", "Cambios de rodeo", "sin_dato", ["No se pudieron leer los cambios de rodeo."])
     dia, base = e["dia"], e["base"]
     if dia >= MEZCLA_VECES * max(base, 1) and dia - base >= MEZCLA_EXTRA:
         subio = [g for g in (d.get("grupos") or []) if g["vacas_d"] - g["vacas_b"] >= 20]
-        ev = [f"{dia} cambios de grupo contra {_n(base, 1)} de lo normal."]
-        ev += [f"El grupo {g['grupo']} sumó {_n(g['vacas_d'] - g['vacas_b'])} vacas." for g in subio[:2]]
-        return _causa("mezcla", "Mucho movimiento entre grupos", "posible", ev,
-                      revisar="Mover vacas entre grupos cambia el kg por vaca de cada grupo sin que cambie la leche total.")
-    return _causa("mezcla", "Cambios de grupo", "descartada",
-                  [f"{dia} cambios de grupo contra {_n(base, 1)} de lo normal."])
+        ev = [f"{dia} cambios de rodeo contra {_n(base, 1)} de lo normal."]
+        ev += [f"{g['grupo']} sumó {_n(g['vacas_d'] - g['vacas_b'])} vacas." for g in subio[:2]]
+        return _causa("mezcla", "Mucho movimiento entre rodeos", "posible", ev,
+                      revisar="Mover vacas entre rodeos cambia el kg por vaca de cada rodeo sin que cambie la leche total.")
+    return _causa("mezcla", "Cambios de rodeo", "descartada",
+                  [f"{dia} cambios de rodeo contra {_n(base, 1)} de lo normal."])
 
 
 def _lecturas(d):
@@ -433,7 +433,7 @@ _ALCANCE_RODEO = frozenset({"alimentacion", "calor"})
 
 
 def _patron(d):
-    """Cómo se reparte la baja: «parejo» (la mayoría de las vacas y de los grupos rindió menos) o «localizado» (se
+    """Cómo se reparte la baja: «parejo» (la mayoría de las vacas y de los rodeos rindió menos) o «localizado» (se
     concentra en una parte del rodeo). None si el rinde por vaca no bajó o falta el dato para saberlo."""
     r, c = d["resumen"], d.get("caidas") or {}
     z_kv = r.get("z_kv")
@@ -461,7 +461,7 @@ def _por_que_ese_lugar(c, patron):
     if patron["tipo"] == "parejo":
         cuando = f"La baja es pareja: el {patron['vacas_pct']} % de las vacas rindió menos"
         if patron["grupos"]:
-            cuando += f" y {patron['grupos_bajaron']} de {patron['grupos']} grupos bajaron"
+            cuando += f" y {patron['grupos_bajaron']} de {patron['grupos']} rodeos bajaron"
         return cuando + (", y esta causa afecta a todo el rodeo a la vez: encaja." if c["clave"] in _ALCANCE_RODEO
                          else ", y esta causa toca a pocas vacas o a un sector: sola no alcanza para explicarla.")
     cuando = f"La baja no es pareja: solo el {patron['vacas_pct']} % de las vacas rindió menos"
@@ -491,7 +491,7 @@ def _ordenar(causas, patron):
 def veredicto(datos: dict) -> dict:
     """{titular, nivel, contexto[], sintomas[], causas[]} a partir de los datos del análisis. No modifica `datos`.
 
-    `sintomas`: cómo se ve la baja (el rinde por vaca, el grupo, el ordeño). `causas`: por qué pasó, ordenadas de más a
+    `sintomas`: cómo se ve la baja (el rinde por vaca, el rodeo, el ordeño). `causas`: por qué pasó, ordenadas de más a
     menos peso (ver `_ordenar`)."""
     r = datos["resumen"]
     diff = r["kg_d"] - r["kg_b"]

@@ -249,7 +249,7 @@ class TestAnalizar(unittest.TestCase):
         r = _analizar(_filas_vacas(por_dia))
         res = r["datos"]["resumen"]
         self.assertEqual(round(res["kg_b"] + res["efecto_vacas"] + res["efecto_rinde"]), round(res["kg_d"]))
-        self.assertEqual(r["datos"]["grupos"][0]["grupo"], 21)
+        self.assertEqual(r["datos"]["grupos"][0]["grupo"], "Rodeo (id 21)")   # sin nombres: no se inventa uno
 
     def test_sin_desvio_en_la_base_una_diferencia_no_divide_por_cero(self):
         por_dia = {f: _rodeo(100, 40.0) for f in _fechas("2026-11-01", "2026-11-06")}
@@ -377,6 +377,8 @@ class TestSerieParaLaLineaDeTiempo(unittest.TestCase):
         def extra(sql):
             if sesiones and "sm.SessionNo AS sesion" in sql:
                 return filas_ses
+            if "FROM AbstractGroup" in sql:
+                return [[21, "Rodeo 3", 3], [22, "Rodeo 4 - Baja", 4]]
             return None
         return _analizar(_filas_vacas(por_dia), extra=extra)["datos"]["serie"]
 
@@ -402,29 +404,86 @@ class TestSerieParaLaLineaDeTiempo(unittest.TestCase):
         self.assertIsNone(serie["total"]["kg"][1])              # el 02/11 no hay nada: un hueco, no una caída a cero
 
     def test_cada_rodeo_grande_tiene_su_serie(self):
-        g = self._escenario()["grupos"]
-        self.assertEqual(g["21"]["kg"][0], 30 * 45.0)
-        self.assertEqual(g["21"]["kg"][-1], 30 * 40.0)
-        self.assertEqual(g["21"]["vacas"][-1], 30)
+        g = {x["nombre"]: x for x in self._escenario()["grupos"]}
+        self.assertEqual(g["Rodeo 3"]["kg"][0], 30 * 45.0)
+        self.assertEqual(g["Rodeo 3"]["kg"][-1], 30 * 40.0)
+        self.assertEqual(g["Rodeo 3"]["vacas"][-1], 30)
 
     def test_los_rodeos_chicos_no_entran(self):
-        self.assertNotIn("22", self._escenario()["grupos"])
+        self.assertEqual([x["nombre"] for x in self._escenario()["grupos"]], ["Rodeo 3"])
 
     def test_cada_ordeno_tiene_su_serie(self):
-        s = self._escenario()["sesiones"]
-        self.assertEqual(sorted(s), ["1", "2", "3"])
-        self.assertEqual(s["3"]["kg"][0], 450.0)
-        self.assertEqual(s["3"]["kg"][-1], 300.0)             # el ordeño que cayó el día analizado
-        self.assertEqual(s["3"]["vacas"][-1], 40)
+        s = {x["sesion"]: x for x in self._escenario()["sesiones"]}
+        self.assertEqual(sorted(s), [1, 2, 3])
+        self.assertEqual(s[3]["kg"][0], 450.0)
+        self.assertEqual(s[3]["kg"][-1], 300.0)             # el ordeño que cayó el día analizado
+        self.assertEqual(s[3]["vacas"][-1], 40)
 
     def test_sin_la_consulta_de_ordenos_no_se_inventan(self):
         serie = self._escenario(sesiones=False)
-        self.assertEqual(serie["sesiones"], {})
-        self.assertIn("21", serie["grupos"])                   # el resto de la serie sigue
+        self.assertEqual(serie["sesiones"], [])
+        self.assertEqual([x["nombre"] for x in serie["grupos"]], ["Rodeo 3"])      # el resto de la serie sigue
 
     def test_los_valores_son_json(self):
         import json
         json.dumps(self._escenario())
+
+
+class TestRodeosPorNombre(unittest.TestCase):
+    """El análisis habla de rodeos con el NOMBRE que les da DelPro («Rodeo 3», «Rodeo 4 - Baja»), no con el
+    identificador interno de la base (21, 25) ni con la palabra «grupo»."""
+
+    NOMBRES = [[21, "Rodeo 3", 3], [22, "Rodeo 4 - Baja", 4]]
+
+    def _correr(self, nombres=NOMBRES):
+        por_dia = {f: [(i, 21, 45.0) for i in range(1, 31)] + [(100 + i, 22, 20.0) for i in range(1, 31)]
+                   for f in _fechas("2026-11-01", "2026-11-06")}
+        por_dia["2026-11-07"] = [(i, 21, 36.0) for i in range(1, 31)] + [(100 + i, 22, 20.0) for i in range(1, 31)]
+        pedidos = []
+
+        def extra(sql):
+            if "FROM AbstractGroup" in sql:
+                pedidos.append(" ".join(sql.split()))
+                return nombres
+            return None
+        r = _analizar(_filas_vacas(por_dia), extra=extra)
+        r["pedidos"] = pedidos
+        return r
+
+    def test_los_datos_traen_el_nombre_del_rodeo(self):
+        r = self._correr()
+        self.assertEqual({g["grupo"] for g in r["datos"]["grupos"]}, {"Rodeo 3", "Rodeo 4 - Baja"})
+        self.assertEqual({g["numero"] for g in r["datos"]["grupos"]}, {3, 4})
+
+    def test_el_informe_dice_rodeo_y_el_nombre_no_el_identificador(self):
+        t = self._correr()["informe"]
+        self.assertIn("Rodeo 3", t)
+        self.assertIn("EN QUÉ RODEOS", t)
+        self.assertNotIn("EN QUÉ GRUPOS", t)
+        self.assertNotRegex(t, r"grupo 21\b")
+
+    def test_el_veredicto_nombra_el_rodeo(self):
+        v = self._correr()["veredicto"]
+        textos = " ".join(c["titulo"] + " ".join(c["evidencia"]) for c in v["sintomas"])
+        self.assertIn("Rodeo 3", textos)
+        self.assertNotIn("grupo", v["titular"].lower())
+
+    def test_los_rodeos_salen_ordenados_por_su_numero_en_la_serie(self):
+        self.assertEqual([g["nombre"] for g in self._correr()["datos"]["serie"]["grupos"]],
+                         ["Rodeo 3", "Rodeo 4 - Baja"])
+
+    def test_si_no_se_pueden_leer_los_nombres_lo_dice_y_no_inventa_un_rodeo(self):
+        r = self._correr(nombres=None)
+        nombres = {g["grupo"] for g in r["datos"]["grupos"]}
+        self.assertEqual(nombres, {"Rodeo (id 21)", "Rodeo (id 22)"})
+        self.assertIn("nombres de los rodeos", r["informe"])
+
+    def test_pide_solo_los_rodeos_que_aparecen(self):
+        self.assertIn("IN (21, 22)", self._correr()["pedidos"][0])
+
+    def test_la_consulta_de_nombres_rechaza_lo_que_no_es_un_numero(self):
+        with self.assertRaises(ValueError):
+            dg.sql_rodeos(["21", "1); DROP TABLE x --"])
 
 
 class TestCruceDeTratadas(unittest.TestCase):

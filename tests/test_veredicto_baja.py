@@ -19,14 +19,14 @@ def _datos(**cambios):
         "resumen": {"kg_d": 69225.0, "kg_b": 69900.0, "vac_d": 1712, "vac_b": 1680, "kv_d": 40.4, "kv_b": 41.6,
                     "efecto_vacas": 1330.0, "efecto_rinde": -2005.0, "sd_kg": 946.0, "z_kg": -0.7,
                     "z_vac": 0.4, "z_kv": -2.4, "ayer_kg": 70484.0, "ayer_vacas": 1690, "ayer_es_maximo": True},
-        "ausentes": {"n": 7, "kg": 131.0, "por_grupo": [{"grupo": 25, "n": 5, "kg": 98.0}]},
+        "ausentes": {"n": 7, "kg": 131.0, "por_grupo": [{"grupo": "Rodeo 9", "n": 5, "kg": 98.0}]},
         "caidas": {"n_comunes": 1743, "n_menos": 1005, "mediana": -0.6},
         "grupos": [
-            {"grupo": 3, "vacas_d": 329, "vacas_b": 333.4, "kg_d": 15275.0, "kg_b": 16228.0, "delta_kg": -953.0},
-            {"grupo": 4, "vacas_d": 353, "vacas_b": 359.9, "kg_d": 14769.0, "kg_b": 15410.0, "delta_kg": -641.0},
-            {"grupo": 5, "vacas_d": 255, "vacas_b": 253.4, "kg_d": 4644.0, "kg_b": 5209.0, "delta_kg": -565.0},
-            {"grupo": 21, "vacas_d": 362, "vacas_b": 362.9, "kg_d": 13934.0, "kg_b": 13931.0, "delta_kg": 3.0},
-            {"grupo": 2, "vacas_d": 429, "vacas_b": 385.6, "kg_d": 20241.0, "kg_b": 18775.0, "delta_kg": 1466.0},
+            {"grupo": "Rodeo 3", "vacas_d": 329, "vacas_b": 333.4, "kg_d": 15275.0, "kg_b": 16228.0, "delta_kg": -953.0},
+            {"grupo": "Rodeo 4 - Baja", "vacas_d": 353, "vacas_b": 359.9, "kg_d": 14769.0, "kg_b": 15410.0, "delta_kg": -641.0},
+            {"grupo": "Rodeo 5", "vacas_d": 255, "vacas_b": 253.4, "kg_d": 4644.0, "kg_b": 5209.0, "delta_kg": -565.0},
+            {"grupo": "Rodeo 1", "vacas_d": 362, "vacas_b": 362.9, "kg_d": 13934.0, "kg_b": 13931.0, "delta_kg": 3.0},
+            {"grupo": "Rodeo 2", "vacas_d": 429, "vacas_b": 385.6, "kg_d": 20241.0, "kg_b": 18775.0, "delta_kg": 1466.0},
         ],
         "ordenos": [
             {"sesion": 1, "vacas_d": 1747, "vacas_b": 1728, "kg_d": 24825.0, "kg_b": 25606.0,
@@ -60,7 +60,7 @@ def _datos_informe_2():
                         efecto_vacas=2603.0, efecto_rinde=-2297.0, sd_kg=1507.0, z_kg=0.2, z_vac=1.7, z_kv=-4.3)
     d["caidas"] = {"n_comunes": 1673, "n_menos": 1099, "mediana": -1.1}
     d["ausentes"] = {"n": 12, "kg": 420.0, "n_invalidas": 51, "kg_invalidas": 1847.0,
-                     "por_grupo": [{"grupo": 2, "n": 13, "kg": 556.0}]}
+                     "por_grupo": [{"grupo": "Rodeo 2", "n": 13, "kg": 556.0}]}
     d["tratadas_ayer"] = {"n": 73, "delta_tratadas": -2.3, "delta_resto": -1.0, "efecto_kg": -98.0,
                           "por_diagnostico": [{"nombre": "Desvasado Correctivo", "n": 59, "delta": -1.3}]}
     d["lecturas"] = {"inval_kg_d": 1428.0, "inval_kg_b": 2176.0, "sinid_kg_d": 0.0, "sinid_kg_b": 0.0}
@@ -164,7 +164,7 @@ class TestBajaReal(unittest.TestCase):
         d = _datos()
         d["resumen"].update(kg_d=63000.0, kg_b=70000.0, vac_d=1550, vac_b=1700, kv_d=40.6, kv_b=41.2,
                             efecto_vacas=-6180.0, efecto_rinde=-820.0, z_kg=-3.0, z_vac=-3.5, z_kv=-0.6)
-        d["ausentes"] = {"n": 150, "kg": 6200.0, "por_grupo": [{"grupo": 4, "n": 140, "kg": 5800.0}]}
+        d["ausentes"] = {"n": 150, "kg": 6200.0, "por_grupo": [{"grupo": "Rodeo 4 - Baja", "n": 140, "kg": 5800.0}]}
         v = vb.veredicto(d)
         self.assertEqual(v["nivel"], "claro")
         self.assertEqual(v["causas"][0]["clave"], "vacas")
@@ -426,6 +426,47 @@ class TestPesoDeLasCausas(unittest.TestCase):
         antes = copy.deepcopy(self.d)
         vb.veredicto(self.d)
         self.assertEqual(self.d, antes)
+
+
+class TestRodeosPorNombre(unittest.TestCase):
+    """Todo se dice por RODEO y con el nombre que le da DelPro: «Rodeo 5», no «el grupo 5» ni «grupo 21»."""
+
+    def setUp(self):
+        d = _datos_informe_2()
+        d["alimentacion"] = _alimentacion()
+        self.v = vb.veredicto(d)
+
+    def textos(self, lista):
+        return " ".join(c["titulo"] + " " + " ".join(c["evidencia"]) + " " + c.get("revisar", "") for c in lista)
+
+    def test_el_sintoma_por_rodeo_nombra_al_rodeo_sin_la_palabra_grupo(self):
+        g = next(c for c in self.v["sintomas"] if c["clave"] == "grupos")
+        self.assertEqual(g["titulo"], "Rodeo 5 rindió mucho menos por vaca")
+        self.assertIn("Rodeo 3: -953 kg", " ".join(g["evidencia"]))
+        self.assertNotRegex(self.textos([g]), r"(?i)\bgrupo")
+
+    def test_las_causas_hablan_de_rodeos(self):
+        txt = self.textos(self.v["causas"])
+        self.assertIn("Mucho movimiento entre rodeos", txt)
+        self.assertIn("Rodeo 2 sumó 43 vacas", txt)
+        self.assertNotRegex(txt, r"(?i)\bgrupos?\b")
+
+    def test_el_peso_de_las_causas_cuenta_rodeos_no_grupos(self):
+        self.assertIn("rodeos bajaron", self.v["causas"][0]["peso"])
+
+    def test_la_caida_concentrada_en_un_rodeo_lo_nombra(self):
+        d = _datos()
+        d["grupos"] = [dict(g, kg_d=g["kg_b"], delta_kg=0.0) for g in _datos()["grupos"]]
+        d["grupos"][0] = dict(d["grupos"][0], kg_d=d["grupos"][0]["kg_b"] - 2500, delta_kg=-2500.0)
+        g = next(c for c in vb.veredicto(d)["sintomas"] if c["clave"] == "grupos")
+        self.assertEqual(g["titulo"], "La caída se concentra en Rodeo 3")
+        self.assertIn("Rodeo 3 explica", g["evidencia"][0])
+
+    def test_las_vacas_ausentes_dicen_de_que_rodeo_son(self):
+        d = _datos()
+        d["ausentes"] = {"n": 150, "kg": 6200.0, "por_grupo": [{"grupo": "Rodeo 4 - Baja", "n": 140, "kg": 5800.0}]}
+        txt = " ".join(next(c for c in vb.veredicto(d)["causas"] if c["clave"] == "vacas")["evidencia"])
+        self.assertIn("sobre todo de Rodeo 4 - Baja", txt)
 
 
 class TestSinDatos(unittest.TestCase):
