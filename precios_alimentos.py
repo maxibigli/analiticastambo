@@ -261,7 +261,7 @@ def de(nombre, datos: dict = None) -> dict | None:
     return (d.get("precios") or {}).get(_norm(nombre))
 
 
-def resumen(ruta: str = None, datos: dict = None) -> dict:
+def resumen(ruta: str = None, datos: dict = None, estimados_en_uso=None) -> dict:
     """Estado de la planilla para la pantalla: cuántos precios hay, cuántos son
     ESTIMADOS y si falta el precio de la leche.
 
@@ -270,6 +270,12 @@ def resumen(ruta: str = None, datos: dict = None) -> dict:
 
     El aviso de estimados no es cosmético: sin él una pantalla de costos muestra
     plata inventada con la misma cara que la real, y alguien decide con eso.
+
+    `estimados_en_uso`: los ingredientes ESTIMADOS que de verdad entraron al cálculo (de
+    `alimentacion.costo_por_lote_dia`, clave `ingredientes_estimados`). Una planilla que sigue
+    teniendo las filas del proveedor anterior (marcadas «Estimado» y sin uso) daba «18 de 20
+    insumos» cuando los del mixer actual ya tenían precio del tambo. Con este dato el aviso
+    nombra solo lo que se usa; sin él cuenta todas las filas, como siempre.
     """
     d = datos if datos is not None else leer(ruta)
     precios = d.get("precios") or {}
@@ -280,7 +286,13 @@ def resumen(ruta: str = None, datos: dict = None) -> dict:
     if not precios:
         faltan.append("los precios de los insumos")
     aviso = None
-    if estimados:
+    if estimados_en_uso is not None:
+        estimados = [n for n in estimados_en_uso]
+        if estimados:
+            aviso = (f"Hay precios ESTIMADOS en uso ({len(estimados)} ingrediente(s) del mixer: "
+                     f"{', '.join(estimados)}): sirven para ver el cálculo, no para decidir. Cargá "
+                     f"el precio del tambo en la planilla y borrá el «SI» de la columna Estimado.")
+    elif estimados:
         aviso = (f"Hay precios ESTIMADOS en uso ({len(estimados)} de {len(precios)} insumos): "
                  f"sirven para ver el cálculo, no para decidir. Cargá los precios del tambo "
                  f"en la planilla y borrá el «SI» de la columna Estimado.")

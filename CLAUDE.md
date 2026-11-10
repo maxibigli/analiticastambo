@@ -3630,3 +3630,8 @@ se valoriza si la planilla cubre el 95 % de sus kg. Medido (28 días): la planil
 `Harina de Soja`, `Maiz Grano Humedo bunker 2 25-26`… y la cobertura daba 0 % a 19 %, así que ninguna receta tenía costo. El cartel decía «No hay planilla de precios
 cargada»; ahora (`alimentacion._falta_planilla`) distingue «no hay planilla» de «hay planilla pero no figuran los ingredientes del mixer», y nombra los que más pesan.
 Se arregla cargando esos ingredientes en la planilla con el nombre del mixer; no se emparejan por parecido (un precio mal asignado es peor que ninguno).
+
+**Precios de MixerOne: el campo `price` de cada alimento es USD por tonelada** (confirmado por el tambo el 10/11/2026; la API no lo dice). La planilla de La Ponderosa ya tiene una sección con los
+ingredientes con el nombre de MixerOne y esos precios, sin la marca «Estimado». Los que MixerOne no tiene cargados (silo de pastura, heno de pastura, heno de paja de cebada, grano de maíz seco) siguen
+con la estimación de Haasten y marcados. El aviso rojo de «precios ESTIMADOS» ahora cuenta solo los ingredientes que el mixer usa en el período (`precios_alimentos.resumen(estimados_en_uso=...)`,
+que sale de `costo_por_lote_dia`), no todas las filas con la marca: la planilla conserva las filas del proveedor anterior y las contaba como si se usaran.

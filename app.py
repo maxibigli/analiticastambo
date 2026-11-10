@@ -980,7 +980,8 @@ def _calentar_alimentacion(tambo: str, herd):
                 costo, diag_costo = alimentacion.costo_por_lote_dia(consumos, pr["precios"])
             precio_litro = pr.get("precio_litro")
             diag_costo["precios"] = precios_alimentos.resumen(
-                configuracion_tambo.ruta_precios(tambo))
+                configuracion_tambo.ruta_precios(tambo),
+                estimados_en_uso=diag_costo.get("ingredientes_estimados"))
         except Exception as exc:  # noqa: BLE001
             diag_costo = {"precios": {"error": str(exc)}}
         _cache_set(key, {
@@ -6823,7 +6824,8 @@ def api_alimentacion_conversion():
                             consumos, pr["precios"])
                     precio_litro = pr.get("precio_litro")
                     diag_costo["precios"] = precios_alimentos.resumen(
-                        configuracion_tambo.ruta_precios(tambo))
+                        configuracion_tambo.ruta_precios(tambo),
+                        estimados_en_uso=diag_costo.get("ingredientes_estimados"))
                 except Exception as exc:  # noqa: BLE001
                     diag_costo = {"precios": {"error": str(exc)}}
                 _cache_set(k, {
@@ -6934,11 +6936,13 @@ def api_alimentacion_conversion_historica():
                 costo, precio_litro, res_precios = {}, None, {}
                 try:
                     pr = _precios_del_tambo(tambo)
+                    _dc = {}
                     if pr.get("precios"):
                         costo, _dc = alimentacion.costo_por_lote_dia(consumos, pr["precios"])
                     precio_litro = pr.get("precio_litro")
                     res_precios = precios_alimentos.resumen(
-                        configuracion_tambo.ruta_precios(tambo))
+                        configuracion_tambo.ruta_precios(tambo),
+                        estimados_en_uso=_dc.get("ingredientes_estimados"))
                 except Exception as exc:  # noqa: BLE001
                     res_precios = {"error": str(exc)}
                 _cache_set(k, {
