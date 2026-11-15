@@ -47,6 +47,101 @@ ver `tambos.py` e `INSTALL.md`). Si aparece un secreto en texto plano en
 algún archivo, es un error: sacarlo y pedirle al usuario que lo setee él
 mismo con `setx`.
 
+## Vigilante: avisa solo cuando un ordeño sale claramente peor que lo normal (15/11/2026)
+
+Diseño aprobado: `docs/superpowers/specs/2026-11-14-vigilante-design.md`. Plan: `docs/superpowers/plans/2026-11-14-vigilante.md`.
+**Viene APAGADO** y solo mira el tambo por defecto (`tambos.DEFAULT_TAMBO`, La Ponderosa). Se enciende, se calibra y se
+prueba en ⚙ Configuración › 👁 Vigilante. **Solo lee** DelPro y MixerOne: no escribe nada en ninguno de los dos.
+
+**Qué hace.** Un hilo (`vigilante.iniciar_hilo`, que arranca `servidor.py` con `app.iniciar_vigilante()` DESPUÉS de tomar el candado de
+instancia única, no al importar `app`: `precalentar.py`, los diagnósticos y las pruebas también importan `app`, y cada uno tendría
+su propio vigilante mandando por los canales reales) hace una pasada cada 15 minutos. Cada ordeño terminado (45 min sin filas nuevas) se compara contra el MISMO número de ordeño de los
+7 días anteriores completos, nunca el día a medio hacer contra días enteros. Cuatro condiciones:
+
+  * **Baja del ordeño**: 2 desvíos o más por debajo de la base (`diagnostico_baja._z`, no hay una segunda versión) Y 4 % o más
+    por debajo de su media. Las dos a la vez: con una sola, una base muy pareja avisaría por 1 % y una muy dispareja nunca
+    avisaría. Con menos de 3 ordeños de base no opina.
+  * **Vacas que faltaron**: vacas habituales de ese ordeño (estuvieron en al menos la mitad de los de la base) que no pasaron
+    y pesan 1 % o más de los kg de la base. Solo se consulta por vaca si el ordeño ya salió 1 % por debajo de la media (la
+    lectura por vaca son ~37.000 filas y 9 s en SQL Express: no es una consulta de cada 15 minutos para todo ordeño).
+  * **Primera comida del mixer atrasada** 60 min o más (`alimentacion_dia.ultima_comida`), una vez por día.
+  * **Sin datos**: nada entra hace 4 h dentro de la ventana en que se suele ordeñar.
+
+Si algo se dispara, **recién ahí** busca la causa (`vigilante.buscar_causas`: vacas y rodeos que faltaron, bocas casi sin
+leche, ITH, comida del mixer; cada una en su propio try/except, la que no se puede medir se omite) y la IA **redacta** sobre
+esos hechos (`vigilante_aviso.redactar`). La IA no decide si avisar ni agrega nada: cada número y cada hora de lo que escribe
+tiene que figurar en los datos medidos (`agente._esta_entre`); si alguno no figura, o la IA falla, tarda, devuelve vacío o no
+hay `ANTHROPIC_API_KEY`, sale el texto determinístico. **Un aviso nunca depende de que la IA responda.**
+
+**Reglas de envío**, todas con test:
+  * **UN mensaje por pasada**, aunque haya varios hallazgos (pedido del 24/08/2026: nada de 20 mensajes sueltos).
+  * **Dedup** por `fecha_en_que_empezó|ordeño|condición`, en SQLite (`vigilante.db`, fuera de git): sobrevive a un reinicio y a
+    la medianoche (un ordeño de 23:30 a 01:20 cuenta para el día que empezó). Un aviso se registra **después** de que el envío
+    salió: si el canal falla, la pasada siguiente reintenta.
+  * **Tope de 3 mensajes por día**. Los que sobran no se pierden: quedan como una línea en el próximo mensaje de las 08:00/20:00
+    («el vigilante retuvo N aviso(s)», `app._lineas_vigilante_retenidos`; el ciclo real los consume, «Probar ciclo» los muestra
+    sin gastarlos). «Sin datos» y «volvieron los datos» no cuentan para el tope.
+  * **Horario silencioso 22:00–05:00**: no se manda ni se registra nada; lo pendiente sale a las 05:00 (se evalúan los ordeños de
+    hoy y de ayer terminados hace 12 h o menos). **OJO**: en La Ponderosa el primer ordeño del día va de ~00:10 a ~04:40, o sea
+    DENTRO del silencio: su aviso sale a las 05:00. Si el tambo prefiere enterarse antes, se cambia el silencio en la pestaña.
+  * **Un ordeño con menos del 90 % de las vacas habituales espera 2 h antes de avisarse**: puede ser un corte de la conexión con
+    DelPro a mitad de ordeño (leído de inmediato sería una «baja» falsa de 70 %), o un problema real (faltó media tropa). Si llegan
+    las filas que faltaban se reevalúa completo; si no, a las 2 h se avisa. Costo: un problema real de ese tipo avisa 2 h más tarde.
+  * En horario silencioso la pasada no hace nada (ni causas, ni IA): son consultas pesadas y llamadas pagas para un mensaje que no
+    se puede mandar. Lo que pase se evalúa en la primera pasada después de las 05:00.
+  * **«Probar»** (`/api/vigilante/probar`) corre una pasada real con `registrar=False`: no anota avisos, no cuenta para el tope,
+    no vacía los retenidos y funciona con el vigilante apagado. Con «Probar y mandar» además lo manda por los canales.
+
+**«Sin datos» mide por ordeño, no de punta a punta del día.** Una sola ventana desde el primer inicio hasta el último fin
+marcaría «sin datos» en el hueco normal entre dos ordeños (3 a 4 h en La Ponderosa, más en otros tambos). Cada número de
+ordeño tiene su ventana (desde la hora en que suele empezar, `sin_datos_horas` + 1 h) y el silencio se cuenta dentro de ella.
+«Volvieron los datos» exige filas de menos de 4 h, no alcanza con salir de la ventana. Además, un ordeño habitual (hecho al menos
+4 de los últimos 7 días) que no tiene ni una fila 4 h después de su hora de apertura se avisa aunque su ventana ya haya cerrado
+(`reglas.sin_datos_desde_apertura`): así un corte de la noche se avisa al levantarse el silencio y no a la mañana siguiente.
+Un corte a MITAD de un ordeño se ve como ordeño incompleto (arriba) y, si no llegan más filas, como «sin datos» recién en el
+próximo ordeño (límite conocido).
+
+**Lo que NO está medido todavía (ledger del plan, Tareas 1 y 7):**
+  * **¿Cuánto tarda DelPro en cargar un ordeño en `SessionMilkYield`?** El diseño supone casi tiempo real. Se mide con
+    `python medir_retraso_ordenos.py` en SERVER-DELPRO (24 h, incluida la madrugada) y después `--analizar`. Si el retraso es de
+    hasta 60 min el diseño sigue igual; entre 60 min y unas horas hay que poner `vigilante.CON_AVISO_DEMORA = True` (los avisos
+    dicen «con los datos al momento»); si son horas o los ordeños llegan partidos, el diseño no sirve tal cual: hablar con el
+    usuario antes de encenderlo.
+  * **Los umbrales** (z 2, 4 %, 1 %, 60 min, 4 h, 3 avisos por día) son los propuestos por el diseño. Se calibran con
+    `python reproducir_vigilante.py ponderosa --dias 60` en SERVER-DELPRO (la copia local de DDM corta el 30/07): objetivo
+    ≤ 1 aviso por semana en condiciones normales Y que el sábado 07/11/2026 sí dispare. Si chocan, cede el límite semanal, no la
+    detección: se informa cuántos avisos por semana resultan y decide el usuario.
+  * **Primera medición, en la copia local (La Ponderosa, 10/07 al 29/07/2026, 20 días, solo lectura con
+    `reproducir_vigilante.py`)**: con los umbrales propuestos el vigilante habría mandado **16 avisos, 5,6 por semana**, muy por
+    encima del objetivo de 1. **13 de los 16 son «vacas que faltaron»**: las vacas habituales ausentes pesan normalmente entre
+    1,4 y 3,6 % de los kg de la base (ruido de todos los ordeños), y solo dos pasan el 5 %: el ordeño 3 del 19/07 (6,6 %, que
+    además bajó 11,8 %: pero ver abajo, es un corrimiento de horario) y el ordeño 1 del 27/07 (65,7 %: es el día al que le falta un ordeño entero, ya documentado más abajo).
+    Con el umbral de ausentes en 3 a 5 % quedan 2 o 3 avisos en 20 días (≈1 por semana) y los dos reales siguen. Cambiar cómo
+    se define «vaca habitual» (la mitad de los ordeños de la base, 70 %, 85 % o 100 %) casi no mueve el resultado: el ruido es de
+    umbral. La baja del ordeño con z 2,5 y 4 % da 1,4 por semana. **No se cambió ninguna constante**: la copia local corta el
+    30/07, no se puede comprobar que el 07/11 dispare, y la regla del diseño es que la detección manda sobre la frecuencia.
+    Para la corrida de SERVER-DELPRO: probar `PCT_VACAS_AUSENTES` en 3 a 5 % y z en 2,5, y mirar si el 07/11 sigue saltando.
+  * **Falsos avisos por corrimiento de horario entre ordeños** (hallado en la revisión final, misma copia local). El 13/07 el
+    ordeño 2 dio −12,2 % (z −9,7): arrancó 06:00 en vez de ~07:40, y el ordeño 3 dio 24.582 kg contra ~22.000; el total del día fue
+    normal (63.712 kg). El 19/07 el ordeño 3 dio −11,8 %: el 2 tuvo 1.558 vacas (lo habitual ~1.450) y el 3 tuvo 1.474 (habitual
+    ~1.570); total del día normal (63.377 kg). `SessionNo` parece cortarse por reloj (inicios a las 06:00:00, 14:00:48 y 00:00:01).
+    La regla de baja por ordeño no lo distingue de una baja real. **Hay que resolverlo en la calibración**, por ejemplo con la
+    comparación acumulada del día que el diseño ya prevé, o mirando si el ordeño vecino compensa. Hasta entonces el 19/07 NO se
+    cuenta como baja real. Sin esto, la frecuencia de avisos falsos no baja de ~1 por semana aunque se suban los umbrales.
+  * **La prueba real de punta a punta por un canal** (Twilio/Telegram/Email): las alertas anteriores solo se probaron con mocks.
+    Se hace con «Probar y mandar» en SERVER-DELPRO después del deploy.
+
+**Fuera de la primera versión, a propósito**: RCS, UPS (el monitoreo por SNMP es otro trabajo) y las incidencias de la rotativa
+(ya van en el mensaje de las 08:00/20:00).
+
+**Despliegue** (SERVER-DELPRO): `git pull`, `actualizar.bat` **como Administrador**, verificar con el `Get-CimInstance` de arriba
+que hay UN solo `servidor.py` y es nuevo. No hay variables de entorno nuevas ni dependencias nuevas. `vigilante.db`,
+`vigilante_config.json` y `retraso_ordenos.csv` son estado propio de cada instalación (están en `.gitignore`).
+
+**Ojo con la consulta pesada**: `db.py` serializa las consultas por servidor con un `Semaphore(1)`, así que la lectura por vaca
+de una causa se encola detrás de lo que esté corriendo (warmups, pantallas). Una pasada que se dispara puede tardar uno o dos
+minutos; es una vez por ordeño malo, no por pasada.
+
 ## Dónde quedamos (05/08/2026)
 
 **Restaurar DDM en SERVER-DELPRO DEJA A LA APP SIN LEER LA BASE.** El backup
