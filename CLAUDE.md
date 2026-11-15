@@ -142,6 +142,31 @@ que hay UN solo `servidor.py` y es nuevo. No hay variables de entorno nuevas ni 
 de una causa se encola detrás de lo que esté corriendo (warmups, pantallas). Una pasada que se dispara puede tardar uno o dos
 minutos; es una vez por ordeño malo, no por pasada.
 
+## Panel de despliegue: actualizar la base de datos desde una carpeta (15/11/2026)
+
+Diseño: `docs/superpowers/specs/2026-11-15-panel-base-de-datos-design.md`. Plan: `docs/superpowers/plans/2026-11-15-panel-base-de-datos.md`.
+`iniciar_panel.bat` (en SERVER-DELPRO, como Administrador) tiene una pestaña **«Base de datos»**: una fila por tambo cuya base
+está en la instancia SQL de ESTA PC (`panel_despliegue.tambos_del_servidor`; `ponderosa` y `ponderosa_local` apuntan a la misma
+DDM y salen como una sola fila). **Cada tambo tiene su propia carpeta de backups**, elegida con «Examinar…» y recordada en
+`panel_despliegue.json` (clave `carpetas_bases`, `{id de tambo: ruta}`). La carpeta tiene SOLO backups de ese tambo (`.zip`/`.7z`
+o partes `DelPro.N.bak`); se toma el más nuevo y completo (un archivo tocado hace menos de 2 min se considera «todavía bajando»).
+
+  * **«Actualizar base»** pide confirmación y: si LactIA estaba corriendo la PARA, restaura (`restaurar_backup.restaurar_tambo`,
+    base paralela `_NUEVA`, `delpro_lectura` devuelto ANTES del intercambio, verifica que traiga animales) y la vuelve a INICIAR
+    **siempre**, incluso si el restore falló (la base actual queda intacta). Si LactIA ya estaba parada no la arranca; si no hay
+    backup nuevo (carpeta vacía, todavía bajando, o ya restaurado) **no la toca ni la para**.
+  * **«Dar acceso a delpro_lectura»** corre solo el script del usuario de solo lectura sobre la base ACTUAL (para un restore
+    hecho a mano con SSMS). Es idempotente y no para LactIA.
+  * **«Solo ver (no cambia nada)»**: muestra qué backup usaría y no cambia ni para nada. **La primera corrida real en
+    SERVER-DELPRO se hace con esto tildado**, y recién después sin tildar.
+  * **Las bases `<base>_ANT_<fecha>` NO se borran** (regla «Nunca borrar»): ocupan disco y el log avisa cuántas hay; limpiarlas es
+    decisión del tambo.
+  * El log se ve en las dos pestañas (Servidor y Base de datos). `restaurar_backup.bat` sigue andando igual para
+    `C:\backupsdelpro\<tambo>\` (subcarpeta por tambo, `restauraciones.json` en la raíz): el panel usa `carpeta_propia=True`
+    y guarda `restauraciones.json` dentro de la carpeta de cada tambo.
+  * Sin contraseñas: SQL Server se abre con `sqlcmd -E` (autenticación de Windows).
+  * **No probado contra el SQL Server real**: las pruebas usan un `ejecutar` y un LactIA de mentira. Esa prueba la hace el usuario.
+
 ## Dónde quedamos (05/08/2026)
 
 **Restaurar DDM en SERVER-DELPRO DEJA A LA APP SIN LEER LA BASE.** El backup
