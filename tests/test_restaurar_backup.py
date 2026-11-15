@@ -438,6 +438,11 @@ class TestResumen(Base):
         self.assertEqual(r["restaurado"], "2026-11-05T01:12:31")
         self.assertEqual(rb.resumen_carpeta(self.raiz, "laponderosa", AHORA, forzar=True)["estado"], "nuevo")
 
+    def test_el_nombre_dice_en_que_subcarpeta_esta_el_backup(self):
+        """Si la carpeta elegida tiene subcarpetas, «b.zip» solo no dice de cuál tambo es: se muestra la ruta relativa."""
+        _zip(self.raiz / "otro_tambo" / "b.zip", {"DelPro.1.bak": b"A", "DelPro.xml": XML.format(f="20261105 011231").encode()})
+        self.assertEqual(rb.resumen_carpeta(self.raiz, "laponderosa", AHORA)["nombre"], "otro_tambo/b.zip")
+
     def test_un_zip_recien_tocado_se_salta_y_se_informa(self):
         self._zip_nuevo(hace_s=10)
         r = rb.resumen_carpeta(self.raiz, "laponderosa", AHORA)

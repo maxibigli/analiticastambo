@@ -330,7 +330,10 @@ def resumen_carpeta(carpeta_tambo, tambo, ahora=None, forzar=False):
     if not elegido:
         return r
     r["backupdate"] = elegido.fecha
-    r["nombre"] = elegido.ruta.name
+    try:        # con la ruta relativa: «b.zip» solo no dice si es del tambo o de una subcarpeta de otro
+        r["nombre"] = elegido.ruta.relative_to(Path(carpeta_tambo)).as_posix()
+    except ValueError:
+        r["nombre"] = elegido.ruta.name
     previo = _leer_registro(carpeta_tambo).get(tambo, {}).get("backupdate")
     r["restaurado"] = previo
     al_dia = bool(previo) and not forzar and datetime.datetime.fromisoformat(previo) >= elegido.fecha

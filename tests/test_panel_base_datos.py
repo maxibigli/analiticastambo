@@ -191,6 +191,52 @@ class TestActualizarBase(_ConDespliegue):
         self.assertNotIn("DROP", texto + "".join(self.sql))
 
 
+class TestRevisionFinal(_ConDespliegue):
+    """Lo que encontró la revisión final: cada caso falló antes del arreglo."""
+
+    def test_restaurar_que_no_restaura_no_se_da_por_exito(self):
+        self._restaurar_original = self._restaurar
+        self.d_restaurar = lambda *a, **kw: (self.orden.append("restaurar"), {"estado": "sin_backup"})[1]
+        ok = self.d.actualizar_base("ponderosa", "DDM", ejecutar=self._ejecutar, resumen=self._resumen("nuevo"),
+                                    restaurar=self.d_restaurar, anteriores=lambda b, e: ["DDM_ANT_1"])
+        self.assertFalse(ok)
+        self.assertEqual(self.orden, ["parar", "restaurar", "iniciar"])      # LactIA igual vuelve
+        self.assertNotIn("anterior", self.log_texto())
+        self.assertIn("no restauró", self.log_texto())
+
+    def test_si_no_se_pudo_parar_pero_ya_no_queda_lactia_se_la_inicia(self):
+        def parar_a_medias():
+            self.orden.append("parar")
+            self.corriendo = False          # murió el proceso pero el panel no llegó a verificarlo
+            return False
+        self.d.parar_lactia = parar_a_medias
+        self.assertFalse(self.actualizar())
+        self.assertEqual(self.orden, ["parar", "iniciar"])
+
+    def test_si_no_se_pudo_parar_y_sigue_viva_no_se_toca(self):
+        self.parar_ok = False
+        self.assertFalse(self.actualizar())
+        self.assertEqual(self.orden, ["parar"])
+
+    def test_rechaza_una_carpeta_con_subcarpetas_de_otros_tambos(self):
+        os.mkdir(os.path.join(self.carpeta, "lamartina"))
+        with self.assertRaises(pd.ErrorPanel) as cm:
+            self.actualizar()
+        self.assertIn("lamartina", str(cm.exception))
+        self.assertEqual(self.orden, [])
+        self.assertEqual(self.d.info_base("ponderosa")["estado"], "error")
+
+    def test_rechaza_una_carpeta_que_ya_es_de_otro_tambo(self):
+        self.d.aj["carpetas_bases"] = {"ponderosa": self.carpeta, "lamartina_local": self.carpeta + os.sep}
+        with self.assertRaises(pd.ErrorPanel) as cm:
+            self.actualizar()
+        self.assertIn("lamartina_local", str(cm.exception))
+        self.assertEqual(self.orden, [])
+
+    def test_problema_de_carpeta_deja_pasar_una_carpeta_limpia(self):
+        self.assertIsNone(pd.problema_de_carpeta(self.carpeta, "ponderosa", {"ponderosa": self.carpeta}))
+
+
 class TestDarAcceso(_ConDespliegue):
     def test_dar_acceso_lectura(self):
         self.assertTrue(self.d.dar_acceso_lectura("DDM", self._ejecutar))
@@ -277,6 +323,15 @@ class TestPantallaBase(unittest.TestCase):
             self.panel._elegir_carpeta_base("lamartina_local")
         self.assertNotIn("lamartina_local", self.panel.aj["carpetas_bases"])
         self.assertEqual(self.guardar.call_count, 1)
+
+    def test_elegir_una_carpeta_con_otros_tambos_adentro_se_rechaza(self):
+        os.mkdir(os.path.join(self.dir.name, "lamartina"))
+        with mock.patch("tkinter.filedialog.askdirectory", return_value=self.dir.name), \
+                mock.patch("tkinter.messagebox.showerror") as error:
+            self.panel._elegir_carpeta_base("ponderosa")
+        self.assertTrue(error.called)
+        self.assertNotIn("ponderosa", self.panel.aj["carpetas_bases"])
+        self.assertEqual(self.guardar.call_count, 0)
 
     def test_actualizar_base_usa_correr_con_la_base_y_solo_ver(self):
         capturado = []

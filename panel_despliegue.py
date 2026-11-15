@@ -468,6 +468,27 @@ def cola_de_log(ruta: str, lineas: int = 25) -> str:
     return "\n".join(texto.splitlines()[-lineas:])
 
 
+def problema_de_carpeta(carpeta: str, tambo_id: str, carpetas: dict) -> str | None:
+    """Por qué esta carpeta NO sirve como la de `tambo_id` (o None). El restore busca hasta 3 niveles hacia abajo y toma
+    el backup más nuevo: con la raíz vieja (`C:\\backupsdelpro`, que tiene una subcarpeta por tambo) o con una carpeta
+    compartida, se restauraría el backup de OTRO tambo sin que nada lo avise."""
+    def norma(p):
+        return os.path.normcase(os.path.normpath(p))
+    for otro, ruta in carpetas.items():
+        if otro != tambo_id and ruta and norma(ruta) == norma(carpeta):
+            return f"Esa carpeta ya es la de «{otro}»: cada tambo necesita la suya, con solo sus backups."
+    import restaurar_backup as rb
+    ajenos = {n.lower() for n in rb.TAMBOS} | {i.lower() for i in carpetas if i != tambo_id}
+    try:
+        for hijo in os.listdir(carpeta):
+            if hijo.lower() in ajenos and os.path.isdir(os.path.join(carpeta, hijo)):
+                return (f"La carpeta tiene una subcarpeta «{hijo}», que parece de otro tambo: se podría restaurar "
+                        "su backup por error. Elegí la carpeta que tiene SOLO los backups de este tambo.")
+    except OSError as e:
+        return f"No puedo leer la carpeta: {e}"
+    return None
+
+
 class Despliegue:
     """Todo lo que el panel hace sobre el servidor. `log` recibe cada línea; `confirmar` recibe
     una pregunta y devuelve True/False (la pantalla lo resuelve con un cuadro de diálogo)."""
@@ -678,6 +699,9 @@ class Despliegue:
             raise ErrorPanel(f"Elegí la carpeta de los backups de «{tambo_id}» (botón Examinar).")
         if not os.path.isdir(carpeta):
             raise ErrorPanel(f"La carpeta de «{tambo_id}» no existe: {carpeta}")
+        problema = problema_de_carpeta(carpeta, tambo_id, self.aj.get("carpetas_bases") or {})
+        if problema:
+            raise ErrorPanel(f"La carpeta de «{tambo_id}» no sirve: {problema}")
         return carpeta
 
     def info_base(self, tambo_id: str, resumen=None) -> dict:
@@ -687,6 +711,9 @@ class Despliegue:
             return {"estado": "sin_carpeta"}
         if not os.path.isdir(carpeta):
             return {"estado": "carpeta_inexistente", "carpeta": carpeta}
+        problema = problema_de_carpeta(carpeta, tambo_id, self.aj.get("carpetas_bases") or {})
+        if problema:
+            return {"estado": "error", "error": problema}
         if resumen is None:
             import restaurar_backup as rb
             resumen = rb.resumen_carpeta
@@ -732,11 +759,16 @@ class Despliegue:
         habia = bool(self._del_script(self.aj["script_lactia"]))
         if habia and not self.parar_lactia():
             self.log("ERROR: no pude parar LactIA. No se restauró nada.")
+            if not self._del_script(self.aj["script_lactia"]):      # murió a medias: que no quede apagada
+                self.log("LactIA quedó parada: la vuelvo a iniciar.")
+                self.iniciar_lactia()
             return False
         restauro = False
         try:
-            restaurar(tambo_id, base, carpeta, ejecutar, forzar=forzar, log=self.log, carpeta_propia=True)
-            restauro = True
+            r = restaurar(tambo_id, base, carpeta, ejecutar, forzar=forzar, log=self.log, carpeta_propia=True)
+            restauro = (r or {}).get("estado") == "restaurado"
+            if not restauro:      # entre la confirmación y acá cambió la carpeta: no se restauró nada
+                self.log(f"AVISO: no restauró nada (estado: {(r or {}).get('estado')}). La base sigue como estaba.")
         except rb.RestauracionError as e:
             self.log(f"ERROR: {e}")
         finally:
@@ -1151,6 +1183,11 @@ class Panel:
         if not ruta:
             return
         ruta = os.path.normpath(ruta)
+        problema = problema_de_carpeta(ruta, tambo_id, self.aj.get("carpetas_bases", {}))
+        if problema:
+            from tkinter import messagebox
+            messagebox.showerror("Esa carpeta no sirve", problema, parent=self.raiz)
+            return
         self.aj.setdefault("carpetas_bases", {})[tambo_id] = ruta
         self.filas_base[tambo_id]["var"].set(ruta)
         guardar_ajustes(self.aj)
