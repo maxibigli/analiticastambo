@@ -22,6 +22,7 @@ que ya existen, al iniciar LactIA se le pasan las variables FRESCAS leídas del 
 from __future__ import annotations
 
 import ctypes
+import datetime
 import hashlib
 import json
 import os
@@ -949,10 +950,13 @@ class Panel:
             while True:
                 item = self.cola.get_nowait()
                 if item[0] == "log":
-                    self.txt.configure(state="normal")
-                    self.txt.insert("end", item[1] + "\n")
-                    self.txt.see("end")
-                    self.txt.configure(state="disabled")
+                    for caja in (self.txt, self.txt_base):          # el mismo log se ve en las dos pestañas
+                        caja.configure(state="normal")
+                        caja.insert("end", item[1] + "\n")
+                        caja.see("end")
+                        caja.configure(state="disabled")
+                elif item[0] == "base":
+                    self._pintar_info_base(item[1], item[2])
                 elif item[0] == "confirmar":
                     item[2][0] = messagebox.askyesno("Confirmar", item[1], parent=self.raiz)
                     item[3].set()
@@ -1009,6 +1013,7 @@ class Panel:
         self.cuaderno.pack(fill="both", expand=True, padx=8, pady=8)
         self._armar_variables(ttk.Frame(self.cuaderno))
         self._armar_servidor(ttk.Frame(self.cuaderno))
+        self._armar_base_datos(ttk.Frame(self.cuaderno))
 
     def _armar_variables(self, marco) -> None:
         tk, ttk = self.tk, self.ttk
@@ -1083,9 +1088,128 @@ class Panel:
         self.txt.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
     def _limpiar_log(self) -> None:
-        self.txt.configure(state="normal")
-        self.txt.delete("1.0", "end")
-        self.txt.configure(state="disabled")
+        for caja in (self.txt, self.txt_base):
+            caja.configure(state="normal")
+            caja.delete("1.0", "end")
+            caja.configure(state="disabled")
+
+    # -- base de datos ---------------------------------------------------------------
+    def _armar_base_datos(self, marco) -> None:
+        tk, ttk = self.tk, self.ttk
+        self.cuaderno.add(marco, text="  Base de datos  ")
+        self.filas_base = {}
+        self.var_solo_ver = tk.BooleanVar(value=False)
+        barra = ttk.Frame(marco)
+        barra.pack(fill="x", padx=8, pady=(8, 2))
+        ttk.Checkbutton(barra, text="Solo ver (no cambia nada)", variable=self.var_solo_ver).pack(side="left")
+        ttk.Button(barra, text="Buscar backups", command=self._refrescar_bases).pack(side="left", padx=10)
+        ttk.Button(barra, text="Limpiar log", command=self._limpiar_log).pack(side="right")
+        ttk.Label(marco, wraplength=900, foreground="#666666", text=(
+            "Elegí la carpeta donde están los backups de cada tambo. «Actualizar base» restaura el más nuevo: para LactIA, "
+            "restaura y la vuelve a iniciar sola; la base anterior NO se borra (queda como <base>_ANT_<fecha>). "
+            "«Dar acceso» solo vuelve a darle lectura a delpro_lectura.")).pack(fill="x", padx=8, pady=(0, 4))
+        try:
+            tambos = tambos_del_servidor()
+        except Exception as e:  # noqa: BLE001
+            tambos = []
+            ttk.Label(marco, text=f"No pude leer la lista de tambos: {e}").pack(padx=8, anchor="w")
+        carpetas = self.aj.setdefault("carpetas_bases", {})
+        for t in tambos:
+            caja = ttk.LabelFrame(marco, text=f"{t['nombre']} · base [{t['base']}]")
+            caja.pack(fill="x", padx=8, pady=4)
+            caja.columnconfigure(0, weight=1)
+            var = tk.StringVar(value=carpetas.get(t["id"], ""))
+            ttk.Entry(caja, textvariable=var, state="readonly").grid(row=0, column=0, sticky="we", padx=(8, 4), pady=(6, 2))
+            ttk.Button(caja, text="Examinar…",
+                       command=lambda i=t["id"]: self._elegir_carpeta_base(i)).grid(row=0, column=1, padx=(0, 8), pady=(6, 2))
+            info = ttk.Label(caja, text="consultando…")
+            info.grid(row=1, column=0, columnspan=2, sticky="w", padx=8)
+            botones = ttk.Frame(caja)
+            botones.grid(row=2, column=0, columnspan=2, sticky="e", padx=8, pady=(2, 6))
+            b_acceso = ttk.Button(botones, text="Dar acceso a delpro_lectura",
+                                  command=lambda i=t["id"]: self._dar_acceso(i))
+            b_acceso.pack(side="right", padx=(6, 0))
+            b_act = ttk.Button(botones, text="Actualizar base", command=lambda i=t["id"]: self._actualizar_base(i))
+            b_act.pack(side="right")
+            self.botones_accion += [b_act, b_acceso]
+            self.filas_base[t["id"]] = {"var": var, "info": info, "actualizar": b_act, "acceso": b_acceso,
+                                        "base": t["base"]}
+        if not tambos:
+            ttk.Label(marco, text="No hay tambos cuya base esté en este servidor.").pack(padx=8, pady=6, anchor="w")
+        from tkinter import scrolledtext
+        self.txt_base = scrolledtext.ScrolledText(marco, height=12, state="disabled", font=("Consolas", 9),
+                                                  background="#111820", foreground="#d6e2f0",
+                                                  insertbackground="#d6e2f0")
+        self.txt_base.pack(fill="both", expand=True, padx=8, pady=(4, 8))
+        self._refrescar_bases()
+
+    def _elegir_carpeta_base(self, tambo_id: str) -> None:
+        from tkinter import filedialog
+        actual = self.aj.get("carpetas_bases", {}).get(tambo_id) or CARPETA
+        ruta = filedialog.askdirectory(parent=self.raiz, initialdir=actual,
+                                       title="Carpeta con los backups de este tambo")
+        if not ruta:
+            return
+        ruta = os.path.normpath(ruta)
+        self.aj.setdefault("carpetas_bases", {})[tambo_id] = ruta
+        self.filas_base[tambo_id]["var"].set(ruta)
+        guardar_ajustes(self.aj)
+        self._refrescar_bases()
+
+    def _actualizar_base(self, tambo_id: str) -> None:
+        base, solo_ver = self.filas_base[tambo_id]["base"], self.var_solo_ver.get()
+
+        def trabajo():
+            try:
+                self.d.actualizar_base(tambo_id, base, solo_ver=solo_ver)
+            finally:
+                self._refrescar_bases([tambo_id], en_hilo=False)
+        self.correr(f"Actualizar base [{base}]" + (" (solo ver)" if solo_ver else ""), trabajo)
+
+    def _dar_acceso(self, tambo_id: str) -> None:
+        base = self.filas_base[tambo_id]["base"]
+        self.correr(f"Dar acceso a delpro_lectura en [{base}]", lambda: self.d.dar_acceso_lectura(base))
+
+    def _refrescar_bases(self, ids: list[str] | None = None, en_hilo: bool = True) -> None:
+        """Lee qué hay en cada carpeta (en un hilo: mirar un .zip grande no tiene que trabar la ventana)."""
+        ids = list(self.filas_base) if ids is None else ids
+
+        def trabajo():
+            for tid in ids:
+                try:
+                    info = self.d.info_base(tid)
+                except Exception as e:  # noqa: BLE001
+                    info = {"estado": "error", "error": str(e)}
+                self.cola.put(("base", tid, info))
+        if en_hilo:
+            threading.Thread(target=trabajo, daemon=True).start()
+        else:
+            trabajo()
+
+    def _pintar_info_base(self, tambo_id: str, info: dict) -> None:
+        fila = self.filas_base.get(tambo_id)
+        if not fila:
+            return
+        estado = info.get("estado")
+        if estado == "sin_carpeta":
+            texto = "sin carpeta: elegila con «Examinar…»"
+        elif estado == "carpeta_inexistente":
+            texto = "la carpeta no existe"
+        elif estado == "error":
+            texto = f"no pude leer la carpeta: {info.get('error', '')}"
+        elif estado == "sin_backup":
+            texto = "sin backup completo en la carpeta"
+            if info.get("saltados"):
+                texto += f" (se saltó: {'; '.join(info['saltados'])})"
+        else:
+            texto = f"backup más nuevo: {info['backupdate']:%d/%m %H:%M} ({info['nombre']})"
+            if estado == "al_dia":
+                texto += " · ya restaurado"
+            elif info.get("restaurado"):
+                texto += f" · restaurado: {datetime.datetime.fromisoformat(info['restaurado']):%d/%m}"
+            else:
+                texto += " · todavía sin restaurar"
+        fila["info"].configure(text=texto)
 
     # -- estado ----------------------------------------------------------------------
     def _pintar_estado(self, e: dict) -> None:
