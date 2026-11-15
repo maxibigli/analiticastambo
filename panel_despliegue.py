@@ -72,11 +72,13 @@ AJUSTES_DEFECTO = {
     "cloudflared_servicio": "cloudflared",
     "url_publica": "",               # vacío = LACTIA_URL_PUBLICA o https://www.analiticastambo.com
     "variables_extra": [],           # nombres que el tambo agregó a mano (para mostrarlas e inyectarlas)
+    "carpetas_bases": {},            # {id de tambo: carpeta donde están sus backups de DelPro} (pestaña Base de datos)
 }
 
 
 def cargar_ajustes(ruta: str = RUTA_AJUSTES) -> dict:
-    aj = {k: (list(v) if isinstance(v, list) else v) for k, v in AJUSTES_DEFECTO.items()}
+    aj = {k: (list(v) if isinstance(v, list) else dict(v) if isinstance(v, dict) else v)
+          for k, v in AJUSTES_DEFECTO.items()}
     try:
         with open(ruta, "r", encoding="utf-8") as f:
             guardado = json.load(f)
@@ -93,6 +95,33 @@ def guardar_ajustes(aj: dict, ruta: str = RUTA_AJUSTES) -> None:
     limpio = {k: aj[k] for k in AJUSTES_DEFECTO if k in aj}
     with open(ruta, "w", encoding="utf-8") as f:
         json.dump(limpio, f, indent=2, ensure_ascii=False)
+
+
+def tambos_del_servidor(config: dict | None = None, equipo: str | None = None) -> list[dict]:
+    """Los tambos cuya base está en la instancia SQL de ESTA PC, sin repetir la misma base.
+
+    `ponderosa` (SERVER-DELPRO, instancia DELPRO) y `ponderosa_local` (localhost) apuntan a la misma DDM cuando el
+    panel corre en el servidor: sale una sola fila, con el id que no termina en `_local`.
+    """
+    if config is None:
+        import tambos
+        config = {i: tambos.conexion(i) for i in tambos.TAMBOS}
+    equipo = (equipo if equipo is not None else socket.gethostname()).lower()
+    locales = {"localhost", "127.0.0.1", ".", "(local)", equipo}
+    por_base: dict[str, dict] = {}
+    for tid, c in config.items():
+        base = (c.get("database") or "").strip()
+        host = re.split(r"[\\,]", (c.get("server") or "").strip(), maxsplit=1)[0].lower()
+        if not base or host not in locales:
+            continue
+        previo = por_base.get(base.lower())
+        if previo is None:
+            por_base[base.lower()] = {"id": tid, "nombre": c.get("nombre") or tid, "base": base}
+        elif previo["id"].endswith("_local") and not tid.endswith("_local"):
+            por_base[base.lower()] = {"id": tid, "nombre": c.get("nombre") or tid, "base": base}
+    # el orden es el de `config` (no el de la primera aparición de cada base)
+    orden = {tid: n for n, tid in enumerate(config)}
+    return sorted(por_base.values(), key=lambda t: orden[t["id"]])
 
 
 # ---------------------------------------------------------------------------
