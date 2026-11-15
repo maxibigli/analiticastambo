@@ -341,6 +341,26 @@ def resumen_carpeta(carpeta_tambo, tambo, ahora=None, forzar=False):
     return r
 
 
+def _carpeta_de_trabajo(carpeta_tambo, tambo, ejecutar, log):
+    """Dónde se extrae y se une el .bak. Tiene que poder LEERLA SQL Server, que corre con su propia cuenta de servicio:
+    una carpeta de Google Drive (`G:\\Mi unidad\\...`, que solo existe para el usuario de Windows) o de otro usuario le
+    da 'Operating system error 5 (Acceso denegado)' al RESTORE VERIFYONLY (medido en SERVER-DELPRO). La carpeta de datos
+    de la instancia siempre la lee y la escribe; si no se puede usar (instancia remota, sin permiso de escritura) se
+    cae a `_trabajo` dentro de la carpeta de los backups, como antes."""
+    propia = carpeta_tambo / CARPETA_TRABAJO
+    try:
+        datos = Path(str(ejecutar("SELECT CAST(SERVERPROPERTY('InstanceDefaultDataPath') AS nvarchar(260));")[0][0]).strip())
+        if datos.is_dir():
+            ruta = datos / f"_lactia_trabajo_{_nombre(tambo)}"
+            ruta.mkdir(exist_ok=True)
+            return ruta
+    except (OSError, IndexError, RestauracionError):
+        pass
+    log(f"  [{tambo}] AVISO: no pude usar la carpeta de datos de SQL Server para el trabajo; uso {propia} "
+        "(si SQL Server no la puede leer, el restore va a fallar con 'Acceso denegado')")
+    return propia
+
+
 def restaurar_tambo(tambo, base, carpeta, ejecutar, ahora=None, forzar=False, solo_ver=False,
                     buscar_7z=_buscar_7z, log=print, esperar=None, carpeta_propia=False):
     """Restaura el backup más nuevo de `tambo` como la base `base`. Devuelve {"estado": ...}.
@@ -381,7 +401,7 @@ def restaurar_tambo(tambo, base, carpeta, ejecutar, ahora=None, forzar=False, so
             f"Quedó una base [{nueva}] de una corrida anterior que no terminó. No la borro sola: revisala y, si "
             f"está de más, eliminala a mano (DROP DATABASE [{nueva}];) y volvé a correr.")
 
-    trabajo = carpeta_tambo / CARPETA_TRABAJO
+    trabajo = _carpeta_de_trabajo(carpeta_tambo, tambo, ejecutar, log)
     try:
         if trabajo.exists():
             shutil.rmtree(trabajo)

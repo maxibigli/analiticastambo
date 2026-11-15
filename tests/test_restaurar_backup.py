@@ -390,6 +390,30 @@ class TestOrquestador(Base):
         self._correr(SqlFalso())
         self.assertFalse((self.tambo / "_trabajo").exists())
 
+    def test_el_trabajo_se_hace_donde_SQL_Server_puede_leer_no_en_la_carpeta_de_los_backups(self):
+        """Medido en SERVER-DELPRO: con los backups en `G:\\Mi unidad\\...` (Google Drive, que solo existe para el usuario
+        de Windows) SQL Server contestaba 'Operating system error 5 (Acceso denegado)' al VERIFYONLY, porque el .bak
+        armado quedaba en `_trabajo` dentro de esa carpeta. El .bak se arma en la carpeta de datos de la instancia."""
+        self._preparar()
+        datos = self.raiz / "sqldata"
+        datos.mkdir()
+
+        class SqlConDatos(SqlFalso):
+            def __call__(self, sql, base="master"):
+                if "InstanceDefaultDataPath" in sql:
+                    self.sentencias.append(sql)
+                    return [[str(datos) + "\\", str(datos) + "\\"]]
+                return super().__call__(sql, base)
+
+        sql = SqlConDatos()
+        r = self._correr(sql)
+        self.assertEqual(r["estado"], "restaurado")
+        verificar = [s for s in sql.sentencias if "VERIFYONLY" in s][0]
+        self.assertIn(str(datos), verificar)
+        self.assertNotIn(str(self.tambo), verificar)
+        self.assertEqual(list(datos.iterdir()), [])       # y lo limpia al terminar
+        self.assertFalse((self.tambo / "_trabajo").exists())
+
 
 class TestCarpetaPropia(Base):
     def _zip_en(self, carpeta):
