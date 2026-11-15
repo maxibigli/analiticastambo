@@ -51,6 +51,8 @@ import lavado_programa
 import voz_comandos
 import voz_sintesis
 import voz_stt
+import vigilante
+import vigilante_estado
 import laserenisima
 import mantenimiento
 import merito
@@ -6474,6 +6476,22 @@ def _html_alertas_puntuales(lineas: list) -> str:
 </div>"""
 
 
+def _lineas_vigilante_retenidos(tambo: str, registrar: bool) -> list:
+    """Los avisos que el vigilante no mandó por pasarse del tope diario (ver `vigilante.pasada`), para decirlos en el
+    próximo mensaje consolidado. Solo el tambo del vigilante. El ciclo real (`registrar=True`) los consume; «Probar»
+    los muestra sin gastarlos. Si el vigilante nunca corrió, no existe su base y no se crea una solo por mirar."""
+    if tambo != tambos.DEFAULT_TAMBO or not os.path.exists(vigilante_estado.RUTA_DB):
+        return []
+    try:
+        est = vigilante_estado.Estado(vigilante_estado.RUTA_DB)
+        lineas = est.tomar_retenidos() if registrar else est.retenidos()
+    except Exception:  # noqa: BLE001 - el vigilante no puede tumbar el mensaje de las 08:00
+        return []
+    if not lineas:
+        return []
+    return [f"👁 El vigilante retuvo {len(lineas)} aviso(s) por pasar el tope diario:"] + [f"• {l}" for l in lineas]
+
+
 def _construir_mensaje_alertas(tambo: str, registrar: bool = False):
     """Arma UN solo mensaje con todo lo que haya para avisar, en vez de un
     envío por cada condición (ver comentario de más arriba). Orden pedido
@@ -6507,6 +6525,11 @@ def _construir_mensaje_alertas(tambo: str, registrar: bool = False):
     if lineas:
         partes_texto.append("\n".join(lineas))
         secciones_html.append(_html_alertas_puntuales(lineas))
+
+    retenidos = _lineas_vigilante_retenidos(tambo, registrar)
+    if retenidos:
+        partes_texto.append("\n".join(retenidos))
+        secciones_html.append(_html_alertas_puntuales(retenidos))
 
     if config_alertas.checklist_resumen_activo():
         try:
@@ -6578,6 +6601,16 @@ def _bucle_alertas_whatsapp():
 
 
 threading.Thread(target=_bucle_alertas_whatsapp, daemon=True).start()
+
+def iniciar_vigilante():
+    """Arranca el hilo del vigilante (avisa solo cuando un ordeño sale claramente peor que lo normal). Viene APAGADO:
+    no hace nada hasta que se lo enciende en ⚙ Configuración › 👁 Vigilante.
+
+    NO se arranca al importar `app`, a diferencia del ciclo de alertas de arriba: lo llama `servidor.py` DESPUÉS de tomar
+    el candado de instancia única. Otros procesos importan `app` (precalentar.py, los diagnósticos, las pruebas) y con el
+    vigilante encendido cada uno tendría el suyo mandando avisos por los canales reales: «consultar, enviar, registrar»
+    no es atómico entre procesos y el mismo aviso saldría dos veces."""
+    return vigilante.iniciar_hilo(tambos.DEFAULT_TAMBO, lambda texto: _enviar_a_canales_activos(texto))
 
 
 @app.get("/api/alertas/canales")
@@ -6659,6 +6692,64 @@ def api_alertas_probar_ciclo():
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 502
     return jsonify({"ok": True})
+
+
+# --- Vigilante: avisa solo cuando un ordeño sale claramente peor que lo normal -------------------------------
+@app.get("/api/vigilante/config")
+@auth.requiere_rol("admin")
+def api_vigilante_config():
+    return jsonify(vigilante_estado.config())
+
+
+@app.post("/api/vigilante/config")
+@auth.requiere_rol("admin")
+def api_vigilante_config_set():
+    body = request.json or {}
+    desconocidos = [k for k in body if k not in vigilante_estado.DEFECTOS]
+    if not body or desconocidos:
+        return jsonify({"error": "Campo desconocido: " + ", ".join(desconocidos) if desconocidos
+                        else "Falta qué guardar."}), 400
+    try:
+        vigilante_estado.set_config(**body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "config": vigilante_estado.config()})
+
+
+@app.get("/api/vigilante/estado")
+@auth.requiere_rol("admin")
+def api_vigilante_estado():
+    est = vigilante_estado.Estado(vigilante_estado.RUTA_DB)
+    ultima = est.ultima_pasada()
+    return jsonify({"estado_datos": est.estado_datos(),
+                    "avisos_hoy": est.avisos_del_dia(datetime.date.today()),
+                    "ultima_pasada": {"cuando": ultima[0].isoformat(), "resultado": ultima[1]} if ultima else None,
+                    "retenidos": est.retenidos()})
+
+
+@app.post("/api/vigilante/probar")
+@auth.requiere_rol("admin")
+def api_vigilante_probar():
+    """Corre una pasada de verdad sobre los datos de ahora y devuelve el aviso que saldría, SIN gastar nada: no registra
+    avisos, no cuenta para el tope, no vacía los retenidos. Con `"enviar": true` además lo manda por los canales activos
+    (para comprobar que el aviso llega), igual sin registrar."""
+    body = request.get_json(silent=True) or {}
+    try:
+        r = vigilante.pasada(tambos.DEFAULT_TAMBO, registrar=False, enviar=None)
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"error": f"No se pudo armar la prueba: {exc}"}), 500
+    if r["estado"] == "error":
+        return jsonify({"error": r.get("error") or "No se pudo leer DelPro."}), 502
+    enviar = bool(body.get("enviar"))
+    if enviar:
+        if not r["mensaje"]:
+            return jsonify({"error": "Ahora no hay nada para avisar, así que no se mandó nada."}), 400
+        try:
+            _enviar_resumen_a_canales_activos(r["mensaje"], None)
+        except Exception as exc:  # noqa: BLE001
+            return jsonify({"error": str(exc)}), 502
+    return jsonify({"estado": r["estado"], "mensaje": r["mensaje"], "retenidos": r["retenidos"], "enviado": enviar,
+                    "hallazgos": [{"tipo": h["tipo"], "clave": h["clave"]} for h in r["hallazgos"]]})
 
 
 # --- Alimentación: conciliación de lotes con grupos --------------------------

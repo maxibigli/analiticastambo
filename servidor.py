@@ -66,7 +66,10 @@ if __name__ == "__main__":
 
     from waitress import serve
 
-    from app import app
+    from app import app, iniciar_vigilante
+
+    # El vigilante se arranca ACA y no al importar `app`: solo esta instancia, la que tomó el candado, puede tener uno.
+    iniciar_vigilante()
 
     print(f"Analitica DelPro escuchando en http://{HOST}:{PORT}  (Ctrl+C para salir)")
     # threads=8 alcanza para varios usuarios a la vez; el acceso a SQL Server ya
