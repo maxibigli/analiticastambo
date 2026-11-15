@@ -254,6 +254,19 @@ def sql_usuario_lectura(base):
             "  ALTER ROLE db_datareader ADD MEMBER delpro_lectura;\nEND")
 
 
+def dar_acceso_lectura(base, ejecutar):
+    """Corre solo el script del usuario de solo lectura sobre `base` (idempotente: sirve si el acceso se perdió)."""
+    ejecutar(sql_usuario_lectura(base))
+
+
+def bases_anteriores(base, ejecutar):
+    """Las bases `<base>_ANT_*` que dejaron las restauraciones anteriores (no se borran solas: ocupan disco)."""
+    base = _nombre(base)
+    prefijo = f"{base}_ANT_"
+    filas = ejecutar(f"SELECT name FROM sys.databases WHERE name LIKE N'{base}\\_ANT\\_%' ESCAPE '\\';")
+    return sorted(f[0] for f in filas if f and f[0].startswith(prefijo))
+
+
 INTENTOS_LOGIN = 4
 ESPERA_LOGIN_S = 20
 _LOGIN_FALLIDO = ("Login timeout expired", "Unable to complete login process", "Timeout error [258]")
@@ -307,15 +320,37 @@ def _guardar_registro(carpeta, tambo, fecha, origen, ahora):
 
 # ---------------------------------------------------------------- orquestación
 
+def resumen_carpeta(carpeta_tambo, tambo, ahora=None, forzar=False):
+    """Qué hay en la carpeta de un tambo, sin tocar nada: {"estado": sin_backup|al_dia|nuevo, "backupdate", "nombre",
+    "restaurado", "saltados"}. La misma regla de «al día» que usa `restaurar_tambo`. Una carpeta inexistente es sin_backup."""
+    ahora = ahora or datetime.datetime.now()
+    elegido, saltados = elegir_ultimo(buscar(carpeta_tambo, ahora))
+    r = {"estado": "sin_backup", "backupdate": None, "nombre": None, "restaurado": None,
+         "saltados": [f"{c.ruta.name}: {c.motivo}" for c in saltados]}
+    if not elegido:
+        return r
+    r["backupdate"] = elegido.fecha
+    r["nombre"] = elegido.ruta.name
+    previo = _leer_registro(carpeta_tambo).get(tambo, {}).get("backupdate")
+    r["restaurado"] = previo
+    al_dia = bool(previo) and not forzar and datetime.datetime.fromisoformat(previo) >= elegido.fecha
+    r["estado"] = "al_dia" if al_dia else "nuevo"
+    return r
+
+
 def restaurar_tambo(tambo, base, carpeta, ejecutar, ahora=None, forzar=False, solo_ver=False,
-                    buscar_7z=_buscar_7z, log=print, esperar=None):
+                    buscar_7z=_buscar_7z, log=print, esperar=None, carpeta_propia=False):
     """Restaura el backup más nuevo de `tambo` como la base `base`. Devuelve {"estado": ...}.
+
+    Con `carpeta_propia=True`, `carpeta` ES la carpeta de los backups de ese tambo (no se le agrega `/<tambo>`), y el
+    registro de lo restaurado y la carpeta de trabajo quedan ahí. Es lo que usa el panel de despliegue.
 
     estados: sin_backup · al_dia · solo_ver · restaurado (cualquier falla es RestauracionError, con la base actual intacta)
     """
     ahora = ahora or datetime.datetime.now()
     carpeta = Path(carpeta)
-    carpeta_tambo = carpeta / tambo
+    carpeta_tambo = carpeta if carpeta_propia else carpeta / tambo
+    registro = carpeta_tambo if carpeta_propia else carpeta
     elegido, saltados = elegir_ultimo(buscar(carpeta_tambo, ahora))
     for c in saltados:
         log(f"  [{tambo}] se salta {c.ruta.name}: {c.motivo}")
@@ -325,7 +360,7 @@ def restaurar_tambo(tambo, base, carpeta, ejecutar, ahora=None, forzar=False, so
     que = elegido.ruta.name if elegido.tipo != "bak" else f"{len(elegido.archivos)} parte(s) .bak en {elegido.ruta.name}"
     log(f"  [{tambo}] más nuevo: {que} (backup del {elegido.fecha:%d/%m/%Y %H:%M})")
 
-    previo = _leer_registro(carpeta).get(tambo, {}).get("backupdate")
+    previo = _leer_registro(registro).get(tambo, {}).get("backupdate")
     if previo and not forzar and datetime.datetime.fromisoformat(previo) >= elegido.fecha:
         log(f"  [{tambo}] ya está restaurado ese backup o uno más nuevo ({previo[:16]}); nada que hacer")
         return {"estado": "al_dia", "backupdate": elegido.fecha}
@@ -380,7 +415,7 @@ def restaurar_tambo(tambo, base, carpeta, ejecutar, ahora=None, forzar=False, so
             raise
 
         _intercambiar(base, nueva, base in existentes, ahora, ejecutar, log, esperar)
-        _guardar_registro(carpeta, tambo, elegido.fecha, elegido.ruta.name, ahora)
+        _guardar_registro(registro, tambo, elegido.fecha, elegido.ruta.name, ahora)
         log(f"  [{tambo}] LISTO: [{base}] ahora tiene el backup del {elegido.fecha:%d/%m/%Y %H:%M} ({animales} animales)")
         return {"estado": "restaurado", "backupdate": elegido.fecha, "animales": animales}
     finally:

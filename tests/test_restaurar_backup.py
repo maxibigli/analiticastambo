@@ -391,5 +391,76 @@ class TestOrquestador(Base):
         self.assertFalse((self.tambo / "_trabajo").exists())
 
 
+class TestCarpetaPropia(Base):
+    def _zip_en(self, carpeta):
+        _zip(carpeta / "b.zip", {"DelPro.1.bak": b"AAA", "DelPro.xml": XML.format(f="20261105 011231").encode()})
+
+    def test_usa_la_carpeta_dada_sin_agregar_el_nombre_del_tambo(self):
+        self._zip_en(self.raiz)
+        r = rb.restaurar_tambo("laponderosa", "DDM", self.raiz, SqlFalso(), ahora=AHORA, log=lambda *_: None,
+                               carpeta_propia=True)
+        self.assertEqual(r["estado"], "restaurado")
+        reg = json.loads((self.raiz / "restauraciones.json").read_text("utf-8"))
+        self.assertIn("laponderosa", reg)
+
+    def test_sin_carpeta_propia_busca_en_la_subcarpeta(self):
+        self._zip_en(self.tambo)
+        r = rb.restaurar_tambo("laponderosa", "DDM", self.raiz, SqlFalso(), ahora=AHORA, log=lambda *_: None)
+        self.assertEqual(r["estado"], "restaurado")
+
+
+class TestResumen(Base):
+    def _zip_nuevo(self, hace_s=3600):
+        _zip(self.raiz / "b.zip", {"DelPro.1.bak": b"AAA", "DelPro.xml": XML.format(f="20261105 011231").encode()},
+             hace_s=hace_s)
+
+    def test_carpeta_vacia_es_sin_backup(self):
+        self.assertEqual(rb.resumen_carpeta(self.raiz, "laponderosa", AHORA)["estado"], "sin_backup")
+
+    def test_carpeta_inexistente_es_sin_backup_sin_excepcion(self):
+        r = rb.resumen_carpeta(self.raiz / "no_existe", "laponderosa", AHORA)
+        self.assertEqual(r["estado"], "sin_backup")
+
+    def test_backup_sin_restaurar_es_nuevo(self):
+        self._zip_nuevo()
+        r = rb.resumen_carpeta(self.raiz, "laponderosa", AHORA)
+        self.assertEqual(r["estado"], "nuevo")
+        self.assertEqual(r["backupdate"], datetime.datetime(2026, 11, 5, 1, 12, 31))
+        self.assertEqual(r["nombre"], "b.zip")
+        self.assertIsNone(r["restaurado"])
+
+    def test_ya_restaurado_es_al_dia_y_forzar_lo_vuelve_nuevo(self):
+        self._zip_nuevo()
+        rb.restaurar_tambo("laponderosa", "DDM", self.raiz, SqlFalso(), ahora=AHORA, log=lambda *_: None,
+                           carpeta_propia=True)
+        r = rb.resumen_carpeta(self.raiz, "laponderosa", AHORA)
+        self.assertEqual(r["estado"], "al_dia")
+        self.assertEqual(r["restaurado"], "2026-11-05T01:12:31")
+        self.assertEqual(rb.resumen_carpeta(self.raiz, "laponderosa", AHORA, forzar=True)["estado"], "nuevo")
+
+    def test_un_zip_recien_tocado_se_salta_y_se_informa(self):
+        self._zip_nuevo(hace_s=10)
+        r = rb.resumen_carpeta(self.raiz, "laponderosa", AHORA)
+        self.assertEqual(r["estado"], "sin_backup")
+        self.assertEqual(len(r["saltados"]), 1)
+        self.assertIn("b.zip", r["saltados"][0])
+
+
+class TestAyudas(unittest.TestCase):
+    def test_bases_anteriores_filtra_y_ordena(self):
+        sql = SqlFalso(existentes={"DDM", "DDM_ANT_20261105_0600", "DDM_ANT_20261101_0600", "OTRA"})
+        self.assertEqual(rb.bases_anteriores("DDM", sql), ["DDM_ANT_20261101_0600", "DDM_ANT_20261105_0600"])
+
+    def test_dar_acceso_lectura_corre_el_script_sobre_esa_base(self):
+        sql = SqlFalso()
+        rb.dar_acceso_lectura("DDM", sql)
+        self.assertTrue(sql.hubo("USE [DDM]"))
+        self.assertTrue(sql.hubo("delpro_lectura"))
+
+    def test_dar_acceso_rechaza_nombres_raros(self):
+        with self.assertRaises(rb.RestauracionError):
+            rb.dar_acceso_lectura("DDM; DROP", SqlFalso())
+
+
 if __name__ == "__main__":
     unittest.main()
