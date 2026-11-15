@@ -670,6 +670,97 @@ class Despliegue:
         self.log("Actualización terminada." if ok else "Actualización terminada CON ERRORES (ver arriba).")
         return ok
 
+    # -- base de datos (pestaña «Base de datos») -------------------------------
+    def _carpeta_de_base(self, tambo_id: str) -> str:
+        carpeta = (self.aj.get("carpetas_bases") or {}).get(tambo_id, "")
+        if not carpeta:
+            raise ErrorPanel(f"Elegí la carpeta de los backups de «{tambo_id}» (botón Examinar).")
+        if not os.path.isdir(carpeta):
+            raise ErrorPanel(f"La carpeta de «{tambo_id}» no existe: {carpeta}")
+        return carpeta
+
+    def info_base(self, tambo_id: str, resumen=None) -> dict:
+        """Qué hay en la carpeta del tambo (solo lee). Para pintar la fila de la pestaña."""
+        carpeta = (self.aj.get("carpetas_bases") or {}).get(tambo_id, "")
+        if not carpeta:
+            return {"estado": "sin_carpeta"}
+        if not os.path.isdir(carpeta):
+            return {"estado": "carpeta_inexistente", "carpeta": carpeta}
+        if resumen is None:
+            import restaurar_backup as rb
+            resumen = rb.resumen_carpeta
+        return resumen(carpeta, tambo_id)
+
+    def actualizar_base(self, tambo_id: str, base: str, solo_ver: bool = False, forzar: bool = False, *,
+                        ejecutar=None, resumen=None, restaurar=None, anteriores=None) -> bool:
+        """Restaura en `base` el backup más nuevo de la carpeta del tambo.
+
+        Si LactIA estaba corriendo la para, y la vuelve a iniciar SIEMPRE al terminar (incluso si el restore falló: en
+        ese caso la base actual quedó intacta y LactIA tiene que seguir sirviendo). Si no hay un backup nuevo, no toca
+        a LactIA. La base anterior se conserva como `<base>_ANT_<fecha>`: no se borra nada."""
+        import restaurar_backup as rb
+        carpeta = self._carpeta_de_base(tambo_id)
+        ejecutar = ejecutar or rb.sqlcmd(rb.INSTANCIA)
+        restaurar = restaurar or rb.restaurar_tambo
+        anteriores = anteriores or rb.bases_anteriores
+        info = (resumen or rb.resumen_carpeta)(carpeta, tambo_id, forzar=forzar)
+        for saltado in info.get("saltados", []):
+            self.log(f"  se salta {saltado}")
+        if info["estado"] == "sin_backup":
+            self.log(f"No hay ningún backup completo en {carpeta}. No se tocó nada.")
+            return False
+        if info["estado"] == "al_dia":
+            self.log(f"La base [{base}] ya tiene el backup más nuevo ({info['backupdate']:%d/%m/%Y %H:%M}). "
+                     "No se tocó nada.")
+            return True
+        if solo_ver:
+            self.log("(solo ver) no se cambia nada: LactIA sigue como está.")
+            restaurar(tambo_id, base, carpeta, ejecutar, forzar=forzar, solo_ver=True, log=self.log,
+                      carpeta_propia=True)
+            return True
+
+        if not self.confirmar(
+                f"Se va a restaurar el backup del {info['backupdate']:%d/%m/%Y %H:%M} ({info['nombre']}) "
+                f"como la base [{base}].\n\n"
+                "• LactIA se para y se vuelve a iniciar sola.\n"
+                f"• La base actual NO se borra: queda como [{base}_ANT_<fecha>] (ocupa disco).\n"
+                "• Puede tardar varios minutos.\n\n¿Seguir?"):
+            self.log("Cancelado: no se tocó nada.")
+            return False
+
+        habia = bool(self._del_script(self.aj["script_lactia"]))
+        if habia and not self.parar_lactia():
+            self.log("ERROR: no pude parar LactIA. No se restauró nada.")
+            return False
+        restauro = False
+        try:
+            restaurar(tambo_id, base, carpeta, ejecutar, forzar=forzar, log=self.log, carpeta_propia=True)
+            restauro = True
+        except rb.RestauracionError as e:
+            self.log(f"ERROR: {e}")
+        finally:
+            inicio = self.iniciar_lactia() if habia else True
+        if restauro:
+            try:
+                viejas = anteriores(base, ejecutar)
+                if viejas:
+                    self.log(f"Hay {len(viejas)} base(s) anterior(es) guardadas (ocupan disco; borrarlas es decisión "
+                             f"tuya): {', '.join(viejas)}")
+            except rb.RestauracionError as e:
+                self.log(f"AVISO: no pude contar las bases anteriores: {e}")
+        return restauro and inicio
+
+    def dar_acceso_lectura(self, base: str, ejecutar=None) -> bool:
+        """Vuelve a dar a `delpro_lectura` el acceso a `base` (se pierde en cada restore). No para LactIA."""
+        import restaurar_backup as rb
+        try:
+            rb.dar_acceso_lectura(base, ejecutar or rb.sqlcmd(rb.INSTANCIA))
+        except rb.RestauracionError as e:
+            self.log(f"ERROR: {e}")
+            return False
+        self.log(f"OK: delpro_lectura tiene acceso de lectura a [{base}].")
+        return True
+
     # -- Cloudflare ---------------------------------------------------------
     def _servicio_estado(self) -> str:
         nombre = self.aj["cloudflared_servicio"]
