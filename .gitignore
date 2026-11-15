@@ -124,3 +124,11 @@ ups.db-shm
 ups_cola.db
 ups_cola.db-wal
 ups_cola.db-shm
+
+# Vigilante: estado propio de cada instalacion y datos de medicion (no van al repo).
+vigilante.db
+vigilante_config.json
+retraso_ordenos.csv
+
+# Cuaderno de trabajo del plan en ejecucion (superpowers).
+.superpowers/
