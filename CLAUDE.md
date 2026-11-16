@@ -166,6 +166,24 @@ o partes `DelPro.N.bak`); se toma el más nuevo y completo (un archivo tocado ha
     y guarda `restauraciones.json` dentro de la carpeta de cada tambo.
   * Sin contraseñas: SQL Server se abre con `sqlcmd -E` (autenticación de Windows).
   * **No probado contra el SQL Server real**: las pruebas usan un `ejecutar` y un LactIA de mentira. Esa prueba la hace el usuario.
+    (Hecha el 15/11/2026 en SERVER-DELPRO: anduvo. El primer intento falló con «Acceso denegado» porque SQL Server no puede leer el
+    Google Drive virtual `G:\`: ahora el .bak se arma en la carpeta de datos de la instancia, `restaurar_backup._carpeta_de_trabajo`.
+    Hace falta ~2× el tamaño del backup libre en ese disco.)
+
+### Pestaña «Precios»: llevar la planilla de precios al servidor (15/11/2026)
+
+`Precios_alimentos.xlsx` está en `.gitignore` (es de cada instalación), así que `git pull` NUNCA la actualiza. Pasó: la del servidor
+tenía 20 insumos con los nombres de Haasten, el mixer (MixerOne) manda otros («Silo Maiz 1 24-25», «Harina de Soja»…), la cobertura
+de precios daba 0 a 21 % por receta (el mínimo es `alimentacion.COBERTURA_MIN`, 95 %) y los litros libres decían «Sin datos
+todavía». Con la planilla de la PC de desarrollo (36 insumos) la cobertura da 100 % en las 8 recetas.
+
+La pestaña elige la planilla nueva («Examinar…», se recuerda en `origen_precios` de `panel_despliegue.json`), muestra qué se agrega,
+qué cambia de precio y —con «OJO»— qué insumos de la actual NO tiene la nueva (por si se eligió una más vieja), y con «Actualizar
+planilla»: guarda la anterior en `precios_anteriores/` (nunca se borra), copia de forma atómica, **vuelve a leer lo copiado** y si no
+se lee bien deja la anterior, y **reinicia LactIA si estaba corriendo**: el análisis de costos vive en memoria 30 min
+(`CONVERSION_CACHE_TTL_S`), así que sin reinicio la pantalla seguiría diciendo «Sin datos» un rato. «Solo ver» no cambia nada.
+Destino = `configuracion_tambo.ruta_precios(DEFAULT_TAMBO)` o `Precios_alimentos.xlsx` junto a la app. Si el nombre de un insumo del
+mixer cambia (cada cosecha: «25-26» pasa a «26-27») hay que sumar la fila nueva en la planilla, o la cobertura vuelve a caer.
 
 ## Dónde quedamos (05/08/2026)
 

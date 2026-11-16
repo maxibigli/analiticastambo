@@ -74,6 +74,7 @@ AJUSTES_DEFECTO = {
     "url_publica": "",               # vacío = LACTIA_URL_PUBLICA o https://www.analiticastambo.com
     "variables_extra": [],           # nombres que el tambo agregó a mano (para mostrarlas e inyectarlas)
     "carpetas_bases": {},            # {id de tambo: carpeta donde están sus backups de DelPro} (pestaña Base de datos)
+    "origen_precios": "",            # la planilla de precios nueva que se lleva al servidor (pestaña Precios)
 }
 
 
@@ -489,6 +490,42 @@ def problema_de_carpeta(carpeta: str, tambo_id: str, carpetas: dict) -> str | No
     return None
 
 
+def _leer_planilla(ruta: str) -> dict:
+    """La planilla de precios tal cual está en el archivo (sin el caché de `precios_alimentos.leer`)."""
+    try:
+        import precios_alimentos
+        return precios_alimentos._leer_excel(ruta)
+    except ImportError as e:
+        raise ErrorPanel(f"Falta una librería para leer la planilla de precios: {e}")
+    except Exception as e:  # noqa: BLE001 - un archivo que no es una planilla no tiene que tirar el panel
+        return {"error": str(e), "precios": {}}
+
+
+def comparar_precios(nueva: dict, actual: dict | None) -> dict:
+    """Qué cambia si la planilla `nueva` reemplaza a la `actual` (ambas como las devuelve `precios_alimentos`)."""
+    pn = (nueva or {}).get("precios") or {}
+    pa = (actual or {}).get("precios") or {}
+    return {
+        "insumos_nueva": len(pn), "insumos_actual": len(pa),
+        "agregados": [pn[k]["nombre"] for k in pn if k not in pa],
+        "quitados": [pa[k]["nombre"] for k in pa if k not in pn],
+        "cambiados": [(pn[k]["nombre"], pa[k].get("precio_kg"), pn[k].get("precio_kg"))
+                      for k in pn if k in pa
+                      and round(pn[k].get("precio_kg") or 0, 6) != round(pa[k].get("precio_kg") or 0, 6)],
+        "estimados_nueva": sum(1 for v in pn.values() if v.get("estimado")),
+        "estimados_actual": sum(1 for v in pa.values() if v.get("estimado")),
+    }
+
+
+def _lista_corta(nombres: list[str], maximo: int = 6) -> str:
+    resto = len(nombres) - maximo
+    return ", ".join(nombres[:maximo]) + (f" (y {resto} más)" if resto > 0 else "")
+
+
+def _insumos(n: int) -> str:
+    return f"{n} insumo" + ("" if n == 1 else "s")
+
+
 class Despliegue:
     """Todo lo que el panel hace sobre el servidor. `log` recibe cada línea; `confirmar` recibe
     una pregunta y devuelve True/False (la pantalla lo resuelve con un cuadro de diálogo)."""
@@ -783,6 +820,128 @@ class Despliegue:
                 self.log(f"AVISO: no pude contar las bases anteriores: {e}")
         return restauro and inicio
 
+    # -- planilla de precios --------------------------------------------------
+    def destino_precios(self) -> str:
+        """Dónde lee LactIA la planilla de precios: la que configuró el tambo, o la de la carpeta de la app."""
+        import configuracion_tambo
+        import tambos
+        return (configuracion_tambo.ruta_precios(tambos.DEFAULT_TAMBO, self.carpeta)
+                or os.path.join(self.carpeta, "Precios_alimentos.xlsx"))
+
+    def info_precios(self, destino: str | None = None, leer=None) -> dict:
+        """La planilla que usa LactIA ahora (solo lee). Para pintar la pestaña."""
+        destino = destino or self.destino_precios()
+        if not os.path.isfile(destino):
+            return {"destino": destino, "existe": False}
+        datos = (leer or _leer_planilla)(destino)
+        return {"destino": destino, "existe": True, "error": datos.get("error"),
+                "insumos": len(datos.get("precios") or {}),
+                "estimados": comparar_precios(datos, None)["estimados_nueva"],
+                "modificado": datetime.datetime.fromtimestamp(os.path.getmtime(destino))}
+
+    def actualizar_precios(self, origen: str, destino: str | None = None, solo_ver: bool = False, *,
+                           leer=None) -> bool:
+        """Reemplaza la planilla de precios de LactIA por `origen`.
+
+        El archivo no está en git (es de cada instalación): un `git pull` nunca lo trae. La anterior NO se borra: queda
+        en `precios_anteriores/`. LactIA guarda los costos en memoria (30 minutos o más), así que si estaba corriendo
+        se la reinicia para que tome los precios nuevos de inmediato."""
+        destino = destino or self.destino_precios()
+        leer = leer or _leer_planilla
+        origen = (origen or "").strip()
+        if not origen:
+            raise ErrorPanel("Elegí la planilla de precios nueva (botón Examinar).")
+        if not os.path.isfile(origen):
+            raise ErrorPanel(f"La planilla elegida no existe: {origen}")
+        existe = os.path.isfile(destino)
+        if existe and os.path.samefile(origen, destino):
+            raise ErrorPanel("La planilla elegida es la misma que ya usa LactIA: elegí el archivo nuevo, no ese.")
+        nueva = leer(origen)
+        if nueva.get("error"):
+            raise ErrorPanel(f"La planilla elegida no se puede leer: {nueva['error']}")
+        if not nueva.get("precios"):
+            raise ErrorPanel("La planilla elegida no tiene ningún precio de insumos (¿es la correcta?).")
+        if existe and _hash_archivo(origen) == _hash_archivo(destino):
+            self.log("La planilla de LactIA ya está al día (es idéntica a la elegida). No se tocó nada.")
+            return True
+
+        actual = None
+        if existe:
+            actual = leer(destino)
+            if actual.get("error"):
+                self.log(f"AVISO: la planilla actual no se pudo leer ({actual['error']}); se reemplaza igual.")
+                actual = None
+        c = comparar_precios(nueva, actual)
+        self.log(f"Planilla nueva: {_insumos(c['insumos_nueva'])} ({c['estimados_nueva']} con precio estimado)")
+        self.log(f"Planilla actual: {_insumos(c['insumos_actual'])} ({c['estimados_actual']} con precio estimado)"
+                 if existe else "Planilla actual: no hay (se crea).")
+        if c["agregados"]:
+            self.log(f"  se agregan {_insumos(len(c['agregados']))}: {_lista_corta(c['agregados'])}")
+        if c["cambiados"]:
+            self.log(f"  cambia el precio de {_insumos(len(c['cambiados']))}: "
+                     f"{_lista_corta([n for n, _a, _d in c['cambiados']])}")
+        if c["quitados"]:
+            self.log(f"  la nueva NO tiene {_insumos(len(c['quitados']))} que la actual sí: "
+                     f"{_lista_corta(c['quitados'])}")
+        if solo_ver:
+            self.log("(solo ver) no se cambia nada: LactIA sigue como está.")
+            return True
+
+        habia = bool(self._del_script(self.aj["script_lactia"]))
+        pregunta = [f"Se va a reemplazar la planilla de precios de LactIA:\n{destino}\n"]
+        if c["agregados"]:
+            pregunta.append(f"• Se agregan {_insumos(len(c['agregados']))}: {_lista_corta(c['agregados'])}.")
+        if c["cambiados"]:
+            pregunta.append(f"• Cambia el precio de {_insumos(len(c['cambiados']))}.")
+        if c["quitados"]:
+            pregunta.append(f"• OJO: la nueva NO tiene {_insumos(len(c['quitados']))} que la actual sí tiene: "
+                            f"{_lista_corta(c['quitados'])}. ¿Elegiste una planilla más vieja?")
+        if existe:
+            pregunta.append("• La actual NO se borra: queda en la carpeta precios_anteriores.")
+        pregunta.append("• LactIA se reinicia (unos segundos) para tomar los precios de inmediato."
+                        if habia else "• LactIA está parada: no se toca.")
+        if not self.confirmar("\n".join(pregunta) + "\n\n¿Seguir?"):
+            self.log("Cancelado: no se tocó nada.")
+            return False
+
+        carpeta = os.path.dirname(destino)
+        copia = None
+        tmp = destino + ".nuevo"
+        try:
+            if existe:
+                guardadas = os.path.join(carpeta, "precios_anteriores")
+                os.makedirs(guardadas, exist_ok=True)
+                base, ext = os.path.splitext(os.path.basename(destino))
+                copia = os.path.join(guardadas, f"{base}_{datetime.datetime.now():%Y%m%d_%H%M%S}{ext}")
+                shutil.copyfile(destino, copia)
+                self.log(f"La planilla anterior quedó guardada en {copia}")
+            shutil.copyfile(origen, tmp)         # copyfile (no copy2): la fecha de hoy, así nada la toma por vieja
+            os.replace(tmp, destino)
+        except OSError as e:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise ErrorPanel(f"No pude copiar la planilla: {e}. (¿Está abierta en Excel? Cerrala y probá de nuevo.) "
+                             "La planilla de LactIA quedó como estaba.")
+        chequeo = leer(destino)
+        if chequeo.get("error") or len(chequeo.get("precios") or {}) != c["insumos_nueva"]:
+            self.log("ERROR: la planilla copiada no se lee bien; vuelvo a la anterior.")
+            try:
+                if copia:
+                    shutil.copyfile(copia, tmp)
+                    os.replace(tmp, destino)
+                else:
+                    os.remove(destino)
+            except OSError as e:
+                self.log(f"ERROR: no pude volver a la anterior: {e}. Está en {copia}")
+            return False
+        self.log(f"OK: LactIA ahora usa la planilla nueva ({_insumos(c['insumos_nueva'])}).")
+        if not habia:
+            return True
+        self.log("Reiniciando LactIA para que tome los precios…")
+        return self.reiniciar_lactia()
+
     def dar_acceso_lectura(self, base: str, ejecutar=None) -> bool:
         """Vuelve a dar a `delpro_lectura` el acceso a `base` (se pierde en cada restore). No para LactIA."""
         import restaurar_backup as rb
@@ -982,13 +1141,15 @@ class Panel:
             while True:
                 item = self.cola.get_nowait()
                 if item[0] == "log":
-                    for caja in (self.txt, self.txt_base):          # el mismo log se ve en las dos pestañas
+                    for caja in (self.txt, self.txt_base, self.txt_precios):    # el mismo log se ve en las tres
                         caja.configure(state="normal")
                         caja.insert("end", item[1] + "\n")
                         caja.see("end")
                         caja.configure(state="disabled")
                 elif item[0] == "base":
                     self._pintar_info_base(item[1], item[2])
+                elif item[0] == "precios":
+                    self._pintar_info_precios(item[1])
                 elif item[0] == "confirmar":
                     item[2][0] = messagebox.askyesno("Confirmar", item[1], parent=self.raiz)
                     item[3].set()
@@ -1046,6 +1207,7 @@ class Panel:
         self._armar_variables(ttk.Frame(self.cuaderno))
         self._armar_servidor(ttk.Frame(self.cuaderno))
         self._armar_base_datos(ttk.Frame(self.cuaderno))
+        self._armar_precios(ttk.Frame(self.cuaderno))
 
     def _armar_variables(self, marco) -> None:
         tk, ttk = self.tk, self.ttk
@@ -1120,7 +1282,7 @@ class Panel:
         self.txt.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
     def _limpiar_log(self) -> None:
-        for caja in (self.txt, self.txt_base):
+        for caja in (self.txt, self.txt_base, self.txt_precios):
             caja.configure(state="normal")
             caja.delete("1.0", "end")
             caja.configure(state="disabled")
@@ -1247,6 +1409,90 @@ class Panel:
             else:
                 texto += " · todavía sin restaurar"
         fila["info"].configure(text=texto)
+
+    # -- precios -----------------------------------------------------------------------
+    def _armar_precios(self, marco) -> None:
+        tk, ttk = self.tk, self.ttk
+        self.cuaderno.add(marco, text="  Precios  ")
+        self.var_solo_ver_precios = tk.BooleanVar(value=False)
+        barra = ttk.Frame(marco)
+        barra.pack(fill="x", padx=8, pady=(8, 2))
+        ttk.Checkbutton(barra, text="Solo ver (no cambia nada)", variable=self.var_solo_ver_precios).pack(side="left")
+        ttk.Button(barra, text="Limpiar log", command=self._limpiar_log).pack(side="right")
+        ttk.Label(marco, wraplength=900, foreground="#666666", text=(
+            "La planilla de precios (Precios_alimentos.xlsx) no viaja con «Actualizar»: es de cada instalación. Elegí acá "
+            "la planilla nueva (por ejemplo la de la PC de desarrollo, por Drive o por el disco compartido del RDP) y "
+            "«Actualizar planilla» la deja como la que usa LactIA. La anterior NO se borra (queda en "
+            "precios_anteriores) y LactIA se reinicia sola para tomar los precios.")).pack(fill="x", padx=8, pady=(0, 4))
+        origen = ttk.LabelFrame(marco, text="Planilla nueva")
+        origen.pack(fill="x", padx=8, pady=4)
+        origen.columnconfigure(0, weight=1)
+        self.var_origen_precios = tk.StringVar(value=self.aj.get("origen_precios", ""))
+        ttk.Entry(origen, textvariable=self.var_origen_precios, state="readonly").grid(
+            row=0, column=0, sticky="we", padx=(8, 4), pady=8)
+        ttk.Button(origen, text="Examinar…", command=self._elegir_origen_precios).grid(row=0, column=1, padx=(0, 8))
+        actual = ttk.LabelFrame(marco, text="La que usa LactIA ahora")
+        actual.pack(fill="x", padx=8, pady=4)
+        self.lbl_precios_actual = ttk.Label(actual, text="consultando…", wraplength=880, justify="left")
+        self.lbl_precios_actual.pack(fill="x", padx=8, pady=8)
+        botones = ttk.Frame(marco)
+        botones.pack(fill="x", padx=8, pady=2)
+        self.btn_actualizar_precios = ttk.Button(botones, text="Actualizar planilla", command=self._actualizar_precios)
+        self.btn_actualizar_precios.pack(side="right")
+        self.botones_accion.append(self.btn_actualizar_precios)
+        from tkinter import scrolledtext
+        self.txt_precios = scrolledtext.ScrolledText(marco, height=12, state="disabled", font=("Consolas", 9),
+                                                     background="#111820", foreground="#d6e2f0",
+                                                     insertbackground="#d6e2f0")
+        self.txt_precios.pack(fill="both", expand=True, padx=8, pady=(4, 8))
+        self._refrescar_precios()
+
+    def _elegir_origen_precios(self) -> None:
+        from tkinter import filedialog
+        actual = self.aj.get("origen_precios") or ""
+        ruta = filedialog.askopenfilename(
+            parent=self.raiz, title="Planilla de precios nueva",
+            initialdir=os.path.dirname(actual) if actual else CARPETA,
+            filetypes=[("Planilla de Excel", "*.xlsx *.xlsm"), ("Todos los archivos", "*.*")])
+        if not ruta:
+            return
+        ruta = os.path.normpath(ruta)
+        self.aj["origen_precios"] = ruta
+        self.var_origen_precios.set(ruta)
+        guardar_ajustes(self.aj)
+
+    def _actualizar_precios(self) -> None:
+        origen, solo_ver = self.aj.get("origen_precios", ""), self.var_solo_ver_precios.get()
+
+        def trabajo():
+            try:
+                self.d.actualizar_precios(origen, solo_ver=solo_ver)
+            finally:
+                self._refrescar_precios(en_hilo=False)
+        self.correr("Actualizar planilla de precios" + (" (solo ver)" if solo_ver else ""), trabajo)
+
+    def _refrescar_precios(self, en_hilo: bool = True) -> None:
+        def trabajo():
+            try:
+                info = self.d.info_precios()
+            except Exception as e:  # noqa: BLE001
+                info = {"error": str(e), "existe": False, "destino": ""}
+            self.cola.put(("precios", info))
+        if en_hilo:
+            threading.Thread(target=trabajo, daemon=True).start()
+        else:
+            trabajo()
+
+    def _pintar_info_precios(self, info: dict) -> None:
+        if not info.get("existe"):
+            texto = f"no hay planilla en {info.get('destino', '')}" if info.get("destino") else \
+                f"no pude consultar: {info.get('error', '')}"
+        elif info.get("error"):
+            texto = f"{info['destino']}\nno se puede leer: {info['error']}"
+        else:
+            texto = (f"{info['destino']}\n{_insumos(info['insumos'])} ({info['estimados']} con precio estimado) · "
+                     f"modificada el {info['modificado']:%d/%m/%Y %H:%M}")
+        self.lbl_precios_actual.configure(text=texto)
 
     # -- estado ----------------------------------------------------------------------
     def _pintar_estado(self, e: dict) -> None:

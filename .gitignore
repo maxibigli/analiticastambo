@@ -132,3 +132,6 @@ retraso_ordenos.csv
 
 # Cuaderno de trabajo del plan en ejecucion (superpowers).
 .superpowers/
+
+# Copias de la planilla de precios que deja el panel de despliegue al reemplazarla
+precios_anteriores/
