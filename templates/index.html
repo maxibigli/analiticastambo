@@ -1717,6 +1717,34 @@
         <button class="lac-segment__item" data-tab="conversion" aria-pressed="false">Eficiencia de conversión</button>
         <button class="lac-segment__item" data-tab="libres" aria-pressed="false">💵 Litros libres</button>
         <button class="lac-segment__item" data-tab="historica" aria-pressed="false">Conversión histórica</button>
+        <button class="lac-segment__item" data-tab="tablero" aria-pressed="false">📊 Tablero del mixer</button>
+      </div>
+    </div>
+
+    <div id="alim-panel-tablero" hidden>
+      <p class="explica" style="margin-top:12px">
+        <b>Qué es.</b> El tablero del mixer, traído tal cual del sistema de alimentación del tambo. Las
+        <b>tarjetas y el puntaje de operarios los calcula el mixer</b>, no LactIA: se muestran rotulados
+        como suyos. <b>Vacas en ordeñe</b> y <b>kg de MS por vaca</b> salen de las cabezas que el tambo
+        carga a mano en cada corral del mixer, no de DelPro. La <b>conversión</b> de acá es
+        <b>kg de leche por kg de MS</b> (41,15 ÷ 22,82 = 1,8); la de la pestaña «Eficiencia de conversión»
+        es de <b>sólidos</b> por kg de MS: es la misma idea en otra unidad.
+        <br><b>Listado de viajes.</b> Suma por día lo que el mixer debía cargar (<b>teórica</b>) contra lo que
+        <b>cargó</b> y <b>descargó</b> de verdad. El triángulo ⚠ de cada día es la cantidad de alertas que
+        registró el mixer ese día; el último día suele estar incompleto.
+      </p>
+      <div class="controls" style="margin-top:12px;gap:10px;align-items:center">
+        <button class="secundario" id="tm-refrescar">Actualizar</button>
+        <span class="aviso" id="tm-info"></span>
+      </div>
+      <div id="tm-avisos" style="margin-top:10px"></div>
+      <section class="kpis" id="tm-kpis" style="margin-top:10px"></section>
+      <h3 class="g-titulo" style="margin-top:20px">Listado de viajes — kg por día</h3>
+      <div class="chart-box" style="height:320px;margin-top:8px"><canvas id="chart-tm-viajes"></canvas></div>
+      <h3 class="g-titulo" style="margin-top:22px">Puntaje de operarios</h3>
+      <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;margin-top:8px">
+        <div class="chart-box" style="height:220px;width:240px"><canvas id="chart-tm-operarios"></canvas></div>
+        <div style="overflow-x:auto;flex:1 1 320px" id="tm-tabla-operarios"></div>
       </div>
     </div>
 
@@ -12567,6 +12595,7 @@ async function cargarTambos() {
       RUTINA_TABS_PREPARADAS.clear();
       // Lo cargado en "Rodeos por día" es del tambo anterior: se oculta hasta volver a pedirlo.
       rodDatos = null; rodSel = null;
+      tmDatos = null;      // el tablero del mixer también es del tambo anterior: se vuelve a pedir al abrir la pestaña
       const rodCuerpo = document.getElementById('rod-cuerpo'); if (rodCuerpo) rodCuerpo.hidden = true;
       // La fila de tarjetas del Dashboard se arma con dos endpoints: si no se
       // limpian los dos, mientras carga el tambo nuevo se ve media fila con
@@ -14714,6 +14743,141 @@ document.getElementById('ch-aplicar').addEventListener('click', () => {
 });
 conectarSelectorTipo('ch-tipo', t => { chTipo = t; pintarConversionHistorica(); });
 
+// ---------------------------------------------------------------------------
+// Tablero del mixer. Todo viene del proveedor de alimentación del tambo
+// (`/api/alimentacion/tablero`); no toca la base DelPro. Las tarjetas y el
+// puntaje los calcula el mixer, y se rotulan como suyos.
+// ---------------------------------------------------------------------------
+let tmDatos = null, chartTmViajes = null, chartTmOperarios = null;
+
+// Triángulo ⚠ con la cantidad de alertas de cada día, arriba del gráfico de viajes (como en el portal del mixer).
+// Se activa por gráfico con `plugins.alertasViajes = { valores: [...] }`, uno por punto.
+Chart.register({
+  id: 'alertasViajes',
+  afterDraw(chart) {
+    const op = chart.config.options.plugins?.alertasViajes;
+    if (!op) return;
+    const { ctx, chartArea } = chart;
+    const puntos = chart.getDatasetMeta(0).data;
+    ctx.save();
+    ctx.font = `600 11px ${css('--lac-font-body') || 'system-ui, sans-serif'}`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    op.valores.forEach((n, i) => {
+      if (!n || !puntos[i]) return;
+      const txt = `⚠ ${n}`, w = ctx.measureText(txt).width + 12, x = puntos[i].x, y = chartArea.top - 16;
+      ctx.beginPath();
+      ctx.roundRect(x - w / 2, y - 10, w, 20, 10);
+      ctx.fillStyle = css('--surface-1');
+      ctx.fill();
+      ctx.strokeStyle = css('--warning');
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      ctx.fillStyle = css('--text-primary');
+      ctx.fillText(txt, x, y);
+    });
+    ctx.restore();
+  }
+});
+
+function pintarTableroMixer() {
+  const d = tmDatos;
+  const kpis = document.getElementById('tm-kpis'), info = document.getElementById('tm-info');
+  const avisos = document.getElementById('tm-avisos');
+  if (chartTmViajes) { chartTmViajes.destroy(); chartTmViajes = null; }
+  if (chartTmOperarios) { chartTmOperarios.destroy(); chartTmOperarios = null; }
+  document.getElementById('tm-tabla-operarios').innerHTML = '';
+  if (!d.disponible) {
+    kpis.innerHTML = '';
+    avisos.innerHTML = `<div class="aviso">${escHtml(d.mensaje || 'Este tablero no está disponible.')}</div>`;
+    info.textContent = '';
+    return;
+  }
+  info.textContent = `Datos de ${d.proveedor}. Se guardan unos minutos: «Actualizar» los vuelve a pedir.`;
+  avisos.innerHTML = (d.avisos || []).map(a =>
+    `<div class="alerta-caja" style="margin-top:6px"><b>⚠ No se pudo leer una parte del tablero.</b>
+      <div style="margin-top:4px">${escHtml(a)}</div></div>`).join('');
+
+  const k = d.kpis;
+  const dec = v => v == null ? '—' : Number(v).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  kpis.innerHTML = !k ? '' : [
+    ['Vacas en ordeñe', k.vacas == null ? '—' : fmt(k.vacas), `según ${escHtml(d.proveedor)}`],
+    ['Producción individual', dec(k.leche_vaca), 'kg de leche por vaca y día'],
+    ['Consumo MS', dec(k.ms_vaca), 'kg de MS por vaca y día'],
+    ['Conversión', dec(k.conversion), 'kg de leche por kg de MS'],
+  ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +
+    `<div class="value">${v}</div><div class="label">${sub}</div></div>`).join('');
+
+  const v = d.viajes || [];
+  if (v.length) {
+    const etiqueta = f => f.slice(8, 10) + '/' + f.slice(5, 7);
+    const alertas = v.map(x => x.alertas);
+    const serie = (label, clave, color, extra) => Object.assign({
+      label, data: v.map(x => x[clave]), borderColor: color, backgroundColor: color,
+      tension: 0.15, pointRadius: 2, borderWidth: 2.5, fill: false }, extra || {});
+    chartTmViajes = dibujar('chart-tm-viajes', chartTmViajes, {
+      type: 'line',
+      data: { labels: v.map(x => etiqueta(x.fecha)), datasets: [
+        serie('Teórica', 'teorica', SERIES[4], { borderDash: [6, 4] }),
+        serie('Carga real', 'carga_real', SERIES[3]),
+        serie('Descarga real', 'descarga_real', SERIES[0]),
+      ] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        layout: { padding: { top: alertas.some(n => n) ? 30 : 0 } },
+        plugins: {
+          legend: { position: 'bottom' },
+          alertasViajes: alertas.some(n => n) ? { valores: alertas } : null,
+          tooltip: { callbacks: {
+            label: c => `${c.dataset.label}: ${fmt(Math.round(c.parsed.y))} kg`,
+            afterBody: it => alertas[it[0].dataIndex] ? [`⚠ ${alertas[it[0].dataIndex]} alertas ese día`] : [] } },
+        },
+        scales: { y: { beginAtZero: true, ticks: { callback: n => fmt(n) } } },
+      },
+    });
+  }
+
+  const o = d.operarios;
+  if (o) {
+    const p = o.porcentajes || {};
+    chartTmOperarios = dibujar('chart-tm-operarios', chartTmOperarios, {
+      type: 'doughnut',
+      data: { labels: ['Bien', 'Regular', 'Mal'], datasets: [{
+        data: [p.bien || 0, p.regular || 0, p.mal || 0],
+        backgroundColor: [css('--good'), css('--warning'), css('--critical')],
+        borderColor: css('--surface-1'), borderWidth: 2 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: '68%',
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 12, boxHeight: 12 } },
+          tooltip: { callbacks: { label: c => `${c.label}: ${c.parsed.toLocaleString('es-AR')} %` } },
+          centro: { valor: o.puntaje == null ? '—' : dec(o.puntaje), etiqueta: 'puntaje' } } },
+    });
+    // De mayor a menor puntaje, como el portal del mixer (la tabla guarda su orden en el contenedor).
+    document.getElementById('tm-tabla-operarios')._tabla = { orden: 'puntaje', asc: false, filtros: {} };
+    tablaInteractiva('tm-tabla-operarios', [
+      { clave: 'nombre', titulo: 'Operario', tipo: 'texto' },
+      { clave: 'puntaje', titulo: 'Puntaje', tipo: 'num', fmt: x => x == null ? '—' : `<b>${dec(x)}</b>` },
+      { clave: 'cargas', titulo: 'Cargas', tipo: 'num' },
+      { clave: 'descargas', titulo: 'Descargas', tipo: 'num' },
+    ], o.lista || [], { orden: 'puntaje' });
+  }
+}
+
+async function cargarTableroMixer(refrescar) {
+  const info = document.getElementById('tm-info');
+  info.textContent = 'Consultando al mixer…';
+  try {
+    tmDatos = await pedirJSON('/api/alimentacion/tablero?tambo=' + encodeURIComponent(tamboActual) +
+      (refrescar ? '&refrescar=1' : ''));
+    pintarTableroMixer();
+  } catch (e) {
+    tmDatos = null;
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('tm-refrescar').addEventListener('click', () => cargarTableroMixer(true));
+
 // Pestañas de Alimentación.
 document.getElementById('alim-tabs').addEventListener('click', (ev) => {
   const b = ev.target.closest('[data-tab]');
@@ -14725,6 +14889,8 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
   document.getElementById('alim-panel-conversion').hidden = tab !== 'conversion';
   document.getElementById('alim-panel-libres').hidden = tab !== 'libres';
   document.getElementById('alim-panel-historica').hidden = tab !== 'historica';
+  document.getElementById('alim-panel-tablero').hidden = tab !== 'tablero';
+  if (tab === 'tablero' && !tmDatos) cargarTableroMixer();
   if (tab === 'conversion' && !cvDatos) cargarConversion();
   if (tab === 'libres' && !llDatos) cargarLitrosLibres();
   if (tab === 'historica' && !chDatos) cargarConversionHistorica();

@@ -167,6 +167,32 @@ o partes `DelPro.N.bak`); se toma el más nuevo y completo (un archivo tocado ha
   * Sin contraseñas: SQL Server se abre con `sqlcmd -E` (autenticación de Windows).
   * **No probado contra el SQL Server real**: las pruebas usan un `ejecutar` y un LactIA de mentira. Esa prueba la hace el usuario.
 
+## Alimentación › «Tablero del mixer» (18/11/2026)
+
+Replica el tablero principal de MixerOne: 4 tarjetas (vacas en ordeñe, producción individual, consumo MS, conversión), el gráfico
+«Listado de viajes» (teórica / carga real / descarga real por día, con el triángulo ⚠ de alertas de cada día) y el puntaje de
+operarios. **Todo viene del proveedor de alimentación, nada de la base DelPro**: `proveedores/mixerone.py::tablero()` →
+`GET /api/alimentacion/tablero` (admin, caché 10 min, `?refrescar=1`). La interfaz es **opcional** y neutral
+(`proveedores/__init__.py`): un proveedor sin `tablero()` (Haasten) contesta `disponible: false` con el motivo, no un error; otro
+sistema puede darlo mañana devolviendo la misma forma.
+
+**De dónde sale cada cosa** (verificado contra la cuenta real el 18/11/2026; coincide con el portal al número):
+  * Tarjetas: `POST dashboard/getCountersDashboard` (`milkingCows`, `generalAverage`, `msRealHead`, `conversion`). **Las calcula
+    MixerOne y se muestran rotuladas como suyas, no se recalculan.** La **conversión de MixerOne es kg de LECHE por kg de MS**
+    (41,15 ÷ 22,82 = 1,80); la de LactIA («Eficiencia de conversión») es de SÓLIDOS por kg de MS (~0,14): misma idea, otra unidad.
+  * La leche (41,15) coincide con DelPro (41,24 kg/vaca promedio del 03 al 16/11). Las vacas y la MS **salen de las cabezas que el
+    tambo carga A MANO en cada corral** del mixer («Edición simple de Corrales»), no de DelPro. **El 1.864 no se pudo reproducir**
+    (los corrales de ordeñe suman 1.743 el último día y 1.729 de promedio): es de MixerOne, se informa tal cual.
+  * Gráfico: `POST dashboard/getTripsDashboard`, suma por día de `total_kg_theoretical_load`, `Carga.Real` y `Descarga.Real` de
+    cada viaje (fecha = los primeros 10 caracteres de `created`, que es hora local aunque diga «Z»). Ventana: la que da MixerOne
+    (~15 días hasta hoy, el último día incompleto).
+  * Alertas: **`GET notifications/alerts/daily-counts`** (`[{date, count}]`). Autorizada por el tambo el 18/11/2026. Es la única
+    ruta GET (`RUTAS_GET_DE_LECTURA`, lista cerrada como la de POST). Si la cuenta no tiene permiso, el gráfico sale sin triángulos
+    y la pantalla lo avisa. Probando con los viajes NO se pueden reconstruir (se probaron conteos por puntaje y por desvío).
+  * Puntaje: `POST dashboard/getOperatorsScoreDashboard`.
+Cada bloque se pide aparte: uno que falla va a `avisos` y los demás salen. **Solo lectura**: se sumaron a `RUTAS_DE_LECTURA` las
+cuatro rutas `dashboard/*` (el portal las llama solo al abrir su pantalla de inicio).
+
 ## Dónde quedamos (05/08/2026)
 
 **Restaurar DDM en SERVER-DELPRO DEJA A LA APP SIN LEER LA BASE.** El backup

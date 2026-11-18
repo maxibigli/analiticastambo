@@ -62,6 +62,18 @@ RUTAS_DE_LECTURA = frozenset({
     "corral/getbyfilter",
     "foods/getbyfilter",
     "device/getall",
+    # El tablero principal del portal. Son lecturas: el portal las llama solas, sin tocar nada, al abrir la pantalla
+    # de inicio (el método es POST sin cuerpo, como todo en esta API). Verificado el 18/11/2026.
+    "dashboard/getCountersDashboard",          # vacas en ordeñe, producción individual, MS por cabeza, conversión
+    "dashboard/getTripsDashboard",             # teórica / carga real / descarga real por día, con sus alertas
+    "dashboard/getOperatorsScoreDashboard",    # puntaje de los operarios
+    "dashboard/getConsumptionDailyDashboard",  # consumo diario por corral
+})
+
+# Las ÚNICAS rutas que se piden con GET (lectura de verdad: el método ya lo garantiza, pero la lista es igual de
+# cerrada). Autorizada por el tambo el 18/11/2026.
+RUTAS_GET_DE_LECTURA = frozenset({
+    "notifications/alerts/daily-counts",       # cuántas alertas hubo cada día (los triángulos del gráfico de viajes)
 })
 
 # La sesión se reusa: cada login son unos segundos y los lotes casi no cambian.
@@ -185,6 +197,30 @@ def _post(ruta: str, cuerpo: dict, tambo, _reintento: bool = True):
         with _lock:
             _cache.pop("sesion", None)
         return _post(ruta, cuerpo, tambo, _reintento=False)
+    if r.status_code not in (200, 201):
+        raise MixerOneError(f"MixerOne devolvió HTTP {r.status_code} en {ruta}.")
+    datos = _json(r, ruta)
+    if isinstance(datos, dict) and datos.get("status") is False:
+        raise MixerOneError(f"MixerOne rechazó {ruta}: {datos.get('detail') or 'sin detalle'}.")
+    return (datos or {}).get("response")
+
+
+def _get(ruta: str, tambo, _reintento: bool = True):
+    """El `response` de un GET de lectura. Misma idea que `_post`: lista cerrada, se rechaza ANTES de salir a la red."""
+    if ruta not in RUTAS_GET_DE_LECTURA:
+        raise MixerOneError(f"MixerOne es de solo lectura: la ruta {ruta!r} no está permitida.")
+    token, clientes = _sesion()
+    cliente = _cliente(clientes, tambo)
+    try:
+        r = _http().get(BASE + ruta, timeout=TIMEOUT_S,
+                        headers={"Authorization": f"Bearer {token}", "clientid": cliente,
+                                 "Accept": "application/json"})
+    except requests.RequestException as exc:
+        raise MixerOneError(f"No se pudo consultar MixerOne ({ruta}): {exc}")
+    if r.status_code == 401 and _reintento:
+        with _lock:
+            _cache.pop("sesion", None)
+        return _get(ruta, tambo, _reintento=False)
     if r.status_code not in (200, 201):
         raise MixerOneError(f"MixerOne devolvió HTTP {r.status_code} en {ruta}.")
     datos = _json(r, ruta)
@@ -336,6 +372,66 @@ def consumos(desde, hasta, tambo=None) -> dict:
     return salida
 
 
+def tablero(tambo=None) -> dict:
+    """El tablero principal del portal, en la forma neutral de `proveedores` (ver su docstring): tarjetas, kg por
+    día de los viajes con sus alertas, y puntaje de los operarios.
+
+    Cada bloque se pide aparte y uno que falla no tira a los demás: va en `avisos` y ese bloque queda en None
+    (o, en las alertas, sin dato por día). Solo si NO se pudo leer ninguno es un error.
+
+    Las cifras de las tarjetas (`vacas`, `leche_vaca`, `ms_vaca`, `conversion`) las calcula MixerOne con las cabezas que el
+    tambo carga a mano en cada corral: se informan tal cual, rotuladas como suyas, y no se recalculan acá.
+    """
+    avisos = []
+
+    def leer(etiqueta, pedir):
+        try:
+            return pedir()
+        except MixerOneError as exc:
+            avisos.append(f"{etiqueta}: {exc}")
+            return None
+
+    contadores = leer("Las tarjetas", lambda: _post("dashboard/getCountersDashboard", None, tambo))
+    viajes = leer("El listado de viajes", lambda: _post("dashboard/getTripsDashboard", None, tambo))
+    puntaje = leer("El puntaje de operarios", lambda: _post("dashboard/getOperatorsScoreDashboard", None, tambo))
+    alertas = leer("Las alertas por día", lambda: _get("notifications/alerts/daily-counts", tambo))
+    if contadores is None and viajes is None and puntaje is None:
+        raise MixerOneError("MixerOne no devolvió el tablero. " + " ".join(avisos))
+
+    por_dia: dict = {}
+    for v in viajes or []:
+        dia = str(v.get("created") or "")[:10]
+        if not dia:
+            continue
+        x = por_dia.setdefault(dia, {"teorica": 0.0, "carga_real": 0.0, "descarga_real": 0.0})
+        x["teorica"] += v.get("total_kg_theoretical_load") or 0
+        x["carga_real"] += (v.get("Carga") or {}).get("Real") or 0
+        x["descarga_real"] += (v.get("Descarga") or {}).get("Real") or 0
+    cuenta = None if alertas is None else {str(a.get("date") or "")[:10]: a.get("count") or 0 for a in alertas}
+    dias = [{"fecha": d, **{k: round(v, 2) for k, v in x.items()},
+             "alertas": None if cuenta is None else cuenta.get(d, 0)} for d, x in sorted(por_dia.items())]
+
+    operarios = None
+    if puntaje is not None:
+        operarios = {
+            "puntaje": puntaje.get("score_final"),
+            "porcentajes": puntaje.get("score_percentages") or {},
+            "lista": [{"nombre": o.get("name"), "puntaje": (o.get("general") or {}).get("score"),
+                       "resultado": (o.get("general") or {}).get("score_result"),
+                       "cargas": (o.get("loads") or {}).get("total"),
+                       "descargas": (o.get("unloads") or {}).get("total")} for o in puntaje.get("operators") or []],
+        }
+    return {
+        "proveedor": NOMBRE,
+        "kpis": None if contadores is None else {
+            "vacas": contadores.get("milkingCows"), "leche_vaca": contadores.get("generalAverage"),
+            "ms_vaca": contadores.get("msRealHead"), "conversion": contadores.get("conversion")},
+        "viajes": dias,
+        "operarios": operarios,
+        "avisos": avisos,
+    }
+
+
 class _DeUnTambo:
     """El proveedor ligado a UN tambo: tiene la misma interfaz que cualquier módulo de `proveedores`
     (`NOMBRE`, `disponible()`, `equipos()`, `lotes()`, `ingredientes()`, `consumos(desde, hasta)`), pero cada
@@ -360,6 +456,9 @@ class _DeUnTambo:
 
     def consumos(self, desde, hasta):
         return consumos(desde, hasta, self.tambo)
+
+    def tablero(self):
+        return tablero(self.tambo)
 
 
 def para(tambo: str) -> _DeUnTambo:
