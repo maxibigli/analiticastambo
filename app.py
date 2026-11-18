@@ -6841,12 +6841,11 @@ def api_alimentacion_conciliacion():
 TABLERO_MIXER_CACHE_TTL_S = 600
 
 
-@app.get("/api/alimentacion/tablero")
-@auth.requiere_rol("admin")
-def api_alimentacion_tablero():
-    """El tablero del mixer (tarjetas, kg por día con sus alertas, puntaje de operarios), tal como lo da el proveedor de
-    alimentación del tambo. Es opcional en la interfaz de `proveedores` (ver su docstring): un proveedor que no lo
-    ofrece contesta `disponible: false` con el motivo, no un error. No toca la base DelPro: todo viene del proveedor."""
+def _del_proveedor_de_alimentacion(metodo: str, que: str):
+    """Lo que el proveedor de alimentación del tambo da con `metodo` (`tablero`, `operarios`...). Es OPCIONAL en la
+    interfaz de `proveedores` (ver su docstring): un proveedor que no lo ofrece contesta `disponible: false` con el
+    motivo, no un error. No toca la base DelPro: todo viene del proveedor. Se guarda 10 minutos (`?refrescar=1` lo
+    vuelve a pedir) y un error no se guarda."""
     tambo = _tambo_del_request()
     refrescar = request.args.get("refrescar") in ("1", "true", "si")
     try:
@@ -6854,21 +6853,35 @@ def api_alimentacion_tablero():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 502
     nombre = getattr(prov, "NOMBRE", "")
-    if not hasattr(prov, "tablero"):
+    if not hasattr(prov, metodo):
         return jsonify({"disponible": False, "proveedor": nombre,
-                        "mensaje": f"{nombre or 'El sistema de alimentación de este tambo'} todavía no ofrece este "
-                                   "tablero."})
-    clave = f"{tambo}:alim_tablero"
+                        "mensaje": f"{nombre or 'El sistema de alimentación de este tambo'} todavía no ofrece "
+                                   f"{que}."})
+    clave = f"{tambo}:alim_{metodo}"
     if not refrescar:
         datos, _ = _cache_get(clave, ttl=TABLERO_MIXER_CACHE_TTL_S)
         if datos is not None:
             return jsonify(datos)
     try:
-        datos = {"disponible": True, **prov.tablero()}
-    except Exception as exc:  # noqa: BLE001 - el motivo va a la pantalla; un error no se guarda
+        datos = {"disponible": True, **getattr(prov, metodo)()}
+    except Exception as exc:  # noqa: BLE001 - el motivo va a la pantalla
         return jsonify({"error": str(exc)}), 502
     _cache_set(clave, datos)
     return jsonify(datos)
+
+
+@app.get("/api/alimentacion/tablero")
+@auth.requiere_rol("admin")
+def api_alimentacion_tablero():
+    """El tablero del mixer (tarjetas, kg por día con sus alertas, puntaje de operarios), tal como lo da el proveedor."""
+    return _del_proveedor_de_alimentacion("tablero", "este tablero")
+
+
+@app.get("/api/alimentacion/operarios")
+@auth.requiere_rol("admin")
+def api_alimentacion_operarios():
+    """Los operarios del mixer analizados junto con las alertas que detecta el sistema (ver `operarios.py`)."""
+    return _del_proveedor_de_alimentacion("operarios", "el análisis de operarios")
 
 
 @app.post("/api/alimentacion/conciliacion")

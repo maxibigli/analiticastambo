@@ -248,5 +248,59 @@ class TestDesdeElProveedor(unittest.TestCase):
         self.assertIn("historia", ad.desde_el_proveedor(prov, self.HOY)["falta"])
 
 
+class TestPrimerasConOperario(unittest.TestCase):
+    """Quién hizo la PRIMERA comida de cada día y cuánto se atrasó: es lo que une la tarjeta «Retraso de la primera
+    comida» del Tablero con la calificación de los operarios."""
+
+    def con_operario(self, d, operario):
+        return dict(d, usuario=operario)
+
+    def test_la_primera_comida_del_dia_trae_su_operario(self):
+        c = consumos(self.con_operario(descarga(DIA, "09:52"), "Daniel Monteros"),
+                     self.con_operario(descarga(DIA, "11:08", lote="RODEO 2"), "Jose Monteros"))
+        r = ad.primeras_con_operario(c)
+        self.assertEqual(len(r), 1)
+        self.assertEqual((r[0]["fecha"], r[0]["primera"], r[0]["operario"]), ("2026-11-07", 9 * 60 + 52,
+                                                                              "Daniel Monteros"))
+
+    def test_cuanto_se_atraso_contra_lo_habitual(self):
+        c = consumos(*historia(), self.con_operario(descarga(DIA, "09:52"), "Daniel Monteros"))
+        dia = next(x for x in ad.primeras_con_operario(c) if x["fecha"] == "2026-11-07")
+        self.assertEqual(dia["retraso"], 168)                 # mismo número que la tarjeta del Tablero
+        self.assertEqual(dia["habitual"], 7 * 60 + 4)
+
+    def test_los_dias_de_la_historia_tambien_salen_con_su_retraso(self):
+        c = consumos(*historia(), descarga(DIA, "09:52"))
+        r = ad.primeras_con_operario(c)
+        self.assertEqual([x["fecha"] for x in r], sorted(x["fecha"] for x in r))
+        self.assertTrue(any(x["retraso"] is not None for x in r))
+
+    def test_desde_recorta_la_ventana(self):
+        c = consumos(*historia(), descarga(DIA, "09:52"))
+        r = ad.primeras_con_operario(c, desde="2026-11-04")
+        self.assertEqual({x["fecha"] for x in r}, {"2026-11-04", "2026-11-05", "2026-11-07"})
+
+    def test_una_descarga_de_madrugada_es_del_dia_anterior(self):
+        c = consumos(self.con_operario(descarga(DIA, "02:30"), "Ivan Sanchez"),
+                     self.con_operario(descarga(DIA, "09:00"), "Daniel Monteros"))
+        r = ad.primeras_con_operario(c)
+        self.assertEqual([(x["fecha"], x["operario"]) for x in r],
+                         [("2026-11-06", "Ivan Sanchez"), ("2026-11-07", "Daniel Monteros")])
+
+    def test_sin_operario_en_el_dato_sale_vacio_no_inventado(self):
+        r = ad.primeras_con_operario(consumos(descarga(DIA, "09:52")))
+        self.assertIsNone(r[0]["operario"])
+
+    def test_solo_cuentan_los_rodeos_de_ordene(self):
+        c = consumos(self.con_operario(descarga(DIA, "05:30", etapa="Recría"), "Ivan Sanchez"),
+                     self.con_operario(descarga(DIA, "09:00"), "Daniel Monteros"))
+        self.assertEqual(ad.primeras_con_operario(c)[0]["operario"], "Daniel Monteros")
+
+    def test_sin_historia_suficiente_el_retraso_es_none_pero_el_dia_sale(self):
+        r = ad.primeras_con_operario(consumos(descarga(DIA, "09:52")))
+        self.assertIsNone(r[0]["retraso"])
+        self.assertEqual(r[0]["primera"], 9 * 60 + 52)
+
+
 if __name__ == "__main__":
     unittest.main()

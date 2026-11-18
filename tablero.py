@@ -108,11 +108,16 @@ INDICADORES = [
         # habitual) son los que acompañaron bajas de producción. 60 min es el mismo corte que usa el diagnóstico de
         # baja (`veredicto_baja.ALIM_RETRASO_MIN`). Se ajustan por tambo desde ⚙ Configuración.
         "direccion": "bajo_mejor", "verde": 30, "rojo": 60,
-        "fuente": "mixer", "pagina": "consultas", "ancla": "diag-card",
-        "destino": "Consultas e IA › Diagnóstico de baja de producción",
+        # Lleva a los OPERARIOS del mixer (18/11/2026): quien hace la primera comida es quien la atrasa, y ahí se ve día por día
+        # a qué hora arrancó y quién, junto con la calificación y las alertas que detecta el mixer. El diagnóstico de baja
+        # de producción (Consultas e IA) sigue siendo donde se mira el efecto sobre la leche.
+        "fuente": "mixer", "pagina": "alimentacion", "tab": "operarios",
+        "destino": "Alimentación › Operarios del mixer",
         "grupo": "Alimentación",
         "ayuda": ("Cuántos minutos se atrasó la primera comida del último día contra lo habitual de este tambo "
-                  "(la mediana de los últimos 30 días). Sale del mixer; si se adelantó vale 0. Solo con MixerOne."),
+                  "(la mediana de los últimos 30 días). Sale del mixer; si se adelantó vale 0. Solo con MixerOne. "
+                  "Toca para ver quién hizo cada primera comida y cómo califica a los operarios; el efecto en la "
+                  "leche está en Consultas e IA › Diagnóstico de baja de producción."),
     },
     {
         "clave": "rutina_score",

@@ -1718,7 +1718,45 @@
         <button class="lac-segment__item" data-tab="libres" aria-pressed="false">💵 Litros libres</button>
         <button class="lac-segment__item" data-tab="historica" aria-pressed="false">Conversión histórica</button>
         <button class="lac-segment__item" data-tab="tablero" aria-pressed="false">📊 Tablero del mixer</button>
+        <button class="lac-segment__item" data-tab="operarios" aria-pressed="false">👷 Operarios del mixer</button>
       </div>
+    </div>
+
+    <div id="alim-panel-operarios" hidden>
+      <p class="explica" style="margin-top:12px">
+        <b>Qué es.</b> La calificación de los operarios del mixer analizada <b>junto con los eventos que detecta el
+        mixer</b> (horario de comida distinto del habitual, cargas demasiado rápidas, descargas lejos del corral,
+        kg de corral modificados…). El <b>puntaje lo calcula el mixer</b>, no LactIA.
+        <br><b>Cada alerta es de quien hizo la acción que la provocó</b>, no de «quien manejó el viaje»: un viaje lo
+        cargan y lo descargan personas distintas, y una alerta de descarga no se le adjudica a quien solo carga.
+        Las alertas de <b>stock, variación del consumo de un rodeo o rodeo sin alimentar</b> son de la gestión del
+        tambo, no de una persona, y van aparte. Es un indicio para conversar, no una sanción: el mismo operario puede
+        tener muchas alertas porque le toca el trabajo más expuesto (descargar, o corregir los kg).
+        <br><b>La primera comida de cada día</b> une esta pantalla con la tarjeta «Retraso de la primera comida» del
+        Tablero: a qué hora arrancó, contra lo habitual, y quién.
+      </p>
+      <div class="controls" style="margin-top:12px;gap:10px;align-items:center">
+        <button class="secundario" id="op-refrescar">Actualizar</button>
+        <span class="aviso" id="op-info"></span>
+      </div>
+      <div id="op-avisos" style="margin-top:10px"></div>
+      <section class="kpis" id="op-kpis" style="margin-top:10px"></section>
+
+      <h3 class="g-titulo" style="margin-top:20px">Operarios — calificación y alertas</h3>
+      <div style="overflow-x:auto;margin-top:8px" id="op-tabla"></div>
+      <div class="chart-box" style="height:260px;margin-top:14px"><canvas id="chart-op-alertas"></canvas></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Primera comida de cada día</h3>
+      <span class="aviso">Hora de la primera descarga a un rodeo de ordeñe, contra lo habitual del tambo (la mediana de
+        los demás días). 60 minutos o más de atraso es el mismo corte que usa el Tablero.</span>
+      <div style="overflow-x:auto;margin-top:8px" id="op-tabla-comidas"></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Alertas que no son de una persona</h3>
+      <div id="op-gestion" style="margin-top:8px"></div>
+
+      <h3 class="g-titulo" style="margin-top:22px">Detalle de alertas</h3>
+      <span class="aviso">Cada alerta con su operario y un enlace a los viajes de ese día en MixerOne.</span>
+      <div style="overflow-x:auto;margin-top:8px" id="op-tabla-alertas"></div>
     </div>
 
     <div id="alim-panel-tablero" hidden>
@@ -1742,6 +1780,7 @@
       <h3 class="g-titulo" style="margin-top:20px">Listado de viajes — kg por día</h3>
       <div class="chart-box" style="height:320px;margin-top:8px"><canvas id="chart-tm-viajes"></canvas></div>
       <h3 class="g-titulo" style="margin-top:22px">Puntaje de operarios</h3>
+      <a href="#" id="tm-ver-operarios" class="aviso">Ver cada operario con las alertas que detecta el mixer →</a>
       <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;margin-top:8px">
         <div class="chart-box" style="height:220px;width:240px"><canvas id="chart-tm-operarios"></canvas></div>
         <div style="overflow-x:auto;flex:1 1 320px" id="tm-tabla-operarios"></div>
@@ -12596,6 +12635,7 @@ async function cargarTambos() {
       // Lo cargado en "Rodeos por día" es del tambo anterior: se oculta hasta volver a pedirlo.
       rodDatos = null; rodSel = null;
       tmDatos = null;      // el tablero del mixer también es del tambo anterior: se vuelve a pedir al abrir la pestaña
+      opDatos = null;      // ídem los operarios del mixer
       const rodCuerpo = document.getElementById('rod-cuerpo'); if (rodCuerpo) rodCuerpo.hidden = true;
       // La fila de tarjetas del Dashboard se arma con dos endpoints: si no se
       // limpian los dos, mientras carga el tambo nuevo se ve media fila con
@@ -14877,6 +14917,138 @@ async function cargarTableroMixer(refrescar) {
 }
 
 document.getElementById('tm-refrescar').addEventListener('click', () => cargarTableroMixer(true));
+document.getElementById('tm-ver-operarios').addEventListener('click', (ev) => {
+  ev.preventDefault();
+  document.querySelector('#alim-tabs [data-tab="operarios"]').click();
+});
+
+// ---------------------------------------------------------------------------
+// Operarios del mixer: calificación (la calcula el mixer) junto con los eventos que detecta, cada alerta atribuida
+// al operario de la acción que la provocó (ver operarios.py). Todo viene de `/api/alimentacion/operarios`.
+// ---------------------------------------------------------------------------
+let opDatos = null, chartOpAlertas = null;
+
+// Nombres cortos de los tipos de alerta de MixerOne (el título completo va en el detalle y en el tooltip).
+const OP_TIPO_CORTO = { N02: 'Kg modificados', N04: 'Fuera del corral', N05: 'Stock bajo', N06: 'Carga rápida',
+  N07: 'Horario', N09: 'Proyección de stock', N11: 'Viaje malo', N12: 'Variación de oferta', N13: 'Rodeo sin alimentar' };
+const opTipo = (cod, tipos) => OP_TIPO_CORTO[cod] || (tipos && tipos[cod]) || cod;
+const opDia = iso => new Date(iso + 'T00:00:00').toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit' });
+const opHora = min => min == null ? '—' :
+  `${String(Math.floor(min / 60) % 24).padStart(2, '0')}:${String(min % 60).padStart(2, '0')}`;
+
+function pintarOperarios() {
+  const d = opDatos;
+  const kpis = document.getElementById('op-kpis'), info = document.getElementById('op-info');
+  const avisos = document.getElementById('op-avisos');
+  if (chartOpAlertas) { chartOpAlertas.destroy(); chartOpAlertas = null; }
+  ['op-tabla', 'op-tabla-comidas', 'op-tabla-alertas', 'op-gestion'].forEach(id => document.getElementById(id).innerHTML = '');
+  if (!d.disponible) {
+    kpis.innerHTML = '';
+    avisos.innerHTML = `<div class="aviso">${escHtml(d.mensaje || 'Este análisis no está disponible.')}</div>`;
+    info.textContent = '';
+    return;
+  }
+  const v = d.ventana || {}, r = d.resumen || {}, tipos = d.tipos || {};
+  const dmy = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) : '—';
+  info.textContent = `Datos de ${d.proveedor}, del ${dmy(v.desde)} al ${dmy(v.hasta)}` +
+    (v.hasta ? '/' + v.hasta.slice(0, 4) : '') + '. Es la misma ventana que muestra el tablero del mixer.';
+  avisos.innerHTML = (d.avisos || []).map(a =>
+    `<div class="alerta-caja" style="margin-top:6px"><b>⚠ No se pudo leer una parte.</b>
+      <div style="margin-top:4px">${escHtml(a)}</div></div>`).join('');
+
+  const dec = x => x == null ? '—' : Number(x).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const pct = r.alertas ? Math.round(100 * r.atribuidas / r.alertas) : null;
+  kpis.innerHTML = [
+    ['Puntaje de operarios', dec(r.puntaje), `lo calcula ${escHtml(d.proveedor)}`],
+    ['Alertas detectadas', fmt(r.alertas), `en el período`],
+    ['De una persona', fmt(r.atribuidas), pct == null ? '' : `${pct} % de las alertas`],
+    ['De la gestión', fmt(r.sin_atribuir), 'stock, consumo de un rodeo, rodeo sin alimentar'],
+  ].map(([l, x, sub]) => `<div class="tile"><div class="label">${l}</div>` +
+    `<div class="value">${x}</div><div class="label">${sub}</div></div>`).join('');
+
+  const ops = d.operarios || [];
+  document.getElementById('op-tabla')._tabla = { orden: 'alertas', asc: false, filtros: {} };
+  tablaInteractiva('op-tabla', [
+    { clave: 'nombre', titulo: 'Operario', tipo: 'texto' },
+    { clave: 'rol', titulo: 'Hace', tipo: 'texto', fmt: x => x || '—' },
+    { clave: 'puntaje', titulo: 'Puntaje', tipo: 'num', fmt: x => x == null ? '—' : `<b>${dec(x)}</b>` },
+    { clave: 'cargas', titulo: 'Cargas', tipo: 'num' },
+    { clave: 'descargas', titulo: 'Descargas', tipo: 'num' },
+    { clave: 'desvio_kg_pct', titulo: 'Desvío de kg en cargas', tipo: 'num',
+      fmt: x => x == null ? '—' : x.toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' %' },
+    { clave: 'alertas', titulo: 'Alertas', tipo: 'num', fmt: x => `<b>${fmt(x)}</b>` },
+    { clave: 'alertas_cada_100', titulo: 'Cada 100 acciones', tipo: 'num',
+      fmt: x => x == null ? '—' : x.toLocaleString('es-AR', { maximumFractionDigits: 1 }) },
+    { clave: 'alertas_por_tipo', titulo: 'Qué tipo', tipo: 'texto',
+      fmt: (x, f) => Object.entries(x || {}).sort((a, b) => b[1] - a[1])
+        .map(([c, n]) => `${escHtml(opTipo(c, tipos))} ${n}`).join(' · ') || '—' },
+  ], ops, { orden: 'alertas' });
+
+  const codigos = [...new Set(ops.flatMap(o => Object.keys(o.alertas_por_tipo || {})))].sort();
+  if (codigos.length) {
+    chartOpAlertas = dibujar('chart-op-alertas', chartOpAlertas, {
+      type: 'bar',
+      data: { labels: ops.map(o => o.nombre), datasets: codigos.map((c, i) => ({
+        label: opTipo(c, tipos), data: ops.map(o => (o.alertas_por_tipo || {})[c] || 0),
+        backgroundColor: SERIES[i % SERIES.length], stack: 'alertas' })) },
+      options: { responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom' }, title: { display: true, text: 'Alertas por operario y por tipo' } },
+        scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } } },
+    });
+  }
+
+  const comidas = (d.primeras_comidas || []).map(c => ({ ...c, dia: opDia(c.fecha),
+    retraso_txt: c.retraso == null ? null : c.retraso }));
+  document.getElementById('op-tabla-comidas')._tabla = { orden: 'fecha', asc: false, filtros: {} };
+  tablaInteractiva('op-tabla-comidas', [
+    { clave: 'fecha', titulo: 'Día', tipo: 'texto', fmt: (x, f) => escHtml(f.dia) },
+    { clave: 'primera', titulo: 'Primera comida', tipo: 'num', fmt: x => `<b>${opHora(x)}</b>` },
+    { clave: 'operario', titulo: 'Quién', tipo: 'texto', fmt: x => x ? escHtml(x) : '<span class="aviso">sin dato</span>' },
+    { clave: 'habitual', titulo: 'Lo habitual', tipo: 'num', fmt: x => opHora(x) },
+    { clave: 'retraso', titulo: 'Atraso', tipo: 'num', fmt: x => {
+        if (x == null) return '<span class="aviso">sin historia</span>';
+        if (x >= 60) return `<span class="chip rojo">+${x} min</span>`;
+        if (x >= 30) return `<span class="chip ambar">+${x} min</span>`;
+        return x > 0 ? `+${x} min` : `${x} min`;
+      } },
+  ], comidas, { orden: 'fecha' });
+
+  const g = d.sin_operario || {};
+  document.getElementById('op-gestion').innerHTML = g.total
+    ? `<div class="aviso">${fmt(g.total)} alertas que no se atribuyen a una persona: ` +
+      Object.entries(g.por_tipo || {}).map(([c, n]) => `<b>${escHtml(opTipo(c, tipos))}</b> ${n}`).join(' · ') + '.</div>'
+    : '<div class="aviso">Todas las alertas del período se atribuyeron a una persona.</div>';
+
+  const filas = (d.alertas || []).map(a => ({
+    fecha: a.fecha, hora: a.hora, tipo: opTipo(a.codigo, tipos), titulo: a.tipo || '', operario: a.operario || '',
+    donde: [a.rodeo, a.insumo].filter(Boolean).join(' · '), mensaje: a.mensaje || '',
+    mx: `https://mixerone.net/app/main/trips?d=${a.fecha.slice(8, 10)}/${a.fecha.slice(5, 7)}/${a.fecha.slice(0, 4)}`,
+  }));
+  document.getElementById('op-tabla-alertas')._tabla = { orden: 'fecha', asc: false, filtros: {} };
+  tablaInteractiva('op-tabla-alertas', [
+    { clave: 'fecha', titulo: 'Día', tipo: 'texto', fmt: (x, f) => escHtml(opDia(x) + ' ' + f.hora) },
+    { clave: 'tipo', titulo: 'Tipo', tipo: 'texto', fmt: (x, f) => `<span title="${escHtml(f.titulo)}">${escHtml(x)}</span>` },
+    { clave: 'operario', titulo: 'Operario', tipo: 'texto', fmt: x => x ? escHtml(x) : '<span class="aviso">gestión</span>' },
+    { clave: 'donde', titulo: 'Rodeo / insumo', tipo: 'texto' },
+    { clave: 'mensaje', titulo: 'Detalle', tipo: 'texto' },
+    { clave: 'mx', titulo: 'MixerOne', tipo: 'texto', fmt: x => `<a href="${escHtml(x)}" target="_blank" rel="noopener">viajes del día ↗</a>` },
+  ], filas, { orden: 'fecha' });
+}
+
+async function cargarOperarios(refrescar) {
+  const info = document.getElementById('op-info');
+  info.textContent = 'Consultando al mixer… (puede tardar unos segundos: son los viajes de un mes y todas las alertas)';
+  try {
+    opDatos = await pedirJSON('/api/alimentacion/operarios?tambo=' + encodeURIComponent(tamboActual) +
+      (refrescar ? '&refrescar=1' : ''));
+    pintarOperarios();
+  } catch (e) {
+    opDatos = null;
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('op-refrescar').addEventListener('click', () => cargarOperarios(true));
 
 // Pestañas de Alimentación.
 document.getElementById('alim-tabs').addEventListener('click', (ev) => {
@@ -14890,7 +15062,9 @@ document.getElementById('alim-tabs').addEventListener('click', (ev) => {
   document.getElementById('alim-panel-libres').hidden = tab !== 'libres';
   document.getElementById('alim-panel-historica').hidden = tab !== 'historica';
   document.getElementById('alim-panel-tablero').hidden = tab !== 'tablero';
+  document.getElementById('alim-panel-operarios').hidden = tab !== 'operarios';
   if (tab === 'tablero' && !tmDatos) cargarTableroMixer();
+  if (tab === 'operarios' && !opDatos) cargarOperarios();
   if (tab === 'conversion' && !cvDatos) cargarConversion();
   if (tab === 'libres' && !llDatos) cargarLitrosLibres();
   if (tab === 'historica' && !chDatos) cargarConversionHistorica();

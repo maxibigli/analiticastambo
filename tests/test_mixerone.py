@@ -103,11 +103,18 @@ class ApiFalsa:
             "notifications/alerts/daily-counts": (200, ALERTAS),
         }
         self.metodos = []
+        self.notificaciones = []         # las alertas que devuelve `GET notifications`
 
-    def get(self, url, headers=None, timeout=None, **_):
+    def get(self, url, params=None, headers=None, timeout=None, **_):
         ruta = url.split("/api/", 1)[1]
         self.metodos.append(("GET", ruta))
-        self.llamadas.append((ruta, None, dict(headers or {})))
+        self.llamadas.append((ruta, params, dict(headers or {})))
+        if ruta == "notifications" and ruta not in self.tablero:      # el listado de alertas, paginado como el real
+            pagina, limite = int(params["page"]), int(params["limit"])
+            lote = self.notificaciones[(pagina - 1) * limite:pagina * limite]
+            return Respuesta({"status": True, "response": {
+                "items": lote, "total": len(self.notificaciones), "page": pagina, "limit": limite,
+                "page_count": max(1, -(-len(self.notificaciones) // limite))}}, 200)
         return self._tablero(ruta)
 
     def _tablero(self, ruta):
@@ -410,6 +417,164 @@ class TestTablero(Base):
 
     def test_el_nombre_del_proveedor_viaja(self):
         self.assertEqual(self.p.tablero()["proveedor"], "MixerOne")
+
+
+def alerta_api(id_, codigo, ocurrio, titulo, mensaje, metadata=None, severidad="warning"):
+    """Una alerta como la devuelve `GET notifications` (La Ponderosa, 13/11/2026). `ocurrio` en UTC."""
+    return {"id": str(id_), "is_alert": True, "read_at": None, "created_at": ocurrio, "code": codigo,
+            "severity": severidad, "title": titulo, "message": mensaje, "metadata": metadata or {},
+            "occurred_at": ocurrio}
+
+
+def detalle(accion, operario, kg, teo, comida=None, corral=None):
+    return {"id": 1, "action": accion, "operator": operario, "kg_real": kg, "kg_theoretical": teo, "food": comida,
+            "corral": corral, "hour": "07:00:00"}
+
+
+# T-A: José carga Cáscara y Heno, Daniel descarga en RODEO 4. T-B: Víctor carga, Daniel descarga en RODEO 1.
+VIAJES_CON_DETALLE = [
+    {"trip_uuid": "T-A", "created": "2026-11-12T07:00:00.000Z", "growth_stage": "Ordeñe", "details": [
+        detalle("Carga", "Jose Monteros", 520, 500, comida="Cáscara"), detalle("Carga", "Jose Monteros", 480, 500, comida="Heno"),
+        detalle("Descarga", "Daniel Monteros", 900, 900, corral="RODEO 4")]},
+    {"trip_uuid": "T-B", "created": "2026-11-13T08:00:00.000Z", "growth_stage": "Ordeñe", "details": [
+        detalle("Carga", "Victor Aguero", 100, 100, comida="Heno"), detalle("Descarga", "Daniel Monteros", 100, 100, corral="RODEO 1")]},
+]
+ALERTAS_API = [
+    alerta_api(1, "N06", "2026-11-13T13:05:00.000Z", "Tiempo de carga menor al límite",
+               "Mixer: 18 segundos entre cargas; límite 30 segundos", {"trip_uuid": "T-A", "item_name": "Cáscara"}),
+    alerta_api(2, "N04", "2026-11-14T01:30:00.000Z", "Descarga fuera del corral",
+               "La descarga en RODEO 4 se registró a 575 m de la ubicación esperada",
+               {"trip_uuid": "T-A", "corral_name": "RODEO 4"}),
+    alerta_api(3, "N02", "2026-11-13T15:00:00.000Z", "Kilogramos de corral modificados",
+               "Daniel Monteros modificó RODEO 4: 4059 → 4500", {"corral_id": 11419}),
+    alerta_api(4, "N12", "2026-11-13T03:10:00.000Z", "Consumo: variación en la oferta",
+               "R9 ENFERMERIA: Se ofreció +52,58%", {"corral_name": "R9 ENFERMERIA"}),
+    alerta_api(5, "N13", "2026-11-13T12:00:00.000Z", "Corral no alimentado",
+               "VAQ PREPARTO: no se registró ninguna descarga el 12/11/2026.",
+               {"corral_name": "VAQ PREPARTO", "detected_trip_uuid": "T-B"}),
+    alerta_api(6, "N09", "2026-11-13T12:00:00.000Z", "Proyección de stock baja",
+               "Expeller de Soja tiene 2 días de stock proyectados", {"item_name": "Expeller de Soja"}, "error"),
+]
+
+
+class TestAlertasYOperarios(Base):
+    """Las alertas de MixerOne traducidas a la forma neutral, y el análisis por operario. Solo lectura: se pide el
+    LISTADO (`GET notifications`); marcarlas como leídas es otra ruta y no se toca."""
+
+    def setUp(self):
+        super().setUp()
+        self.api.notificaciones = list(ALERTAS_API)
+        self.api.tablero["dashboard/getTripsDashboard"] = (201, VIAJES_CON_DETALLE)
+
+    def alertas(self):
+        return {a["id"]: a for a in self.p.alertas(datetime.date(2026, 11, 12), datetime.date(2026, 11, 13))}
+
+    def test_se_piden_solo_alertas_con_las_fechas_y_sin_marcar_nada(self):
+        self.alertas()
+        _, params, _ = next(l for l in self.api.llamadas if l[0] == "notifications")
+        self.assertEqual((params["is_alert"], params["start_date"], params["end_date"]),
+                         ("true", "2026-11-12", "2026-11-13"))
+        self.assertEqual(params["unread_only"], "false")
+        self.assertTrue(all(m == "GET" for m, r in self.api.metodos if r.startswith("notifications")))
+
+    def test_el_dia_es_hora_argentina_no_utc(self):
+        a = self.alertas()
+        self.assertEqual((a["1"]["fecha"], a["1"]["hora"]), ("2026-11-13", "10:05"))
+        self.assertEqual((a["2"]["fecha"], a["2"]["hora"]), ("2026-11-13", "22:30"))      # 01:30Z es el día anterior
+        self.assertEqual((a["4"]["fecha"], a["4"]["hora"]), ("2026-11-13", "00:10"))
+
+    def test_que_accion_provoco_cada_alerta(self):
+        a = self.alertas()
+        self.assertEqual(a["1"]["accion"], "carga")
+        self.assertEqual(a["2"]["accion"], "descarga")
+        self.assertEqual(a["3"]["accion"], "edicion")
+        for i in ("4", "5", "6"):                       # variación de consumo, rodeo sin alimentar, stock
+            self.assertIsNone(a[i]["accion"], i)
+
+    def test_viaje_rodeo_e_insumo(self):
+        a = self.alertas()
+        self.assertEqual((a["1"]["viaje"], a["1"]["insumo"]), ("T-A", "Cáscara"))
+        self.assertEqual((a["2"]["viaje"], a["2"]["rodeo"]), ("T-A", "RODEO 4"))
+        self.assertEqual(a["6"]["insumo"], "Expeller de Soja")
+
+    def test_la_edicion_trae_el_operario_del_mensaje(self):
+        self.assertEqual(self.alertas()["3"]["operario"], "Daniel Monteros")
+
+    def test_titulo_mensaje_y_severidad(self):
+        a = self.alertas()
+        self.assertEqual(a["6"]["tipo"], "Proyección de stock baja")
+        self.assertEqual(a["6"]["severidad"], "error")
+        self.assertIn("575 m", a["2"]["mensaje"])
+
+    def test_recorre_todas_las_paginas(self):
+        self.api.notificaciones = [alerta_api(i, "N06", "2026-11-13T13:00:00.000Z", "t", "m",
+                                              {"trip_uuid": "T-A", "item_name": "Heno"}) for i in range(250)]
+        self.assertEqual(len(self.p.alertas(datetime.date(2026, 11, 12), datetime.date(2026, 11, 13))), 250)
+
+    def test_el_analisis_atribuye_cada_alerta_a_quien_la_provoco(self):
+        r = self.p.operarios()
+        por = {o["nombre"]: o for o in r["operarios"]}
+        self.assertEqual(por["Jose Monteros"]["alertas_por_tipo"], {"N06": 1})
+        self.assertEqual(por["Daniel Monteros"]["alertas_por_tipo"], {"N04": 1, "N02": 1})
+        self.assertEqual(r["sin_operario"]["por_tipo"], {"N09": 1, "N12": 1, "N13": 1})
+        self.assertEqual(r["proveedor"], "MixerOne")
+
+    def test_la_ventana_es_la_de_los_viajes_del_tablero(self):
+        v = self.p.operarios()["ventana"]
+        self.assertEqual((v["desde"], v["hasta"]), ("2026-11-12", "2026-11-13"))
+        _, params, _ = next(l for l in self.api.llamadas if l[0] == "notifications")
+        self.assertEqual((params["start_date"], params["end_date"]), ("2026-11-12", "2026-11-13"))
+
+    def test_el_puntaje_es_el_que_informa_mixerone(self):
+        r = self.p.operarios()
+        self.assertEqual(r["resumen"]["puntaje"], 8.74)
+        por = {o["nombre"]: o for o in r["operarios"]}
+        self.assertEqual((por["Daniel Monteros"]["puntaje"], por["Daniel Monteros"]["puntaje_descargas"]), (8.99, 9.17))
+        self.assertIsNone(por["Jose Monteros"]["puntaje"])        # MixerOne no lo trae en este ejemplo
+        self.assertEqual(r["resumen"]["porcentajes"]["bien"], 64.93)
+
+    def test_sin_permiso_para_las_alertas_el_analisis_sale_y_lo_avisa(self):
+        self.api.tablero["notifications"] = (403, None)
+        r = self.p.operarios()
+        self.assertEqual(r["alertas"], [])
+        self.assertTrue(any("alertas" in a.lower() for a in r["avisos"]), r["avisos"])
+        self.assertTrue(r["operarios"])           # los operarios y sus acciones salen igual
+
+    def test_si_falla_todo_lo_dice(self):
+        self.api.tablero["dashboard/getTripsDashboard"] = (500, None)
+        self.api.tablero["dashboard/getOperatorsScoreDashboard"] = (500, None)
+        self.api.tablero["notifications"] = (500, None)
+        with self.assertRaises(mixerone.MixerOneError):
+            self.p.operarios()
+
+    def test_la_primera_comida_de_cada_dia_trae_quien_la_hizo(self):
+        self.api.viajes = [
+            viaje("v1", "2026-11-12T07:00:00.000Z", [carga("07:00:00", "Heno", 100, 100, 88),
+                                                     descarga("07:04:00", "RODEO 1", 900, 531)]),
+            viaje("v2", "2026-11-13T07:30:00.000Z", [carga("07:30:00", "Heno", 100, 100, 88),
+                                                     descarga("07:40:00", "RODEO 1", 900, 531)]),
+            viaje("v0", "2026-11-05T07:00:00.000Z", [carga("07:00:00", "Heno", 100, 100, 88),
+                                                     descarga("07:02:00", "RODEO 1", 900, 531)]),   # antes de la ventana
+        ]
+        r = self.p.operarios()
+        self.assertEqual([(c["fecha"], c["operario"]) for c in r["primeras_comidas"]],
+                         [("2026-11-12", "Daniel Monteros"), ("2026-11-13", "Daniel Monteros")])
+        self.assertEqual(r["primeras_comidas"][0]["primera"], 7 * 60 + 4)
+
+    def test_si_falla_la_primera_comida_el_resto_sale_y_lo_avisa(self):
+        with mock.patch.object(mixerone, "_viajes", side_effect=mixerone.MixerOneError("cortado")):
+            r = self.p.operarios()
+        self.assertEqual(r["primeras_comidas"], [])
+        self.assertTrue(any("primera comida" in a.lower() for a in r["avisos"]), r["avisos"])
+        self.assertTrue(r["operarios"])
+
+    def test_el_analisis_solo_usa_rutas_de_lectura(self):
+        self.p.operarios()
+        post = {r for m, r in self.api.metodos if m == "POST"}
+        get = {r for m, r in self.api.metodos if m == "GET"}
+        self.assertTrue(post <= mixerone.RUTAS_DE_LECTURA, post - mixerone.RUTAS_DE_LECTURA)
+        self.assertTrue(get <= mixerone.RUTAS_GET_DE_LECTURA, get - mixerone.RUTAS_GET_DE_LECTURA)
+        self.assertNotIn("notifications/read-all", get)
 
 
 class TestConsumos(Base):

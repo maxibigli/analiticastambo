@@ -211,6 +211,41 @@ sistema puede darlo mañana devolviendo la misma forma.
 Cada bloque se pide aparte: uno que falla va a `avisos` y los demás salen. **Solo lectura**: se sumaron a `RUTAS_DE_LECTURA` las
 cuatro rutas `dashboard/*` (el portal las llama solo al abrir su pantalla de inicio).
 
+## Alimentación › «Operarios del mixer» y las alertas de MixerOne (18/11/2026)
+
+Sector propio (pestaña 👷 de Alimentación, `GET /api/alimentacion/operarios`, admin, caché 10 min) que junta **la calificación
+de los operarios (la calcula MixerOne) con los eventos que detecta MixerOne**. La tarjeta «Retraso de la primera comida» del
+Tablero de Diagnóstico ahora lleva ACÁ (antes al diagnóstico de baja, que sigue nombrado en su ayuda), y el bloque de puntaje del
+«Tablero del mixer» tiene un enlace. Neutral como el tablero: lo calcula `operarios.py` (puro, sin saber de MixerOne) y el
+proveedor lo ofrece con `operarios()` (opcional, ver `proveedores/__init__.py`); `proveedores/mixerone.py` traduce.
+
+**Las alertas** son `GET notifications` (`is_alert=true`, `start_date`/`end_date`, paginado de a 100; autorizado por el tambo el
+18/11/2026, en `RUTAS_GET_DE_LECTURA`). **Solo se LEE el listado: marcarlas como leídas es un PATCH a otra ruta
+(`notifications/<id>/read`, `read-all`) y NUNCA se llama.** El día de cada alerta es `occurred_at` en **hora argentina (UTC−3)**:
+así los 418 del 03 al 18/11 coinciden día por día con los triángulos del portal. Tipos (códigos de MixerOne): N07 horario de
+comida distinto del habitual, N06 tiempo de carga menor al límite (30 s), N04 descarga a más de 100 m del corral (GPS), N02 alguien
+modificó los kg de un corral, N12 variación de la oferta de MS contra el promedio de 7 días, N13 rodeo sin descarga, N05/N09 stock,
+N11 viaje con puntaje bajo.
+
+**LA REGLA QUE IMPORTA: cada alerta es del operario de la ACCIÓN que la provocó, no del «operario principal» del viaje.** Un viaje
+lo cargan y lo descargan personas distintas. Atribuyendo por viaje, a Iván Sánchez (que solo carga: 0 descargas) le salían 26
+alertas de «descarga fuera del corral». Por eso el proveedor dice qué acción disparó cada tipo (`_ACCION_DE_ALERTA`: N06 → quien
+cargó ese insumo; N04/N07/N11 → quien descargó en ese rodeo; N02 → el operario viene en el mensaje) y `operarios.atribuir` busca
+quién la hizo en ese viaje. **Stock, variación del consumo de un rodeo y rodeo sin alimentar NO se atribuyen** (son de la gestión
+del tambo): 75 de 430 alertas. Un empate entre dos operarios tampoco se atribuye. Resultado medido en La Ponderosa (03 al
+18/11/2026): Daniel Monteros hace casi todas las descargas (343 de 389) y carga 507 veces, y concentra las alertas de horario
+(138), fuera del corral (55) y kg modificados (42): 267 alertas, 31 cada 100 acciones, contra 7 de José Monteros (que carga: 58
+de carga rápida). Es un indicio para conversar, no una sanción: al que descarga y corrige kg le toca lo más expuesto.
+
+**El puntaje NO se recalcula**: promediar los `score` de los movimientos NO da el del portal (da 7,13 para Daniel contra 8,99), así que
+se usa `dashboard/getOperatorsScoreDashboard` tal cual, y la ventana de todo es la del tablero del portal (los viajes de
+`dashboard/getTripsDashboard`, ~15 días). **Primera comida de cada día** (`alimentacion_dia.primeras_con_operario`): hora de la
+primera descarga a ordeñe, quién (`usuario`), lo habitual y el atraso con el MISMO criterio de la tarjeta del Tablero. En ese
+período Daniel Monteros hizo todas las primeras comidas, incluidas las tardías (sáb 14/11 09:00, mié 11/11 08:55).
+
+Cada bloque se pide aparte y uno que falla va a `avisos`. El enlace de cada alerta lleva a los viajes de ese día en MixerOne
+(`https://mixerone.net/app/main/trips?d=DD/MM/AAAA`).
+
 ## Dónde quedamos (05/08/2026)
 
 **Restaurar DDM en SERVER-DELPRO DEJA A LA APP SIN LEER LA BASE.** El backup

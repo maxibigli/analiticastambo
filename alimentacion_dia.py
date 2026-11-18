@@ -74,6 +74,42 @@ def por_dia(consumos) -> dict:
     return salida
 
 
+def primeras_con_operario(consumos, desde=None) -> list:
+    """La primera comida de cada día con QUIÉN la hizo y cuánto se atrasó, de más vieja a más nueva.
+
+    `[{fecha, primera, operario, habitual, retraso}]`: `primera`/`habitual` en minutos desde la medianoche, `retraso`
+    igual que la tarjeta del Tablero (contra la mediana de los demás días, ver `evaluar`) o None si todavía no hay
+    historia para saber qué es lo habitual. `operario` es el `usuario` de la descarga más temprana, o None si el
+    proveedor no lo informa: no se inventa. Mismos filtros que `por_dia` (solo rodeos de ordeñe, una descarga de
+    madrugada es del día anterior). `desde` recorta la lista pero la historia sigue contando.
+    """
+    descargas = (consumos or {}).get("descargas") or []
+    hay_etapa = any(d.get("etapa") for d in descargas)
+    primera: dict = {}
+    for d in descargas:
+        if hay_etapa and not _sin_tildes(d.get("etapa")).startswith("orde"):
+            continue
+        t = _momento(d.get("fecha"))
+        if (d.get("kg") or 0) <= 0 or t is None:
+            continue
+        minuto, dia = t.hour * 60 + t.minute, t.date()
+        if minuto < INICIO_JORNADA:
+            dia, minuto = dia - datetime.timedelta(days=1), minuto + 24 * 60
+        f = dia.isoformat()
+        if f not in primera or minuto < primera[f][0]:
+            primera[f] = (minuto, (d.get("usuario") or "").strip() or None)
+    salida = []
+    for f in sorted(primera):
+        if desde and f < str(desde):
+            continue
+        r = evaluar(consumos, datetime.date.fromisoformat(f))
+        fila = r and r["dia"]
+        salida.append({"fecha": f, "primera": primera[f][0], "operario": primera[f][1],
+                       "habitual": r["base"]["primera_med"] if fila else None,
+                       "retraso": fila["retraso"] if fila else None})
+    return salida
+
+
 def _fila(fecha, d, med, sd, kg_med, kg_sd):
     if d is None:
         return None

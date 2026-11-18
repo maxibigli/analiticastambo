@@ -108,5 +108,66 @@ class TestTablero(Base):
         self.assertIn(app.app.test_client().get("/api/alimentacion/tablero").status_code, (302, 401, 403))
 
 
+OPERARIOS = {
+    "proveedor": "MixerOne", "ventana": {"desde": "2026-11-03", "hasta": "2026-11-18"},
+    "operarios": [{"nombre": "Daniel Monteros", "alertas": 267}], "sin_operario": {"total": 75, "por_tipo": {}},
+    "alertas": [], "tipos": {}, "primeras_comidas": [], "avisos": [],
+    "resumen": {"alertas": 430, "atribuidas": 355, "sin_atribuir": 75, "puntaje": 8.75, "porcentajes": {}},
+}
+
+
+class ProveedorConOperarios(ProveedorConTablero):
+    def __init__(self, resultado=None, error=None):
+        super().__init__(resultado or OPERARIOS, error)
+
+    def operarios(self):
+        return self.tablero()
+
+
+class TestOperarios(Base):
+    """`/api/alimentacion/operarios`: los operarios del mixer con las alertas que detecta el sistema. Misma idea que el
+    tablero: opcional en la interfaz del proveedor, caché propio, solo el administrador."""
+
+    def test_devuelve_lo_del_proveedor(self):
+        self.con_proveedor(ProveedorConOperarios())
+        r = self.client.get("/api/alimentacion/operarios")
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertTrue(d["disponible"])
+        self.assertEqual(d["operarios"][0]["nombre"], "Daniel Monteros")
+        self.assertEqual(d["resumen"]["alertas"], 430)
+
+    def test_un_proveedor_sin_operarios_lo_dice_sin_error(self):
+        self.con_proveedor(ProveedorSinTablero())
+        r = self.client.get("/api/alimentacion/operarios")
+        self.assertEqual(r.status_code, 200)
+        self.assertFalse(r.get_json()["disponible"])
+        self.assertIn("Haasten", r.get_json()["mensaje"])
+
+    def test_si_el_proveedor_falla_devuelve_el_motivo_y_no_lo_guarda(self):
+        prov = self.con_proveedor(ProveedorConOperarios(error=mixerone.MixerOneError("HTTP 500")))
+        r = self.client.get("/api/alimentacion/operarios")
+        self.assertEqual(r.status_code, 502)
+        self.assertIn("HTTP 500", r.get_json()["error"])
+        self.client.get("/api/alimentacion/operarios")
+        self.assertEqual(prov.llamadas, 2)
+
+    def test_cache_propio_distinto_del_del_tablero(self):
+        prov = self.con_proveedor(ProveedorConOperarios())
+        self.client.get("/api/alimentacion/tablero")
+        self.client.get("/api/alimentacion/operarios")
+        self.client.get("/api/alimentacion/operarios")
+        self.assertEqual(prov.llamadas, 2)                 # el tablero y los operarios se guardan por separado
+        self.client.get("/api/alimentacion/operarios?refrescar=1")
+        self.assertEqual(prov.llamadas, 3)
+
+    def test_solo_el_administrador(self):
+        self.con_proveedor(ProveedorConOperarios())
+        operario = app.app.test_client()
+        with operario.session_transaction() as s:
+            s["rol"], s["usuario"] = "operario", "y"
+        self.assertIn(operario.get("/api/alimentacion/operarios").status_code, (401, 403))
+
+
 if __name__ == "__main__":
     unittest.main()

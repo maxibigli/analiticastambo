@@ -74,6 +74,9 @@ RUTAS_DE_LECTURA = frozenset({
 # cerrada). Autorizada por el tambo el 18/11/2026.
 RUTAS_GET_DE_LECTURA = frozenset({
     "notifications/alerts/daily-counts",       # cuántas alertas hubo cada día (los triángulos del gráfico de viajes)
+    # El listado de alertas/notificaciones (con filtro por fechas). OJO: marcarlas como leídas es un PATCH a otra ruta
+    # (`notifications/<id>/read`, `notifications/read-all`) y NUNCA se llama desde acá: leer no las marca.
+    "notifications",
 })
 
 # La sesión se reusa: cada login son unos segundos y los lotes casi no cambian.
@@ -205,14 +208,14 @@ def _post(ruta: str, cuerpo: dict, tambo, _reintento: bool = True):
     return (datos or {}).get("response")
 
 
-def _get(ruta: str, tambo, _reintento: bool = True):
+def _get(ruta: str, tambo, params: dict = None, _reintento: bool = True):
     """El `response` de un GET de lectura. Misma idea que `_post`: lista cerrada, se rechaza ANTES de salir a la red."""
     if ruta not in RUTAS_GET_DE_LECTURA:
         raise MixerOneError(f"MixerOne es de solo lectura: la ruta {ruta!r} no está permitida.")
     token, clientes = _sesion()
     cliente = _cliente(clientes, tambo)
     try:
-        r = _http().get(BASE + ruta, timeout=TIMEOUT_S,
+        r = _http().get(BASE + ruta, params=params, timeout=TIMEOUT_S,
                         headers={"Authorization": f"Bearer {token}", "clientid": cliente,
                                  "Accept": "application/json"})
     except requests.RequestException as exc:
@@ -220,7 +223,7 @@ def _get(ruta: str, tambo, _reintento: bool = True):
     if r.status_code == 401 and _reintento:
         with _lock:
             _cache.pop("sesion", None)
-        return _get(ruta, tambo, _reintento=False)
+        return _get(ruta, tambo, params, _reintento=False)
     if r.status_code not in (200, 201):
         raise MixerOneError(f"MixerOne devolvió HTTP {r.status_code} en {ruta}.")
     datos = _json(r, ruta)
@@ -432,6 +435,111 @@ def tablero(tambo=None) -> dict:
     }
 
 
+# MixerOne manda los instantes en UTC («...Z»). Argentina no tiene horario de verano: UTC-3 todo el año. Con esta
+# conversión el conteo de alertas por día coincide al número con el que muestra el portal.
+_UTC_ARGENTINA = datetime.timedelta(hours=-3)
+
+# Qué ACCIÓN del operario dispara cada tipo de alerta (ver `operarios.py`). Lo que no figura acá (stock, variación de
+# consumo de un rodeo, rodeo sin alimentar) NO se atribuye a una persona: es de la gestión del tambo.
+_ACCION_DE_ALERTA = {"N06": "carga",         # tiempo de carga menor al límite: quien cargó ese insumo
+                     "N04": "descarga",      # descarga fuera del corral (GPS): quien descargó en ese rodeo
+                     "N07": "descarga",      # horario de alimentación inestable: idem
+                     "N11": "descarga",      # viaje malo por puntuación de descarga
+                     "N02": "edicion"}       # alguien modificó los kg de un corral: el operario viene en el mensaje
+
+
+def _local(utc_iso: str):
+    return datetime.datetime.fromisoformat(str(utc_iso).replace("Z", "+00:00")).replace(tzinfo=None) + _UTC_ARGENTINA
+
+
+def _alerta_neutra(x: dict) -> dict:
+    md = x.get("metadata") or {}
+    codigo = x.get("code")
+    accion, operario = _ACCION_DE_ALERTA.get(codigo), None
+    if accion == "edicion":
+        mensaje = x.get("message") or ""
+        operario = mensaje.split(" modificó")[0].strip() if " modificó" in mensaje else None
+        accion = "edicion" if operario else None
+    momento = _local(x.get("occurred_at") or x.get("created_at"))
+    return {"id": x.get("id"), "codigo": codigo, "tipo": x.get("title"), "severidad": x.get("severity"),
+            "mensaje": x.get("message"), "fecha": momento.date().isoformat(), "hora": momento.strftime("%H:%M"),
+            "viaje": md.get("trip_uuid") or md.get("detected_trip_uuid"), "rodeo": md.get("corral_name"),
+            "insumo": md.get("item_name"), "accion": accion, "operario": operario}
+
+
+def alertas(desde, hasta, tambo=None) -> list:
+    """Las alertas que detectó MixerOne entre dos fechas (inclusive), en la forma neutral de `operarios.py`.
+
+    Solo LEE el listado (`GET notifications`): marcarlas como leídas es un PATCH a otra ruta y no se llama nunca."""
+    salida, pagina = [], 1
+    while True:
+        r = _get("notifications", tambo, {
+            "page": pagina, "limit": 100, "grouped": "true", "unread_only": "false", "is_alert": "true",
+            "start_date": _dia(desde), "end_date": _dia(hasta)}) or {}
+        salida.extend(_alerta_neutra(x) for x in r.get("items") or [])
+        if pagina >= (r.get("page_count") or 1):
+            return salida
+        pagina += 1
+        if pagina > MAX_PAGINAS:
+            raise MixerOneError(f"MixerOne devolvió más de {MAX_PAGINAS} páginas de alertas: acotá el período.")
+
+
+def operarios(tambo=None) -> dict:
+    """Los operarios del mixer analizados junto con las alertas que detecta MixerOne (ver `operarios.analizar`).
+
+    La ventana es la del tablero del portal (los viajes que devuelve `dashboard/getTripsDashboard`, unos 15 días): el
+    puntaje que da MixerOne es de ESA ventana y mezclarlo con otra daría números que no se pueden comparar. Cada bloque
+    se pide aparte: uno que falla va a `avisos` y los otros siguen; solo si no hay ni viajes ni puntaje es un error."""
+    import operarios as analisis
+    avisos = []
+
+    def leer(etiqueta, pedir):
+        try:
+            return pedir()
+        except MixerOneError as exc:
+            avisos.append(f"{etiqueta}: {exc}")
+            return None
+
+    viajes = leer("El listado de viajes", lambda: _post("dashboard/getTripsDashboard", None, tambo))
+    puntaje = leer("El puntaje de operarios", lambda: _post("dashboard/getOperatorsScoreDashboard", None, tambo))
+    if viajes is None and puntaje is None:
+        raise MixerOneError("MixerOne no devolvió los viajes ni el puntaje de operarios. " + " ".join(avisos))
+
+    movimientos = []
+    for v in viajes or []:
+        for d in v.get("details") or []:
+            accion = {"Carga": "carga", "Descarga": "descarga"}.get(d.get("action"))
+            if accion and d.get("operator"):
+                movimientos.append({"viaje": v.get("trip_uuid"), "accion": accion, "operario": d["operator"],
+                                    "ingrediente": (d.get("food") or "").strip() or None,
+                                    "rodeo": (d.get("corral") or "").strip() or None,
+                                    "kg_real": d.get("kg_real"), "kg_teorico": d.get("kg_theoretical")})
+    fechas = sorted(str(v.get("created") or "")[:10] for v in viajes or [] if v.get("created"))
+    ventana = {"desde": fechas[0] if fechas else None, "hasta": fechas[-1] if fechas else None}
+    lista = []
+    if fechas:
+        lista = leer("Las alertas", lambda: alertas(datetime.date.fromisoformat(fechas[0]),
+                                                    datetime.date.fromisoformat(fechas[-1]), tambo)) or []
+    comidas = []
+    if fechas:
+        def primera_comida():
+            import alimentacion_dia
+            desde = datetime.date.fromisoformat(fechas[0])
+            c = consumos(desde - datetime.timedelta(days=alimentacion_dia.HISTORIA_DIAS),
+                         datetime.date.fromisoformat(fechas[-1]), tambo)
+            return alimentacion_dia.primeras_con_operario(c, desde=fechas[0])
+        comidas = leer("La primera comida de cada día", primera_comida) or []
+    puntajes = None
+    if puntaje is not None:
+        puntajes = {"puntaje": puntaje.get("score_final"), "porcentajes": puntaje.get("score_percentages") or {},
+                    "operarios": {o.get("name"): {"general": (o.get("general") or {}).get("score"),
+                                                  "cargas": (o.get("loads") or {}).get("score"),
+                                                  "descargas": (o.get("unloads") or {}).get("score")}
+                                  for o in puntaje.get("operators") or []}}
+    return {**analisis.analizar(movimientos, lista, puntajes), "proveedor": NOMBRE, "ventana": ventana,
+            "primeras_comidas": comidas, "avisos": avisos}
+
+
 class _DeUnTambo:
     """El proveedor ligado a UN tambo: tiene la misma interfaz que cualquier módulo de `proveedores`
     (`NOMBRE`, `disponible()`, `equipos()`, `lotes()`, `ingredientes()`, `consumos(desde, hasta)`), pero cada
@@ -459,6 +567,12 @@ class _DeUnTambo:
 
     def tablero(self):
         return tablero(self.tambo)
+
+    def operarios(self):
+        return operarios(self.tambo)
+
+    def alertas(self, desde, hasta):
+        return alertas(desde, hasta, self.tambo)
 
 
 def para(tambo: str) -> _DeUnTambo:

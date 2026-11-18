@@ -31,9 +31,15 @@ class TestTarjetaRetrasoComida(unittest.TestCase):
         self.assertEqual(t["nivel"], "sin_dato")
         self.assertEqual(t["falta"], "MixerOne no informa la etapa")
 
-    def test_lleva_al_diagnostico_de_baja(self):
+    def test_lleva_a_los_operarios_del_mixer(self):
+        """Quien hace la primera comida es quien la atrasa: la tarjeta lleva a la calificación de los operarios, con
+        su hora de primera comida día por día y las alertas que detecta el mixer (18/11/2026)."""
         t = tarjeta(0)
-        self.assertEqual((t["pagina"], t["ancla"]), ("consultas", "diag-card"))
+        self.assertEqual((t["pagina"], t["tab"]), ("alimentacion", "operarios"))
+        self.assertIn("Operarios", t["destino"])
+
+    def test_el_diagnostico_de_baja_sigue_nombrado_en_la_ayuda(self):
+        self.assertIn("diagnóstico de baja", tarjeta(0)["ayuda"].lower())
 
 
 if __name__ == "__main__":
