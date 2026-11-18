@@ -12,6 +12,19 @@ mismo a un módulo que cumple esta interfaz.
     lotes()                     los lotes con sus cabezas
     ingredientes()              los ingredientes con %MS y precio
     consumos(desde, hasta)      kg descargados por lote y por ingrediente
+    tablero()                   OPCIONAL: el tablero del mixer (ver abajo). Un proveedor que no lo tiene simplemente
+                                no define el método y la pantalla lo avisa; no es un error.
+
+El tablero es:
+
+    proveedor    NOMBRE
+    kpis         {vacas, leche_vaca, ms_vaca, conversion} tal como los informa el proveedor (None si no los da).
+                 `conversion` es kg de LECHE por kg de MS, no sólidos: es la que muestra el portal del mixer.
+    viajes       [{fecha, teorica, carga_real, descarga_real, alertas}] un renglón por día, kg. `alertas` es la
+                 cantidad de alertas de ese día, o None si el proveedor no las pudo dar.
+    operarios    {puntaje, porcentajes: {bien, regular, mal}, lista: [{nombre, puntaje, resultado, cargas,
+                 descargas}]} o None
+    avisos       qué bloque no se pudo leer y por qué (lista de textos)
 
 Cada implementación traduce lo suyo a estas claves comunes. Un lote es:
 

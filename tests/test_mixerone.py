@@ -62,6 +62,29 @@ class Respuesta:
         return json.loads(self.content)
 
 
+def viaje_tablero(creado, teorica, carga, descarga):
+    """Un viaje como lo devuelve `dashboard/getTripsDashboard`: con sus totales ya sumados."""
+    return {"trip_uuid": "t-" + creado, "created": creado, "growth_stage": "Ordeñe",
+            "total_kg_theoretical_load": teorica, "Carga": {"Real": carga}, "Descarga": {"Real": descarga}}
+
+
+CONTADORES = {"milkingCows": 1864, "generalAverage": 41.15, "conversion": 1.8, "msRealHead": 22.82}
+VIAJES_TABLERO = [
+    viaje_tablero("2026-11-03T06:33:24.000Z", 8760.0, 8960.09, 8925.0),
+    viaje_tablero("2026-11-03T14:10:00.000Z", 7000.0, 7100.0, 6900.0),
+    viaje_tablero("2026-11-04T07:00:00.000Z", 9000.0, 9200.0, 9100.0),
+]
+PUNTAJE = {"score_final": 8.74, "score_percentages": {"bien": 64.93, "regular": 25.19, "mal": 9.88},
+           "operators": [
+               {"name": "Daniel Monteros", "loads": {"total": 342, "score": 8.83},
+                "unloads": {"total": 334, "score": 9.17},
+                "general": {"total": 676, "score": 8.99, "score_result": "REGULAR"}},
+               {"name": "Victor Aguero", "loads": {"total": 153, "score": 8.97},
+                "unloads": {"total": 0, "score": None},
+                "general": {"total": 153, "score": 8.97, "score_result": "REGULAR"}}]}
+ALERTAS = [{"date": "2026-11-03T00:00:00.000Z", "count": 6}, {"date": "2026-11-05T00:00:00.000Z", "count": 29}]
+
+
 class ApiFalsa:
     """Se hace pasar por mixerone.net. Anota cada llamada para poder mirarla después."""
 
@@ -72,6 +95,28 @@ class ApiFalsa:
         self.por_pagina = por_pagina
         self.llamadas = []
         self.logins = 0
+        # {ruta: (estado HTTP, response)}: lo que contesta cada ruta del tablero. Se pisa en cada prueba.
+        self.tablero = {
+            "dashboard/getCountersDashboard": (201, CONTADORES),
+            "dashboard/getTripsDashboard": (201, VIAJES_TABLERO),
+            "dashboard/getOperatorsScoreDashboard": (201, PUNTAJE),
+            "notifications/alerts/daily-counts": (200, ALERTAS),
+        }
+        self.metodos = []
+
+    def get(self, url, headers=None, timeout=None, **_):
+        ruta = url.split("/api/", 1)[1]
+        self.metodos.append(("GET", ruta))
+        self.llamadas.append((ruta, None, dict(headers or {})))
+        return self._tablero(ruta)
+
+    def _tablero(self, ruta):
+        if ruta not in self.tablero:
+            return Respuesta({"status": False}, 404)
+        estado, respuesta = self.tablero[ruta]
+        if estado not in (200, 201):
+            return Respuesta({"status": False, "detail": "sin permiso"}, estado)
+        return Respuesta({"status": True, "response": respuesta}, estado)
 
     def post(self, url, json=None, headers=None, timeout=None, **_):
         ruta = url.split("/api/", 1)[1]
@@ -83,6 +128,9 @@ class ApiFalsa:
             return Respuesta({"status": True, "response": {"access_token": TOKEN, "associated_clients": self.clientes}})
         if (headers or {}).get("Authorization") != f"Bearer {TOKEN}":
             return Respuesta({"status": False}, 401)
+        self.metodos.append(("POST", ruta))
+        if ruta.startswith("dashboard/"):
+            return self._tablero(ruta)
         if ruta == "trips/GetByFilterPaginated":
             pagina = json["page"]
             ini = (pagina - 1) * self.por_pagina
@@ -124,6 +172,7 @@ class Base(unittest.TestCase):
         self.api = ApiFalsa()
         self._parches = [
             mock.patch.object(mixerone.requests.Session, "post", lambda s, *a, **k: self.api.post(*a, **k)),
+            mock.patch.object(mixerone.requests.Session, "get", lambda s, *a, **k: self.api.get(*a, **k)),
             mock.patch.object(mixerone, "_variable", self._variable),
         ]
         self.entorno = {mixerone.VAR_USUARIO: "usuario", mixerone.VAR_PASSWORD: "clave",
@@ -269,12 +318,98 @@ class TestSoloLectura(Base):
         usadas = {r for r, _, _ in self.api.llamadas}
         self.assertTrue(usadas <= mixerone.RUTAS_DE_LECTURA, usadas - mixerone.RUTAS_DE_LECTURA)
 
+    def test_el_tablero_solo_usa_rutas_de_lectura(self):
+        self.p.tablero()
+        post = {r for m, r in self.api.metodos if m == "POST"}
+        get = {r for m, r in self.api.metodos if m == "GET"}
+        self.assertTrue(post <= mixerone.RUTAS_DE_LECTURA, post - mixerone.RUTAS_DE_LECTURA)
+        self.assertTrue(get <= mixerone.RUTAS_GET_DE_LECTURA, get - mixerone.RUTAS_GET_DE_LECTURA)
+
+    def test_un_GET_a_una_ruta_que_no_esta_en_la_lista_no_sale_a_la_red(self):
+        for ruta in ("notifications/read-all", "notifications/settings/x", "auth/logout", "una/ruta/desconocida"):
+            with self.subTest(ruta=ruta):
+                with self.assertRaises(mixerone.MixerOneError) as cm:
+                    mixerone._get(ruta, "ponderosa")
+                self.assertIn("solo lectura", str(cm.exception).lower())
+        self.assertEqual(self.api.llamadas, [])
+
+    def test_la_lista_de_GET_no_contiene_verbos_de_escritura(self):
+        for ruta in mixerone.RUTAS_GET_DE_LECTURA:
+            for verbo in ("create", "update", "delete", "insert", "disable", "enable", "register", "change",
+                          "backfill", "reset", "associate", "read-all", "markread"):
+                self.assertNotIn(verbo, ruta.lower(), ruta)
+
     def test_la_lista_no_contiene_verbos_de_escritura(self):
         for ruta in mixerone.RUTAS_DE_LECTURA:
             nombre = ruta.rsplit("/", 1)[-1].lower()
             for verbo in ("create", "update", "delete", "insert", "disable", "enable", "register", "change",
                           "backfill", "reset", "associate"):
                 self.assertNotIn(verbo, nombre, ruta)
+
+
+class TestTablero(Base):
+    """El tablero principal del portal (tarjetas, «Listado de viajes» con sus alertas y puntaje de operarios), en la
+    forma neutral que cualquier proveedor puede dar. Cifras de La Ponderosa, 18/11/2026."""
+
+    def test_las_tarjetas_son_las_que_informa_mixerone(self):
+        k = self.p.tablero()["kpis"]
+        self.assertEqual(k, {"vacas": 1864, "leche_vaca": 41.15, "ms_vaca": 22.82, "conversion": 1.8})
+
+    def test_los_viajes_se_suman_por_dia_con_los_totales_de_cada_viaje(self):
+        dias = {d["fecha"]: d for d in self.p.tablero()["viajes"]}
+        self.assertEqual(list(dias), ["2026-11-03", "2026-11-04"])
+        self.assertEqual(dias["2026-11-03"]["teorica"], 15760.0)
+        self.assertAlmostEqual(dias["2026-11-03"]["carga_real"], 16060.09)
+        self.assertEqual(dias["2026-11-03"]["descarga_real"], 15825.0)
+        self.assertEqual(dias["2026-11-04"]["descarga_real"], 9100.0)
+
+    def test_las_alertas_se_pegan_al_dia_y_un_dia_sin_alertas_es_cero(self):
+        dias = {d["fecha"]: d["alertas"] for d in self.p.tablero()["viajes"]}
+        self.assertEqual(dias, {"2026-11-03": 6, "2026-11-04": 0})
+
+    def test_las_alertas_se_piden_con_GET_y_el_resto_con_POST(self):
+        self.p.tablero()
+        self.assertIn(("GET", "notifications/alerts/daily-counts"), self.api.metodos)
+        self.assertIn(("POST", "dashboard/getTripsDashboard"), self.api.metodos)
+        self.assertNotIn(("POST", "notifications/alerts/daily-counts"), self.api.metodos)
+
+    def test_el_puntaje_de_operarios(self):
+        o = self.p.tablero()["operarios"]
+        self.assertEqual(o["puntaje"], 8.74)
+        self.assertEqual(o["porcentajes"], {"bien": 64.93, "regular": 25.19, "mal": 9.88})
+        self.assertEqual(o["lista"][0], {"nombre": "Daniel Monteros", "puntaje": 8.99, "resultado": "REGULAR",
+                                         "cargas": 342, "descargas": 334})
+        self.assertEqual(o["lista"][1]["descargas"], 0)
+
+    def test_sin_permiso_para_las_alertas_el_resto_sale_igual_y_lo_avisa(self):
+        self.api.tablero["notifications/alerts/daily-counts"] = (403, None)
+        t = self.p.tablero()
+        self.assertTrue(all(d["alertas"] is None for d in t["viajes"]))
+        self.assertEqual(t["kpis"]["vacas"], 1864)
+        self.assertTrue(any("alertas" in a.lower() for a in t["avisos"]), t["avisos"])
+
+    def test_si_un_bloque_falla_los_demas_siguen(self):
+        self.api.tablero["dashboard/getCountersDashboard"] = (500, None)
+        t = self.p.tablero()
+        self.assertIsNone(t["kpis"])
+        self.assertEqual(len(t["viajes"]), 2)
+        self.assertEqual(t["operarios"]["puntaje"], 8.74)
+        self.assertEqual(len(t["avisos"]), 1)
+
+    def test_si_falla_todo_lo_dice_en_vez_de_devolver_un_tablero_vacio(self):
+        for ruta in list(self.api.tablero):
+            self.api.tablero[ruta] = (500, None)
+        with self.assertRaises(mixerone.MixerOneError):
+            self.p.tablero()
+
+    def test_un_viaje_sin_totales_no_rompe_y_cuenta_cero(self):
+        self.api.tablero["dashboard/getTripsDashboard"] = (201, [
+            {"created": "2026-11-03T06:00:00.000Z", "Carga": None, "Descarga": {}}])
+        d = self.p.tablero()["viajes"][0]
+        self.assertEqual((d["teorica"], d["carga_real"], d["descarga_real"]), (0, 0, 0))
+
+    def test_el_nombre_del_proveedor_viaja(self):
+        self.assertEqual(self.p.tablero()["proveedor"], "MixerOne")
 
 
 class TestConsumos(Base):

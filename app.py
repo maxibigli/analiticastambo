@@ -6838,6 +6838,39 @@ def api_alimentacion_conciliacion():
         return jsonify({"error": str(exc)}), 502
 
 
+TABLERO_MIXER_CACHE_TTL_S = 600
+
+
+@app.get("/api/alimentacion/tablero")
+@auth.requiere_rol("admin")
+def api_alimentacion_tablero():
+    """El tablero del mixer (tarjetas, kg por día con sus alertas, puntaje de operarios), tal como lo da el proveedor de
+    alimentación del tambo. Es opcional en la interfaz de `proveedores` (ver su docstring): un proveedor que no lo
+    ofrece contesta `disponible: false` con el motivo, no un error. No toca la base DelPro: todo viene del proveedor."""
+    tambo = _tambo_del_request()
+    refrescar = request.args.get("refrescar") in ("1", "true", "si")
+    try:
+        prov = proveedores.de(tambo)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 502
+    nombre = getattr(prov, "NOMBRE", "")
+    if not hasattr(prov, "tablero"):
+        return jsonify({"disponible": False, "proveedor": nombre,
+                        "mensaje": f"{nombre or 'El sistema de alimentación de este tambo'} todavía no ofrece este "
+                                   "tablero."})
+    clave = f"{tambo}:alim_tablero"
+    if not refrescar:
+        datos, _ = _cache_get(clave, ttl=TABLERO_MIXER_CACHE_TTL_S)
+        if datos is not None:
+            return jsonify(datos)
+    try:
+        datos = {"disponible": True, **prov.tablero()}
+    except Exception as exc:  # noqa: BLE001 - el motivo va a la pantalla; un error no se guarda
+        return jsonify({"error": str(exc)}), 502
+    _cache_set(clave, datos)
+    return jsonify(datos)
+
+
 @app.post("/api/alimentacion/conciliacion")
 @auth.requiere_rol("admin")
 def api_alimentacion_guardar_conciliacion():
