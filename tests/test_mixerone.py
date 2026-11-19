@@ -577,6 +577,24 @@ class TestAlertasYOperarios(Base):
         self.assertTrue(any("primera comida" in a.lower() for a in r["avisos"]), r["avisos"])
         self.assertTrue(r["operarios"])
 
+    def test_el_rodeo_de_una_edicion_de_kg_sale_del_despues(self):
+        """En «kg modificados» el rodeo no está arriba: viene dentro de `before`/`after`."""
+        self.api.notificaciones = [alerta_api(
+            9, "N02", "2026-11-13T15:00:00.000Z", "Kilogramos de corral modificados",
+            "Daniel Monteros modificó RODEO 4: 4059 → 4500",
+            {"before": {"corral_name": "RODEO 4", "kg": 4059}, "after": {"corral_name": "RODEO 4", "kg": 4500}})]
+        self.assertEqual(self.alertas()["9"]["rodeo"], "RODEO 4")
+
+    def test_el_dia_del_que_habla_la_alerta(self):
+        """«Rodeo sin alimentar» se detecta al día siguiente, pero es del día que faltó (`missing_date`); la variación
+        de consumo trae el suyo en `date`; el resto es del día en que pasó."""
+        self.api.notificaciones = [
+            alerta_api(1, "N13", "2026-11-13T12:00:00.000Z", "t", "m", {"corral_name": "X", "missing_date": "2026-11-12"}),
+            alerta_api(2, "N12", "2026-11-13T12:00:00.000Z", "t", "m", {"corral_name": "X", "date": "2026-11-12"}),
+            alerta_api(3, "N07", "2026-11-13T12:00:00.000Z", "t", "m", {"corral_name": "X"})]
+        a = self.alertas()
+        self.assertEqual([a["1"]["dia"], a["2"]["dia"], a["3"]["dia"]], ["2026-11-12", "2026-11-12", "2026-11-13"])
+
     def test_el_analisis_solo_usa_rutas_de_lectura(self):
         self.p.operarios()
         post = {r for m, r in self.api.metodos if m == "POST"}
@@ -584,6 +602,92 @@ class TestAlertasYOperarios(Base):
         self.assertTrue(post <= mixerone.RUTAS_DE_LECTURA, post - mixerone.RUTAS_DE_LECTURA)
         self.assertTrue(get <= mixerone.RUTAS_GET_DE_LECTURA, get - mixerone.RUTAS_GET_DE_LECTURA)
         self.assertNotIn("notifications/read-all", get)
+
+
+def descarga_en(hora, rodeo, kg, teo, operario="Daniel Monteros"):
+    return {"id": 1, "action": "Descarga", "operator": operario, "kg_real": kg, "kg_theoretical": teo, "corral": rodeo,
+            "hour": hora, "food": None}
+
+
+def viaje_de(dia, creado_hhmm, detalles, etapa="Ordeñe"):
+    return {"trip_uuid": f"V-{dia}-{creado_hhmm}", "created": f"{dia}T{creado_hhmm}:00.000Z", "growth_stage": etapa,
+            "details": detalles}
+
+
+class TestEntregasPorRodeo(Base):
+    """La entrega de comida por rodeo y día (kg contra teóricos, primera comida, alertas) a partir del tablero de
+    MixerOne. El cálculo es de `entrega.py`; acá se prueba que el proveedor le pase lo correcto."""
+
+    def setUp(self):
+        super().setUp()
+        self.api.notificaciones = []
+        self.api.tablero["dashboard/getTripsDashboard"] = (201, [
+            viaje_de("2026-11-10", "07:00", [descarga_en("07:04:00", "RODEO 1", 900, 1000),
+                                             descarga_en("09:00:00", "RODEO 2", 500, 500)]),
+            viaje_de("2026-11-11", "07:00", [descarga_en("07:04:00", "RODEO 1", 1000, 1000)]),
+            viaje_de("2026-11-12", "07:00", [descarga_en("07:04:00", "RODEO 1", 1000, 1000)]),
+            viaje_de("2026-11-13", "09:00", [descarga_en("09:04:00", "RODEO 1", 1100, 1000)]),
+            viaje_de("2026-11-13", "08:00", [descarga_en("08:00:00", "RECRIA LP", 300, 300)], etapa="Recría"),
+        ])
+
+    def rodeos(self):
+        return {r["rodeo"]: r for r in self.p.entregas_por_rodeo()["rodeos"]}
+
+    def dias(self, rodeo):
+        return {d["fecha"]: d for d in self.rodeos()[rodeo]["dias"]}
+
+    def test_suma_lo_entregado_y_lo_teorico_por_rodeo_y_dia(self):
+        d = self.dias("RODEO 1")["2026-11-10"]
+        self.assertEqual((d["kg_real"], d["kg_teorico"], d["cumplimiento"]), (900.0, 1000.0, 90.0))
+
+    def test_la_primera_comida_en_minutos_y_el_atraso_contra_lo_habitual_del_rodeo(self):
+        r = self.rodeos()["RODEO 1"]
+        self.assertEqual(r["habitual"], 7 * 60 + 4)
+        d = {x["fecha"]: x for x in r["dias"]}
+        self.assertEqual(d["2026-11-10"]["primera"], 7 * 60 + 4)
+        self.assertEqual(d["2026-11-13"]["atraso"], 120)               # 09:04 contra 07:04
+
+    def test_solo_los_rodeos_de_ordene(self):
+        self.assertNotIn("RECRIA LP", self.rodeos())
+
+    def test_un_rodeo_con_pocos_dias_no_tiene_lo_habitual(self):
+        r = self.rodeos()["RODEO 2"]
+        self.assertIsNone(r["habitual"])
+        self.assertIsNone(r["dias"][0]["atraso"])
+
+    def test_las_alertas_se_cuentan_en_el_dia_y_rodeo_de_los_que_hablan(self):
+        self.api.notificaciones = [
+            alerta_api(1, "N07", "2026-11-13T12:30:00.000Z", "Horario", "m",
+                       {"trip_uuid": "V", "corral_name": "RODEO 1"}),                       # 09:30 del 13
+            alerta_api(2, "N13", "2026-11-13T12:00:00.000Z", "Rodeo sin alimentar", "m",
+                       {"corral_name": "RODEO 2", "missing_date": "2026-11-11"})]
+        r = self.rodeos()
+        self.assertEqual({d["fecha"]: d["alertas"] for d in r["RODEO 1"]["dias"]}["2026-11-13"], 1)
+        r2 = {d["fecha"]: d for d in r["RODEO 2"]["dias"]}
+        self.assertNotIn("2026-11-11", r2)      # Rodeo 2 solo comió el 10: su alerta del 11 queda fuera de su rango
+
+    def test_la_ventana_y_el_proveedor(self):
+        e = self.p.entregas_por_rodeo()
+        self.assertEqual((e["ventana"]["desde"], e["ventana"]["hasta"]), ("2026-11-10", "2026-11-13"))
+        self.assertEqual(e["proveedor"], "MixerOne")
+
+    def test_si_fallan_las_alertas_la_entrega_sale_igual_y_lo_avisa(self):
+        self.api.tablero["notifications"] = (403, None)
+        e = self.p.entregas_por_rodeo()
+        self.assertTrue(e["rodeos"])
+        self.assertTrue(any("alertas" in a.lower() for a in e["avisos"]), e["avisos"])
+
+    def test_si_falla_el_tablero_de_viajes_es_un_error(self):
+        self.api.tablero["dashboard/getTripsDashboard"] = (500, None)
+        with self.assertRaises(mixerone.MixerOneError):
+            self.p.entregas_por_rodeo()
+
+    def test_solo_usa_rutas_de_lectura(self):
+        self.p.entregas_por_rodeo()
+        post = {r for m, r in self.api.metodos if m == "POST"}
+        get = {r for m, r in self.api.metodos if m == "GET"}
+        self.assertTrue(post <= mixerone.RUTAS_DE_LECTURA, post - mixerone.RUTAS_DE_LECTURA)
+        self.assertTrue(get <= mixerone.RUTAS_GET_DE_LECTURA, get - mixerone.RUTAS_GET_DE_LECTURA)
 
 
 class TestConsumos(Base):

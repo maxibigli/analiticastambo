@@ -265,6 +265,31 @@ se ve en una línea de 👷 Operarios del mixer («no se está copiando — …�
 desarrollo `ponderosa` está con Haasten, por eso ahí no copia; en SERVER-DELPRO tiene que estar `sistema_alimentacion` = MixerOne.
 `alertas_guardadas.diarias(tambo)` da `[{fecha, codigo, n}]`: es la base para cruzar con la leche por rodeo cuando haya historia.
 
+## Alimentación › entrega de comida contra producción, por rodeo (19/11/2026)
+
+En el «Tablero del mixer»: por rodeo y por día, la entrega de comida (del proveedor) al lado de la leche por vaca de ese rodeo
+(DelPro). `GET /api/alimentacion/entrega-vs-produccion` (admin, caché 10 min, no se guarda si falló la base). El cálculo de la
+entrega es de `entrega.py` (puro, neutral: `por_rodeo`, `con_leche`); el proveedor lo ofrece con `entregas_por_rodeo()`
+(opcional). El cruce rodeo del mixer ↔ grupo de DelPro es el de **Conciliación de grupos** (`conciliacion.lote_de_grupo` +
+`alinear_lotes` para los nombres): sin mapeo la entrega sale igual, sin leche, y la pantalla manda a Conciliación. El último día de
+DelPro (a medio cargar) no lleva leche (`ultimo_dia_completo`).
+
+**«Eficiencia de la entrega» son DOS cosas, y se miden aparte** (decisión del usuario: ambas):
+  * **Cumplimiento**: kg entregados ÷ teóricos del día. En La Ponderosa es casi 100 % siempre (94 a 105 % en 4 de 6 rodeos; Rodeo 2
+    llegó a 75 % un día y R9 Enfermería oscila 80 a 120 % con 47 vacas): el mixer entrega lo que le piden, SOLO no dice nada.
+  * **Puntualidad**: la primera comida de cada rodeo contra lo habitual DE ESE RODEO (mediana de sus propios días, mínimo 3 días).
+    Cada rodeo tiene su hora: Rodeo 1 y 2 a las ~07:05, Rodeo 3 y 5 a las ~09:30, Rodeo 4 a las ~16:45, R9 a las ~14:45. La tarjeta
+    «Retraso de la primera comida» del Tablero mide la de los rodeos de ordeñe en conjunto (la más temprana del día).
+  * **Con 14 días NO se ve ninguna relación con la leche** (03 al 16/11/2026): r = −0,05 el mismo día y 0,02 al siguiente sobre 81
+    rodeo-días; por rodeo suelto salen r de −0,4 a +0,75 pero con 14 puntos y de signo cambiante. La pantalla lo dice. Sirve para
+    mirar qué pasó cada día; el análisis formal necesita 6 a 8 semanas (ver la copia de alertas).
+
+**Gráfica**: la leche es una LÍNEA (no barras) a propósito: el eje no arranca en cero (47 contra 50 kg) y unas barras con el eje
+cortado exagerarían la diferencia. Puntos ámbar = primera comida con 60 min o más de atraso (el corte del Tablero); cumplimiento
+punteado en el eje derecho (80 a 120 %); ⚠ = alertas del mixer de ESE rodeo ESE día. Cada alerta cuenta en el día DEL QUE HABLA
+(`dia`: «rodeo sin alimentar» se detecta al día siguiente pero es del día que faltó; la variación de consumo trae su `date`), y el
+rodeo de «kg modificados» sale de `before`/`after` (no viene arriba).
+
 ## Dónde quedamos (05/08/2026)
 
 **Restaurar DDM en SERVER-DELPRO DEJA A LA APP SIN LEER LA BASE.** El backup

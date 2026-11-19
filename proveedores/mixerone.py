@@ -461,9 +461,16 @@ def _alerta_neutra(x: dict, crudo: bool = False) -> dict:
         operario = mensaje.split(" modificó")[0].strip() if " modificó" in mensaje else None
         accion = "edicion" if operario else None
     momento = _local(x.get("occurred_at") or x.get("created_at"))
+    fecha = momento.date().isoformat()
     neutra = {"id": x.get("id"), "codigo": codigo, "tipo": x.get("title"), "severidad": x.get("severity"),
-              "mensaje": x.get("message"), "fecha": momento.date().isoformat(), "hora": momento.strftime("%H:%M"),
-              "viaje": md.get("trip_uuid") or md.get("detected_trip_uuid"), "rodeo": md.get("corral_name"),
+              "mensaje": x.get("message"), "fecha": fecha, "hora": momento.strftime("%H:%M"),
+              # El día DEL QUE HABLA la alerta: «rodeo sin alimentar» se detecta al día siguiente (`missing_date`) y la
+              # variación de consumo trae el suyo (`date`); el resto es del día en que pasó.
+              "dia": md.get("missing_date") or md.get("date") or fecha,
+              "viaje": md.get("trip_uuid") or md.get("detected_trip_uuid"),
+              # En «kg modificados» el rodeo no está arriba: viene dentro de `after`/`before`.
+              "rodeo": md.get("corral_name") or (md.get("after") or {}).get("corral_name")
+              or (md.get("before") or {}).get("corral_name"),
               "insumo": md.get("item_name"), "accion": accion, "operario": operario}
     if crudo:
         neutra["crudo"] = x          # el JSON original completo, para la copia local (`alertas_guardadas.py`)
@@ -486,6 +493,42 @@ def alertas(desde, hasta, tambo=None, crudo: bool = False) -> list:
         pagina += 1
         if pagina > MAX_PAGINAS:
             raise MixerOneError(f"MixerOne devolvió más de {MAX_PAGINAS} páginas de alertas: acotá el período.")
+
+
+def entregas_por_rodeo(tambo=None) -> dict:
+    """La entrega de comida de cada rodeo de ordeñe, día por día (kg contra teóricos, primera comida, alertas), de la ventana
+    del tablero del portal. El cálculo es de `entrega.py`; la leche la pega la app, que es la que tiene DelPro.
+
+    La fecha de cada descarga es el día en que EMPEZÓ el viaje (como el portal) y el minuto cuenta desde la medianoche de ese
+    día: una descarga que pasó la medianoche sigue sumando después de las 24:00. Solo etapa «Ordeñe»: el resto (recría, secas)
+    no tiene leche con qué compararse. Si fallan las alertas la entrega sale igual (va a `avisos`); sin los viajes es un error."""
+    import entrega
+    viajes = _post("dashboard/getTripsDashboard", None, tambo) or []
+    descargas = []
+    for v in viajes:
+        if (v.get("growth_stage") or "").strip().lower() not in ("ordeñe", "ordene"):
+            continue
+        creado = str(v.get("created") or "")[:10]
+        for d in v.get("details") or []:
+            rodeo = (d.get("corral") or "").strip()
+            if d.get("action") != "Descarga" or not rodeo or not creado:
+                continue
+            momento = _fecha(v, d.get("hour"))
+            minuto = None
+            if momento:
+                m = datetime.datetime.fromisoformat(momento)
+                minuto = (m.date() - datetime.date.fromisoformat(creado)).days * 1440 + m.hour * 60 + m.minute
+            descargas.append({"fecha": creado, "minuto": minuto, "rodeo": rodeo,
+                              "kg_real": d.get("kg_real") or 0, "kg_teorico": d.get("kg_theoretical") or 0})
+    fechas = sorted({d["fecha"] for d in descargas})
+    avisos, lista = [], []
+    if fechas:
+        try:
+            lista = alertas(datetime.date.fromisoformat(fechas[0]), datetime.date.fromisoformat(fechas[-1]), tambo)
+        except MixerOneError as exc:
+            avisos.append(f"Las alertas: {exc}")
+    return {"proveedor": NOMBRE, "ventana": {"desde": fechas[0] if fechas else None, "hasta": fechas[-1] if fechas else None},
+            "rodeos": entrega.por_rodeo(descargas, lista), "avisos": avisos}
 
 
 def operarios(tambo=None) -> dict:
@@ -574,6 +617,9 @@ class _DeUnTambo:
 
     def operarios(self):
         return operarios(self.tambo)
+
+    def entregas_por_rodeo(self):
+        return entregas_por_rodeo(self.tambo)
 
     def alertas(self, desde, hasta, crudo=False):
         return alertas(desde, hasta, self.tambo, crudo)

@@ -1780,6 +1780,26 @@
       <section class="kpis" id="tm-kpis" style="margin-top:10px"></section>
       <h3 class="g-titulo" style="margin-top:20px">Listado de viajes — kg por día</h3>
       <div class="chart-box" style="height:320px;margin-top:8px"><canvas id="chart-tm-viajes"></canvas></div>
+      <h3 class="g-titulo" style="margin-top:22px">Entrega de comida contra producción — por rodeo</h3>
+      <p class="explica" style="margin-top:6px">
+        La <b>eficiencia de la entrega</b> tiene dos caras. El <b>cumplimiento</b> (línea) son los kg entregados contra los
+        teóricos del día: casi siempre está cerca de 100 %, porque el mixer entrega lo que le piden. La <b>puntualidad</b>
+        es cuándo llegó la primera comida del rodeo contra lo habitual de <b>ese</b> rodeo: los puntos <b>ámbar</b> son
+        los días con 60 minutos o más de atraso. La línea azul es la <b>leche por vaca de DelPro</b> del mismo rodeo y día
+        (el eje de la izquierda no arranca en cero: mirá la escala), y cada ⚠ son las alertas que detectó el mixer en ese
+        rodeo ese día.
+        <br><b>Con pocos días de historia no se ve una relación clara entre la entrega y la leche</b> (03 al 16/11/2026: ninguna
+        que se sostenga). Es para mirar qué pasó cada día; el análisis formal necesita unas 6 a 8 semanas.
+      </p>
+      <div class="controls" style="margin-top:8px;gap:10px;align-items:center;flex-wrap:wrap">
+        <label class="aviso" style="display:flex;align-items:center;gap:5px">Rodeo
+          <select id="ev-rodeo" style="padding:6px 8px"></select></label>
+        <span class="aviso" id="ev-info"></span>
+      </div>
+      <div id="ev-avisos" style="margin-top:6px"></div>
+      <div class="chart-box" style="height:320px;margin-top:8px"><canvas id="chart-ev"></canvas></div>
+      <div style="overflow-x:auto;margin-top:10px" id="ev-tabla"></div>
+
       <h3 class="g-titulo" style="margin-top:22px">Puntaje de operarios</h3>
       <a href="#" id="tm-ver-operarios" class="aviso">Ver cada operario con las alertas que detecta el mixer →</a>
       <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center;margin-top:8px">
@@ -12637,6 +12657,7 @@ async function cargarTambos() {
       rodDatos = null; rodSel = null;
       tmDatos = null;      // el tablero del mixer también es del tambo anterior: se vuelve a pedir al abrir la pestaña
       opDatos = null;      // ídem los operarios del mixer
+      evDatos = null;      // y la entrega contra producción por rodeo
       const rodCuerpo = document.getElementById('rod-cuerpo'); if (rodCuerpo) rodCuerpo.hidden = true;
       // La fila de tarjetas del Dashboard se arma con dos endpoints: si no se
       // limpian los dos, mientras carga el tambo nuevo se ve media fila con
@@ -14904,9 +14925,109 @@ function pintarTableroMixer() {
   }
 }
 
+// ---- Entrega de comida contra producción, por rodeo (/api/alimentacion/entrega-vs-produccion) -------------------
+let evDatos = null, chartEv = null;
+const EV_ATRASO_MIN = 60;      // el mismo corte del Tablero: 60 minutos o más de atraso es «tarde»
+
+function pintarEntregaVsProduccion() {
+  const d = evDatos, sel = document.getElementById('ev-rodeo');
+  const avisos = document.getElementById('ev-avisos'), info = document.getElementById('ev-info');
+  if (chartEv) { chartEv.destroy(); chartEv = null; }
+  document.getElementById('ev-tabla').innerHTML = '';
+  if (!d || !d.disponible) {
+    avisos.innerHTML = d && d.mensaje ? `<div class="aviso">${escHtml(d.mensaje)}</div>` : '';
+    sel.innerHTML = ''; info.textContent = '';
+    return;
+  }
+  const rodeos = d.rodeos || [];
+  const previo = sel.value;
+  sel.innerHTML = rodeos.map(r => `<option value="${escHtml(r.rodeo)}">${escHtml(r.rodeo)}</option>`).join('');
+  if (rodeos.some(r => r.rodeo === previo)) sel.value = previo;
+  avisos.innerHTML = (d.avisos || []).map(a =>
+    `<div class="alerta-caja" style="margin-top:6px"><b>⚠ Falta una parte.</b><div style="margin-top:4px">${escHtml(a)}</div></div>`).join('');
+  const r = rodeos.find(x => x.rodeo === sel.value) || rodeos[0];
+  if (!r) { info.textContent = 'Sin entregas en el período.'; return; }
+  const v = d.ventana || {};
+  info.textContent = `${v.desde ? v.desde.slice(8, 10) + '/' + v.desde.slice(5, 7) : ''} al ` +
+    `${v.hasta ? v.hasta.slice(8, 10) + '/' + v.hasta.slice(5, 7) : ''}` +
+    (r.habitual != null ? ` · primera comida habitual de este rodeo: ${opHora(r.habitual)}` : '') +
+    (r.con_leche ? '' : ' · este rodeo no tiene un grupo de DelPro asignado en Conciliación: se muestra solo la entrega');
+
+  const dias = r.dias || [];
+  const tarde = x => x.atraso != null && x.atraso >= EV_ATRASO_MIN;
+  const alertas = dias.map(x => x.alertas);
+  chartEv = dibujar('chart-ev', chartEv, {
+    type: 'line',
+    data: { labels: dias.map(x => opDia(x.fecha)), datasets: [
+      // Línea y no barras: el eje de la leche no arranca en cero (47 contra 50 kg no se ve desde cero) y unas barras con el
+      // eje cortado exagerarían la diferencia. Los puntos ámbar son los días con la primera comida tardía.
+      { label: 'Leche por vaca (DelPro)', data: dias.map(x => x.leche_vaca), yAxisID: 'y',
+        borderColor: SERIES[0], backgroundColor: SERIES[0], tension: 0.15, borderWidth: 3, spanGaps: false,
+        pointRadius: dias.map(x => tarde(x) ? 7 : 3), pointBackgroundColor: dias.map(x => tarde(x) ? css('--warning') : SERIES[0]),
+        pointBorderColor: dias.map(x => tarde(x) ? css('--warning') : SERIES[0]) },
+      { label: 'Cumplimiento de la entrega (%)', data: dias.map(x => x.cumplimiento), yAxisID: 'y1',
+        borderColor: SERIES[4], backgroundColor: SERIES[4], borderDash: [6, 4], tension: 0.15, pointRadius: 2,
+        borderWidth: 2, spanGaps: false },
+    ] },
+    options: {
+      responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      layout: { padding: { top: alertas.some(n => n) ? 30 : 0 } },
+      plugins: {
+        legend: { position: 'bottom' },
+        alertasViajes: alertas.some(n => n) ? { valores: alertas } : null,
+        tooltip: { callbacks: { afterBody: it => {
+          const x = dias[it[0].dataIndex];
+          const l = [x.primera == null ? 'Sin comida ese día' :
+            `Primera comida ${opHora(x.primera)}` + (x.atraso == null ? '' : ` (${x.atraso > 0 ? '+' : ''}${x.atraso} min contra lo habitual)`),
+            `Entregó ${fmt(Math.round(x.kg_real))} de ${fmt(Math.round(x.kg_teorico))} kg teóricos`];
+          if (x.alertas) l.push(`⚠ ${x.alertas} alerta(s) del mixer`);
+          return l;
+        } } },
+      },
+      scales: {
+        y: { position: 'left', beginAtZero: false, title: { display: true, text: 'kg de leche por vaca' } },
+        y1: { position: 'right', beginAtZero: false, suggestedMin: 80, suggestedMax: 120, grid: { drawOnChartArea: false },
+              ticks: { callback: n => n + ' %' }, title: { display: true, text: 'cumplimiento' } },
+      },
+    },
+  });
+  document.getElementById('ev-tabla')._tabla = { orden: 'fecha', asc: false, filtros: {} };
+  tablaInteractiva('ev-tabla', [
+    { clave: 'fecha', titulo: 'Día', tipo: 'texto', fmt: x => escHtml(opDia(x)) },
+    { clave: 'leche_vaca', titulo: 'Leche/vaca', tipo: 'num', fmt: x => x == null ? '—' : x.toLocaleString('es-AR', { maximumFractionDigits: 1 }) },
+    { clave: 'vacas', titulo: 'Vacas', tipo: 'num', fmt: x => x == null ? '—' : fmt(x) },
+    { clave: 'cumplimiento', titulo: 'Cumplimiento', tipo: 'num', fmt: x => x == null ? '—' : x.toLocaleString('es-AR', { maximumFractionDigits: 1 }) + ' %' },
+    { clave: 'kg_real', titulo: 'Kg entregados', tipo: 'num', fmt: (x, f) => `${fmt(Math.round(x))} / ${fmt(Math.round(f.kg_teorico))}` },
+    { clave: 'primera', titulo: 'Primera comida', tipo: 'num', fmt: x => x == null ? '<span class="aviso">no comió</span>' : `<b>${opHora(x)}</b>` },
+    { clave: 'atraso', titulo: 'Atraso', tipo: 'num', fmt: x => {
+        if (x == null) return '—';
+        if (x >= EV_ATRASO_MIN) return `<span class="chip rojo">+${x} min</span>`;
+        if (x >= 30) return `<span class="chip ambar">+${x} min</span>`;
+        return x > 0 ? `+${x} min` : `${x} min`;
+      } },
+    { clave: 'alertas', titulo: 'Alertas', tipo: 'num', fmt: x => x ? `<b>${x}</b>` : '0' },
+  ], dias, { orden: 'fecha' });
+}
+
+async function cargarEntregaVsProduccion(refrescar) {
+  const info = document.getElementById('ev-info');
+  info.textContent = 'Consultando la entrega y la leche…';
+  try {
+    evDatos = await pedirJSON('/api/alimentacion/entrega-vs-produccion?tambo=' + encodeURIComponent(tamboActual) +
+      (refrescar ? '&refrescar=1' : ''));
+    pintarEntregaVsProduccion();
+  } catch (e) {
+    evDatos = null;
+    info.textContent = 'Error: ' + e.message;
+  }
+}
+
+document.getElementById('ev-rodeo').addEventListener('change', () => { if (evDatos) pintarEntregaVsProduccion(); });
+
 async function cargarTableroMixer(refrescar) {
   const info = document.getElementById('tm-info');
   info.textContent = 'Consultando al mixer…';
+  cargarEntregaVsProduccion(refrescar);
   try {
     tmDatos = await pedirJSON('/api/alimentacion/tablero?tambo=' + encodeURIComponent(tamboActual) +
       (refrescar ? '&refrescar=1' : ''));

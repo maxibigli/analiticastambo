@@ -22,6 +22,7 @@ import agente
 import ai
 import alertas_guardadas
 import alimentacion
+import entrega
 import alimentacion_dia
 import auth
 import balance_leche
@@ -6892,6 +6893,67 @@ def iniciar_copia_alertas():
 def api_alimentacion_alertas_copia():
     """Qué hay copiado de las alertas del mixer: cuántas, desde cuándo y cómo salió la última sincronización."""
     return jsonify(alertas_guardadas.resumen(_tambo_del_request()))
+
+
+@app.get("/api/alimentacion/entrega-vs-produccion")
+@auth.requiere_rol("admin")
+def api_alimentacion_entrega_vs_produccion():
+    """La entrega de comida de cada rodeo (cumplimiento de kg y puntualidad, del proveedor de alimentación) al lado de la
+    leche por vaca de ese rodeo (DelPro), día por día. Ver `entrega.py`: con pocos días de historia NO se ve relación entre
+    las dos cosas, y la pantalla lo dice; sirve para mirar qué pasó cada día.
+
+    El cruce rodeo del mixer ↔ grupo de DelPro es el de ⚙ Conciliación de grupos. Si falta el mapeo o falla la base la
+    entrega sale igual, sin leche y con el motivo en `avisos`: el proveedor es la fuente principal y DelPro el agregado."""
+    tambo = _tambo_del_request()
+    refrescar = request.args.get("refrescar") in ("1", "true", "si")
+    try:
+        prov = proveedores.de(tambo)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 502
+    nombre = getattr(prov, "NOMBRE", "")
+    if not hasattr(prov, "entregas_por_rodeo"):
+        return jsonify({"disponible": False, "proveedor": nombre,
+                        "mensaje": f"{nombre or 'El sistema de alimentación de este tambo'} todavía no ofrece la entrega "
+                                   "de comida por rodeo."})
+    clave = f"{tambo}:alim_entrega_vs_produccion"
+    if not refrescar:
+        datos, _ = _cache_get(clave, ttl=TABLERO_MIXER_CACHE_TTL_S)
+        if datos is not None:
+            return jsonify(datos)
+    try:
+        ent = prov.entregas_por_rodeo()
+    except Exception as exc:  # noqa: BLE001 - el motivo va a la pantalla
+        return jsonify({"error": str(exc)}), 502
+
+    avisos, leche, ultimo, guardable = list(ent.get("avisos") or []), {}, None, True
+    mapeo = conciliacion.lote_de_grupo(tambo)
+    if not mapeo:
+        avisos.append("No hay rodeos del mixer asignados a grupos de DelPro: sin eso no se puede poner la leche al lado de "
+                      "la entrega. Se define en Alimentación › Conciliación de grupos.")
+    else:
+        try:
+            herd = rebano.por_defecto(tambo)
+            ultimo = conciliacion.ultimo_dia_completo(
+                db.run_query(conciliacion.sql_dias_animaldaily(herd), tambo=tambo, max_rows=60))["fecha"]
+            v = ent.get("ventana") or {}
+            prod = db.run_query(alimentacion.sql_produccion_grupo_dia(v["desde"], v["hasta"], herd),
+                                tambo=tambo, max_rows=4000)
+            rodeo_de = conciliacion.alinear_lotes(mapeo, {r["rodeo"] for r in ent["rodeos"]})
+            for f in alimentacion._filas(prod):
+                rodeo = rodeo_de.get(int(f["grupo"]))
+                if rodeo:
+                    x = leche.setdefault(rodeo, {}).setdefault(str(f["fecha"])[:10], {"vacas": 0, "kg": 0.0})
+                    x["vacas"] += int(f["vacas"] or 0)
+                    x["kg"] += float(f["kg_leche"] or 0)
+        except Exception as exc:  # noqa: BLE001 - sin DelPro la entrega sale igual
+            avisos.append(f"No se pudo leer la leche de DelPro: {exc}")
+            leche, guardable = {}, False
+    datos = {"disponible": True, "proveedor": ent.get("proveedor"), "ventana": ent.get("ventana"),
+             "ultimo_dia_completo": ultimo, "rodeos": entrega.con_leche(ent["rodeos"], leche, ultimo or ""),
+             "avisos": avisos}
+    if guardable:
+        _cache_set(clave, datos)
+    return jsonify(datos)
 
 
 @app.get("/api/alimentacion/operarios")
