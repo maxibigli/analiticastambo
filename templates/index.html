@@ -1740,6 +1740,7 @@
         <span class="aviso" id="op-info"></span>
       </div>
       <div id="op-avisos" style="margin-top:10px"></div>
+      <div class="aviso" id="op-copia" style="margin-top:6px"></div>
       <section class="kpis" id="op-kpis" style="margin-top:10px"></section>
 
       <h3 class="g-titulo" style="margin-top:20px">Operarios — calificación y alertas</h3>
@@ -15035,9 +15036,32 @@ function pintarOperarios() {
   ], filas, { orden: 'fecha' });
 }
 
+// Estado de la copia local de las alertas (alertas_guardadas.py): que se vea que se están guardando sola.
+async function cargarCopiaDeAlertas() {
+  const el = document.getElementById('op-copia');
+  try {
+    const c = await pedirJSON('/api/alimentacion/alertas-copia?tambo=' + encodeURIComponent(tamboActual));
+    const dmy = iso => iso ? iso.slice(8, 10) + '/' + iso.slice(5, 7) + '/' + iso.slice(0, 4) : '—';
+    const s = c.ultima_sincronizacion;
+    if (!s) { el.textContent = 'Copia de seguridad de las alertas: todavía no se copió nada. Se copia sola unos minutos ' +
+      'después de que arranca el servidor y después cada 6 horas.'; return; }
+    const cuando = new Date(s.cuando).toLocaleString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit',
+      hour: '2-digit', minute: '2-digit' });
+    if (s.omitido) {            // el tambo no está configurado con un sistema que dé alertas: se dice por qué
+      el.innerHTML = `Copia de seguridad de las alertas: <b style="color:var(--critical)">no se está copiando</b> — ` +
+        `${escHtml(s.omitido)} (${escHtml(cuando)}).`;
+      return;
+    }
+    el.innerHTML = `Copia de seguridad de las alertas: <b>${fmt(c.total)}</b> guardadas (del ${dmy(c.desde)} al ` +
+      `${dmy(c.hasta)}). Última sincronización: ${escHtml(cuando)}` +
+      (s.error ? ` — <b style="color:var(--critical)">falló: ${escHtml(s.error)}</b>` : '') + '.';
+  } catch (e) { el.textContent = ''; }
+}
+
 async function cargarOperarios(refrescar) {
   const info = document.getElementById('op-info');
   info.textContent = 'Consultando al mixer… (puede tardar unos segundos: son los viajes de un mes y todas las alertas)';
+  cargarCopiaDeAlertas();
   try {
     opDatos = await pedirJSON('/api/alimentacion/operarios?tambo=' + encodeURIComponent(tamboActual) +
       (refrescar ? '&refrescar=1' : ''));

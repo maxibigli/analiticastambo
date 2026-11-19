@@ -246,6 +246,25 @@ período Daniel Monteros hizo todas las primeras comidas, incluidas las tardías
 Cada bloque se pide aparte y uno que falla va a `avisos`. El enlace de cada alerta lleva a los viajes de ese día en MixerOne
 (`https://mixerone.net/app/main/trips?d=DD/MM/AAAA`).
 
+### Copia diaria de las alertas de MixerOne (18/11/2026)
+
+`alertas_guardadas.py` copia solas las alertas a una base local (`alertas_mixerone.db`, **en `.gitignore`**, estado propio de cada
+instalación). **Por qué**: no se sabe si MixerOne guarda el historial para siempre, y las alertas **empezaron el 04/11/2026** (se
+comprobó pidiendo desde mayo: la primera es del 04/11). Con 15 días no alcanza para saber si anticipan caídas de leche: hacen
+falta 6 a 8 semanas, y si MixerOne las depurara, lo no copiado se pierde.
+
+Un hilo (`iniciar_copia_alertas`, que arranca `servidor.py` DESPUÉS del candado de instancia única, no al importar `app`: igual que el
+vigilante) sincroniza **un minuto después de arrancar y cada 6 horas**, para cada tambo cuyo proveedor ofrece `alertas()` y está
+conectado. La primera vez de cada tambo trae todo el historial (180 días atrás) y después repasa los últimos 3 días: una alerta puede
+llegar tarde o cambiar (la marcan leída en el portal). **Se guarda el JSON crudo completo** más los campos neutrales; una alerta que
+MixerOne deja de devolver NO se borra (`visto_primero`/`visto_ultimo` dicen cuándo se la vio). Idempotente (probado contra la cuenta
+real: 444 alertas, la 2ª pasada repasó 132 y no duplicó ninguna; los conteos por día coinciden con el portal).
+
+**Si el tambo no está configurado con un sistema que dé alertas, la copia NO hace nada, y lo dice**: el motivo queda registrado y
+se ve en una línea de 👷 Operarios del mixer («no se está copiando — …»; `GET /api/alimentacion/alertas-copia`). En la PC de
+desarrollo `ponderosa` está con Haasten, por eso ahí no copia; en SERVER-DELPRO tiene que estar `sistema_alimentacion` = MixerOne.
+`alertas_guardadas.diarias(tambo)` da `[{fecha, codigo, n}]`: es la base para cruzar con la leche por rodeo cuando haya historia.
+
 ## Dónde quedamos (05/08/2026)
 
 **Restaurar DDM en SERVER-DELPRO DEJA A LA APP SIN LEER LA BASE.** El backup

@@ -452,7 +452,7 @@ def _local(utc_iso: str):
     return datetime.datetime.fromisoformat(str(utc_iso).replace("Z", "+00:00")).replace(tzinfo=None) + _UTC_ARGENTINA
 
 
-def _alerta_neutra(x: dict) -> dict:
+def _alerta_neutra(x: dict, crudo: bool = False) -> dict:
     md = x.get("metadata") or {}
     codigo = x.get("code")
     accion, operario = _ACCION_DE_ALERTA.get(codigo), None
@@ -461,14 +461,18 @@ def _alerta_neutra(x: dict) -> dict:
         operario = mensaje.split(" modificó")[0].strip() if " modificó" in mensaje else None
         accion = "edicion" if operario else None
     momento = _local(x.get("occurred_at") or x.get("created_at"))
-    return {"id": x.get("id"), "codigo": codigo, "tipo": x.get("title"), "severidad": x.get("severity"),
-            "mensaje": x.get("message"), "fecha": momento.date().isoformat(), "hora": momento.strftime("%H:%M"),
-            "viaje": md.get("trip_uuid") or md.get("detected_trip_uuid"), "rodeo": md.get("corral_name"),
-            "insumo": md.get("item_name"), "accion": accion, "operario": operario}
+    neutra = {"id": x.get("id"), "codigo": codigo, "tipo": x.get("title"), "severidad": x.get("severity"),
+              "mensaje": x.get("message"), "fecha": momento.date().isoformat(), "hora": momento.strftime("%H:%M"),
+              "viaje": md.get("trip_uuid") or md.get("detected_trip_uuid"), "rodeo": md.get("corral_name"),
+              "insumo": md.get("item_name"), "accion": accion, "operario": operario}
+    if crudo:
+        neutra["crudo"] = x          # el JSON original completo, para la copia local (`alertas_guardadas.py`)
+    return neutra
 
 
-def alertas(desde, hasta, tambo=None) -> list:
+def alertas(desde, hasta, tambo=None, crudo: bool = False) -> list:
     """Las alertas que detectó MixerOne entre dos fechas (inclusive), en la forma neutral de `operarios.py`.
+    Con `crudo=True` cada una trae además el JSON original de MixerOne (clave `crudo`).
 
     Solo LEE el listado (`GET notifications`): marcarlas como leídas es un PATCH a otra ruta y no se llama nunca."""
     salida, pagina = [], 1
@@ -476,7 +480,7 @@ def alertas(desde, hasta, tambo=None) -> list:
         r = _get("notifications", tambo, {
             "page": pagina, "limit": 100, "grouped": "true", "unread_only": "false", "is_alert": "true",
             "start_date": _dia(desde), "end_date": _dia(hasta)}) or {}
-        salida.extend(_alerta_neutra(x) for x in r.get("items") or [])
+        salida.extend(_alerta_neutra(x, crudo) for x in r.get("items") or [])
         if pagina >= (r.get("page_count") or 1):
             return salida
         pagina += 1
@@ -571,8 +575,8 @@ class _DeUnTambo:
     def operarios(self):
         return operarios(self.tambo)
 
-    def alertas(self, desde, hasta):
-        return alertas(desde, hasta, self.tambo)
+    def alertas(self, desde, hasta, crudo=False):
+        return alertas(desde, hasta, self.tambo, crudo)
 
 
 def para(tambo: str) -> _DeUnTambo:

@@ -135,3 +135,6 @@ retraso_ordenos.csv
 
 # Copias de la planilla de precios que deja el panel de despliegue al reemplazarla
 precios_anteriores/
+
+# Copia local de las alertas del mixer (MixerOne): estado propio de cada instalacion.
+alertas_mixerone.db

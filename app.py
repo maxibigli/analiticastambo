@@ -20,6 +20,7 @@ import os
 
 import agente
 import ai
+import alertas_guardadas
 import alimentacion
 import alimentacion_dia
 import auth
@@ -6875,6 +6876,22 @@ def _del_proveedor_de_alimentacion(metodo: str, que: str):
 def api_alimentacion_tablero():
     """El tablero del mixer (tarjetas, kg por día con sus alertas, puntaje de operarios), tal como lo da el proveedor."""
     return _del_proveedor_de_alimentacion("tablero", "este tablero")
+
+
+def iniciar_copia_alertas():
+    """Arranca el hilo que copia las alertas del sistema de alimentación (MixerOne) a una base local, cada pocas horas
+    (ver `alertas_guardadas.py`: no se sabe si MixerOne guarda el historial para siempre).
+
+    NO se arranca al importar `app`: lo llama `servidor.py` DESPUÉS de tomar el candado de instancia única, igual que
+    el vigilante, para que `precalentar.py`, los diagnósticos y las pruebas no tengan cada uno el suyo."""
+    return alertas_guardadas.iniciar_hilo()
+
+
+@app.get("/api/alimentacion/alertas-copia")
+@auth.requiere_rol("admin")
+def api_alimentacion_alertas_copia():
+    """Qué hay copiado de las alertas del mixer: cuántas, desde cuándo y cómo salió la última sincronización."""
+    return jsonify(alertas_guardadas.resumen(_tambo_del_request()))
 
 
 @app.get("/api/alimentacion/operarios")

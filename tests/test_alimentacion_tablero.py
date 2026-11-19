@@ -169,5 +169,58 @@ class TestOperarios(Base):
         self.assertIn(operario.get("/api/alimentacion/operarios").status_code, (401, 403))
 
 
+class TestCopiaDeAlertas(Base):
+    """`/api/alimentacion/alertas-copia`: qué hay copiado de las alertas del mixer (ver `alertas_guardadas.py`)."""
+
+    def setUp(self):
+        super().setUp()
+        import os
+        import tempfile
+        import alertas_guardadas
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        p = mock.patch.object(alertas_guardadas, "RUTA_DB", os.path.join(self.dir.name, "a.db"))
+        p.start()
+        self.addCleanup(p.stop)
+        self.ag = alertas_guardadas
+
+    def test_sin_nada_copiado_dice_cero(self):
+        d = self.client.get("/api/alimentacion/alertas-copia").get_json()
+        self.assertEqual((d["total"], d["desde"], d["ultima_sincronizacion"]), (0, None, None))
+
+    def test_dice_cuantas_hay_desde_cuando_y_la_ultima_sincronizacion(self):
+        import datetime
+
+        class Prov:
+            NOMBRE = "MixerOne"
+
+            def disponible(self):
+                return True, ""
+
+            def alertas(self, desde, hasta, crudo=False):
+                return [{"id": "1", "codigo": "N07", "fecha": "2026-11-04", "hora": "10:00", "crudo": {}}]
+        self.ag.sincronizar("ponderosa", Prov(), datetime.date(2026, 11, 18), datetime.datetime(2026, 11, 18, 9, 0))
+        d = self.client.get("/api/alimentacion/alertas-copia?tambo=ponderosa").get_json()
+        self.assertEqual((d["total"], d["desde"]), (1, "2026-11-04"))
+        self.assertEqual(d["ultima_sincronizacion"]["nuevas"], 1)
+
+    def test_cada_tambo_ve_lo_suyo(self):
+        self.ag.guardar("san_jose", [{"id": "1", "codigo": "N07", "fecha": "2026-11-04", "hora": "1", "crudo": {}}])
+        self.assertEqual(self.client.get("/api/alimentacion/alertas-copia?tambo=ponderosa").get_json()["total"], 0)
+
+    def test_solo_el_administrador(self):
+        operario = app.app.test_client()
+        with operario.session_transaction() as s:
+            s["rol"], s["usuario"] = "operario", "y"
+        self.assertIn(operario.get("/api/alimentacion/alertas-copia").status_code, (401, 403))
+
+    def test_el_hilo_de_la_copia_no_arranca_al_importar_app(self):
+        """Lo arranca `servidor.py` con el candado de instancia única: si arrancara al importar, cada proceso que
+        importa `app` (precalentar, los diagnósticos, las pruebas) tendría su propio hilo."""
+        import threading
+        self.assertNotIn("copia-alertas", [t.name for t in threading.enumerate()])
+        self.assertTrue(callable(app.iniciar_copia_alertas))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -506,6 +506,15 @@ class TestAlertasYOperarios(Base):
         self.assertEqual(a["6"]["severidad"], "error")
         self.assertIn("575 m", a["2"]["mensaje"])
 
+    def test_con_crudo_trae_el_json_original_para_la_copia(self):
+        a = {x["id"]: x for x in self.p.alertas(datetime.date(2026, 11, 12), datetime.date(2026, 11, 13), crudo=True)}
+        self.assertEqual(a["2"]["crudo"]["metadata"]["corral_name"], "RODEO 4")
+        self.assertEqual(a["2"]["crudo"]["code"], "N04")
+        self.assertEqual(a["2"]["crudo"]["occurred_at"], "2026-11-14T01:30:00.000Z")      # el instante en UTC, intacto
+
+    def test_sin_pedirlo_no_incluye_el_crudo(self):
+        self.assertNotIn("crudo", self.alertas()["1"])
+
     def test_recorre_todas_las_paginas(self):
         self.api.notificaciones = [alerta_api(i, "N06", "2026-11-13T13:00:00.000Z", "t", "m",
                                               {"trip_uuid": "T-A", "item_name": "Heno"}) for i in range(250)]
