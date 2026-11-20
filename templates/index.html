@@ -1784,8 +1784,8 @@
       <p class="explica" style="margin-top:6px">
         La <b>eficiencia de la entrega</b> tiene dos caras. El <b>cumplimiento</b> (línea) son los kg entregados contra los
         teóricos del día: casi siempre está cerca de 100 %, porque el mixer entrega lo que le piden. La <b>puntualidad</b>
-        es cuándo llegó la primera comida del rodeo contra lo habitual de <b>ese</b> rodeo: los puntos <b>ámbar</b> son
-        los días con 60 minutos o más de atraso. La línea azul es la <b>leche por vaca de DelPro</b> del mismo rodeo y día
+        es cuándo llegó la primera comida del rodeo contra lo habitual de <b>ese</b> rodeo: las <b>barras de abajo</b> son
+        los minutos de atraso de cada día, y las <b>ámbar</b> (con el punto ámbar sobre la leche) son los de 60 minutos o más. La línea azul es la <b>leche por vaca de DelPro</b> del mismo rodeo y día
         (el eje de la izquierda no arranca en cero: mirá la escala), y cada ⚠ son las alertas que detectó el mixer en ese
         rodeo ese día.
         <br><b>Con pocos días de historia no se ve una relación clara entre la entrega y la leche</b> (03 al 16/11/2026: ninguna
@@ -14956,6 +14956,8 @@ function pintarEntregaVsProduccion() {
   const dias = r.dias || [];
   const tarde = x => x.atraso != null && x.atraso >= EV_ATRASO_MIN;
   const alertas = dias.map(x => x.alertas);
+  // Tope del eje de atraso: múltiplos de 60 min, al menos 120, para que el corte de «tarde» (60) quede a la vista.
+  const evTopeAtraso = Math.max(120, Math.ceil(Math.max(0, ...dias.map(x => x.atraso || 0)) / 60) * 60);
   chartEv = dibujar('chart-ev', chartEv, {
     type: 'line',
     data: { labels: dias.map(x => opDia(x.fecha)), datasets: [
@@ -14968,6 +14970,12 @@ function pintarEntregaVsProduccion() {
       { label: 'Cumplimiento de la entrega (%)', data: dias.map(x => x.cumplimiento), yAxisID: 'y1',
         borderColor: SERIES[4], backgroundColor: SERIES[4], borderDash: [6, 4], tension: 0.15, pointRadius: 2,
         borderWidth: 2, spanGaps: false },
+      // Atraso de la primera comida, en una franja propia abajo (eje y2) para no pisar las líneas. Un día que comió ANTES de
+      // lo habitual cuenta 0 (no hay atraso); el tooltip y la tabla muestran el número real.
+      { type: 'bar', label: 'Atraso de la primera comida (min)', yAxisID: 'y2',
+        data: dias.map(x => x.atraso == null ? null : Math.max(0, x.atraso)),
+        backgroundColor: dias.map(x => tarde(x) ? css('--warning') : css('--text-muted') + '88'),
+        borderWidth: 0, borderRadius: 2, maxBarThickness: 26, order: 2 },
     ] },
     options: {
       responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
@@ -14975,7 +14983,9 @@ function pintarEntregaVsProduccion() {
       plugins: {
         legend: { position: 'bottom' },
         alertasViajes: alertas.some(n => n) ? { valores: alertas } : null,
-        tooltip: { callbacks: { afterBody: it => {
+        tooltip: { callbacks: { label: c => c.datasetIndex === 2
+          ? `${c.dataset.label}: ${c.raw == null ? '—' : c.raw} min` : `${c.dataset.label}: ${c.formattedValue}`,
+          afterBody: it => {
           const x = dias[it[0].dataIndex];
           const l = [x.primera == null ? 'Sin comida ese día' :
             `Primera comida ${opHora(x.primera)}` + (x.atraso == null ? '' : ` (${x.atraso > 0 ? '+' : ''}${x.atraso} min contra lo habitual)`),
@@ -14985,9 +14995,17 @@ function pintarEntregaVsProduccion() {
         } } },
       },
       scales: {
-        y: { position: 'left', beginAtZero: false, title: { display: true, text: 'kg de leche por vaca' } },
-        y1: { position: 'right', beginAtZero: false, suggestedMin: 80, suggestedMax: 120, grid: { drawOnChartArea: false },
-              ticks: { callback: n => n + ' %' }, title: { display: true, text: 'cumplimiento' } },
+        // Dos franjas apiladas (stack): arriba las líneas (leche a la izquierda, cumplimiento a la derecha), abajo las barras de
+        // atraso. y3 es el espejo mudo de y2 en el lado derecho: sin él, el cumplimiento ocuparía toda la altura y pisaría las barras.
+        // Solo se rotulan el 0 y el corte de «tarde» (60 min): más marcas se pisarían con las del eje de la leche, que está encima.
+        y2: { position: 'left', stack: 'izq', stackWeight: 2, min: 0, max: evTopeAtraso, offset: false,
+              ticks: { stepSize: 60, callback: n => (n === 0 || n === EV_ATRASO_MIN) ? n + ' min' : '' }, grid: { drawOnChartArea: true },
+              title: { display: true, text: 'atraso' } },
+        y: { position: 'left', stack: 'izq', stackWeight: 3, beginAtZero: false, title: { display: true, text: 'kg de leche por vaca' } },
+        y1: { position: 'right', stack: 'der', stackWeight: 3, beginAtZero: false, suggestedMin: 80, suggestedMax: 120,
+              grid: { drawOnChartArea: false }, ticks: { callback: n => n + ' %' }, title: { display: true, text: 'cumplimiento' } },
+        y3: { position: 'right', stack: 'der', stackWeight: 2, min: 0, max: evTopeAtraso, grid: { drawOnChartArea: false },
+              border: { display: false }, ticks: { display: false } },
       },
     },
   });

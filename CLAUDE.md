@@ -285,7 +285,9 @@ DelPro (a medio cargar) no lleva leche (`ultimo_dia_completo`).
     mirar qué pasó cada día; el análisis formal necesita 6 a 8 semanas (ver la copia de alertas).
 
 **Gráfica**: la leche es una LÍNEA (no barras) a propósito: el eje no arranca en cero (47 contra 50 kg) y unas barras con el eje
-cortado exagerarían la diferencia. Puntos ámbar = primera comida con 60 min o más de atraso (el corte del Tablero); cumplimiento
+cortado exagerarían la diferencia. Puntos ámbar = primera comida con 60 min o más de atraso (el corte del Tablero), y además **barras de atraso en una franja propia
+abajo** (eje `y2`, ejes apilados con `stack`/`stackWeight`; `y3` es su espejo mudo a la derecha, sin él el cumplimiento ocuparía toda
+la altura y pisaría las barras; el que adelantó cuenta 0, el tooltip y la tabla muestran el número real; solo se rotulan 0 y 60 min); cumplimiento
 punteado en el eje derecho (80 a 120 %); ⚠ = alertas del mixer de ESE rodeo ESE día. Cada alerta cuenta en el día DEL QUE HABLA
 (`dia`: «rodeo sin alimentar» se detecta al día siguiente pero es del día que faltó; la variación de consumo trae su `date`), y el
 rodeo de «kg modificados» sale de `before`/`after` (no viene arriba).
