@@ -139,3 +139,4 @@ precios_anteriores/
 # Copia local de las alertas del mixer (MixerOne): estado propio de cada instalacion.
 alertas_mixerone.db
 iot_analogicas.json
+iot_vumetros.json

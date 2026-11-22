@@ -23,6 +23,7 @@ import sqlite3
 import db
 import iot_analogicas
 import iot_canales
+import iot_vumetros
 import voz_comandos
 from iot_lavado import RUTA_DB, _conectar_db, ACTUADORES
 
@@ -309,7 +310,22 @@ def lecturas_actuales() -> list:
         salida.append({**s, "valor": v["valor"], "fecha_hora": v["fecha_hora"]})
     salida.append({"clave": "ith", "label": "ITH (estrés calórico)", "unidad": "", "min": 50, "max": 90,
                     "valor": ith, "fecha_hora": None})
-    return salida
+    configuradas = iot_vumetros.cargar()
+    return [_con_vumetro(s, configuradas) for s in salida]
+
+
+def _con_vumetro(sensor: dict, configuradas: dict) -> dict:
+    """Le suma a un sensor cómo se dibuja: estilo, escala propia (si el tambo cargó una, pisa la de siempre), los
+    4 límites y la zona de color de su lectura de ahora (None si no hay lectura o no hay ningún límite)."""
+    cfg = iot_vumetros.config_de(sensor["clave"], configuradas)
+    return {
+        **sensor,
+        "min": sensor["min"] if cfg["min"] is None else cfg["min"],
+        "max": sensor["max"] if cfg["max"] is None else cfg["max"],
+        "estilo": cfg["estilo"],
+        "limites": {k: cfg[k] for k in iot_vumetros.LIMITES},
+        "zona": iot_vumetros.zona(sensor["valor"], cfg),
+    }
 
 
 def historico(sensor: str, desde: str, hasta: str, max_puntos: int = 150) -> list:
@@ -365,3 +381,92 @@ def historico(sensor: str, desde: str, hasta: str, max_puntos: int = 150) -> lis
          "valor": round(sum(vals) / len(vals), 2)}
         for idx, vals in sorted(baldes.items())
     ]
+
+
+def sensores_con_ith() -> list:
+    """Claves de todo lo que tiene vúmetro: los sensores del panel y el ITH (que se calcula)."""
+    return [x["clave"] for x in SENSORES_PLANEADOS] + ["ith"]
+
+
+def sensores_para_vumetros() -> list:
+    """Cada sensor con su configuración de vúmetro, para ⚙ Configuración › 🔌 Entradas/Salidas. `escala_defecto` es
+    la de siempre (la que se usa si el tambo no carga una propia)."""
+    configuradas = iot_vumetros.cargar()
+    base = [{"clave": s["clave"], "label": s["label"], "unidad": s["unidad"], "min": s["min"], "max": s["max"]}
+            for s in SENSORES_PLANEADOS]
+    base.append({"clave": "ith", "label": "ITH (estrés calórico)", "unidad": "", "min": 50, "max": 90})
+    salida = []
+    for s in base:
+        cfg = iot_vumetros.config_de(s["clave"], configuradas)
+        salida.append({"clave": s["clave"], "label": s["label"], "unidad": s["unidad"],
+                       "escala_defecto": {"min": s["min"], "max": s["max"]},
+                       "estilo": cfg["estilo"], "min": cfg["min"], "max": cfg["max"],
+                       **{k: cfg[k] for k in iot_vumetros.LIMITES}})
+    return salida
+
+
+# Historial de un sensor al hacer clic en su tarjeta: hasta dónde se mira y de a cuánto se agrupa. Con lecturas cada 30 s
+# se guardan ~1 millón de filas por sensor y por año (decisión del tambo: se guarda todo el detalle), así que el
+# agrupado lo hace SQLite y nunca se trae una fila de más: cada rango devuelve de 120 a 365 puntos.
+RANGOS_HISTORIAL = {
+    "dia": (datetime.timedelta(hours=24), 600),            # 144 puntos, de 10 minutos
+    "semana": (datetime.timedelta(days=7), 3600),          # 168 puntos, de 1 hora
+    "mes": (datetime.timedelta(days=30), 6 * 3600),        # 120 puntos, de 6 horas
+    "anio": (datetime.timedelta(days=365), 86400),         # 365 puntos, de 1 día
+}
+_EPOCA = datetime.datetime(1970, 1, 1)
+
+
+def _baldes(con, sensor: str, desde: str, hasta: str, balde_s: int) -> list:
+    """[(inicio del balde ISO, promedio, mínimo, máximo)] en orden cronológico, agrupado en la base."""
+    filas = con.execute(
+        "SELECT CAST(strftime('%s', fecha_hora) AS INTEGER) / ? AS b, AVG(valor), MIN(valor), MAX(valor) "
+        "FROM lecturas_sensor WHERE sensor = ? AND fecha_hora >= ? AND fecha_hora <= ? "
+        "GROUP BY b ORDER BY b", (balde_s, sensor, desde, hasta)).fetchall()
+    return [((_EPOCA + datetime.timedelta(seconds=b * balde_s)).isoformat(timespec="minutes"), p, mn, mx)
+            for b, p, mn, mx in filas]
+
+
+def historial(sensor: str, rango: str, ahora: datetime.datetime = None) -> dict:
+    """Serie de UN sensor para el gráfico del historial: {puntos: [{t, prom, min, max}], resumen: {min, prom, max, n}}.
+
+    `resumen` es del rango entero y sale de todas las lecturas (no de promediar promedios). El ITH no es un sensor:
+    se calcula por balde con el promedio de temperatura y de humedad ambiente de ESE balde, y por eso no tiene mínimo
+    ni máximo propios (min/max de cada punto son None) y su `resumen.n` cuenta baldes, no lecturas."""
+    if rango not in RANGOS_HISTORIAL:
+        raise ValueError(f"Rango inválido: {rango!r} (opciones: {', '.join(RANGOS_HISTORIAL)}).")
+    ahora = ahora or datetime.datetime.now()
+    ventana, balde_s = RANGOS_HISTORIAL[rango]
+    desde = (ahora - ventana).isoformat(timespec="seconds")
+    hasta = ahora.isoformat(timespec="seconds")
+
+    con = sqlite3.connect(RUTA_DB)
+    try:
+        con.execute("""
+            CREATE TABLE IF NOT EXISTS lecturas_sensor (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sensor TEXT NOT NULL,
+                fecha_hora TEXT NOT NULL,
+                valor REAL NOT NULL
+            )
+        """)
+        if sensor == "ith":
+            temps = {t: p for t, p, _, _ in _baldes(con, "temp_ambiente", desde, hasta, balde_s)}
+            hums = {t: p for t, p, _, _ in _baldes(con, "hum_ambiente", desde, hasta, balde_s)}
+            puntos = [{"t": t, "prom": calcular_ith(temps[t], hums[t]), "min": None, "max": None}
+                      for t in sorted(temps) if t in hums]
+            proms = [p["prom"] for p in puntos]
+            resumen = {"min": min(proms), "prom": round(sum(proms) / len(proms), 2), "max": max(proms),
+                       "n": len(proms)} if proms else {"min": None, "prom": None, "max": None, "n": 0}
+        else:
+            puntos = [{"t": t, "prom": round(p, 2), "min": round(mn, 2), "max": round(mx, 2)}
+                      for t, p, mn, mx in _baldes(con, sensor, desde, hasta, balde_s)]
+            mn, prom, mx, n = con.execute(
+                "SELECT MIN(valor), AVG(valor), MAX(valor), COUNT(*) FROM lecturas_sensor "
+                "WHERE sensor = ? AND fecha_hora >= ? AND fecha_hora <= ?", (sensor, desde, hasta)).fetchone()
+            resumen = ({"min": round(mn, 2), "prom": round(prom, 2), "max": round(mx, 2), "n": n}
+                       if n else {"min": None, "prom": None, "max": None, "n": 0})
+    finally:
+        con.close()
+    return {"sensor": sensor, "rango": rango, "desde": desde, "hasta": hasta, "balde_s": balde_s,
+            "puntos": puntos, "resumen": resumen}

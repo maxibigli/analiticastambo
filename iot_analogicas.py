@@ -51,6 +51,9 @@ def _numero(valor, nombre, clave, entero=False):
     return int(n) if n.is_integer() else n
 
 
+numero = _numero   # lo comparte iot_vumetros: mismo criterio para leer los números de un formulario
+
+
 def cargar() -> dict:
     """clave -> {sensor, direccion, raw_4, raw_20, min, max}. Solo las entradas que el tambo configuró; {} si no hay
     archivo (o está roto: antes dejar la lectura de sensores sin andar que fallar el ciclo del gateway)."""

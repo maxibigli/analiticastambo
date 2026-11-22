@@ -50,6 +50,7 @@ import iot_analogicas
 import iot_canales
 import iot_conexion
 import iot_monitoreo
+import iot_vumetros
 import lavado_programa
 import voz_comandos
 import voz_sintesis
@@ -3331,6 +3332,48 @@ def api_iot_analogicas_listar():
     """Entradas analógicas (4-20 mA) del M300: asignación a un sensor del panel, escala y lectura en vivo, para
     ⚙ Configuración › 🔌 Entradas/Salidas. La lectura la hace iot_lavado.py; acá solo se ve lo último que dejó."""
     return jsonify(iot_monitoreo.panel_analogicas())
+
+
+@app.get("/api/iot/vumetros")
+@auth.requiere_rol("admin")
+def api_iot_vumetros_listar():
+    """Estilo (digital o analógico), escala y zonas de color de cada sensor del panel IoT, para el editor de
+    ⚙ Configuración › 🔌 Entradas/Salidas."""
+    return jsonify({"sensores": iot_monitoreo.sensores_para_vumetros()})
+
+
+@app.post("/api/iot/vumetros")
+@auth.requiere_rol("admin")
+def api_iot_vumetros_guardar():
+    sensores = (request.json or {}).get("sensores")
+    if not isinstance(sensores, dict):
+        return jsonify({"error": "Formato inválido."}), 400
+    try:
+        iot_vumetros.guardar(sensores, set(iot_monitoreo.sensores_con_ith()))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.get("/api/iot/historial")
+@auth.requiere_rol("admin")
+def api_iot_historial():
+    """Historial de UN sensor para la ventana que se abre al hacer clic en su tarjeta (Monitoreo IoT): día, semana,
+    mes o año, agrupado en la base. Trae también cómo se dibuja el sensor (estilo, escala y límites) para pintar las
+    zonas de color de fondo. (Distinto de /api/iot/pantalla/historico, que es público y es de la pantalla ESP32.)"""
+    sensor = request.args.get("sensor", "")
+    rango = request.args.get("rango", "dia")
+    if sensor not in iot_monitoreo.sensores_con_ith():
+        return jsonify({"error": f"Sensor inválido: {sensor}"}), 400
+    try:
+        datos = iot_monitoreo.historial(sensor, rango)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    ficha = next(s for s in iot_monitoreo.sensores_para_vumetros() if s["clave"] == sensor)
+    return jsonify({**datos, "label": ficha["label"], "unidad": ficha["unidad"], "estilo": ficha["estilo"],
+                    "escala": {"min": ficha["escala_defecto"]["min"] if ficha["min"] is None else ficha["min"],
+                               "max": ficha["escala_defecto"]["max"] if ficha["max"] is None else ficha["max"]},
+                    "limites": {k: ficha[k] for k in iot_vumetros.LIMITES}})
 
 
 @app.post("/api/iot/analogicas")

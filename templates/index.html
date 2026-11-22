@@ -468,6 +468,24 @@
   /* Indicadores de Salud del rodeo / Monitoreo IoT: fila de tarjetas .lac-metric
      (etiqueta + cifra grande), sin gráfico — se prioriza velocidad. */
   .gauge-row { display: flex; flex-wrap: wrap; gap: 10px; }
+  /* Monitoreo IoT: tarjeta de un sensor (digital o con dial), clic = historial. Es un <button>: se llega con el teclado. */
+  .iot-tarjeta { min-width: 168px; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+  .iot-tarjeta:hover { border-color: var(--accent); }
+  .iot-tarjeta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .iot-tarjeta.zona-verde .lac-metric__value { color: var(--good); }
+  .iot-tarjeta.zona-amarillo .lac-metric__value { color: var(--warning); }
+  .iot-tarjeta.zona-rojo .lac-metric__value { color: var(--critical); }
+  .iot-dial { display: block; width: 150px; height: 84px; margin: 2px 0 6px; }
+  .iot-zona { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; font-weight: 600; }
+  .iot-zona::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .iot-zona.verde { color: var(--good); } .iot-zona.amarillo { color: var(--warning); } .iot-zona.rojo { color: var(--critical); }
+  /* Ventana de historial de un sensor */
+  .iot-hist { width: min(920px, 94vw); padding: 18px 20px; border: 1px solid var(--border); border-radius: 14px;
+    background: var(--lac-surface); color: var(--text-primary); }
+  .iot-hist::backdrop { background: rgba(0, 0, 0, .55); }
+  .iot-hist-resumen { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 12px 0; }
+  .iot-hist-resumen b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; }
+  .iot-hist-grafico { position: relative; height: 320px; }
   /* Monitoreo IoT: estado de 4 fases de la rotativa */
   .iot-estado { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 14px 18px;
     border-radius: 12px; border: 1px solid var(--border); }
@@ -3669,6 +3687,26 @@
       <span class="aviso">Temperatura, humedad y vacío por sector — se activan solos apenas se cablean, sin tocar nada acá.</span>
       <div class="gauge-row" id="iot-sensores-cuerpo" style="margin-top:12px"></div>
     </section>
+
+    <dialog class="iot-hist" id="iot-hist-dialogo" aria-labelledby="iot-hist-titulo">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <h2 style="margin:0;flex:1" id="iot-hist-titulo">Historial</h2>
+        <button class="secundario" id="iot-hist-cerrar" type="button">Cerrar</button>
+      </div>
+      <div class="lac-segment" id="iot-hist-tabs" style="margin-top:12px">
+        <button class="lac-segment__item" type="button" data-rango="dia" aria-pressed="true">Día</button>
+        <button class="lac-segment__item" type="button" data-rango="semana" aria-pressed="false">Semana</button>
+        <button class="lac-segment__item" type="button" data-rango="mes" aria-pressed="false">Mes</button>
+        <button class="lac-segment__item" type="button" data-rango="anio" aria-pressed="false">Año</button>
+      </div>
+      <div class="iot-hist-resumen" id="iot-hist-resumen"></div>
+      <div class="aviso" id="iot-hist-estado" style="margin:6px 0"></div>
+      <div class="iot-hist-grafico"><canvas id="iot-hist-canvas"></canvas></div>
+      <p class="explica" style="margin-top:8px">
+        La línea es el promedio de cada tramo y la banda, su mínimo y máximo. Los colores de fondo son las zonas
+        que se configuran en ⚙ Configuración › 🔌 Entradas/Salidas.
+      </p>
+    </dialog>
   </div>
 
   <div class="page" id="page-tareas" hidden>
@@ -4421,6 +4459,22 @@
       <div style="overflow-x:auto"><table class="tabla" id="config-iot-ana-tabla"></table></div>
       <div style="margin-top:14px">
         <button id="config-iot-ana-guardar" disabled>Guardar asignación</button>
+      </div>
+    </div>
+
+    <div style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-top:22px">
+      <div style="font-weight:600;margin-bottom:8px">Vúmetros del panel IoT: estilo y zonas de color</div>
+      <p class="explica">
+        Cada sensor se puede mostrar como <b>número</b> (digital) o con un <b>dial</b> (analógico). Los cuatro límites son
+        opcionales: rojo si baja de X, amarillo si baja de Y, amarillo si sube de Z y rojo si sube de W. El verde es lo que
+        queda en el medio. Por ejemplo, para la leche: «amarillo si sube de» 4 y «rojo si sube de» 6, y dejás los dos de
+        abajo en blanco. <b>Sin ningún límite la tarjeta no tiene color</b>: no hay valores de fábrica. «Dial desde / hasta»
+        es la escala del dial (en blanco usa la de siempre). Al hacer clic en una tarjeta se abre su historial.
+      </p>
+      <div class="aviso" id="config-iot-vu-estado" style="margin:8px 0"></div>
+      <div style="overflow-x:auto"><table class="tabla" id="config-iot-vu-tabla"></table></div>
+      <div style="margin-top:14px">
+        <button id="config-iot-vu-guardar" disabled>Guardar vúmetros</button>
       </div>
     </div>
   </section>
@@ -11224,14 +11278,187 @@ function pintarIotEstado(sistema) {
   </div>`;
 }
 
-function pintarIotSensores(sensores) {
-  const specs = (sensores || []).map(s => ({
-    key: 'iot-' + s.clave, valor: s.valor, min: s.min, max: s.max, unidad: s.unidad,
-    label: s.label, disabled: s.valor == null,
-    sub: s.valor == null ? '' : (s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : ''),
-  }));
-  pintarVumetros('iot-sensores-cuerpo', specs);
+// --- Sensores del panel: digital o dial, zona de color y clic = historial ---------
+// Mismo criterio que iot_vumetros.zona (Python): justo en un límite todavía es la zona de adentro.
+function zonaIot(v, lim) {
+  if (v == null || !lim) return null;
+  const { rojo_bajo: rb, amarillo_bajo: ab, amarillo_alto: aa, rojo_alto: ra } = lim;
+  if ([rb, ab, aa, ra].every(x => x == null)) return null;
+  if ((rb != null && v < rb) || (ra != null && v > ra)) return 'rojo';
+  if ((ab != null && v < ab) || (aa != null && v > aa)) return 'amarillo';
+  return 'verde';
 }
+const ZONA_TEXTO = { verde: 'Normal', amarillo: 'Atención', rojo: 'Fuera de rango' };
+const ZONA_COLOR = { verde: '--good', amarillo: '--warning', rojo: '--critical' };
+const LIMITES_IOT = ['rojo_bajo', 'amarillo_bajo', 'amarillo_alto', 'rojo_alto'];
+
+// Tramos de color de una escala [min, max]: se corta en cada límite y a cada tramo se le pone la zona de su punto medio.
+function tramosIot(min, max, lim) {
+  const cortes = [...new Set(LIMITES_IOT.map(k => lim && lim[k]).filter(v => v != null && v > min && v < max))]
+    .sort((a, b) => a - b);
+  const bordes = [min, ...cortes, max];
+  const tramos = [];
+  for (let i = 0; i < bordes.length - 1; i++) {
+    tramos.push({ desde: bordes[i], hasta: bordes[i + 1], zona: zonaIot((bordes[i] + bordes[i + 1]) / 2, lim) });
+  }
+  return tramos;
+}
+
+// Dial semicircular liviano (SVG sin librerías, a propósito: ya se probaron vúmetros pesados y la app se sentía lenta).
+function dialIotSVG(s) {
+  const cx = 60, cy = 60, r = 46, { min, max } = s;
+  const t = v => Math.min(1, Math.max(0, (v - min) / (max - min)));
+  const punto = (tt, rad) => { const a = Math.PI * (1 - tt); return [cx + rad * Math.cos(a), cy - rad * Math.sin(a)]; };
+  const arco = (t0, t1) => {
+    const [x0, y0] = punto(t0, r), [x1, y1] = punto(t1, r);
+    return `M${x0.toFixed(2)} ${y0.toFixed(2)} A${r} ${r} 0 0 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+  };
+  const tramos = tramosIot(min, max, s.limites).map(tr =>
+    `<path d="${arco(t(tr.desde), t(tr.hasta))}" fill="none" stroke-width="9"
+       style="stroke:var(${ZONA_COLOR[tr.zona] || '--lac-border'});opacity:.9"/>`).join('');
+  let aguja = '';
+  if (s.valor != null) {
+    const [x, y] = punto(t(s.valor), r - 8);
+    aguja = `<line x1="${cx}" y1="${cy}" x2="${x.toFixed(2)}" y2="${y.toFixed(2)}" stroke-width="2.6"
+        stroke-linecap="round" style="stroke:var(--text-primary)"/>
+      <circle cx="${cx}" cy="${cy}" r="4" style="fill:var(--text-primary)"/>`;
+  }
+  return `<svg class="iot-dial" viewBox="0 0 120 70" role="img" aria-label="Dial de ${escHtml(s.label)}">
+    ${tramos}${aguja}
+    <text x="${cx - r}" y="68" font-size="8" text-anchor="middle" style="fill:var(--muted)">${escHtml(fmt(min))}</text>
+    <text x="${cx + r}" y="68" font-size="8" text-anchor="middle" style="fill:var(--muted)">${escHtml(fmt(max))}</text>
+  </svg>`;
+}
+
+function iotTarjetaHTML(s) {
+  const sinDato = s.valor == null;
+  const valor = sinDato ? '—' : fmt(s.valor) + (s.unidad || '');
+  const sub = sinDato ? 'sin instalar' : (s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : '');
+  const chip = s.zona ? `<div class="iot-zona ${s.zona}">${ZONA_TEXTO[s.zona]}</div>` : '';
+  return `<button type="button" class="lac-metric iot-tarjeta${s.zona ? ' zona-' + s.zona : ''}"
+      data-sensor="${escHtml(s.clave)}" aria-label="Ver el historial de ${escHtml(s.label)}">
+    <div class="lac-metric__label">${escHtml(s.label)}</div>
+    ${s.estilo === 'analogico' ? dialIotSVG(s) : ''}
+    <div class="lac-metric__value">${escHtml(valor)}</div>
+    ${chip}
+    <div class="lac-caption" style="margin-top:4px">${escHtml(sub)}</div>
+  </button>`;
+}
+
+let iotSensoresUltimo = '';
+function pintarIotSensores(sensores) {
+  // Se vuelve a dibujar solo si algo cambió: el refresco es cada 5 s y un redibujado le saca el foco a quien navega
+  // con el teclado.
+  const firma = JSON.stringify(sensores || []);
+  if (firma === iotSensoresUltimo) return;
+  iotSensoresUltimo = firma;
+  document.getElementById('iot-sensores-cuerpo').innerHTML = (sensores || []).map(iotTarjetaHTML).join('');
+}
+
+document.getElementById('iot-sensores-cuerpo').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-sensor]');
+  if (b) abrirHistorialIot(b.dataset.sensor);
+});
+
+// Fondo del gráfico del historial: las zonas de color del sensor, detrás de las líneas.
+Chart.register({
+  id: 'iotZonas',
+  beforeDatasetsDraw(chart) {
+    const o = chart.config.options.plugins?.iotZonas, y = chart.scales.y;
+    if (!o || !y) return;
+    const a = chart.chartArea, ctx = chart.ctx;
+    ctx.save();
+    ctx.globalAlpha = 0.13;
+    for (const tr of tramosIot(y.min, y.max, o.limites)) {
+      if (!tr.zona) continue;
+      const arriba = y.getPixelForValue(tr.hasta), abajo = y.getPixelForValue(tr.desde);
+      ctx.fillStyle = css(ZONA_COLOR[tr.zona]);
+      ctx.fillRect(a.left, arriba, a.right - a.left, abajo - arriba);
+    }
+    ctx.restore();
+  }
+});
+
+// --- Historial al hacer clic en una tarjeta: día, semana, mes y año ---------------
+let iotHistSensor = null, iotHistRango = 'dia', chartIotHist = null, iotHistPedido = 0;
+
+function etiquetaHistIot(t, rango) {   // t = '2026-11-22T15:10'
+  const dm = `${t.slice(8, 10)}/${t.slice(5, 7)}`;
+  if (rango === 'dia') return t.slice(11, 16);
+  if (rango === 'anio') return dm;
+  return `${dm} ${t.slice(11, 13)}h`;
+}
+
+function pintarHistorialIot(d) {
+  document.getElementById('iot-hist-titulo').textContent = `Historial · ${d.label}`;
+  const u = d.unidad ? ' ' + d.unidad : '';
+  const r = d.resumen;
+  document.getElementById('iot-hist-resumen').innerHTML = [['Mínimo', r.min], ['Promedio', r.prom], ['Máximo', r.max]]
+    .map(([t, v]) => `<div><span class="lac-caption">${t}</span><b>${v == null ? '—' : escHtml(fmt(v) + u)}</b></div>`)
+    .join('') + `<div><span class="lac-caption">${d.sensor === 'ith' ? 'Tramos' : 'Lecturas'}</span><b>${r.n.toLocaleString('es-AR')}</b></div>`;
+
+  const etiquetas = d.puntos.map(p => etiquetaHistIot(p.t, d.rango));
+  const conRango = d.puntos.some(p => p.min != null);
+  const datasets = [];
+  if (conRango) {
+    datasets.push({ label: 'Mínimo', data: d.puntos.map(p => p.min), borderWidth: 0, pointRadius: 0, fill: false });
+    datasets.push({ label: 'Máximo', data: d.puntos.map(p => p.max), borderWidth: 0, pointRadius: 0, fill: '-1',
+                    backgroundColor: css('--accent') + '1f' });
+  }
+  datasets.push({ label: 'Promedio', data: d.puntos.map(p => p.prom), borderColor: css('--accent'),
+                  backgroundColor: css('--accent'), borderWidth: 2, pointRadius: 0, tension: .2, spanGaps: true });
+
+  // El eje incluye los límites de color, aunque los datos no lleguen: así se ve cuánto falta para cada zona.
+  const lims = LIMITES_IOT.map(k => d.limites[k]).filter(v => v != null);
+  const opts = baseOpts(false);
+  opts.scales.y.beginAtZero = false;
+  opts.scales.x.ticks = { maxTicksLimit: 8, autoSkip: true, maxRotation: 0 };
+  if (lims.length) { opts.scales.y.suggestedMin = Math.min(...lims); opts.scales.y.suggestedMax = Math.max(...lims); }
+  opts.interaction = { mode: 'index', intersect: false };
+  opts.plugins.iotZonas = { limites: d.limites };
+  opts.plugins.tooltip = { callbacks: { label: c => `${c.dataset.label}: ${fmt(c.parsed.y)}${u}` } };
+  chartIotHist = dibujar('iot-hist-canvas', chartIotHist, { type: 'line', data: { labels: etiquetas, datasets }, options: opts });
+}
+
+async function cargarHistorialIot() {
+  const estado = document.getElementById('iot-hist-estado');
+  const pedido = ++iotHistPedido;     // si se toca otra pestaña antes de que llegue, la respuesta vieja se descarta
+  estado.textContent = 'Cargando…';
+  try {
+    const d = await pedirJSON(`/api/iot/historial?sensor=${encodeURIComponent(iotHistSensor)}&rango=${iotHistRango}`);
+    if (pedido !== iotHistPedido) return;
+    pintarHistorialIot(d);
+    estado.textContent = d.puntos.length ? '' : 'Todavía no hay lecturas en este período.';
+  } catch (e) {
+    if (pedido === iotHistPedido) estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+function abrirHistorialIot(clave) {
+  iotHistSensor = clave;
+  iotHistRango = 'dia';
+  document.querySelectorAll('#iot-hist-tabs [data-rango]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.rango === 'dia')));
+  document.getElementById('iot-hist-dialogo').showModal();
+  cargarHistorialIot();
+}
+
+document.getElementById('iot-hist-tabs').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-rango]');
+  if (!b) return;
+  iotHistRango = b.dataset.rango;
+  document.querySelectorAll('#iot-hist-tabs [data-rango]').forEach(x =>
+    x.setAttribute('aria-pressed', String(x === b)));
+  cargarHistorialIot();
+});
+document.getElementById('iot-hist-cerrar').addEventListener('click', () => document.getElementById('iot-hist-dialogo').close());
+document.getElementById('iot-hist-dialogo').addEventListener('click', ev => {
+  if (ev.target.id === 'iot-hist-dialogo') ev.target.close();   // clic en el fondo oscuro
+});
+document.getElementById('iot-hist-dialogo').addEventListener('close', () => {
+  iotHistPedido++;                                              // lo que venga en camino ya no se pinta
+  if (chartIotHist) { chartIotHist.destroy(); chartIotHist = null; }
+});
 
 const IOT_REFRESCO_MS = 5000;
 let iotTimer = null;
@@ -15801,6 +16028,7 @@ async function cargarConfiguracion() {
     cargarConexionIot();
     cargarCanalesGateway();
     cargarAnalogicas(true);
+    cargarVumetrosConfig();
     cargarConfigTv();
     cargarLavadoAuto();
     cargarConfigCamaras();
@@ -16705,6 +16933,74 @@ document.getElementById('config-iot-ana-guardar').addEventListener('click', asyn
       body: JSON.stringify({ canales: anaActual }),
     });
     await cargarAnalogicas(true);   // vuelve a leer: el servidor completa el rango en blanco con el del sensor
+    estado.textContent = '✔ Guardado.';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+});
+
+// --- Vúmetros del panel IoT: estilo, escala y zonas de color de cada sensor -------
+let vuSensores = [];
+let vuActual = {};
+let vuOriginal = '';
+const VU_CAMPOS = ['estilo', 'min', 'max', 'rojo_bajo', 'amarillo_bajo', 'amarillo_alto', 'rojo_alto'];
+
+async function cargarVumetrosConfig() {
+  const estado = document.getElementById('config-iot-vu-estado');
+  try {
+    const d = await pedirJSON('/api/iot/vumetros');
+    vuSensores = d.sensores || [];
+    vuActual = {};
+    vuSensores.forEach(s => {
+      vuActual[s.clave] = {};
+      VU_CAMPOS.forEach(k => { vuActual[s.clave][k] = anaTexto(s[k]); });
+    });
+    vuOriginal = JSON.stringify(vuActual);
+    pintarVumetrosConfig();
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+function pintarVumetrosConfig() {
+  const num = (s, campo, ancho, ph) => `<input type="number" step="any" data-vu="${campo}" style="width:${ancho}px;padding:6px"
+      value="${escHtml(anaTexto(vuActual[s.clave][campo]))}" placeholder="${escHtml(ph || '')}">`;
+  document.getElementById('config-iot-vu-tabla').innerHTML = `
+    <thead><tr><th>Sensor</th><th>Estilo</th><th>Dial desde</th><th>Dial hasta</th><th>Rojo si baja de</th>
+      <th>Amarillo si baja de</th><th>Amarillo si sube de</th><th>Rojo si sube de</th></tr></thead>
+    <tbody>${vuSensores.map(s => `<tr data-clave="${escHtml(s.clave)}">
+      <td>${escHtml(s.label)}${s.unidad ? ` <span class="aviso">(${escHtml(s.unidad)})</span>` : ''}</td>
+      <td><select data-vu="estilo" style="padding:6px">
+        <option value="digital"${vuActual[s.clave].estilo !== 'analogico' ? ' selected' : ''}>Digital (número)</option>
+        <option value="analogico"${vuActual[s.clave].estilo === 'analogico' ? ' selected' : ''}>Analógico (dial)</option>
+      </select></td>
+      <td>${num(s, 'min', 80, String(s.escala_defecto.min))}</td>
+      <td>${num(s, 'max', 80, String(s.escala_defecto.max))}</td>
+      <td>${num(s, 'rojo_bajo', 90)}</td><td>${num(s, 'amarillo_bajo', 90)}</td>
+      <td>${num(s, 'amarillo_alto', 90)}</td><td>${num(s, 'rojo_alto', 90)}</td>
+    </tr>`).join('')}</tbody>`;
+  document.getElementById('config-iot-vu-guardar').disabled = JSON.stringify(vuActual) === vuOriginal;
+}
+
+// 'input' y 'change' a la vez: el desplegable dispara los dos, el campo numérico solo 'input'.
+['input', 'change'].forEach(evento => document.getElementById('config-iot-vu-tabla').addEventListener(evento, ev => {
+  const campo = ev.target.dataset.vu, fila = ev.target.closest('tr');
+  if (!campo || !fila) return;
+  vuActual[fila.dataset.clave][campo] = ev.target.value;
+  document.getElementById('config-iot-vu-guardar').disabled = JSON.stringify(vuActual) === vuOriginal;
+}));
+
+document.getElementById('config-iot-vu-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('config-iot-vu-estado');
+  estado.textContent = 'Guardando…';
+  try {
+    await pedirJSON('/api/iot/vumetros', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sensores: vuActual }),
+    });
+    await cargarVumetrosConfig();
+    iotSensoresUltimo = '';       // que el panel IoT se redibuje con lo nuevo en el próximo refresco
     estado.textContent = '✔ Guardado.';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;

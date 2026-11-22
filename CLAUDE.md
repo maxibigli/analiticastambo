@@ -3913,3 +3913,31 @@ registros 3X y 4X daban «Illegal Data Address».)
     ~29.000 filas por día y por entrada.
   * **La configuración se vuelve a leer en cada ciclo**: guardar en la pantalla no exige reiniciar `iot_lavado.py`. El guardado es atómico (archivo temporal y reemplazo).
   * La tabla `lecturas_sensor` ahora también la crea `iot_lavado._conectar_db` (antes solo la app): es este proceso el que escribe, y tiene que existir desde ahí.
+
+## Vúmetros del panel IoT: digital o dial, zonas de color y historial al hacer clic (22/11/2026)
+
+En **📡 Monitoreo IoT**, cada tarjeta de sensor se muestra como **número (digital)** o con un **dial semicircular (analógico)**, a elección POR SENSOR, con zonas de color
+verde / amarillo / rojo, y **al hacer clic abre su historial** (día, semana, mes y año). Se configura en ⚙ Configuración › 🔌 Entradas/Salidas, bloque «Vúmetros del panel IoT».
+Módulos: `iot_vumetros.py` (configuración y `zona()`, archivo `iot_vumetros.json`, **fuera de git**), `iot_monitoreo.lecturas_actuales` (suma `estilo`, `limites`, `zona` y la
+escala propia), `iot_monitoreo.historial`, `GET/POST /api/iot/vumetros` y `GET /api/iot/historial` (admin). Pruebas: `tests/test_iot_vumetros.py`.
+
+**Las zonas son 4 límites, todos opcionales**: rojo si baja de X, amarillo si baja de Y, amarillo si sube de Z, rojo si sube de W; el verde es lo que queda en el medio. Sirve para
+«la leche no debe pasar de 4 °C» (solo los de arriba) y para «el vacío entre 48 y 52 kPa» (los cuatro). **Justo en un límite todavía es la zona de adentro** (con «amarillo si sube de 4»,
+4,0 es verde y 4,1 amarillo). Los límites tienen que ir de menor a mayor (se rechaza si no). La misma regla está duplicada en JS (`zonaIot`, `tramosIot` en `index.html`): si se
+cambia una, cambiar la otra.
+
+**NO hay valores por defecto, a propósito** (misma regla que los umbrales de retirada y de preparación de la rutina): sin ningún límite cargado la tarjeta no tiene color. Un límite
+inventado marcaría en rojo algo que está bien. Los carga el tambo. «Dial desde / hasta» es la escala del dial; en blanco usa la de siempre (`SENSORES_PLANEADOS`, y 50 a 90 para el ITH).
+
+**El dial es SVG sin librerías, a propósito**: el código ya tenía la nota de que se probaron un dial y una barra de LEDs y la app «se sentía pesada». Las tarjetas son `<button>` (se llega con el
+teclado) y el panel solo se redibuja si cambió algo, porque refresca cada 5 s y redibujar le saca el foco a quien navega con teclado.
+
+**Historial: se guarda TODO el detalle** (decisión del tambo, 22/11/2026): lecturas cada 30 s son ~1 millón de filas por sensor y por año (~80 MB). Por eso el agrupado lo hace SQLite
+(`GROUP BY` sobre el tiempo en segundos, índice `sensor, fecha_hora`) y nunca se trae una fila de más: día = 144 puntos de 10 min, semana = 168 de 1 h, mes = 120 de 6 h, año = 365 de 1 día
+(`RANGOS_HISTORIAL`). El resumen (mínimo, promedio, máximo, lecturas) sale de TODAS las lecturas, no de promediar promedios. El ITH no es un sensor: se calcula por tramo con el promedio de
+temperatura y humedad ambiente de ESE tramo, sin mínimo ni máximo propios. Si el disco se vuelve un problema, la salida es resumir lo de más de 30 días (no está hecho). El gráfico dibuja las zonas
+de color de fondo con un plugin de Chart.js (`iotZonas`) y extiende el eje para que se vean los límites aunque los datos no lleguen.
+`/api/iot/pantalla/historico` (público, de la pantalla ESP32, rangos 7d/15d/30d/180d) NO cambió: el historial nuevo es otro endpoint y pide sesión de administrador.
+
+**Ojo con las lecturas ficticias de la PC de desarrollo**: `iot_sensores.db` tiene 26.411 lecturas inventadas (09/02 al 28/08/2026, `scripts/generar_lecturas_ficticias.py`). Sirven para ver los gráficos,
+pero mezclan datos falsos con los reales: **hay que borrarlas (`DELETE FROM lecturas_sensor;`) antes de usar sensores reales de verdad**, y nunca correr ese script en SERVER-DELPRO.
