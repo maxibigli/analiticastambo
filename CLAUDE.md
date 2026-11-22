@@ -3964,3 +3964,12 @@ la pantalla ESP32 (`/api/iot/pantalla` trae `valor: null` y `sin_datos: true`) y
   * Los demás sensores solo cuentan por color con **límites cargados** (sin límites no hay con qué comparar).
   * **No se rellena con la última lectura vieja** (`sin_ultima_lectura`): es del gateway local y una cuenta vieja mostrada como actual sería peor que decir que no hay dato.
   * Sale de la base SQLite del gateway, no de DDM: ya no depende de que el servidor de DelPro responda (antes se salteaba con «caída»).
+
+### Aviso por WhatsApp cuando un sensor IoT se calla (22/11/2026)
+
+`iot_avisos.py` (hilo `avisos-iot`, cada 5 min; lo arranca `servidor.py` con `app.iniciar_avisos_iot()` DESPUÉS del candado de instancia única, igual que el vigilante). Manda por los
+canales de alerta tildados en ⚙ Configuración › Tablero (WhatsApp, Telegram, correo: `_enviar_a_canales_activos`) **UN mensaje** con los sensores que pasaron a `sin_datos` («• Temp. leche: sin datos desde el
+dom 22/11 17:25 (último valor 7,5°C)»; «nunca mandó datos» si tiene límites y jamás leyó) y, cuando vuelven, «✅ Volvieron a mandar datos: …». **Una vez por sensor al callarse y una al volver**, no en cada pasada.
+El estado (a quién ya se avisó) está en `iot_avisos.json` (fuera de git): un reinicio no repite el aviso de uno que sigue mudo. Si el envío falla no se anota nada y la pasada siguiente reintenta.
+**Sin horario silencioso, a propósito** (un sensor de la leche que se calla a las 3 es justo lo que se quiere saber; si se corta todo, sale un solo mensaje). El ITH no avisa aparte (sale de temperatura y humedad ambiente).
+Costos conocidos: un sensor que oscila mudo/vivo cada rato manda un aviso por cambio (no hay antirrebote); la primera vez que corre, los que ya estén mudos avisan una vez. Pruebas: `tests/test_iot_avisos.py`.

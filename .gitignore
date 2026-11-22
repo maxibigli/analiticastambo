@@ -140,3 +140,5 @@ precios_anteriores/
 alertas_mixerone.db
 iot_analogicas.json
 iot_vumetros.json
+iot_avisos.json
+iot_avisos.json.tmp

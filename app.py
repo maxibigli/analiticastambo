@@ -47,6 +47,7 @@ import genetica
 import herencia
 import gestacion
 import iot_analogicas
+import iot_avisos
 import iot_canales
 import iot_conexion
 import iot_monitoreo
@@ -6689,6 +6690,13 @@ def iniciar_vigilante():
     vigilante encendido cada uno tendría el suyo mandando avisos por los canales reales: «consultar, enviar, registrar»
     no es atómico entre procesos y el mismo aviso saldría dos veces."""
     return vigilante.iniciar_hilo(tambos.DEFAULT_TAMBO, lambda texto: _enviar_a_canales_activos(texto))
+
+
+def iniciar_avisos_iot():
+    """Arranca el hilo que avisa por los canales de alerta cuando un sensor del Monitoreo IoT se queda sin datos (y cuando
+    vuelve). Ver `iot_avisos.py`. Igual que el vigilante, NO se arranca al importar `app`: lo llama `servidor.py` después de
+    tomar el candado de instancia única, o cada proceso que importa `app` mandaría el mismo aviso."""
+    return iot_avisos.iniciar_hilo(lambda texto: _enviar_a_canales_activos(texto))
 
 
 @app.get("/api/alertas/canales")
