@@ -163,6 +163,33 @@ class TestGuardar(Base):
             ia.guardar({"ai_1": {"sensor": "temp_leche", "direccion": 3},
                         "ai_2": {"sensor": "temp_lavado", "direccion": 3}}, SENSORES)
 
+    def test_la_direccion_larga_del_m300_se_guarda_como_la_de_lactia(self):
+        # El M300 muestra 30001, 30003...; el protocolo (y LactIA) usa 0, 2... : 30001 es la dirección 0.
+        ia.guardar({"ai_1": {"direccion": 30001}, "ai_2": {"direccion": "30003"}, "ai_3": {"direccion": 30011}},
+                   SENSORES)
+        c = ia.cargar()
+        self.assertEqual((c["ai_1"]["direccion"], c["ai_2"]["direccion"], c["ai_3"]["direccion"]), (0, 2, 10))
+
+    def test_los_limites_de_la_notacion_larga(self):
+        ia.guardar({"ai_1": {"direccion": 39999}}, SENSORES)
+        self.assertEqual(ia.cargar()["ai_1"]["direccion"], 9998)
+        ia.guardar({"ai_1": {"direccion": 40001}}, SENSORES)          # fuera de 30001-39999: es una dirección común
+        self.assertEqual(ia.cargar()["ai_1"]["direccion"], 40001)
+
+    def test_las_direcciones_cortas_no_se_tocan(self):
+        ia.guardar({"ai_1": {"direccion": 0}, "ai_2": {"direccion": 4}, "ai_3": {"direccion": 30000}}, SENSORES)
+        c = ia.cargar()
+        self.assertEqual((c["ai_1"]["direccion"], c["ai_2"]["direccion"], c["ai_3"]["direccion"]), (0, 4, 30000))
+
+    def test_la_misma_direccion_en_forma_corta_y_larga_cuenta_como_repetida(self):
+        with self.assertRaises(ValueError):
+            ia.guardar({"ai_1": {"sensor": "temp_leche", "direccion": 0},
+                        "ai_2": {"sensor": "temp_lavado", "direccion": 30001}}, SENSORES)
+
+    def test_dos_direcciones_largas_que_se_pisan_se_rechazan(self):
+        with self.assertRaises(ValueError):
+            ia.guardar({"ai_1": {"direccion": 30001}, "ai_2": {"direccion": 30002}}, SENSORES)
+
     def test_direcciones_que_se_pisan_se_rechazan_porque_cada_entrada_ocupa_dos_registros(self):
         with self.assertRaises(ValueError):
             ia.guardar({"ai_1": {"sensor": "temp_leche", "direccion": 3},

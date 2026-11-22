@@ -3896,7 +3896,7 @@ con un simulador (botón «tomar»), más el rango del transmisor (`min`/`max`, 
 **Formato del registro (corregido el 22/11/2026, mismo día): los puntos AI del M300 son «32 Bit Float (AB CD)»** (se ve en Data Point › lista de puntos del slave
 «Local_IO»: AI01, AI02, AI21 a AI24), o sea un decimal IEEE-754 en **DOS registros 3X consecutivos, el alto primero**. La primera versión leía UN registro de 16 bits
 y habría dado números sin sentido. Ahora `iot_lavado._decimal_32_bits` lee 2 registros y decodifica `>f`; un NaN, un infinito o una respuesta corta se descartan.
-Consecuencia: **las direcciones de las entradas tienen que estar al menos 2 de distancia** (0, 2, 4…), y `guardar` rechaza las que se pisan. En qué unidad llega el
+Consecuencia: **las direcciones de las entradas tienen que estar al menos 2 de distancia** (0, 2, 4…), y `guardar` rechaza las que se pisan. **La dirección que se carga es la 0-based (30001 → 0, 30003 → 2…), no el número que muestra el M300**: en producción se cargaron 30001, 30003… y daba «sin lectura» (el equipo contesta «Illegal Data Address»). Desde el 22/11/2026 `guardar` acepta también la forma del M300 (30001 a 39999) y la guarda como la de protocolo; la pantalla avisa «30001 → 0». En qué unidad llega el
 número (µA o mA) se ve en la columna «En vivo» con el simulador: no se supone.
 
 **Que se vean en la web del M300 NO las expone por Modbus.** Igual que DI01 y las salidas, hay que sumarlas a mano en Edge Computing › IO Module › Protocol › Modbus

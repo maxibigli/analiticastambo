@@ -4451,7 +4451,8 @@
         ves ~6404 son microamperios y «Escala en µA» carga 4000 y 20000; si ves ~6,4 son mA y cargás 4 y 20 a mano.
         «Valor a 4 / 20 mA» es el rango del transmisor (en blanco usa el del sensor).
         Cada entrada es un decimal de 32 bits, o sea <b>2 registros</b>: la dirección es la del punto en la tabla de
-        mapeo Modbus del M300 (tipo 3X) y la siguiente entrada tiene que estar al menos 2 más allá (0, 2, 4…).
+        mapeo Modbus del M300 (tipo 3X). Podés cargarla como la muestra el M300 (30001, 30003…) o como la usa el
+        protocolo (0, 2…): <b>30001 se guarda como 0</b>. La siguiente entrada tiene que estar al menos 2 más allá.
         Los cambios los toma el gateway solos, sin reiniciar. Una lectura de menos de 3,5 mA (cable cortado) no
         se guarda.
       </p>
@@ -16927,13 +16928,16 @@ document.getElementById('config-iot-ana-tabla').addEventListener('click', ev => 
 document.getElementById('config-iot-ana-guardar').addEventListener('click', async () => {
   const estado = document.getElementById('config-iot-ana-estado');
   estado.textContent = 'Guardando…';
+  // Las direcciones largas del M300 (30001…39999) el servidor las guarda como la de protocolo (30001 -> 0).
+  const convertidas = Object.values(anaActual).map(c => Number(c.direccion))
+    .filter(d => d >= 30001 && d <= 39999).map(d => `${d} → ${d - 30001}`);
   try {
     await pedirJSON('/api/iot/analogicas', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ canales: anaActual }),
     });
     await cargarAnalogicas(true);   // vuelve a leer: el servidor completa el rango en blanco con el del sensor
-    estado.textContent = '✔ Guardado.';
+    estado.textContent = '✔ Guardado.' + (convertidas.length ? ` Direcciones convertidas: ${convertidas.join(', ')}.` : '');
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
   }

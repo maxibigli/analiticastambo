@@ -93,6 +93,10 @@ def guardar(nuevo: dict, sensores: dict) -> None:
             sensores_usados[sensor] = clave
 
         direccion = _numero(c.get("direccion"), "dirección Modbus", clave, entero=True)
+        if direccion is not None and 30001 <= direccion <= 39999:
+            # El M300 muestra los registros de entrada como 30001, 30003...; el protocolo (y `read_input_registers`)
+            # usa la dirección 0-based: 30001 es la 0. Se acepta la forma que muestra el equipo y se guarda la de LactIA.
+            direccion -= 30001
         if direccion is not None:
             if not 0 <= direccion <= 65535:
                 raise ValueError(f"{clave}: la dirección Modbus tiene que estar entre 0 y 65535.")
