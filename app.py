@@ -51,6 +51,7 @@ import iot_avisos
 import iot_canales
 import iot_conexion
 import iot_monitoreo
+import iot_sensores
 import iot_vumetros
 import lavado_programa
 import voz_comandos
@@ -2963,11 +2964,19 @@ def api_iot_pantalla():
     microcontrolador."""
     tambo = _tambo_del_request()
     sistema = iot_monitoreo.estado_sistema(tambo)
+    lecturas = iot_monitoreo.lecturas_actuales()
+    # Los analógicos como siempre (el firmware espera números). Los digitales van aparte, con su texto y su color: no
+    # se mezclan para no hacerle mostrar un «1,0» donde ahora dice «ALARMA».
     sensores = {
         s["clave"]: {"valor": s["valor"], "unidad": s["unidad"], "label": s["label"], "sin_datos": s["sin_datos"]}
-        for s in iot_monitoreo.lecturas_actuales()
+        for s in lecturas if s["tipo"] == "analogico"
     }
-    return jsonify({"estado": sistema["estado"], "desde": sistema["desde"], "sensores": sensores})
+    digitales = {
+        s["clave"]: {"label": s["label"], "estado": s["estado"], "zona": s["zona"], "sin_datos": s["sin_datos"]}
+        for s in lecturas if s["tipo"] == "digital"
+    }
+    return jsonify({"estado": sistema["estado"], "desde": sistema["desde"], "sensores": sensores,
+                    "digitales": digitales})
 
 
 _RANGOS_HISTORICO_IOT = {"7d": 7, "15d": 15, "30d": 30, "180d": 180}
@@ -2985,7 +2994,7 @@ def api_iot_pantalla_historico():
     if dias is None:
         return jsonify({"error": f"Rango inválido: {rango} (opciones: "
                                   f"{', '.join(_RANGOS_HISTORICO_IOT)})"}), 400
-    validos = {s["clave"] for s in iot_monitoreo.SENSORES_PLANEADOS} | {"ith"}
+    validos = set(iot_monitoreo.sensores_con_ith())
     if sensor not in validos:
         return jsonify({"error": f"Sensor inválido: {sensor}"}), 400
     hasta = datetime.datetime.now()
@@ -3344,6 +3353,31 @@ def api_iot_analogicas_listar():
     """Entradas analógicas (4-20 mA) del M300: asignación a un sensor del panel, escala y lectura en vivo, para
     ⚙ Configuración › 🔌 Entradas/Salidas. La lectura la hace iot_lavado.py; acá solo se ve lo último que dejó."""
     return jsonify(iot_monitoreo.panel_analogicas())
+
+
+@app.get("/api/iot/sensores")
+@auth.requiere_rol("admin")
+def api_iot_sensores_listar():
+    """El catálogo de sensores del Monitoreo IoT (analógicos y digitales) para el editor de ⚙ Configuración › 🔌 Entradas/
+    Salidas, con las entradas digitales del gateway que se les pueden asignar y cuáles están en uso por un analógico."""
+    nombres = iot_canales.nombres()
+    entradas = [{"clave": clave, "label": nombres.get(clave, label)} for clave, label in iot_monitoreo.ENTRADAS_PANEL]
+    return jsonify({"sensores": iot_sensores.cargar(), "entradas": entradas,
+                    "asignados": sorted({c["sensor"] for c in iot_analogicas.cargar().values() if c.get("sensor")})})
+
+
+@app.post("/api/iot/sensores")
+@auth.requiere_rol("admin")
+def api_iot_sensores_guardar():
+    lista = (request.json or {}).get("sensores")
+    if not isinstance(lista, list):
+        return jsonify({"error": "Formato inválido."}), 400
+    en_uso = {c["sensor"] for c in iot_analogicas.cargar().values() if c.get("sensor")}
+    try:
+        iot_sensores.guardar(lista, en_uso)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
 
 
 @app.get("/api/iot/vumetros")

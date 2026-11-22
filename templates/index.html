@@ -481,6 +481,9 @@
   .iot-zona::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
   .iot-zona.sin-datos { color: var(--warning); }
   .iot-tarjeta.sin-datos { border-color: var(--warning); }
+  .iot-tarjeta.fija { cursor: default; }
+  .iot-tarjeta.fija:hover { border-color: var(--border); }
+  .iot-tarjeta.fija.sin-datos:hover { border-color: var(--warning); }
   .iot-zona.verde { color: var(--good); } .iot-zona.amarillo { color: var(--warning); } .iot-zona.rojo { color: var(--critical); }
   /* Ventana de historial de un sensor */
   .iot-hist { width: min(920px, 94vw); padding: 18px 20px; border: 1px solid var(--border); border-radius: 14px;
@@ -4448,6 +4451,28 @@
     <div style="overflow-x:auto"><table class="tabla" id="config-iot-canales-tabla"></table></div>
     <div style="margin-top:14px">
       <button id="config-iot-canales-guardar" disabled>Guardar</button>
+    </div>
+
+    <div style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-top:22px">
+      <div style="font-weight:600;margin-bottom:8px">Sensores del tambo</div>
+      <p class="explica">
+        La lista de lo que se ve en Monitoreo IoT. Agregá o sacá los que necesites; las entradas físicas las fija el
+        gateway y no se agregan (6 analógicas y 2 digitales reales). <b>Analógico</b>: un valor medido (temperatura,
+        humedad, vacío…) con su unidad y la escala de su dial; se conecta a una entrada más abajo, en «Entradas
+        analógicas». <b>Digital</b>: un contacto de dos estados. <b>Alarma</b> = activo es un problema (rojo «ALARMA», verde
+        «Normal»). <b>Indicador</b> = un fin de carrera, un portón… con el texto y el color que quieras para cada estado;
+        si un estado es rojo, también cuenta como alarma. «Contacto NC» es el normalmente cerrado: el cable cortado se lee
+        como activo. «Avisar» manda un mensaje por los canales de alerta cuando entra en rojo y cuando vuelve.
+        Un sensor se puede renombrar pero no cambiar de analógico a digital. No se puede sacar uno que tenga una entrada
+        analógica asignada. Lo que ya se midió no se borra.
+      </p>
+      <div class="aviso" id="config-iot-sen-estado" style="margin:8px 0"></div>
+      <div id="config-iot-sen-lista" style="display:flex;flex-direction:column;gap:8px"></div>
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="secundario" id="config-iot-sen-agregar-an" type="button">➕ Sensor analógico</button>
+        <button class="secundario" id="config-iot-sen-agregar-dig" type="button">➕ Alarma o indicador digital</button>
+        <button id="config-iot-sen-guardar" type="button" disabled>Guardar sensores</button>
+      </div>
     </div>
 
     <div style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-top:22px">
@@ -11352,10 +11377,28 @@ function ultimaLecturaIot(s) {
   const d = new Date(s.fecha_hora);
   const cuando = d.toLocaleString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit',
     hour: '2-digit', minute: '2-digit', hour12: false });
-  return 'último dato: ' + cuando + (s.ultimo_valor != null ? ` (${fmt(s.ultimo_valor)}${s.unidad || ''})` : '');
+  const ultimo = s.tipo === 'digital' ? (s.ultimo_estado ? ` (${s.ultimo_estado})` : '')
+    : (s.ultimo_valor != null ? ` (${fmt(s.ultimo_valor)}${s.unidad || ''})` : '');
+  return 'último dato: ' + cuando + ultimo;
+}
+
+// Un sensor digital muestra el texto de su estado (el que le puso el tambo) en el color de ese estado. No tiene dial ni
+// historial: es un contacto de dos estados.
+function iotTarjetaDigitalHTML(s) {
+  const sub = s.sin_datos ? ultimaLecturaIot(s)
+    : !s.entrada ? 'sin entrada asignada'
+    : s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : 'esperando lectura';
+  const chip = s.sin_datos ? '<div class="iot-zona sin-datos">Sin datos</div>' : '';
+  return `<div class="lac-metric iot-tarjeta fija${s.zona ? ' zona-' + s.zona : ''}${s.sin_datos ? ' sin-datos' : ''}">
+    <div class="lac-metric__label">${escHtml(s.label)}</div>
+    <div class="lac-metric__value">${escHtml(s.estado || '—')}</div>
+    ${chip}
+    <div class="lac-caption" style="margin-top:4px">${escHtml(sub)}</div>
+  </div>`;
 }
 
 function iotTarjetaHTML(s) {
+  if (s.tipo === 'digital') return iotTarjetaDigitalHTML(s);
   const sinDato = s.valor == null;
   const valor = sinDato ? '—' : fmt(s.valor) + (s.unidad || '');
   // Un sensor mudo NO muestra su última medición como si fuera la de ahora: «Sin datos», con cuándo habló por última vez
@@ -16056,6 +16099,7 @@ async function cargarConfiguracion() {
     cargarVigilante();
     cargarConexionIot();
     cargarCanalesGateway();
+    cargarSensoresConfig();
     cargarAnalogicas(true);
     cargarVumetrosConfig();
     cargarConfigTv();
@@ -17032,6 +17076,120 @@ document.getElementById('config-iot-vu-guardar').addEventListener('click', async
       body: JSON.stringify({ sensores: vuActual }),
     });
     await cargarVumetrosConfig();
+    iotSensoresUltimo = '';       // que el panel IoT se redibuje con lo nuevo en el próximo refresco
+    estado.textContent = '✔ Guardado.';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+});
+
+// --- Sensores del tambo: la lista dinámica (analógicos, alarmas e indicadores digitales) -------------------------
+let senLista = [];
+let senOriginal = '';
+let senEntradas = [];
+let senAsignados = [];
+const SEN_COLORES = [['neutro', 'sin color'], ['verde', 'verde'], ['amarillo', 'amarillo'], ['rojo', 'rojo']];
+
+async function cargarSensoresConfig() {
+  const estado = document.getElementById('config-iot-sen-estado');
+  try {
+    const d = await pedirJSON('/api/iot/sensores');
+    senLista = d.sensores || [];
+    senEntradas = d.entradas || [];
+    senAsignados = d.asignados || [];
+    senOriginal = JSON.stringify(senLista);
+    pintarSensoresConfig();
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+function pintarSensoresConfig() {
+  const campo = (i, k, valor, ancho, tipo, extra) => `<input type="${tipo || 'text'}" ${tipo === 'number' ? 'step="any"' : ''}
+      data-i="${i}" data-sen="${k}" value="${escHtml(valor == null ? '' : String(valor))}" ${extra || ''}
+      style="width:${ancho}px;padding:6px">`;
+  const colores = (i, k, actual, bloqueado) => `<select data-i="${i}" data-sen="${k}" style="padding:6px"${bloqueado ? ' disabled' : ''}>
+      ${SEN_COLORES.map(([v, t]) => `<option value="${v}"${actual === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`;
+  document.getElementById('config-iot-sen-lista').innerHTML = senLista.map((s, i) => {
+    const enUso = s.clave && senAsignados.includes(s.clave);
+    const borrar = `<button class="secundario" type="button" data-i="${i}" data-sen-borrar="1"
+        ${enUso ? 'disabled title="Tiene una entrada analógica asignada: sacalo de ahí primero"' : 'title="Sacar este sensor"'}>✕</button>`;
+    const base = `<label class="aviso" style="margin:0">Nombre ${campo(i, 'label', s.label, 190, 'text', 'maxlength="40"')}</label>`;
+    if (s.tipo === 'analogico') {
+      return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        ${base}
+        <span class="aviso" style="min-width:70px;font-weight:600;margin:0">Analógico</span>
+        <label class="aviso" style="margin:0">Unidad ${campo(i, 'unidad', s.unidad, 64, 'text', 'maxlength="12"')}</label>
+        <label class="aviso" style="margin:0">Dial desde ${campo(i, 'min', s.min, 74, 'number')}</label>
+        <label class="aviso" style="margin:0">hasta ${campo(i, 'max', s.max, 74, 'number')}</label>
+        ${borrar}</div>`;
+    }
+    const alarma = s.rol === 'alarma';
+    return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        ${base}
+        <span class="aviso" style="min-width:70px;font-weight:600;margin:0">Digital</span>
+        <select data-i="${i}" data-sen="rol" style="padding:6px">
+          <option value="alarma"${alarma ? ' selected' : ''}>Alarma</option>
+          <option value="indicador"${!alarma ? ' selected' : ''}>Indicador</option></select>
+        <label class="aviso" style="margin:0">Entrada <select data-i="${i}" data-sen="entrada" style="padding:6px;min-width:150px">
+          <option value="">(sin entrada)</option>
+          ${senEntradas.map(e => `<option value="${escHtml(e.clave)}"${s.entrada === e.clave ? ' selected' : ''}>${escHtml(e.label)}</option>`).join('')}
+        </select></label>
+        <label class="aviso" style="margin:0">Activo dice ${campo(i, 'texto_activo', s.texto_activo, 110, 'text', 'maxlength="24"')}</label>
+        ${colores(i, 'color_activo', s.color_activo, alarma)}
+        <label class="aviso" style="margin:0">Inactivo dice ${campo(i, 'texto_inactivo', s.texto_inactivo, 110, 'text', 'maxlength="24"')}</label>
+        ${colores(i, 'color_inactivo', s.color_inactivo, alarma)}
+        <label class="aviso" style="margin:0"><input type="checkbox" data-i="${i}" data-sen="invertido"${s.invertido ? ' checked' : ''}> Contacto NC</label>
+        <label class="aviso" style="margin:0"><input type="checkbox" data-i="${i}" data-sen="avisar"${s.avisar ? ' checked' : ''}> Avisar</label>
+        ${borrar}</div>`;
+  }).join('') || '<div class="aviso">No hay sensores. Agregá uno con los botones de abajo.</div>';
+  document.getElementById('config-iot-sen-guardar').disabled = JSON.stringify(senLista) === senOriginal;
+}
+
+// 'input' y 'change': los campos de texto disparan solo 'input'; los desplegables y casillas, 'change'.
+['input', 'change'].forEach(evento => document.getElementById('config-iot-sen-lista').addEventListener(evento, ev => {
+  const k = ev.target.dataset.sen, i = ev.target.dataset.i;
+  if (!k || i == null || ev.target.dataset.senBorrar) return;
+  const s = senLista[Number(i)];
+  if (!s) return;
+  if (ev.target.type === 'checkbox') s[k] = ev.target.checked;
+  else s[k] = ev.target.value;
+  if (k === 'rol' && evento === 'change') {
+    // Una alarma es siempre roja/verde; al pasar a indicador los colores quedan como estaban.
+    if (s.rol === 'alarma') { s.color_activo = 'rojo'; s.color_inactivo = 'verde'; s.avisar = true; }
+    pintarSensoresConfig();
+    return;
+  }
+  document.getElementById('config-iot-sen-guardar').disabled = JSON.stringify(senLista) === senOriginal;
+}));
+
+document.getElementById('config-iot-sen-lista').addEventListener('click', ev => {
+  if (!ev.target.dataset.senBorrar) return;
+  senLista.splice(Number(ev.target.dataset.i), 1);
+  pintarSensoresConfig();
+});
+
+document.getElementById('config-iot-sen-agregar-an').addEventListener('click', () => {
+  senLista.push({ label: '', tipo: 'analogico', unidad: '', min: 0, max: 100 });
+  pintarSensoresConfig();
+});
+
+document.getElementById('config-iot-sen-agregar-dig').addEventListener('click', () => {
+  senLista.push({ label: '', tipo: 'digital', rol: 'alarma', entrada: '', invertido: false, texto_activo: '',
+    texto_inactivo: '', color_activo: 'rojo', color_inactivo: 'verde', avisar: true });
+  pintarSensoresConfig();
+});
+
+document.getElementById('config-iot-sen-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('config-iot-sen-estado');
+  estado.textContent = 'Guardando…';
+  try {
+    await pedirJSON('/api/iot/sensores', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sensores: senLista }),
+    });
+    await Promise.all([cargarSensoresConfig(), cargarAnalogicas(true), cargarVumetrosConfig()]);
     iotSensoresUltimo = '';       // que el panel IoT se redibuje con lo nuevo en el próximo refresco
     estado.textContent = '✔ Guardado.';
   } catch (e) {

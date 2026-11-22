@@ -28,6 +28,7 @@ from pymodbus.client import ModbusTcpClient
 
 import iot_analogicas
 import iot_conexion
+import iot_sensores
 import lavado_programa
 import voz_comandos
 
@@ -36,6 +37,7 @@ INTERVALO_POLL_S = 3      # cada cuánto se pregunta el estado
 # a 3 s serían ~29.000 filas por día y por entrada para un dato que cambia en minutos. El histórico igual lo
 # agrupa en baldes (iot_monitoreo.historico).
 INTERVALO_GUARDADO_ANALOGICAS_S = 30
+INTERVALO_LATIDO_DI_S = 30    # cada cuánto se anota que una entrada digital sigue viva aunque no haya cambiado
 INTERVALO_RECONEXION_S = 5
 INTENTOS_APAGADO_ARRANQUE = 3   # ver apagar_actuadores_voz_al_arrancar
 
@@ -122,6 +124,15 @@ def _conectar_db(ruta: str = RUTA_DB) -> sqlite3.Connection:
         )
     """)
     con.execute("CREATE INDEX IF NOT EXISTS idx_lecturas_sensor_sensor_fecha ON lecturas_sensor(sensor, fecha_hora)")
+    # Último estado leído de cada entrada digital y CUÁNDO (latido): `eventos_di` solo guarda los cambios, y con eso un
+    # contacto que no se mueve en una semana no se distingue de un gateway apagado.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS digitales_estado (
+            canal TEXT PRIMARY KEY,
+            fecha_hora TEXT NOT NULL,
+            estado INTEGER NOT NULL
+        )
+    """)
     # Último número CRUDO de cada entrada analógica: es lo que se mira para calibrar con un simulador.
     con.execute("""
         CREATE TABLE IF NOT EXISTS analogicas_crudo (
@@ -145,6 +156,26 @@ def _leer_estado(client: ModbusTcpClient, direccion: int, invertido: bool):
     except Exception:  # noqa: BLE001
         client.close()   # ver el comentario igual en _escribir_reles: fuerza reconexion
         return None
+
+
+def latir(con: sqlite3.Connection, canal: str, estado: bool, ultimo: dict, ahora: datetime.datetime = None) -> None:
+    """Anota en `digitales_estado` que la entrada `canal` se leyó bien y estaba en `estado`: siempre que cambia y, si no,
+    una vez cada INTERVALO_LATIDO_DI_S (no en cada ciclo de 3 s: serían ocho escrituras por segundo para nada).
+    `ultimo` (canal -> (estado, datetime)) es del llamador, para que sobreviva entre ciclos."""
+    ahora = ahora or datetime.datetime.now()
+    previo = ultimo.get(canal)
+    if previo and previo[0] == estado and (ahora - previo[1]).total_seconds() < INTERVALO_LATIDO_DI_S:
+        return
+    con.execute("INSERT OR REPLACE INTO digitales_estado (canal, fecha_hora, estado) VALUES (?, ?, ?)",
+                (canal, ahora.isoformat(timespec="seconds"), int(estado)))
+    con.commit()
+    ultimo[canal] = (estado, ahora)
+
+
+def entradas_invertidas() -> dict:
+    """{entrada: contacto normalmente cerrado?} de los sensores digitales del catálogo que tienen una entrada asignada. Se
+    vuelve a leer en cada ciclo: lo que se guarda en la pantalla se toma sin reiniciar este proceso."""
+    return {d["entrada"]: bool(d["invertido"]) for d in iot_sensores.digitales() if d["entrada"]}
 
 
 def _decimal_32_bits(resultado):
@@ -593,6 +624,7 @@ def main():
     anteriores = {canal: None for canal in CANALES}
     anteriores_voz = {clave: False for clave in voz_comandos.ACTUADORES_VALIDOS}
     ultimo_guardado_analogicas = {}
+    ultimo_latido = {}
     print(f"Conectando a {cfg['host']}:{cfg['port']}... (Ctrl+C para salir)")
     try:
         if not client.connected:
@@ -605,10 +637,13 @@ def main():
         while True:
             if not client.connected:
                 client.connect()
+            invertidas = entradas_invertidas()
             for canal, cfg in CANALES.items():
-                estado = _leer_estado(client, cfg["direccion"], cfg["invertido"])
+                # El contacto normalmente cerrado de un sensor digital se suma al propio de la entrada (si ambos, se anulan).
+                estado = _leer_estado(client, cfg["direccion"], cfg["invertido"] != invertidas.get(canal, False))
                 if estado is None:
                     continue  # error de lectura puntual: se reintenta el próximo ciclo
+                latir(con, canal, estado, ultimo_latido)
                 arranco = estado and estado != anteriores[canal]
                 anteriores[canal] = registrar_si_cambio(con, canal, estado, anteriores[canal])
                 if arranco and AUDIO_ACTIVADO and canal in MENSAJES_VOZ:

@@ -3973,3 +3973,30 @@ dom 22/11 17:25 (último valor 7,5°C)»; «nunca mandó datos» si tiene límit
 El estado (a quién ya se avisó) está en `iot_avisos.json` (fuera de git): un reinicio no repite el aviso de uno que sigue mudo. Si el envío falla no se anota nada y la pasada siguiente reintenta.
 **Sin horario silencioso, a propósito** (un sensor de la leche que se calla a las 3 es justo lo que se quiere saber; si se corta todo, sale un solo mensaje). El ITH no avisa aparte (sale de temperatura y humedad ambiente).
 Costos conocidos: un sensor que oscila mudo/vivo cada rato manda un aviso por cambio (no hay antirrebote); la primera vez que corre, los que ya estén mudos avisan una vez. Pruebas: `tests/test_iot_avisos.py`.
+
+### Catálogo de sensores dinámico: analógicos, alarmas e indicadores digitales (22/11/2026)
+
+Pedido del usuario: «esto deberia ser configurable en cantidad de sensores segun el proyecto» y que haya sensores digitales para una alarma, un
+fin de carrera o algo que se asigne a un estado (como la lavadora). **Paso 1 de 2** (el paso 2 es la lista de estados configurable, ver abajo).
+
+**Se separaron la entrada física y el sensor.** Las ENTRADAS las fija el hardware (6 analógicas y 8 digitales del M300; **solo 2 digitales existen de
+verdad: DI01 y DI02**, las otras 6 no tienen nada atrás hasta que se agregue un módulo de expansión de entradas o sensores LoRa). Los SENSORES son una lista que arma el tambo
+en ⚙ Configuración › 🔌 Entradas/Salidas › «Sensores del tambo» (`iot_sensores.py`, archivo `iot_sensores.json`, fuera de git; `/api/iot/sensores`). Sin archivo, la lista son los 11
+analógicos de siempre (mismas claves: no se pierde historial ni calibración ni límites). Antes estaban escritos en `iot_monitoreo.SENSORES_PLANEADOS`, que ya no existe.
+
+  * **Analógico**: nombre, unidad, escala del dial. Se conecta a una entrada analógica en el asignador de siempre (`iot_analogicas`); el desplegable ofrece los de la lista.
+  * **Digital**: atado a una entrada digital (`entrada`, una por sensor). `rol` **alarma** (activo = problema; rojo «ALARMA» / verde «Normal», colores fijos, `avisar` por defecto) o
+    **indicador** (fin de carrera, portón…: texto y color —verde/amarillo/rojo/neutro— por estado; neutro = sin color, no cuenta). **El estado en rojo es la alarma** (`iot_sensores.estado_de_alarma`).
+    `invertido` = contacto normalmente cerrado: lo aplica `iot_lavado.py` al leer (`entradas_invertidas`, se relee en cada ciclo; se suma al `invertido` propio de la entrada).
+  * La `clave` es interna y no cambia nunca (el nombre sí). No se puede pasar un sensor de analógico a digital, ni sacar uno asignado a una entrada analógica. Lo ya medido nunca se borra.
+  * El ITH sigue siendo calculado (reservado, no está en la lista) y no rompe si se saca la temperatura o la humedad ambiente.
+
+**El estado de un digital sale de un LATIDO** (`digitales_estado`, lo escribe `iot_lavado.latir`: en cada cambio y cada 30 s), no de `eventos_di` (que solo guarda cambios: un contacto quieto una semana
+no se distinguiría de un gateway apagado). **Reglas de «sin datos» (30 min) iguales a las de los analógicos**: un digital con color o con entrada que no latió es mudo y alarma; sin entrada o neutro que nunca latió es
+«sin instalar». Una entrada que no existe físicamente (di_3 a di_8 hoy) da error de lectura, no latido: un sensor atado a ella aparece «Sin datos».
+
+**Avisos** (`iot_avisos.py`): además de los sensores mudos, una alarma digital con `avisar` manda un mensaje cuando ENTRA en rojo y otro cuando vuelve. Se leen los CAMBIOS de `eventos_di`
+(`ultimo_evento` en `iot_avisos.json`): una alarma que entró y salió entre dos pasadas igual se avisa; la primera vez no repite el historial, solo lo que ya está en alarma; hasta 10 líneas por mensaje.
+**Pantalla ESP32**: `/api/iot/pantalla` deja `sensores` solo con los analógicos (el firmware espera números) y agrega `digitales` (`label`, `estado`, `zona`, `sin_datos`).
+**Panel IoT**: la tarjeta digital muestra el texto del estado en su color; no tiene dial ni historial (las tarjetas analógicas siguen abriendo el historial). El Tablero cuenta los digitales por color igual que a los demás.
+**Falta (paso 2)**: la lista de estados configurable que reemplaza el estado fijo de la rotativa (hoy DI01 = LAVANDO, DI02 = BARRIDO, ordeño, APAGADO en `iot_monitoreo.estado_sistema`). Pruebas: `tests/test_iot_sensores.py`, `test_iot_digitales.py`, `test_iot_avisos.py`.

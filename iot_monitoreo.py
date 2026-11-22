@@ -23,6 +23,7 @@ import sqlite3
 import db
 import iot_analogicas
 import iot_canales
+import iot_sensores
 import iot_vumetros
 import voz_comandos
 from iot_lavado import RUTA_DB, _conectar_db, ACTUADORES
@@ -39,22 +40,8 @@ SQL_ULTIMA_VISITA = """
 
 _cache_ordeno: dict = {}  # tambo -> (timestamp, bool)
 
-# Sensores planeados (ninguno instalado todavía, 2026-07-25 — ver memoria
-# delpro-iot-gateway). "ith" es calculado (temperatura-humedad, estrés
-# calórico), no un sensor propio, así que no tiene "unidad" de sensor directo.
-SENSORES_PLANEADOS = [
-    {"clave": "temp_leche", "label": "Temp. leche", "unidad": "°C", "min": 0, "max": 40},
-    {"clave": "temp_llegada", "label": "Temp. llegada", "unidad": "°C", "min": 0, "max": 40},
-    {"clave": "temp_ambiente", "label": "Temp. ambiente", "unidad": "°C", "min": -10, "max": 45},
-    {"clave": "hum_ambiente", "label": "Humedad ambiente", "unidad": "%", "min": 0, "max": 100},
-    {"clave": "temp_lavado", "label": "Temp. lavado", "unidad": "°C", "min": 0, "max": 90},
-    {"clave": "temp_sala_maquinas", "label": "Temp. sala máquinas", "unidad": "°C", "min": -10, "max": 50},
-    {"clave": "temp_sala_tableros", "label": "Temp. sala tableros", "unidad": "°C", "min": -10, "max": 50},
-    {"clave": "temp_sala_caldera", "label": "Temp. sala caldera", "unidad": "°C", "min": 0, "max": 80},
-    {"clave": "temp_corral", "label": "Temp. corral", "unidad": "°C", "min": -10, "max": 45},
-    {"clave": "hum_corral", "label": "Humedad corral", "unidad": "%", "min": 0, "max": 100},
-    {"clave": "vacio_general", "label": "Vacío (a definir sectores)", "unidad": "kPa", "min": 0, "max": 60},
-]
+# Los sensores ya no están escritos acá: son el catálogo que arma el tambo (`iot_sensores`, con los 11 de siempre de lista
+# inicial). "ith" es calculado (temperatura-humedad, estrés calórico), no un sensor de la lista.
 
 
 def calcular_ith(temp_c: float, hum_pct: float) -> float:
@@ -183,7 +170,7 @@ def panel_io() -> dict:
 
 def sensores_asignables() -> dict:
     """clave -> (min, max) de los sensores que se pueden asignar a una entrada analógica. El ITH no: se calcula."""
-    return {s["clave"]: (s["min"], s["max"]) for s in SENSORES_PLANEADOS}
+    return {s["clave"]: (s["min"], s["max"]) for s in iot_sensores.analogicos()}
 
 
 def panel_analogicas() -> dict:
@@ -216,7 +203,7 @@ def panel_analogicas() -> dict:
             "sin_senal": bool(conv and conv["sin_senal"]),
         })
     sensores = [{"clave": s["clave"], "label": s["label"], "unidad": s["unidad"], "min": s["min"], "max": s["max"]}
-                for s in SENSORES_PLANEADOS]
+                for s in iot_sensores.analogicos()]
     return {"canales": canales, "sensores": sensores}
 
 
@@ -276,9 +263,16 @@ def ciclos_lavado(limite: int = 20) -> list:
 
 
 def lecturas_actuales(ahora: datetime.datetime = None) -> list:
-    """Lectura de AHORA de cada sensor planeado. `valor` None = todavía sin instalar o sin datos (`sin_datos`: lleva más de
+    """Lectura de AHORA de cada sensor del catálogo (`iot_sensores`: la lista que arma el tambo) más el ITH calculado.
+
+    Analógicos: `valor` es la última lectura de `lecturas_sensor`. Digitales: `activo` (True/False), `estado` (el texto que el
+    tambo le puso a ese estado) y `zona` (verde/amarillo/rojo, o None si ese estado no tiene color); `valor` es 1.0/0.0 por
+    si alguien necesita un número. `valor` None = todavía sin instalar o sin datos (`sin_datos`: lleva más de
     `VENTANA_LECTURA_RECIENTE_MIN` minutos sin mandar nada; ahí NO se devuelve la última medición, ver
-    `_sin_datos_si_esta_mudo`). El ITH se calcula al vuelo si hay temp+hum de ambiente; si no, también queda None."""
+    `_sin_datos_si_esta_mudo`). `con_color` dice si el sensor se puede comparar y contar por color. El ITH se calcula al
+    vuelo si hay temp+hum de ambiente; si no, también queda None."""
+    catalogo = iot_sensores.cargar()
+    ahora = ahora or datetime.datetime.now()
     con = sqlite3.connect(RUTA_DB)
     con.execute("""
         CREATE TABLE IF NOT EXISTS lecturas_sensor (
@@ -289,48 +283,77 @@ def lecturas_actuales(ahora: datetime.datetime = None) -> list:
         )
     """)
     con.execute("CREATE INDEX IF NOT EXISTS idx_lecturas_sensor_sensor_fecha ON lecturas_sensor(sensor, fecha_hora)")
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS digitales_estado (
+            canal TEXT PRIMARY KEY,
+            fecha_hora TEXT NOT NULL,
+            estado INTEGER NOT NULL
+        )
+    """)
     con.commit()
 
     valores = {}
-    for s in SENSORES_PLANEADOS:
+    for s in catalogo:
+        if s["tipo"] != "analogico":
+            continue
         fila = con.execute(
             "SELECT valor, fecha_hora FROM lecturas_sensor WHERE sensor = ? "
             "ORDER BY fecha_hora DESC LIMIT 1", (s["clave"],)
         ).fetchone()
         valores[s["clave"]] = {"valor": fila[0], "fecha_hora": fila[1]} if fila else {"valor": None, "fecha_hora": None}
+    latidos = {c: (bool(e), f) for c, e, f in con.execute("SELECT canal, estado, fecha_hora FROM digitales_estado")}
     con.close()
 
-    ith = None
-    if valores["temp_ambiente"]["valor"] is not None and valores["hum_ambiente"]["valor"] is not None:
-        ith = calcular_ith(valores["temp_ambiente"]["valor"], valores["hum_ambiente"]["valor"])
+    sin_valor = {"valor": None, "fecha_hora": None}
+    temp, hum = valores.get("temp_ambiente", sin_valor), valores.get("hum_ambiente", sin_valor)
+    ith = calcular_ith(temp["valor"], hum["valor"]) if temp["valor"] is not None and hum["valor"] is not None else None
 
-    salida = []
-    for s in SENSORES_PLANEADOS:
-        v = valores[s["clave"]]
-        salida.append({**s, "valor": v["valor"], "fecha_hora": v["fecha_hora"]})
-    # El ITH es tan reciente como el más viejo de los dos datos de los que sale.
-    fechas_ith = [valores[k]["fecha_hora"] for k in ("temp_ambiente", "hum_ambiente")]
-    salida.append({"clave": "ith", "label": "ITH (estrés calórico)", "unidad": "", "min": 50, "max": 90,
-                    "valor": ith, "fecha_hora": None if None in fechas_ith else min(fechas_ith)})
     configuradas = iot_vumetros.cargar()
-    ahora = ahora or datetime.datetime.now()
-    return [_con_vumetro(_sin_datos_si_esta_mudo(s, configuradas, ahora), configuradas) for s in salida]
+    salida = []
+    for s in catalogo:
+        if s["tipo"] == "analogico":
+            v = valores[s["clave"]]
+            cfg = iot_vumetros.config_de(s["clave"], configuradas)
+            con_limites = any(cfg[k] is not None for k in iot_vumetros.LIMITES)
+            mudo = _sin_datos_si_esta_mudo({**s, "valor": v["valor"], "fecha_hora": v["fecha_hora"]}, con_limites, ahora)
+            salida.append(_con_vumetro(mudo, configuradas))
+        else:
+            salida.append(_digital_actual(s, latidos, ahora))
+    # El ITH es tan reciente como el más viejo de los dos datos de los que sale.
+    fechas_ith = [temp["fecha_hora"], hum["fecha_hora"]]
+    cfg = iot_vumetros.config_de("ith", configuradas)
+    ith_mudo = _sin_datos_si_esta_mudo(
+        {"clave": "ith", "label": "ITH (estrés calórico)", "tipo": "analogico", "unidad": "", "min": 50, "max": 90,
+         "valor": ith, "fecha_hora": None if None in fechas_ith else min(fechas_ith)},
+        any(cfg[k] is not None for k in iot_vumetros.LIMITES), ahora)
+    salida.append(_con_vumetro(ith_mudo, configuradas))
+    return salida
+
+
+def _digital_actual(s: dict, latidos: dict, ahora: datetime.datetime) -> dict:
+    """Un sensor digital con su estado de ahora, tomado del último latido de su entrada (`digitales_estado`, que escribe
+    iot_lavado.py en cada lectura del gateway, no solo cuando cambia). Sin entrada asignada es «sin instalar»."""
+    latido = latidos.get(s["entrada"]) if s["entrada"] else None
+    activo, fecha = (latido if latido else (None, None))
+    texto, color = iot_sensores.estado_de(s, activo) if activo is not None else (None, None)
+    item = {**s, "valor": None if activo is None else (1.0 if activo else 0.0), "activo": activo, "estado": texto,
+            "zona": color, "fecha_hora": fecha, "limites": {}, "con_color": iot_sensores.tiene_color(s)}
+    return _sin_datos_si_esta_mudo(item, item["con_color"] and bool(s["entrada"]), ahora)
 
 
 # Un sensor que no mandó nada en este tiempo está MUDO: no se muestra su última medición como si fuera la de ahora (sería
 # un «7 °C» tranquilizador de hace tres horas), se muestra «Sin datos» y cuenta como alarma. Las analógicas se guardan cada
-# 30 s (iot_lavado.INTERVALO_GUARDADO_ANALOGICAS_S), así que 30 minutos es muy holgado. Es una decisión mía, no del tambo:
-# si molesta, se cambia acá.
+# 30 s (iot_lavado.INTERVALO_GUARDADO_ANALOGICAS_S) y las entradas digitales dejan un latido cada 30 s
+# (iot_lavado.INTERVALO_LATIDO_DI_S), así que 30 minutos es muy holgado. Es una decisión mía, no del tambo: si molesta, se
+# cambia acá.
 VENTANA_LECTURA_RECIENTE_MIN = 30
 
 
-def _sin_datos_si_esta_mudo(sensor: dict, configuradas: dict, ahora: datetime.datetime) -> dict:
-    """Marca `sin_datos` en un sensor INSTALADO (alguna vez leyó, o el tambo le cargó límites) cuya última lectura es más
-    vieja que `VENTANA_LECTURA_RECIENTE_MIN`. En ese caso `valor` pasa a None (nunca el último conocido, que queda en
+def _sin_datos_si_esta_mudo(sensor: dict, con_limites: bool, ahora: datetime.datetime) -> dict:
+    """Marca `sin_datos` en un sensor INSTALADO (alguna vez leyó, o el tambo le cargó límites/colores) cuya última lectura es
+    más vieja que `VENTANA_LECTURA_RECIENTE_MIN`. En ese caso `valor` pasa a None (nunca el último conocido, que queda en
     `ultimo_valor` solo para informar) y `sin_datos_hace_min` dice cuánto hace. Uno que nunca leyó y no tiene límites
     es «sin instalar»: no es una falla, todavía no existe."""
-    cfg = iot_vumetros.config_de(sensor["clave"], configuradas)
-    con_limites = any(cfg[k] is not None for k in iot_vumetros.LIMITES)
     hace_min = None
     try:
         if sensor["fecha_hora"]:
@@ -340,11 +363,15 @@ def _sin_datos_si_esta_mudo(sensor: dict, configuradas: dict, ahora: datetime.da
     mudo = con_limites if hace_min is None else hace_min > VENTANA_LECTURA_RECIENTE_MIN
     if not mudo:
         return {**sensor, "sin_datos": False, "ultimo_valor": None, "sin_datos_hace_min": None}
-    return {**sensor, "valor": None, "sin_datos": True, "ultimo_valor": sensor["valor"], "sin_datos_hace_min": hace_min}
+    callado = {**sensor, "valor": None, "sin_datos": True, "ultimo_valor": sensor["valor"],
+               "sin_datos_hace_min": hace_min}
+    if sensor["tipo"] == "digital":
+        callado.update(ultimo_estado=sensor.get("estado"), activo=None, estado=None, zona=None)
+    return callado
 
 
 def _con_vumetro(sensor: dict, configuradas: dict) -> dict:
-    """Le suma a un sensor cómo se dibuja: estilo, escala propia (si el tambo cargó una, pisa la de siempre), los
+    """Le suma a un sensor analógico cómo se dibuja: estilo, escala propia (si el tambo cargó una, pisa la de siempre), los
     4 límites y la zona de color de su lectura de ahora (None si no hay lectura o no hay ningún límite)."""
     cfg = iot_vumetros.config_de(sensor["clave"], configuradas)
     return {
@@ -353,6 +380,7 @@ def _con_vumetro(sensor: dict, configuradas: dict) -> dict:
         "max": sensor["max"] if cfg["max"] is None else cfg["max"],
         "estilo": cfg["estilo"],
         "limites": {k: cfg[k] for k in iot_vumetros.LIMITES},
+        "con_color": any(cfg[k] is not None for k in iot_vumetros.LIMITES),
         "zona": iot_vumetros.zona(sensor["valor"], cfg),
     }
 
@@ -426,7 +454,7 @@ def conteo_alarmas(ahora: datetime.datetime = None) -> dict:
             c["sin_datos"] += 1
             c["sin_lectura"].append(s["label"])
             continue
-        if all(v is None for v in s["limites"].values()):
+        if not s["con_color"]:
             c["sin_limites"] += 1
             continue
         c["con_limites"] += 1
@@ -440,7 +468,7 @@ def conteo_alarmas(ahora: datetime.datetime = None) -> dict:
 
 def sensores_con_ith() -> list:
     """Claves de todo lo que tiene vúmetro: los sensores del panel y el ITH (que se calcula)."""
-    return [x["clave"] for x in SENSORES_PLANEADOS] + ["ith"]
+    return [x["clave"] for x in iot_sensores.analogicos()] + ["ith"]
 
 
 def sensores_para_vumetros() -> list:
@@ -448,7 +476,7 @@ def sensores_para_vumetros() -> list:
     la de siempre (la que se usa si el tambo no carga una propia)."""
     configuradas = iot_vumetros.cargar()
     base = [{"clave": s["clave"], "label": s["label"], "unidad": s["unidad"], "min": s["min"], "max": s["max"]}
-            for s in SENSORES_PLANEADOS]
+            for s in iot_sensores.analogicos()]
     base.append({"clave": "ith", "label": "ITH (estrés calórico)", "unidad": "", "min": 50, "max": 90})
     salida = []
     for s in base:
