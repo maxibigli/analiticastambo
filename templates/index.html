@@ -469,7 +469,8 @@
      (etiqueta + cifra grande), sin gráfico — se prioriza velocidad. */
   .gauge-row { display: flex; flex-wrap: wrap; gap: 10px; }
   /* Monitoreo IoT: tarjeta de un sensor (digital o con dial), clic = historial. Es un <button>: se llega con el teclado. */
-  .iot-tarjeta { min-width: 168px; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+  .iot-tarjeta { min-width: 168px; text-align: left; font: inherit; color: inherit; cursor: pointer;
+    display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; }
   .iot-tarjeta:hover { border-color: var(--accent); }
   .iot-tarjeta:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .iot-tarjeta.zona-verde .lac-metric__value { color: var(--good); }
