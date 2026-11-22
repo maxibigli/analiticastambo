@@ -3941,3 +3941,26 @@ de color de fondo con un plugin de Chart.js (`iotZonas`) y extiende el eje para 
 
 **Ojo con las lecturas ficticias de la PC de desarrollo**: `iot_sensores.db` tiene 26.411 lecturas inventadas (09/02 al 28/08/2026, `scripts/generar_lecturas_ficticias.py`). Sirven para ver los gráficos,
 pero mezclan datos falsos con los reales: **hay que borrarlas (`DELETE FROM lecturas_sensor;`) antes de usar sensores reales de verdad**, y nunca correr ese script en SERVER-DELPRO.
+
+### Tablero de Diagnóstico › «Alarmas de monitoreo IoT»: cuántos sensores hay en rojo, amarillo y verde (22/11/2026)
+
+La tarjeta de Instalación del Tablero (antes un esqueleto que buscaba `sensores` donde nunca existieron y siempre decía «No hay gateway IoT conectado») ahora cuenta los sensores
+del Monitoreo IoT según las zonas de sus vúmetros: `iot_monitoreo.conteo_alarmas` → `app._iot_alarmas_tablero` → tarjeta. Pruebas: `tests/test_iot_alarmas_tablero.py`.
+Muestra **«N activas»** (rojo + amarillo + sin datos), **cuatro contadores** (rojo / amarillo / verde / sin datos, aunque alguno sea 0) y el detalle de CUÁLES sensores están mudos, en rojo o en amarillo.
+
+**El color de la tarjeta lo decide el sensor más grave**, no los límites verde/rojo de la fila (`color_propio` en `tablero.INDICADORES`): rojo si hay alguno en rojo, naranja si hay amarillos, verde si no.
+En ⚙ Configuración › Tablero esa fila tiene los campos verde/rojo deshabilitados («color de los vúmetros»). El resumen de las 8:00/20:00 agrega el desglose («1 en rojo · 2 en amarillo · 2 en verde · 1 sin datos»).
+
+**Sensor mudo = «Sin datos» y alarma, no la última medición** (22/11/2026, pedido del usuario: «sensores sin envío de datos deberían arrojar una alerta, no quedarse con la ultima medicion»).
+`iot_monitoreo.lecturas_actuales` marca `sin_datos` en un sensor INSTALADO (leyó alguna vez, o el tambo le cargó límites) cuya última lectura tiene más de 30 minutos
+(`VENTANA_LECTURA_RECIENTE_MIN`; las analógicas se guardan cada 30 s; **decisión mía, no del tambo**) y entonces `valor` pasa a None: la última medición queda solo en `ultimo_valor` /
+`sin_datos_hace_min` para informar. Uno que nunca leyó y no tiene límites sigue «sin instalar» (no es una falla). El ITH está mudo si lo está la temperatura o la humedad ambiente.
+Lo ven todos los que leen `lecturas_actuales`: la tarjeta del panel IoT («Sin datos» en naranja, con «último dato: dom 22/11 16:19 (50 kPa)», sin aguja ni color de zona),
+la pantalla ESP32 (`/api/iot/pantalla` trae `valor: null` y `sin_datos: true`) y el Tablero.
+
+**Qué cuenta y qué no** (`conteo_alarmas`):
+  * Un sensor **mudo cuenta siempre, tenga límites o no** (que dejó de hablar no depende de con qué se lo compare): suma a «N activas» (rojo + amarillo + sin datos), es el 4.º contador y deja la tarjeta
+    en naranja como mínimo (el rojo gana). Un mudo **nunca es verde**.
+  * Los demás sensores solo cuentan por color con **límites cargados** (sin límites no hay con qué comparar).
+  * **No se rellena con la última lectura vieja** (`sin_ultima_lectura`): es del gateway local y una cuenta vieja mostrada como actual sería peor que decir que no hay dato.
+  * Sale de la base SQLite del gateway, no de DDM: ya no depende de que el servidor de DelPro responda (antes se salteaba con «caída»).

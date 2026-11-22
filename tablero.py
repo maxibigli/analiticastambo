@@ -310,8 +310,13 @@ INDICADORES = [
         "fuente": "iot", "pagina": "iot",
         "destino": "Monitoreo IoT",
         "grupo": "Instalación",
-        "ayuda": ("Sensores fuera de rango o sin reportar. Si el tambo no tiene "
-                  "gateway conectado, la tarjeta queda sin dato."),
+        # El color NO sale de verde/rojo de esta fila: lo decide el sensor más grave (rojo si hay alguno en rojo,
+        # naranja si hay amarillos, verde si no). Y no se rellena con una lectura vieja: es del gateway local.
+        "color_propio": True, "sin_ultima_lectura": True,
+        "ayuda": ("Cuántos sensores del Monitoreo IoT están en rojo, amarillo y verde según los límites de "
+                  "color que se cargan en ⚙ Configuración › Entradas/Salidas, y cuántos están sin datos (no mandaron "
+                  "nada en los últimos 30 minutos: eso cuenta como alarma, tengan límites o no). El color de la "
+                  "tarjeta es el del sensor más grave."),
     },
 ]
 
@@ -326,6 +331,10 @@ def _num(v):
         return None if v is None else float(v)
     except (TypeError, ValueError):
         return None
+
+
+# Colores de los tres niveles, los mismos extremos que usa `color_de` (verde, naranja y rojo del semáforo).
+_CSS_NIVEL = {"bien": "rgb(0, 135, 90)", "atencion": "rgb(242, 169, 0)", "mal": "rgb(228, 0, 43)"}
 
 
 def color_de(valor, verde, rojo) -> dict | None:
@@ -391,7 +400,7 @@ def armar(valores: dict, config: dict = None, lecturas: dict = None,
         viejo, leido, hace = False, None, None
 
         if valor is None:
-            prev = lecturas.get(ind["clave"]) or {}
+            prev = {} if ind.get("sin_ultima_lectura") else (lecturas.get(ind["clave"]) or {})
             if prev.get("valor") is not None:
                 valor = prev["valor"]
                 detalle = prev.get("detalle")
@@ -402,7 +411,13 @@ def armar(valores: dict, config: dict = None, lecturas: dict = None,
             leido = datetime.datetime.now().isoformat(timespec="seconds")
             hace = "recién"
 
-        col = color_de(valor, verde, rojo)
+        if ind.get("color_propio"):
+            # El nivel lo trae el dato (ver app._iot_alarmas_tablero); sin dato, la tarjeta queda gris.
+            nivel_propio = dato.get("nivel") if valor is not None else None
+            col = ({"css": _CSS_NIVEL[nivel_propio], "t": None, "nivel": nivel_propio}
+                   if nivel_propio in _CSS_NIVEL else None)
+        else:
+            col = color_de(valor, verde, rojo)
         tarjetas.append({
             **{k: ind[k] for k in ("clave", "nombre", "unidad", "decimales",
                                     "direccion", "pagina", "destino", "ayuda", "grupo")},
@@ -420,6 +435,8 @@ def armar(valores: dict, config: dict = None, lecturas: dict = None,
             # caída no se está calculando nada y decirlo sería mentir.
             "calculando": bool(dato.get("calculando")) and not base_caida,
             "detalle": detalle,
+            # Solo las tarjetas que cuentan por colores (hoy las alarmas IoT): {rojo, amarillo, verde, ...}.
+            "conteo": dato.get("conteo") if valor is not None else None,
             "leido": leido, "hace": hace, "viejo": viejo,
             "orden": cfg.get("orden", 999),
             "incluir_resumen": bool(cfg.get("incluir_resumen")),
@@ -449,6 +466,17 @@ def _num_ar(valor: float, decimales: int) -> str:
     return f"{valor:,.{decimales}f}".replace(",", "§").replace(".", ",").replace("§", ".")
 
 
+def _desglose(t: dict) -> str:
+    """«1 en rojo · 1 en amarillo · 3 en verde» para las tarjetas que cuentan por colores; '' para las demás."""
+    c = t.get("conteo")
+    if not c:
+        return ""
+    partes = [f"{c[k]} en {k}" for k in ("rojo", "amarillo", "verde")]
+    if c.get("sin_datos"):
+        partes.append(f"{c['sin_datos']} sin datos")
+    return " · ".join(partes)
+
+
 def texto_resumen(armado: dict, nombre_tambo: str = None) -> str | None:
     """Mensaje de texto con los indicadores tildados para el resumen periódico
     (ver `app.py::_revisar_resumen_tablero`) — agrupados igual que la pantalla,
@@ -472,7 +500,8 @@ def texto_resumen(armado: dict, nombre_tambo: str = None) -> str | None:
             emoji = _EMOJI_NIVEL.get(t["nivel"], "⚪")
             valor_txt = _num_ar(t["valor"], t["decimales"])
             vieja = " (dato viejo)" if t.get("viejo") else ""
-            partes.append(f"{emoji} {t['nombre']}: {valor_txt} {t['unidad']}{vieja}")
+            desglose = f" ({_desglose(t)})" if _desglose(t) else ""
+            partes.append(f"{emoji} {t['nombre']}: {valor_txt} {t['unidad']}{desglose}{vieja}")
     return "\n".join(partes)
 
 
@@ -512,6 +541,8 @@ def html_resumen(armado: dict, nombre_tambo: str = None) -> str | None:
             color = _COLOR_NIVEL.get(t["nivel"], _COLOR_NIVEL["sin_dato"])
             valor_txt = _num_ar(t["valor"], t["decimales"])
             vieja = ' <span style="color:#94a3b8;font-size:12px;">(dato viejo)</span>' if t.get("viejo") else ""
+            if _desglose(t):
+                vieja = f' <span style="color:#64748b;font-size:12px;">({_esc(_desglose(t))})</span>' + vieja
             filas.append(f"""<tr>
   <td style="padding:7px 0;border-bottom:1px solid #eef1f4;">
     <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:{color};margin-right:8px;"></span>
@@ -542,9 +573,10 @@ def html_resumen(armado: dict, nombre_tambo: str = None) -> str | None:
 
 def catalogo() -> list:
     """Los indicadores con sus defaults, para la pantalla de configuración."""
-    return [{k: i[k] for k in ("clave", "nombre", "unidad", "decimales",
-                               "direccion", "verde", "rojo", "grupo", "ayuda",
-                               "destino")}
+    return [{**{k: i[k] for k in ("clave", "nombre", "unidad", "decimales",
+                                  "direccion", "verde", "rojo", "grupo", "ayuda",
+                                  "destino")},
+             "color_propio": bool(i.get("color_propio"))}
             for i in INDICADORES]
 
 

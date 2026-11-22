@@ -479,6 +479,8 @@
   .iot-dial { display: block; width: 150px; height: 84px; margin: 2px 0 6px; }
   .iot-zona { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; font-size: 12px; font-weight: 600; }
   .iot-zona::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .iot-zona.sin-datos { color: var(--warning); }
+  .iot-tarjeta.sin-datos { border-color: var(--warning); }
   .iot-zona.verde { color: var(--good); } .iot-zona.amarillo { color: var(--warning); } .iot-zona.rojo { color: var(--critical); }
   /* Ventana de historial de un sensor */
   .iot-hist { width: min(920px, 94vw); padding: 18px 20px; border: 1px solid var(--border); border-radius: 14px;
@@ -663,6 +665,12 @@
     padding: 2px 9px; border-radius: 99px; line-height: 1.3; white-space: nowrap;
     background: var(--e); color: #fff; }
   .tb-card[data-nivel="atencion"] .tb-chip { color: #3b2800; }
+  /* Tarjeta que cuenta por colores (Alarmas de monitoreo IoT): tres contadores, rojo / amarillo / verde. */
+  .tb-conteo { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 6px 0 2px; font-size: 13px; }
+  .tb-cnt { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .tb-cnt i { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .tb-cnt b { font-size: 15px; font-variant-numeric: tabular-nums; }
+  .tb-cnt.cero { opacity: .5; }
   .tb-chip.calc { background: transparent; color: var(--muted); padding: 2px 0; font-weight: 500; }
   /* Cuándo se leyó el dato. Con el servidor caído es la diferencia entre un
      número que sirve y uno que engaña. */
@@ -10516,10 +10524,10 @@ function pintarConfigTablero() {
           <span class="aviso">${dir} ${escHtml(i.unidad)} · ${escHtml(i.destino)}</span><br>
           <span class="aviso" style="opacity:.8">${escHtml(i.ayuda)}</span></td>
       <td><input type="number" step="any" class="tb-cfg-verde" value="${c.verde ?? i.verde}"
-            style="width:92px;padding:5px 7px"></td>
+            style="width:92px;padding:5px 7px" ${i.color_propio ? 'disabled title="El color sale de los vúmetros"' : ''}></td>
       <td><input type="number" step="any" class="tb-cfg-rojo" value="${c.rojo ?? i.rojo}"
-            style="width:92px;padding:5px 7px"></td>
-      <td class="aviso" style="white-space:nowrap">${i.verde} / ${i.rojo}
+            style="width:92px;padding:5px 7px" ${i.color_propio ? 'disabled title="El color sale de los vúmetros"' : ''}></td>
+      <td class="aviso" style="white-space:nowrap">${i.color_propio ? 'color de los vúmetros' : `${i.verde} / ${i.rojo}`}
           ${c.modificado ? '<br><span class="chip rojo">cambiado</span>' : ''}</td>
       <td><div class="tb-escala" style="width:110px"></div></td>
       <td style="text-align:center">
@@ -10689,7 +10697,13 @@ function tarjetaTablero(t) {
   const marca = t.posicion == null ? '' :
     `<div class="tb-escala"><i style="left:calc(${(t.posicion * 100).toFixed(1)}% - 1.5px)"></i></div>
      <div class="tb-lims"><span>${t.verde}</span><span>${t.rojo}</span></div>`;
-  const sub = hayValor ? (t.detalle || '')
+  // Las tarjetas que cuentan por colores (alarmas IoT) muestran los tres contadores, aunque alguno sea 0.
+  const contadores = (hayValor && t.conteo)
+    ? `<div class="tb-conteo">${[['rojo', '--critical', 'rojo'], ['amarillo', '--warning', 'amarillo'], ['verde', '--good', 'verde'],
+        ['sin_datos', '--muted', 'sin datos']].map(([k, c, txt]) =>
+        `<span class="tb-cnt${t.conteo[k] ? '' : ' cero'}"><i style="background:var(${c})"></i><b>${t.conteo[k] || 0}</b> ${txt}</span>`
+      ).join('')}</div>` : '';
+  const sub = hayValor ? (t.detalle ? escHtml(t.detalle) : '')
     : `<span style="color:var(--muted)">${escHtml(t.calculando ? 'Calculando…' : (t.falta || 'Sin dato'))}</span>`;
   // Cuándo se leyó el dato, siempre que haya uno. Con el servidor caído es lo
   // que separa "esto es de ahora" de "esto es de ayer", y sin eso un número
@@ -10708,6 +10722,7 @@ function tarjetaTablero(t) {
     <div class="tb-nom">${escHtml(t.nombre)}</div>
     <div class="tb-val" style="${hayValor ? '' : 'color:var(--muted);font-size:19px'}">${val}${
       hayValor ? `<small>${escHtml(t.unidad)}</small>` : ''}</div>
+    ${contadores}
     <div class="tb-sub">${sub}</div>
     ${marca}
     ${leido}
@@ -11332,12 +11347,24 @@ function dialIotSVG(s) {
   </svg>`;
 }
 
+function ultimaLecturaIot(s) {
+  if (!s.fecha_hora) return 'nunca mandó datos';
+  const d = new Date(s.fecha_hora);
+  const cuando = d.toLocaleString('es-AR', { weekday: 'short', day: '2-digit', month: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false });
+  return 'último dato: ' + cuando + (s.ultimo_valor != null ? ` (${fmt(s.ultimo_valor)}${s.unidad || ''})` : '');
+}
+
 function iotTarjetaHTML(s) {
   const sinDato = s.valor == null;
   const valor = sinDato ? '—' : fmt(s.valor) + (s.unidad || '');
-  const sub = sinDato ? 'sin instalar' : (s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : '');
-  const chip = s.zona ? `<div class="iot-zona ${s.zona}">${ZONA_TEXTO[s.zona]}</div>` : '';
-  return `<button type="button" class="lac-metric iot-tarjeta${s.zona ? ' zona-' + s.zona : ''}"
+  // Un sensor mudo NO muestra su última medición como si fuera la de ahora: «Sin datos», con cuándo habló por última vez
+  // (fecha con día de la semana, no «hace 3 h»: el panel puede quedar abierto).
+  const sub = s.sin_datos ? ultimaLecturaIot(s) : sinDato ? 'sin instalar'
+    : (s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : '');
+  const chip = s.sin_datos ? '<div class="iot-zona sin-datos">Sin datos</div>'
+    : s.zona ? `<div class="iot-zona ${s.zona}">${ZONA_TEXTO[s.zona]}</div>` : '';
+  return `<button type="button" class="lac-metric iot-tarjeta${s.zona ? ' zona-' + s.zona : ''}${s.sin_datos ? ' sin-datos' : ''}"
       data-sensor="${escHtml(s.clave)}" aria-label="Ver el historial de ${escHtml(s.label)}">
     <div class="lac-metric__label">${escHtml(s.label)}</div>
     ${s.estilo === 'analogico' ? dialIotSVG(s) : ''}

@@ -361,7 +361,7 @@ class TestPanel(Base):
         ia.guardar(config_basica(), SENSORES)
         iot_lavado.procesar_analogicas(self.con, ClienteFalso({0: 12000}), {}, datetime.datetime(2026, 11, 22, 15))
         with mock.patch.object(iot_monitoreo, "RUTA_DB", self.ruta_db):
-            lect = {s["clave"]: s for s in iot_monitoreo.lecturas_actuales()}
+            lect = {s["clave"]: s for s in iot_monitoreo.lecturas_actuales(datetime.datetime(2026, 11, 22, 15))}
         self.assertEqual(lect["temp_leche"]["valor"], 20.0)
 
 

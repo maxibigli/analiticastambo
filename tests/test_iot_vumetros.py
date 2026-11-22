@@ -146,24 +146,24 @@ class TestLecturasActuales(Base):
     def test_cada_sensor_trae_su_estilo_limites_y_zona(self):
         self.lectura("temp_leche", 5.0, AHORA)
         iv.guardar({"temp_leche": {"estilo": "analogico", "amarillo_alto": 4, "rojo_alto": 6}}, SENSORES)
-        s = {x["clave"]: x for x in iot_monitoreo.lecturas_actuales()}["temp_leche"]
+        s = {x["clave"]: x for x in iot_monitoreo.lecturas_actuales(AHORA)}["temp_leche"]
         self.assertEqual((s["estilo"], s["zona"]), ("analogico", "amarillo"))
         self.assertEqual((s["limites"]["amarillo_alto"], s["limites"]["rojo_alto"]), (4, 6))
 
     def test_un_sensor_sin_configurar_es_digital_sin_zona(self):
         self.lectura("temp_ambiente", 20.0, AHORA)
-        s = {x["clave"]: x for x in iot_monitoreo.lecturas_actuales()}["temp_ambiente"]
+        s = {x["clave"]: x for x in iot_monitoreo.lecturas_actuales(AHORA)}["temp_ambiente"]
         self.assertEqual((s["estilo"], s["zona"]), ("digital", None))
 
     def test_un_sensor_sin_lectura_no_tiene_zona_aunque_tenga_limites(self):
         iv.guardar({"temp_leche": {"estilo": "digital", "rojo_alto": 6}}, SENSORES)
-        s = {x["clave"]: x for x in iot_monitoreo.lecturas_actuales()}["temp_leche"]
+        s = {x["clave"]: x for x in iot_monitoreo.lecturas_actuales(AHORA)}["temp_leche"]
         self.assertIsNone(s["valor"])
         self.assertIsNone(s["zona"])
 
     def test_la_escala_propia_pisa_la_del_sensor_y_sin_ella_queda_la_de_siempre(self):
         iv.guardar({"temp_leche": {"estilo": "analogico", "min": 2, "max": 12}}, SENSORES)
-        lect = {x["clave"]: x for x in iot_monitoreo.lecturas_actuales()}
+        lect = {x["clave"]: x for x in iot_monitoreo.lecturas_actuales(AHORA)}
         self.assertEqual((lect["temp_leche"]["min"], lect["temp_leche"]["max"]), (2, 12))
         self.assertEqual((lect["temp_lavado"]["min"], lect["temp_lavado"]["max"]), (0, 90))
 
@@ -171,10 +171,57 @@ class TestLecturasActuales(Base):
         self.lectura("temp_ambiente", 28.0, AHORA)
         self.lectura("hum_ambiente", 70.0, AHORA)
         iv.guardar({"ith": {"estilo": "analogico", "amarillo_alto": 68, "rojo_alto": 80}}, SENSORES)
-        ith = {x["clave"]: x for x in iot_monitoreo.lecturas_actuales()}["ith"]
+        ith = {x["clave"]: x for x in iot_monitoreo.lecturas_actuales(AHORA)}["ith"]
         self.assertEqual(ith["estilo"], "analogico")
         self.assertEqual(ith["valor"], 78.4)             # ITH de 28 °C y 70 %: entre 68 y 80
         self.assertEqual(ith["zona"], "amarillo")
+
+
+class TestSensorMudo(Base):
+    """Un sensor que dejó de mandar datos NO muestra su última medición: «Sin datos» y alerta."""
+
+    def sensor(self, clave="temp_leche"):
+        return {x["clave"]: x for x in iot_monitoreo.lecturas_actuales(AHORA)}[clave]
+
+    def test_con_una_lectura_reciente_funciona_normal(self):
+        self.lectura("temp_leche", 5.0, AHORA - datetime.timedelta(minutes=2))
+        s = self.sensor()
+        self.assertEqual((s["valor"], s["sin_datos"]), (5.0, False))
+
+    def test_pasada_la_ventana_el_valor_desaparece_y_el_ultimo_queda_solo_para_informar(self):
+        iv.guardar({"temp_leche": {"estilo": "digital", "rojo_alto": 6}}, SENSORES)
+        hace = iot_monitoreo.VENTANA_LECTURA_RECIENTE_MIN + 1
+        self.lectura("temp_leche", 7.5, AHORA - datetime.timedelta(minutes=hace))
+        s = self.sensor()
+        self.assertIsNone(s["valor"])
+        self.assertIsNone(s["zona"])                       # tampoco se pinta de rojo con un valor viejo
+        self.assertTrue(s["sin_datos"])
+        self.assertEqual((s["ultimo_valor"], s["sin_datos_hace_min"]), (7.5, hace))
+
+    def test_justo_en_el_limite_de_la_ventana_todavia_vale(self):
+        self.lectura("temp_leche", 5.0, AHORA - datetime.timedelta(minutes=iot_monitoreo.VENTANA_LECTURA_RECIENTE_MIN))
+        self.assertFalse(self.sensor()["sin_datos"])
+
+    def test_sin_lectura_ni_limites_es_sin_instalar_no_una_falla(self):
+        s = self.sensor()
+        self.assertEqual((s["valor"], s["sin_datos"]), (None, False))
+
+    def test_sin_lectura_pero_con_limites_es_sin_datos(self):
+        iv.guardar({"temp_leche": {"estilo": "digital", "rojo_alto": 6}}, SENSORES)
+        self.assertTrue(self.sensor()["sin_datos"])
+
+    def test_el_ith_esta_mudo_si_lo_esta_la_temperatura_o_la_humedad(self):
+        self.lectura("temp_ambiente", 28.0, AHORA)
+        self.lectura("hum_ambiente", 70.0, AHORA - datetime.timedelta(hours=3))
+        ith = self.sensor("ith")
+        self.assertTrue(ith["sin_datos"])
+        self.assertIsNone(ith["valor"])
+
+    def test_la_pantalla_esp32_avisa_que_el_sensor_esta_mudo(self):
+        self.lectura("temp_leche", 7.5, datetime.datetime.now() - datetime.timedelta(hours=3))
+        with mock.patch.object(app.iot_monitoreo, "estado_sistema", return_value={"estado": "ORDENIO", "desde": None}):
+            d = app.app.test_client().get("/api/iot/pantalla").get_json()
+        self.assertEqual((d["sensores"]["temp_leche"]["valor"], d["sensores"]["temp_leche"]["sin_datos"]), (None, True))
 
 
 class TestHistorial(Base):

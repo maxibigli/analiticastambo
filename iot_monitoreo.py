@@ -275,10 +275,10 @@ def ciclos_lavado(limite: int = 20) -> list:
     return ciclos[:limite]
 
 
-def lecturas_actuales() -> list:
-    """Último valor conocido de cada sensor planeado (None = todavía sin
-    instalar / sin datos). El ITH se calcula al vuelo si hay temp+hum de
-    ambiente disponibles; si no, también queda None."""
+def lecturas_actuales(ahora: datetime.datetime = None) -> list:
+    """Lectura de AHORA de cada sensor planeado. `valor` None = todavía sin instalar o sin datos (`sin_datos`: lleva más de
+    `VENTANA_LECTURA_RECIENTE_MIN` minutos sin mandar nada; ahí NO se devuelve la última medición, ver
+    `_sin_datos_si_esta_mudo`). El ITH se calcula al vuelo si hay temp+hum de ambiente; si no, también queda None."""
     con = sqlite3.connect(RUTA_DB)
     con.execute("""
         CREATE TABLE IF NOT EXISTS lecturas_sensor (
@@ -308,10 +308,39 @@ def lecturas_actuales() -> list:
     for s in SENSORES_PLANEADOS:
         v = valores[s["clave"]]
         salida.append({**s, "valor": v["valor"], "fecha_hora": v["fecha_hora"]})
+    # El ITH es tan reciente como el más viejo de los dos datos de los que sale.
+    fechas_ith = [valores[k]["fecha_hora"] for k in ("temp_ambiente", "hum_ambiente")]
     salida.append({"clave": "ith", "label": "ITH (estrés calórico)", "unidad": "", "min": 50, "max": 90,
-                    "valor": ith, "fecha_hora": None})
+                    "valor": ith, "fecha_hora": None if None in fechas_ith else min(fechas_ith)})
     configuradas = iot_vumetros.cargar()
-    return [_con_vumetro(s, configuradas) for s in salida]
+    ahora = ahora or datetime.datetime.now()
+    return [_con_vumetro(_sin_datos_si_esta_mudo(s, configuradas, ahora), configuradas) for s in salida]
+
+
+# Un sensor que no mandó nada en este tiempo está MUDO: no se muestra su última medición como si fuera la de ahora (sería
+# un «7 °C» tranquilizador de hace tres horas), se muestra «Sin datos» y cuenta como alarma. Las analógicas se guardan cada
+# 30 s (iot_lavado.INTERVALO_GUARDADO_ANALOGICAS_S), así que 30 minutos es muy holgado. Es una decisión mía, no del tambo:
+# si molesta, se cambia acá.
+VENTANA_LECTURA_RECIENTE_MIN = 30
+
+
+def _sin_datos_si_esta_mudo(sensor: dict, configuradas: dict, ahora: datetime.datetime) -> dict:
+    """Marca `sin_datos` en un sensor INSTALADO (alguna vez leyó, o el tambo le cargó límites) cuya última lectura es más
+    vieja que `VENTANA_LECTURA_RECIENTE_MIN`. En ese caso `valor` pasa a None (nunca el último conocido, que queda en
+    `ultimo_valor` solo para informar) y `sin_datos_hace_min` dice cuánto hace. Uno que nunca leyó y no tiene límites
+    es «sin instalar»: no es una falla, todavía no existe."""
+    cfg = iot_vumetros.config_de(sensor["clave"], configuradas)
+    con_limites = any(cfg[k] is not None for k in iot_vumetros.LIMITES)
+    hace_min = None
+    try:
+        if sensor["fecha_hora"]:
+            hace_min = int((ahora - datetime.datetime.fromisoformat(sensor["fecha_hora"])).total_seconds() // 60)
+    except ValueError:
+        pass
+    mudo = con_limites if hace_min is None else hace_min > VENTANA_LECTURA_RECIENTE_MIN
+    if not mudo:
+        return {**sensor, "sin_datos": False, "ultimo_valor": None, "sin_datos_hace_min": None}
+    return {**sensor, "valor": None, "sin_datos": True, "ultimo_valor": sensor["valor"], "sin_datos_hace_min": hace_min}
 
 
 def _con_vumetro(sensor: dict, configuradas: dict) -> dict:
@@ -381,6 +410,32 @@ def historico(sensor: str, desde: str, hasta: str, max_puntos: int = 150) -> lis
          "valor": round(sum(vals) / len(vals), 2)}
         for idx, vals in sorted(baldes.items())
     ]
+
+
+def conteo_alarmas(ahora: datetime.datetime = None) -> dict:
+    """Cuántos sensores están en rojo, amarillo y verde según las zonas de sus vúmetros, y cuántos están mudos (para el
+    Tablero de Diagnóstico).
+
+    Un sensor mudo (`sin_datos`: ver `_sin_datos_si_esta_mudo`) cuenta SIEMPRE, tenga límites o no: que dejó de mandar datos
+    no depende de con qué se lo compare. Los demás solo cuentan con límites cargados (sin ellos no hay con qué comparar la
+    lectura): nunca se mide con la última medición de un sensor que dejó de reportar."""
+    c = {"rojo": 0, "amarillo": 0, "verde": 0, "sin_datos": 0, "en_rojo": [], "en_amarillo": [], "sin_lectura": [],
+         "con_limites": 0, "sin_limites": 0}
+    for s in lecturas_actuales(ahora):
+        if s["sin_datos"]:
+            c["sin_datos"] += 1
+            c["sin_lectura"].append(s["label"])
+            continue
+        if all(v is None for v in s["limites"].values()):
+            c["sin_limites"] += 1
+            continue
+        c["con_limites"] += 1
+        c[s["zona"]] += 1
+        if s["zona"] == "rojo":
+            c["en_rojo"].append(s["label"])
+        elif s["zona"] == "amarillo":
+            c["en_amarillo"].append(s["label"])
+    return c
 
 
 def sensores_con_ith() -> list:

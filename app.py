@@ -1073,6 +1073,30 @@ def _dias_completos(sesiones: list, ordenos_dia: int | None) -> tuple[list, int]
             len(por_dia) - len(completos))
 
 
+def _iot_alarmas_tablero(ahora: datetime.datetime = None) -> dict:
+    """La tarjeta «Alarmas de monitoreo IoT» del Tablero: `valor` = sensores en alarma (rojo + amarillo + sin datos),
+    `conteo` = cuántos hay de cada tipo y `nivel` = el del sensor más grave. Un sensor que dejó de mandar datos es una
+    alarma (`nivel` atención como mínimo): nunca se lo cuenta con su última medición. Sin ningún sensor medible NO devuelve
+    un 0 (sin dato no es cero: un 0 se leería como «todo bien»), devuelve `falta` con el motivo."""
+    try:
+        c = iot_monitoreo.conteo_alarmas(ahora)
+    except Exception as exc:  # noqa: BLE001
+        return {"valor": None, "falta": f"Error al leer el monitoreo IoT: {exc}"}
+    if c["rojo"] + c["amarillo"] + c["verde"] + c["sin_datos"] == 0:
+        return {"valor": None, "falta": "Ningún sensor tiene límites de color cargados todavía "
+                         "(⚙ Configuración › Entradas/Salidas)."}
+    partes = []
+    if c["sin_lectura"]:
+        partes.append("Sin datos: " + ", ".join(c["sin_lectura"]))
+    if c["en_rojo"]:
+        partes.append("En rojo: " + ", ".join(c["en_rojo"]))
+    if c["en_amarillo"]:
+        partes.append("En amarillo: " + ", ".join(c["en_amarillo"]))
+    nivel = "mal" if c["rojo"] else ("atencion" if c["amarillo"] or c["sin_datos"] else "bien")
+    return {"valor": c["rojo"] + c["amarillo"] + c["sin_datos"], "nivel": nivel, "conteo": c,
+            "detalle": " · ".join(partes) or None}
+
+
 def _valores_tablero(tambo: str) -> dict:
     """{clave: {"valor"|"falta"|"calculando"}} para cada indicador del tablero.
 
@@ -1093,9 +1117,9 @@ def _valores_tablero(tambo: str) -> dict:
     # salen de un caché ya calentado se sirven igual — no necesitan la base.
     caida = _base_responde(tambo)
 
-    def poner(clave, valor=None, falta=None, calculando=False, detalle=None):
+    def poner(clave, valor=None, falta=None, calculando=False, detalle=None, **extra):
         out[clave] = {"valor": valor, "falta": falta,
-                      "calculando": calculando, "detalle": detalle}
+                      "calculando": calculando, "detalle": detalle, **extra}
 
     # --- Alimentación: costo por litro, litros libres y conversión ----------
     # Misma clave de caché que /api/alimentacion/conversion con sus días por
@@ -1390,22 +1414,9 @@ def _valores_tablero(tambo: str) -> dict:
     except Exception as exc:  # noqa: BLE001
         poner("ufc", falta=f"Error al leer las entregas: {exc}")
 
-    # --- IoT: sensores fuera de rango o sin reportar ------------------------
-    # `estado_sistema` consulta la base para saber si se está ordeñando, así que
-    # con el servidor caído también se cuelga en el timeout.
-    try:
-        if caida:
-            raise RuntimeError(caida)
-        est = iot_monitoreo.estado_sistema(tambo) or {}
-        sensores = est.get("sensores") or est.get("canales") or []
-        if not sensores:
-            poner("iot_alarmas", falta="No hay gateway IoT conectado en este tambo.")
-        else:
-            alarmas = sum(1 for s in sensores
-                          if s.get("alarma") or s.get("estado") in ("alarma", "sin_datos"))
-            poner("iot_alarmas", alarmas, detalle=f"de {len(sensores)} sensor(es)")
-    except Exception as exc:  # noqa: BLE001
-        poner("iot_alarmas", falta=f"Error al leer el monitoreo IoT: {exc}")
+    # --- IoT: cuántos sensores están en rojo, amarillo y verde ---------------
+    # Sale de la base SQLite local del gateway, no de DDM: no depende de que el servidor responda.
+    poner("iot_alarmas", **_iot_alarmas_tablero())
 
     # --- Rutina y días abiertos: con caché propio del tablero --------------
     # No tienen una clave de caché estable (la de rutina depende de la fecha y
@@ -2952,7 +2963,7 @@ def api_iot_pantalla():
     tambo = _tambo_del_request()
     sistema = iot_monitoreo.estado_sistema(tambo)
     sensores = {
-        s["clave"]: {"valor": s["valor"], "unidad": s["unidad"], "label": s["label"]}
+        s["clave"]: {"valor": s["valor"], "unidad": s["unidad"], "label": s["label"], "sin_datos": s["sin_datos"]}
         for s in iot_monitoreo.lecturas_actuales()
     }
     return jsonify({"estado": sistema["estado"], "desde": sistema["desde"], "sensores": sensores})
