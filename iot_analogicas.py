@@ -6,8 +6,9 @@ que ya muestra el panel (`iot_monitoreo.SENSORES_PLANEADOS`), con su escala. `io
 conexión Modbus) lee el registro, lo convierte con `convertir` y lo guarda en `lecturas_sensor`: el vúmetro se
 enciende solo, igual que cuando se cablea cualquier otro sensor.
 
-La escala son dos pares de números, y por eso no hay que saber cómo codifica el M300 la corriente:
-  * `raw_4` / `raw_20`: el número CRUDO que da el registro a 4 mA y a 20 mA. Se toman con un simulador mirando el valor
+Cada entrada es un punto «32 Bit Float (AB CD)» del M300 (decimal IEEE-754 en 2 registros 3X, el alto primero). La
+escala son dos pares de números, y por eso no hay que saber en qué unidad lo da (µA o mA):
+  * `raw_4` / `raw_20`: el número CRUDO que da el punto a 4 mA y a 20 mA. Se toman con un simulador mirando el valor
     en vivo de ⚙ Configuración › 🔌 Entradas/Salidas.
   * `min` / `max`: qué valor del sensor son 4 y 20 mA (el rango del transmisor). En blanco toma el del sensor.
 
@@ -115,6 +116,15 @@ def guardar(nuevo: dict, sensores: dict) -> None:
                    "min": minimo, "max": maximo}
         if any(v is not None for v in entrada.values()):   # una fila en blanco no se guarda
             limpio[clave] = entrada
+
+    # Cada entrada es un decimal de 32 bits: ocupa DOS registros desde su dirección. Direcciones a menos de 2 de
+    # distancia se pisan (la 3 y la 4 comparten el registro 4) y las dos leerían medio número de la otra.
+    ordenadas = sorted(direcciones_usadas.items())
+    for (d1, c1), (d2, c2) in zip(ordenadas, ordenadas[1:]):
+        if d2 - d1 < 2:
+            raise ValueError(
+                f"Las direcciones {d1} ({c1}) y {d2} ({c2}) se pisan: cada entrada analógica ocupa 2 registros, "
+                "así que la siguiente tiene que estar al menos 2 más allá.")
 
     with _lock:
         # Se escribe a un temporal y se reemplaza: iot_lavado.py lo lee en cada ciclo y no debe ver un archivo a medias.

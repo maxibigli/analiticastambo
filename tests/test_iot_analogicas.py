@@ -11,6 +11,7 @@ Sin red ni hardware: el cliente Modbus es de mentira y las bases son archivos te
 import datetime
 import os
 import sqlite3
+import struct
 import tempfile
 import unittest
 from unittest import mock
@@ -33,18 +34,27 @@ class Resp:
         return self._error
 
 
+def registros_de(valor):
+    """Un decimal de 32 bits «AB CD» (el formato de los puntos AI del M300) son dos registros, el alto primero."""
+    return list(struct.unpack(">HH", struct.pack(">f", valor)))
+
+
 class ClienteFalso:
-    """Devuelve, por dirección de registro de entrada, el valor que se le puso."""
+    """Devuelve, por dirección del primer registro, el decimal de 32 bits que se le puso (2 registros)."""
 
     def __init__(self, valores):
         self.valores = valores
         self.pedidos = []
+        self.cantidades = []
 
     def read_input_registers(self, address, count=1, device_id=1):
         self.pedidos.append(address)
+        self.cantidades.append(count)
         if address not in self.valores:
             return Resp(error=True)
-        return Resp([self.valores[address]])
+        valor = self.valores[address]
+        regs = valor if isinstance(valor, list) else registros_de(valor)
+        return Resp(regs[:count])
 
     def close(self):
         pass
@@ -153,6 +163,17 @@ class TestGuardar(Base):
             ia.guardar({"ai_1": {"sensor": "temp_leche", "direccion": 3},
                         "ai_2": {"sensor": "temp_lavado", "direccion": 3}}, SENSORES)
 
+    def test_direcciones_que_se_pisan_se_rechazan_porque_cada_entrada_ocupa_dos_registros(self):
+        with self.assertRaises(ValueError):
+            ia.guardar({"ai_1": {"sensor": "temp_leche", "direccion": 3},
+                        "ai_2": {"sensor": "temp_lavado", "direccion": 4}}, SENSORES)
+
+    def test_direcciones_contiguas_de_dos_en_dos_se_aceptan(self):
+        ia.guardar({"ai_1": {"sensor": "temp_leche", "direccion": 0},
+                    "ai_2": {"sensor": "temp_lavado", "direccion": 2},
+                    "ai_3": {"sensor": "vacio_general", "direccion": 4}}, SENSORES)
+        self.assertEqual(sorted(c["direccion"] for c in ia.cargar().values()), [0, 2, 4])
+
     def test_mismos_crudos_en_4_y_20_ma_se_rechazan(self):
         with self.assertRaises(ValueError):
             ia.guardar({"ai_1": {"sensor": "temp_leche", "raw_4": 100, "raw_20": 100}}, SENSORES)
@@ -245,6 +266,30 @@ class TestProcesarAnalogicas(Base):
         cliente.read_input_registers.side_effect = OSError("conexión caída")
         iot_lavado.procesar_analogicas(self.con, cliente, {}, self.AHORA)   # no tiene que levantar
         cliente.close.assert_called_once()           # igual que las DI: fuerza la reconexión
+
+    def test_cada_entrada_son_dos_registros_decodificados_como_decimal_de_32_bits(self):
+        ia.guardar({"ai_1": {"direccion": 4}}, SENSORES)
+        cliente, _ = self.correr({4: 6404.5})
+        self.assertEqual(cliente.cantidades, [2])
+        self.assertEqual(self.con.execute("SELECT raw FROM analogicas_crudo").fetchall(), [(6404.5,)])
+
+    def test_el_orden_es_ab_cd_el_registro_alto_primero(self):
+        # 0x4040 0x0000 es 3.0 en IEEE-754: con el orden de registros al revés daría un número ridículo.
+        ia.guardar({"ai_1": {"direccion": 0}}, SENSORES)
+        self.correr({0: [0x4040, 0x0000]})
+        self.assertEqual(self.con.execute("SELECT raw FROM analogicas_crudo").fetchall(), [(3.0,)])
+
+    def test_un_valor_que_no_es_numero_se_ignora(self):
+        ia.guardar(config_basica(), SENSORES)
+        self.correr({0: [0x7FC0, 0x0000]})           # NaN
+        self.correr({0: [0x7F80, 0x0000]})           # infinito
+        self.assertEqual(self.filas("analogicas_crudo"), [])
+        self.assertEqual(self.filas("lecturas_sensor"), [])
+
+    def test_una_respuesta_corta_se_ignora(self):
+        ia.guardar(config_basica(), SENSORES)
+        self.correr({0: [0x4040]})                   # llegó un solo registro
+        self.assertEqual(self.filas("analogicas_crudo"), [])
 
     def test_sin_direccion_no_se_lee_nada(self):
         ia.guardar({"ai_1": {"sensor": "temp_leche", "raw_4": 4000, "raw_20": 20000}}, SENSORES)

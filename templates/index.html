@@ -4409,9 +4409,11 @@
         Asigná cada entrada analógica a un sensor: apenas llega la señal, el vúmetro de ese sensor se enciende
         solo en Monitoreo IoT (y en la pantalla del tambo). Cada sensor va en una sola entrada.
         <br><b>Para calibrar</b> con un simulador: ponelo en 4 mA y apretá «tomar» en «Crudo a 4 mA»; ponelo en
-        20 mA y apretá «tomar» en «Crudo a 20 mA». El M300 informa la corriente en microamperios, así que
-        «Escala en µA» carga 4000 y 20000. «Valor a 4 / 20 mA» es el rango del transmisor (en blanco usa el del
-        sensor). La dirección es la que tiene el punto en la tabla de mapeo Modbus del M300 (tipo 3X).
+        20 mA y apretá «tomar» en «Crudo a 20 mA». Mirá en «En vivo» en qué unidad llega el número: si con 6,4 mA
+        ves ~6404 son microamperios y «Escala en µA» carga 4000 y 20000; si ves ~6,4 son mA y cargás 4 y 20 a mano.
+        «Valor a 4 / 20 mA» es el rango del transmisor (en blanco usa el del sensor).
+        Cada entrada es un decimal de 32 bits, o sea <b>2 registros</b>: la dirección es la del punto en la tabla de
+        mapeo Modbus del M300 (tipo 3X) y la siguiente entrada tiene que estar al menos 2 más allá (0, 2, 4…).
         Los cambios los toma el gateway solos, sin reiniciar. Una lectura de menos de 3,5 mA (cable cortado) no
         se guarda.
       </p>

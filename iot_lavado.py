@@ -20,6 +20,7 @@ Corre como proceso aparte, continuo (no es parte de la app Flask):
 """
 import datetime
 import sqlite3
+import struct
 import subprocess
 import time
 
@@ -126,7 +127,7 @@ def _conectar_db(ruta: str = RUTA_DB) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS analogicas_crudo (
             canal TEXT PRIMARY KEY,
             fecha_hora TEXT NOT NULL,
-            raw INTEGER NOT NULL
+            raw REAL NOT NULL
         )
     """)
     con.commit()
@@ -146,6 +147,21 @@ def _leer_estado(client: ModbusTcpClient, direccion: int, invertido: bool):
         return None
 
 
+def _decimal_32_bits(resultado):
+    """El número de una entrada analógica del M300, o None si la respuesta no sirve.
+
+    Los puntos AI del M300 son «32 Bit Float (AB CD)» (se ve en su lista de Data Point): un decimal IEEE-754 en DOS
+    registros consecutivos, el alto primero. Una respuesta de error, una corta, o un valor que no es número (NaN,
+    infinito) se descarta: no hay lectura, y no se guarda nada."""
+    if resultado.isError() or len(resultado.registers) < 2:
+        return None
+    alto, bajo = resultado.registers[:2]
+    valor = struct.unpack(">f", struct.pack(">HH", alto, bajo))[0]
+    if valor != valor or valor in (float("inf"), float("-inf")):
+        return None
+    return round(valor, 4)
+
+
 def procesar_analogicas(con: sqlite3.Connection, client: ModbusTcpClient, ultimo_guardado: dict,
                         ahora: datetime.datetime = None) -> None:
     """Lee los registros de entrada de las entradas analógicas asignadas (ver iot_analogicas) y:
@@ -161,13 +177,13 @@ def procesar_analogicas(con: sqlite3.Connection, client: ModbusTcpClient, ultimo
         if cfg.get("direccion") is None:
             continue
         try:
-            resultado = client.read_input_registers(address=cfg["direccion"], count=1, device_id=1)
+            resultado = client.read_input_registers(address=cfg["direccion"], count=2, device_id=1)
         except Exception:  # noqa: BLE001
             client.close()   # fuerza la reconexión, igual que en _leer_estado; el resto del ciclo se reintenta
             break
-        if resultado.isError():
+        raw = _decimal_32_bits(resultado)
+        if raw is None:
             continue
-        raw = int(resultado.registers[0])
         con.execute("INSERT OR REPLACE INTO analogicas_crudo (canal, fecha_hora, raw) VALUES (?, ?, ?)",
                     (canal, marca, raw))
         conv = iot_analogicas.convertir(raw, cfg)

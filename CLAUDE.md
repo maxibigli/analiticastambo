@@ -3893,10 +3893,16 @@ a `iot_monitoreo`/`iot_lavado`, igual que `iot_canales.py`; archivo `iot_analogi
 trae lo mismo, 4 mA = 4000 y 20 mA = 20000 (el botón «Escala en µA» carga eso). **No se supuso**: la escala son dos números crudos (`raw_4`, `raw_20`) que se toman en vivo
 con un simulador (botón «tomar»), más el rango del transmisor (`min`/`max`, en blanco toma el del sensor).
 
+**Formato del registro (corregido el 22/11/2026, mismo día): los puntos AI del M300 son «32 Bit Float (AB CD)»** (se ve en Data Point › lista de puntos del slave
+«Local_IO»: AI01, AI02, AI21 a AI24), o sea un decimal IEEE-754 en **DOS registros 3X consecutivos, el alto primero**. La primera versión leía UN registro de 16 bits
+y habría dado números sin sentido. Ahora `iot_lavado._decimal_32_bits` lee 2 registros y decodifica `>f`; un NaN, un infinito o una respuesta corta se descartan.
+Consecuencia: **las direcciones de las entradas tienen que estar al menos 2 de distancia** (0, 2, 4…), y `guardar` rechaza las que se pisan. En qué unidad llega el
+número (µA o mA) se ve en la columna «En vivo» con el simulador: no se supone.
+
 **Que se vean en la web del M300 NO las expone por Modbus.** Igual que DI01 y las salidas, hay que sumarlas a mano en Edge Computing › IO Module › Protocol › Modbus
 TCP › Node mapping table, como **registros de entrada 3X**, slave «Local_IO». Si el M300 no las mapea, `read_input_registers` da «Illegal Data Address» y la pantalla
-muestra «sin lectura». La dirección que quede asignada se carga en la columna «Dirección Modbus (3X)». **Supone un registro de 16 bits sin signo**: si el M300 las
-entrega como número de 32 bits o en coma flotante, hay que ajustar `procesar_analogicas`.
+muestra «sin lectura». La dirección que quede asignada se carga en la columna «Dirección Modbus (3X)». (Al 22/11/2026 todavía no estaban mapeadas por Modbus: los
+registros 3X y 4X daban «Illegal Data Address».)
 
 **Reglas deliberadas:**
   * **Un lazo cortado no se guarda.** Menos de 3,5 mA (o más de 21) es un cable suelto o un transmisor apagado, no una medición (`iot_analogicas.MA_MIN_VALIDO`):
