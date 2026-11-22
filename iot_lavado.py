@@ -25,11 +25,16 @@ import time
 
 from pymodbus.client import ModbusTcpClient
 
+import iot_analogicas
 import iot_conexion
 import lavado_programa
 import voz_comandos
 
 INTERVALO_POLL_S = 3      # cada cuánto se pregunta el estado
+# La lectura analógica llega cada ciclo (para calibrar en vivo), pero a `lecturas_sensor` se guarda una cada tanto:
+# a 3 s serían ~29.000 filas por día y por entrada para un dato que cambia en minutos. El histórico igual lo
+# agrupa en baldes (iot_monitoreo.historico).
+INTERVALO_GUARDADO_ANALOGICAS_S = 30
 INTERVALO_RECONEXION_S = 5
 INTENTOS_APAGADO_ARRANQUE = 3   # ver apagar_actuadores_voz_al_arrancar
 
@@ -105,6 +110,25 @@ def _conectar_db(ruta: str = RUTA_DB) -> sqlite3.Connection:
             etapa_inicio TEXT
         )
     """)
+    # Mismo esquema que crea iot_monitoreo.lecturas_actuales: la tabla la escribe ahora este proceso (entradas
+    # analógicas) y la lee la app, así que tiene que existir desde acá.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS lecturas_sensor (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sensor TEXT NOT NULL,
+            fecha_hora TEXT NOT NULL,
+            valor REAL NOT NULL
+        )
+    """)
+    con.execute("CREATE INDEX IF NOT EXISTS idx_lecturas_sensor_sensor_fecha ON lecturas_sensor(sensor, fecha_hora)")
+    # Último número CRUDO de cada entrada analógica: es lo que se mira para calibrar con un simulador.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS analogicas_crudo (
+            canal TEXT PRIMARY KEY,
+            fecha_hora TEXT NOT NULL,
+            raw INTEGER NOT NULL
+        )
+    """)
     con.commit()
     return con
 
@@ -120,6 +144,41 @@ def _leer_estado(client: ModbusTcpClient, direccion: int, invertido: bool):
     except Exception:  # noqa: BLE001
         client.close()   # ver el comentario igual en _escribir_reles: fuerza reconexion
         return None
+
+
+def procesar_analogicas(con: sqlite3.Connection, client: ModbusTcpClient, ultimo_guardado: dict,
+                        ahora: datetime.datetime = None) -> None:
+    """Lee los registros de entrada de las entradas analógicas asignadas (ver iot_analogicas) y:
+      * guarda SIEMPRE el número crudo (para calibrar en vivo con un simulador);
+      * si la entrada está calibrada y asignada a un sensor, guarda el valor convertido en `lecturas_sensor` como
+        mucho una vez cada INTERVALO_GUARDADO_ANALOGICAS_S. Un lazo cortado (~0 mA) NO se guarda.
+
+    La configuración se vuelve a leer en cada ciclo: lo que se guarda en la pantalla se toma sin reiniciar este
+    proceso. `ultimo_guardado` (canal -> datetime) es del llamador, para que sobreviva entre ciclos."""
+    ahora = ahora or datetime.datetime.now()
+    marca = ahora.isoformat(timespec="seconds")
+    for canal, cfg in iot_analogicas.cargar().items():
+        if cfg.get("direccion") is None:
+            continue
+        try:
+            resultado = client.read_input_registers(address=cfg["direccion"], count=1, device_id=1)
+        except Exception:  # noqa: BLE001
+            client.close()   # fuerza la reconexión, igual que en _leer_estado; el resto del ciclo se reintenta
+            break
+        if resultado.isError():
+            continue
+        raw = int(resultado.registers[0])
+        con.execute("INSERT OR REPLACE INTO analogicas_crudo (canal, fecha_hora, raw) VALUES (?, ?, ?)",
+                    (canal, marca, raw))
+        conv = iot_analogicas.convertir(raw, cfg)
+        if not conv or conv["sin_senal"] or not cfg.get("sensor"):
+            continue
+        anterior = ultimo_guardado.get(canal)
+        if anterior is None or (ahora - anterior).total_seconds() >= INTERVALO_GUARDADO_ANALOGICAS_S:
+            con.execute("INSERT INTO lecturas_sensor (sensor, fecha_hora, valor) VALUES (?, ?, ?)",
+                        (cfg["sensor"], marca, conv["valor"]))
+            ultimo_guardado[canal] = ahora
+    con.commit()
 
 
 def registrar_si_cambio(con: sqlite3.Connection, canal: str, estado: bool, estado_anterior) -> bool:
@@ -517,6 +576,7 @@ def main():
     client = ModbusTcpClient(cfg["host"], port=cfg["port"])
     anteriores = {canal: None for canal in CANALES}
     anteriores_voz = {clave: False for clave in voz_comandos.ACTUADORES_VALIDOS}
+    ultimo_guardado_analogicas = {}
     print(f"Conectando a {cfg['host']}:{cfg['port']}... (Ctrl+C para salir)")
     try:
         if not client.connected:
@@ -537,6 +597,7 @@ def main():
                 anteriores[canal] = registrar_si_cambio(con, canal, estado, anteriores[canal])
                 if arranco and AUDIO_ACTIVADO and canal in MENSAJES_VOZ:
                     _anunciar_voz(MENSAJES_VOZ[canal])
+            procesar_analogicas(con, client, ultimo_guardado_analogicas)
             ejecutar_comandos_pendientes(con, client)
             reles_lavado = procesar_ciclo_lavado(con, client)
             anteriores_voz = procesar_comandos_voz(con, client, anteriores_voz, reles_lavado)

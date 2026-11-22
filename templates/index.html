@@ -4402,6 +4402,25 @@
     <div style="margin-top:14px">
       <button id="config-iot-canales-guardar" disabled>Guardar</button>
     </div>
+
+    <div style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-top:22px">
+      <div style="font-weight:600;margin-bottom:8px">Entradas analógicas (4-20 mA) → vúmetros del panel</div>
+      <p class="explica">
+        Asigná cada entrada analógica a un sensor: apenas llega la señal, el vúmetro de ese sensor se enciende
+        solo en Monitoreo IoT (y en la pantalla del tambo). Cada sensor va en una sola entrada.
+        <br><b>Para calibrar</b> con un simulador: ponelo en 4 mA y apretá «tomar» en «Crudo a 4 mA»; ponelo en
+        20 mA y apretá «tomar» en «Crudo a 20 mA». El M300 informa la corriente en microamperios, así que
+        «Escala en µA» carga 4000 y 20000. «Valor a 4 / 20 mA» es el rango del transmisor (en blanco usa el del
+        sensor). La dirección es la que tiene el punto en la tabla de mapeo Modbus del M300 (tipo 3X).
+        Los cambios los toma el gateway solos, sin reiniciar. Una lectura de menos de 3,5 mA (cable cortado) no
+        se guarda.
+      </p>
+      <div class="aviso" id="config-iot-ana-estado" style="margin:8px 0"></div>
+      <div style="overflow-x:auto"><table class="tabla" id="config-iot-ana-tabla"></table></div>
+      <div style="margin-top:14px">
+        <button id="config-iot-ana-guardar" disabled>Guardar asignación</button>
+      </div>
+    </div>
   </section>
 
   <section class="card" id="config-lavado-auto-card" hidden>
@@ -15779,6 +15798,7 @@ async function cargarConfiguracion() {
     cargarVigilante();
     cargarConexionIot();
     cargarCanalesGateway();
+    cargarAnalogicas(true);
     cargarConfigTv();
     cargarLavadoAuto();
     cargarConfigCamaras();
@@ -16544,6 +16564,145 @@ document.getElementById('config-iot-canales-guardar').addEventListener('click', 
       body: JSON.stringify({ nombres: canalesGatewayActual }),
     });
     canalesGatewayOriginal = JSON.stringify(canalesGatewayActual);
+    estado.textContent = '✔ Guardado.';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+});
+
+// --- Entradas analógicas (4-20 mA) del M300 -> vúmetros del panel IoT --------
+// El servidor manda la configuración guardada MÁS la lectura en vivo de cada entrada. Lo que se está editando vive
+// aparte (anaActual) para que el refresco de cada 3 s solo toque la columna «En vivo» y nunca pise lo que se escribe.
+let anaCanales = [];
+let anaSensores = [];
+let anaActual = {};
+let anaOriginal = '';
+let anaTimer = null;
+const ANA_REFRESCO_MS = 3000;
+const ANA_CAMPOS = ['sensor', 'direccion', 'raw_4', 'raw_20', 'min', 'max'];
+
+function anaTexto(v) { return v == null ? '' : String(v); }
+
+function anaEnVivo(c) {
+  if (c.raw == null) return 'sin lectura';
+  if (c.sin_senal) return `${c.raw} · ⚠ sin señal (${String(c.ma).replace('.', ',')} mA)`;
+  if (c.ma == null) return `${c.raw} · sin calibrar`;
+  const sens = anaSensores.find(s => s.clave === c.sensor);
+  const valor = c.valor == null ? '' : ` · ${fmt(c.valor)}${sens && sens.unidad ? ' ' + sens.unidad : ''}`;
+  return `${c.raw} · ${String(c.ma).replace('.', ',')} mA${valor}`;
+}
+
+function anaCambiado() { return JSON.stringify(anaActual) !== anaOriginal; }
+
+function pintarAnalogicas() {
+  const t = document.getElementById('config-iot-ana-tabla');
+  const num = (c, campo, ancho, ph) => `<input type="number" step="any" data-ana="${campo}"
+      value="${escHtml(anaTexto(anaActual[c.clave][campo]))}" placeholder="${escHtml(ph || '')}"
+      style="width:${ancho}px;padding:6px">`;
+  t.innerHTML = `
+    <thead><tr><th>Entrada</th><th>Sensor</th><th>Dirección Modbus (3X)</th><th>Crudo a 4 mA</th>
+      <th>Crudo a 20 mA</th><th>Valor a 4 mA</th><th>Valor a 20 mA</th><th>En vivo (crudo · mA · valor)</th>
+      <th></th></tr></thead>
+    <tbody>${anaCanales.map(c => {
+      const a = anaActual[c.clave];
+      const s = anaSensores.find(x => x.clave === a.sensor);
+      return `<tr data-clave="${escHtml(c.clave)}">
+        <td>${escHtml(c.label)}</td>
+        <td><select data-ana="sensor" style="padding:6px">
+          <option value="">— sin asignar —</option>
+          ${anaSensores.map(x => `<option value="${escHtml(x.clave)}"${x.clave === a.sensor ? ' selected' : ''}>${escHtml(x.label)}</option>`).join('')}
+        </select></td>
+        <td>${num(c, 'direccion', 90)}</td>
+        <td style="white-space:nowrap">${num(c, 'raw_4', 90)} <button class="secundario" data-tomar="raw_4">tomar</button></td>
+        <td style="white-space:nowrap">${num(c, 'raw_20', 90)} <button class="secundario" data-tomar="raw_20">tomar</button></td>
+        <td>${num(c, 'min', 80, s ? String(s.min) : '')}</td>
+        <td>${num(c, 'max', 80, s ? String(s.max) : '')}</td>
+        <td data-vivo>${escHtml(anaEnVivo(c))}</td>
+        <td><button class="secundario" data-microamperios="1">Escala en µA</button></td>
+      </tr>`;
+    }).join('')}</tbody>`;
+  document.getElementById('config-iot-ana-guardar').disabled = !anaCambiado();
+}
+
+function pintarAnalogicasEnVivo() {
+  anaCanales.forEach(c => {
+    const td = document.querySelector(`#config-iot-ana-tabla tr[data-clave="${c.clave}"] [data-vivo]`);
+    if (td) td.textContent = anaEnVivo(c);
+  });
+}
+
+async function cargarAnalogicas(reiniciarEdicion) {
+  const estado = document.getElementById('config-iot-ana-estado');
+  try {
+    const d = await pedirJSON('/api/iot/analogicas');
+    anaCanales = d.canales || [];
+    anaSensores = d.sensores || [];
+    if (reiniciarEdicion || !Object.keys(anaActual).length) {
+      anaActual = {};
+      anaCanales.forEach(c => {
+        anaActual[c.clave] = {};
+        ANA_CAMPOS.forEach(k => { anaActual[c.clave][k] = anaTexto(c[k]); });
+      });
+      anaOriginal = JSON.stringify(anaActual);
+      pintarAnalogicas();
+      estado.textContent = '';
+    } else {
+      pintarAnalogicasEnVivo();
+    }
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+  clearInterval(anaTimer);
+  anaTimer = setInterval(() => {
+    // Solo mientras se mira esta tarjeta: no vale la pena pegarle al servidor cada 3 s desde otra pestaña.
+    if (document.hidden || document.getElementById('config-iot-canales-card').hidden) return;
+    cargarAnalogicas(false);
+  }, ANA_REFRESCO_MS);
+}
+
+document.getElementById('config-iot-ana-tabla').addEventListener('input', ev => {
+  const campo = ev.target.dataset.ana;
+  const clave = ev.target.closest('tr') && ev.target.closest('tr').dataset.clave;
+  if (!campo || !clave) return;
+  anaActual[clave][campo] = ev.target.value;
+  document.getElementById('config-iot-ana-guardar').disabled = !anaCambiado();
+});
+
+// El desplegable de sensor cambia los rangos que se sugieren, así que se vuelve a dibujar la tabla.
+document.getElementById('config-iot-ana-tabla').addEventListener('change', ev => {
+  if (ev.target.dataset.ana !== 'sensor') return;
+  const fila = ev.target.closest('tr');
+  if (fila) anaActual[fila.dataset.clave].sensor = ev.target.value;   // se anota ANTES de redibujar, o se pierde
+  pintarAnalogicas();
+});
+
+document.getElementById('config-iot-ana-tabla').addEventListener('click', ev => {
+  const fila = ev.target.closest('tr');
+  const clave = fila && fila.dataset.clave;
+  if (!clave) return;
+  const estado = document.getElementById('config-iot-ana-estado');
+  if (ev.target.dataset.tomar) {
+    const c = anaCanales.find(x => x.clave === clave);
+    if (!c || c.raw == null) { estado.textContent = 'Esa entrada todavía no tiene lectura: revisá la dirección Modbus.'; return; }
+    anaActual[clave][ev.target.dataset.tomar] = String(c.raw);
+    estado.textContent = '';
+    pintarAnalogicas();
+  } else if (ev.target.dataset.microamperios) {
+    anaActual[clave].raw_4 = '4000';
+    anaActual[clave].raw_20 = '20000';
+    pintarAnalogicas();
+  }
+});
+
+document.getElementById('config-iot-ana-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('config-iot-ana-estado');
+  estado.textContent = 'Guardando…';
+  try {
+    await pedirJSON('/api/iot/analogicas', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ canales: anaActual }),
+    });
+    await cargarAnalogicas(true);   // vuelve a leer: el servidor completa el rango en blanco con el del sensor
     estado.textContent = '✔ Guardado.';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;

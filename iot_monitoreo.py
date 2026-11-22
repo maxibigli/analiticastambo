@@ -21,6 +21,7 @@ import datetime
 import sqlite3
 
 import db
+import iot_analogicas
 import iot_canales
 import voz_comandos
 from iot_lavado import RUTA_DB, _conectar_db, ACTUADORES
@@ -177,6 +178,45 @@ def panel_io() -> dict:
         con.close()
 
     return {"entradas": entradas, "salidas": salidas}
+
+
+def sensores_asignables() -> dict:
+    """clave -> (min, max) de los sensores que se pueden asignar a una entrada analógica. El ITH no: se calcula."""
+    return {s["clave"]: (s["min"], s["max"]) for s in SENSORES_PLANEADOS}
+
+
+def panel_analogicas() -> dict:
+    """Las entradas analógicas con su asignación y su lectura EN VIVO, para ⚙ Configuración › 🔌 Entradas/Salidas.
+
+    De cada una: la configuración (sensor, dirección Modbus, escala), el último número crudo que leyó iot_lavado.py y,
+    si está calibrada, la corriente en mA y el valor ya convertido. Con un simulador en 4, 12 y 20 mA se ven los
+    crudos y se cargan como escala. `ma`/`valor` son None si falta calibrar; `valor` es None y `sin_senal` True si el
+    lazo está cortado."""
+    configuradas = iot_analogicas.cargar()
+    con = _conectar_db()
+    try:
+        crudos = {c: (raw, fh) for c, raw, fh in con.execute("SELECT canal, raw, fecha_hora FROM analogicas_crudo")}
+    finally:
+        con.close()
+
+    canales = []
+    for clave, label in iot_analogicas.CANALES:
+        cfg = configuradas.get(clave) or {}
+        raw, fecha = crudos.get(clave, (None, None))
+        conv = iot_analogicas.convertir(raw, cfg) if cfg else None
+        canales.append({
+            "clave": clave, "label": label,
+            "sensor": cfg.get("sensor"), "direccion": cfg.get("direccion"),
+            "raw_4": cfg.get("raw_4"), "raw_20": cfg.get("raw_20"),
+            "min": cfg.get("min"), "max": cfg.get("max"),
+            "raw": raw, "fecha_hora": fecha,
+            "ma": conv["ma"] if conv else None,
+            "valor": conv["valor"] if conv else None,
+            "sin_senal": bool(conv and conv["sin_senal"]),
+        })
+    sensores = [{"clave": s["clave"], "label": s["label"], "unidad": s["unidad"], "min": s["min"], "max": s["max"]}
+                for s in SENSORES_PLANEADOS]
+    return {"canales": canales, "sensores": sensores}
 
 
 def solicitar_pulso(canal: str) -> bool:

@@ -3880,3 +3880,30 @@ Se arregla cargando esos ingredientes en la planilla con el nombre del mixer; no
 ingredientes con el nombre de MixerOne y esos precios, sin la marca «Estimado». Los que MixerOne no tiene cargados (silo de pastura, heno de pastura, heno de paja de cebada, grano de maíz seco) siguen
 con la estimación de Haasten y marcados. El aviso rojo de «precios ESTIMADOS» ahora cuenta solo los ingredientes que el mixer usa en el período (`precios_alimentos.resumen(estimados_en_uso=...)`,
 que sale de `costo_por_lote_dia`), no todas las filas con la marca: la planilla conserva las filas del proveedor anterior y las contaba como si se usaran.
+
+## Entradas analógicas (4-20 mA) del M300 asignadas a los vúmetros del panel IoT (22/11/2026)
+
+⚙ Configuración › 🔌 Entradas/Salidas tiene un segundo bloque, **«Entradas analógicas → vúmetros»**: cada entrada analógica se asigna a UN sensor de los del panel
+(`iot_monitoreo.SENSORES_PLANEADOS`) con su escala, y el vúmetro de ese sensor se enciende solo. Módulos: `iot_analogicas.py` (configuración y conversión, sin importar
+a `iot_monitoreo`/`iot_lavado`, igual que `iot_canales.py`; archivo `iot_analogicas.json`, estado propio de cada instalación, **no está en git**),
+`iot_lavado.procesar_analogicas` (lee y guarda), `iot_monitoreo.panel_analogicas` + `GET/POST /api/iot/analogicas` (pantalla). Pruebas: `tests/test_iot_analogicas.py`.
+
+**Hardware (verificado en la web del M300, 22/11/2026): 6 entradas analógicas de corriente**: AI01 y AI02 de la base y AI21 a AI24 del módulo USR-IO0440; en la app son
+`ai_1` a `ai_6` en ese orden. **La web del M300 informa la corriente en MICROAMPERIOS** (AI21 con el simulador en ~6,4 mA marcaba `6404uA`): si el registro Modbus
+trae lo mismo, 4 mA = 4000 y 20 mA = 20000 (el botón «Escala en µA» carga eso). **No se supuso**: la escala son dos números crudos (`raw_4`, `raw_20`) que se toman en vivo
+con un simulador (botón «tomar»), más el rango del transmisor (`min`/`max`, en blanco toma el del sensor).
+
+**Que se vean en la web del M300 NO las expone por Modbus.** Igual que DI01 y las salidas, hay que sumarlas a mano en Edge Computing › IO Module › Protocol › Modbus
+TCP › Node mapping table, como **registros de entrada 3X**, slave «Local_IO». Si el M300 no las mapea, `read_input_registers` da «Illegal Data Address» y la pantalla
+muestra «sin lectura». La dirección que quede asignada se carga en la columna «Dirección Modbus (3X)». **Supone un registro de 16 bits sin signo**: si el M300 las
+entrega como número de 32 bits o en coma flotante, hay que ajustar `procesar_analogicas`.
+
+**Reglas deliberadas:**
+  * **Un lazo cortado no se guarda.** Menos de 3,5 mA (o más de 21) es un cable suelto o un transmisor apagado, no una medición (`iot_analogicas.MA_MIN_VALIDO`):
+    guardarlo como valor mostraría, por ejemplo, leche a 0 °C. La pantalla lo marca «⚠ sin señal».
+  * **Sin calibrar no se inventa un valor**: sin `raw_4`/`raw_20` o sin rango, `convertir` devuelve `None` y no se escribe nada en `lecturas_sensor`.
+  * **Cada sensor en una sola entrada, cada dirección en una sola entrada**, y el ITH no se asigna (se calcula con temperatura y humedad ambiente).
+  * **Se lee cada ciclo (3 s) para poder calibrar en vivo, pero a `lecturas_sensor` se guarda una cada 30 s** (`INTERVALO_GUARDADO_ANALOGICAS_S`): a 3 s serían
+    ~29.000 filas por día y por entrada.
+  * **La configuración se vuelve a leer en cada ciclo**: guardar en la pantalla no exige reiniciar `iot_lavado.py`. El guardado es atómico (archivo temporal y reemplazo).
+  * La tabla `lecturas_sensor` ahora también la crea `iot_lavado._conectar_db` (antes solo la app): es este proceso el que escribe, y tiene que existir desde ahí.

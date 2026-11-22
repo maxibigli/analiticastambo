@@ -46,6 +46,7 @@ import flujos
 import genetica
 import herencia
 import gestacion
+import iot_analogicas
 import iot_canales
 import iot_conexion
 import iot_monitoreo
@@ -3319,6 +3320,27 @@ def api_iot_canales_guardar():
         return jsonify({"error": "Formato inválido."}), 400
     try:
         iot_canales.guardar(nombres)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.get("/api/iot/analogicas")
+@auth.requiere_rol("admin")
+def api_iot_analogicas_listar():
+    """Entradas analógicas (4-20 mA) del M300: asignación a un sensor del panel, escala y lectura en vivo, para
+    ⚙ Configuración › 🔌 Entradas/Salidas. La lectura la hace iot_lavado.py; acá solo se ve lo último que dejó."""
+    return jsonify(iot_monitoreo.panel_analogicas())
+
+
+@app.post("/api/iot/analogicas")
+@auth.requiere_rol("admin")
+def api_iot_analogicas_guardar():
+    canales = (request.json or {}).get("canales")
+    if not isinstance(canales, dict):
+        return jsonify({"error": "Formato inválido."}), 400
+    try:
+        iot_analogicas.guardar(canales, iot_monitoreo.sensores_asignables())
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True})
