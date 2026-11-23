@@ -3409,6 +3409,16 @@ def api_iot_historial():
     zonas de color de fondo. (Distinto de /api/iot/pantalla/historico, que es público y es de la pantalla ESP32.)"""
     sensor = request.args.get("sensor", "")
     rango = request.args.get("rango", "dia")
+    digital = next((s for s in iot_sensores.digitales() if s["clave"] == sensor), None)
+    if digital:
+        try:
+            datos = iot_monitoreo.historial_digital(digital, rango)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({**datos, "label": digital["label"], "texto_activo": digital["texto_activo"],
+                        "texto_inactivo": digital["texto_inactivo"], "color_activo": digital["color_activo"],
+                        "color_inactivo": digital["color_inactivo"], "rol": digital["rol"],
+                        "con_entrada": bool(digital["entrada"])})
     if sensor not in iot_monitoreo.sensores_con_ith():
         return jsonify({"error": f"Sensor inválido: {sensor}"}), 400
     try:

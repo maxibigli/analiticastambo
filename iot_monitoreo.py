@@ -538,6 +538,60 @@ def _baldes(con, sensor: str, desde: str, hasta: str, balde_s: int) -> list:
             for b, p, mn, mx in filas]
 
 
+def historial_digital(sensor: dict, rango: str, ahora: datetime.datetime = None) -> dict:
+    """Historial de un sensor DIGITAL (ficha del catálogo) a partir de los cambios de su entrada (`eventos_di`).
+
+    `tramos` son los períodos de la ventana con un estado fijo ({desde, hasta, activo, segundos}), `cambios` los últimos 40
+    cambios (el más nuevo primero, con el texto que el tambo le puso a ese estado) y `resumen` cuánto estuvo activo.
+    Se supone que entre dos cambios el estado se mantiene: `eventos_di` guarda solo los cambios y no dice si el gateway estuvo
+    apagado en el medio. Antes del primer cambio que se conozca no se sabe el estado y ese tramo no se cuenta (la ventana
+    puede empezar antes de que el contacto existiera). Dos cambios seguidos al mismo estado (el gateway al reiniciar vuelve a
+    anotar el estado en que está) se funden en uno."""
+    if rango not in RANGOS_HISTORIAL:
+        raise ValueError(f"Rango inválido: {rango!r} (opciones: {', '.join(RANGOS_HISTORIAL)}).")
+    ahora = ahora or datetime.datetime.now()
+    ventana, _ = RANGOS_HISTORIAL[rango]
+    desde_dt = ahora - ventana
+    desde, hasta = desde_dt.isoformat(timespec="seconds"), ahora.isoformat(timespec="seconds")
+    entrada = sensor.get("entrada")
+    previo, eventos = None, []
+    if entrada:
+        con = _conectar_db()
+        try:
+            fila = con.execute("SELECT estado FROM eventos_di WHERE canal = ? AND fecha_hora < ? "
+                               "ORDER BY fecha_hora DESC, id DESC LIMIT 1", (entrada, desde)).fetchone()
+            previo = bool(fila[0]) if fila else None
+            eventos = [(f, bool(e)) for f, e in con.execute(
+                "SELECT fecha_hora, estado FROM eventos_di WHERE canal = ? AND fecha_hora >= ? AND fecha_hora <= ? "
+                "ORDER BY fecha_hora, id", (entrada, desde, hasta))]
+        finally:
+            con.close()
+
+    cambios, estado = [], previo                       # solo los cambios reales: un evento al mismo estado no cambia nada
+    for f, e in eventos:
+        if e != estado:
+            cambios.append((f, e))
+            estado = e
+    tramos, cursor, actual = [], (desde if previo is not None else None), previo
+    for f, e in cambios + [(hasta, None)]:
+        if cursor is not None and actual is not None and f > cursor:
+            seg = int((datetime.datetime.fromisoformat(f) - datetime.datetime.fromisoformat(cursor)).total_seconds())
+            tramos.append({"desde": cursor, "hasta": f, "activo": actual, "segundos": seg})
+        cursor, actual = f, e
+    activo_s = sum(t["segundos"] for t in tramos if t["activo"])
+    conocido_s = sum(t["segundos"] for t in tramos)
+    activaciones = [f for f, e in cambios if e]
+    cambios_texto = [{"fecha_hora": f, "activo": e,
+                      "estado": iot_sensores.estado_de(sensor, e)[0], "zona": iot_sensores.estado_de(sensor, e)[1]}
+                     for f, e in reversed(cambios)][:40]
+    return {"sensor": sensor["clave"], "tipo": "digital", "rango": rango, "desde": desde, "hasta": hasta,
+            "tramos": tramos, "cambios": cambios_texto,
+            "resumen": {"activo_s": activo_s, "conocido_s": conocido_s,
+                        "pct_activo": round(100 * activo_s / conocido_s, 1) if conocido_s else None,
+                        "activaciones": len(activaciones), "cambios": len(cambios),
+                        "ultima_activacion": activaciones[-1] if activaciones else None}}
+
+
 def historial(sensor: str, rango: str, ahora: datetime.datetime = None) -> dict:
     """Serie de UN sensor para el gráfico del historial: {puntos: [{t, prom, min, max}], resumen: {min, prom, max, n}}.
 

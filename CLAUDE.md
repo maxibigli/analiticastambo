@@ -4010,7 +4010,15 @@ Un estado no tiene color ni aviso (no es una alarma) y dos estados no pueden lla
 (y avisa). Sin latido todavía (recién actualizado, `iot_lavado.py` sin reiniciar) se usa el último cambio de `eventos_di`, como antes. `desde` es la hora
 del último encendido en `eventos_di`, no la del latido. El endpoint devuelve además `equipo` (True si viene de un sensor) y `estados`. La pantalla
 ESP32 lee `estado` como texto: **un nombre que el firmware no conozca (por ejemplo «LAVADORA») hay que verlo en la pantalla**, no se probó con el
-hardware. **Orden y tamaño de las tarjetas (22/11/2026).** El orden de la lista de sensores ES el orden de las tarjetas del panel; se cambia arrastrando
+hardware. **Historial de un sensor digital (22/11/2026).** La tarjeta digital con entrada asignada es un botón (sin entrada sigue siendo fija) y abre la misma
+ventana de historial que las analógicas (día / semana / mes / año). `/api/iot/historial` acepta un digital y devuelve `iot_monitoreo.historial_digital`:
+`tramos` (períodos con estado fijo), `cambios` (los últimos 40, con el texto del tambo y el más nuevo primero) y `resumen` (tiempo activo y %,
+activaciones, última activación). Sale de `eventos_di` (solo los CAMBIOS): **se supone que entre dos cambios el estado se mantiene**, así que un
+gateway apagado en el medio no se ve; el tramo anterior al primer cambio que se conozca no se cuenta (no se sabe cómo estaba) y dos cambios seguidos
+al mismo estado (el gateway al reiniciar anota otra vez el estado en que está) se funden en uno. Se dibuja como línea escalonada. Las fechas llevan día
+de la semana. Pruebas: `TestHistorialDigital` en `tests/test_iot_estados.py`.
+
+**Orden y tamaño de las tarjetas (22/11/2026).** El orden de la lista de sensores ES el orden de las tarjetas del panel; se cambia arrastrando
 del asa ⠿ de cada fila o con ▲▼ (un lugar). Cada sensor tiene `tamano`: `chico` (solo la cifra, sin dial), `mediano` (como siempre) o `grande`
 (2 columnas × 2 filas, dial y cifra grandes). El panel es una grilla con `grid-auto-flow: dense`, así que las tarjetas chicas rellenan los huecos
 al lado de una grande y el orden visual puede adelantar una tarjeta cuando eso evita un hueco. El ITH (calculado, no está en la lista) va siempre

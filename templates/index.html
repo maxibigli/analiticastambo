@@ -3725,9 +3725,15 @@
       <div class="iot-hist-resumen" id="iot-hist-resumen"></div>
       <div class="aviso" id="iot-hist-estado" style="margin:6px 0"></div>
       <div class="iot-hist-grafico"><canvas id="iot-hist-canvas"></canvas></div>
-      <p class="explica" style="margin-top:8px">
+      <div id="iot-hist-cambios" hidden style="max-height:180px;overflow:auto;margin-top:10px"></div>
+      <p class="explica" id="iot-hist-explica-an" style="margin-top:8px">
         La línea es el promedio de cada tramo y la banda, su mínimo y máximo. Los colores de fondo son las zonas
         que se configuran en ⚙ Configuración › 🔌 Entradas/Salidas.
+      </p>
+      <p class="explica" id="iot-hist-explica-dig" hidden style="margin-top:8px">
+        La línea sube cuando el contacto pasa a activo y baja cuando vuelve. Entre dos cambios se supone que el estado
+        se mantiene: si el gateway estuvo apagado en el medio, eso no se ve acá. «Activo» es el estado que el tambo
+        llamó con ese nombre en ⚙ Configuración › 🔌 Entradas/Salidas.
       </p>
     </dialog>
   </div>
@@ -11402,12 +11408,15 @@ function iotTarjetaDigitalHTML(s) {
     : !s.entrada ? 'sin entrada asignada'
     : s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : 'esperando lectura';
   const chip = s.sin_datos ? '<div class="iot-zona sin-datos">Sin datos</div>' : '';
-  return `<div class="lac-metric iot-tarjeta fija t-${s.tamano || 'mediano'}${s.zona ? ' zona-' + s.zona : ''}${s.sin_datos ? ' sin-datos' : ''}">
+  // Con entrada asignada es un botón: clic = historial de cambios. Sin entrada no hay nada que mostrar.
+  const clic = s.entrada ? `data-sensor="${escHtml(s.clave)}" aria-label="Ver el historial de ${escHtml(s.label)}"` : '';
+  const etiqueta = s.entrada ? 'button type="button"' : 'div';
+  return `<${etiqueta} class="lac-metric iot-tarjeta${s.entrada ? '' : ' fija'} t-${s.tamano || 'mediano'}${s.zona ? ' zona-' + s.zona : ''}${s.sin_datos ? ' sin-datos' : ''}" ${clic}>
     <div class="lac-metric__label">${escHtml(s.label)}</div>
     <div class="lac-metric__value">${escHtml(s.estado || '—')}</div>
     ${chip}
     <div class="lac-caption" style="margin-top:4px">${escHtml(sub)}</div>
-  </div>`;
+  </${s.entrada ? 'button' : 'div'}>`;
 }
 
 function iotTarjetaHTML(s) {
@@ -11474,8 +11483,55 @@ function etiquetaHistIot(t, rango) {   // t = '2026-11-22T15:10'
   return `${dm} ${t.slice(11, 13)}h`;
 }
 
+const _DIAS_SEM = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+function fechaCortaIot(t) {          // '2026-11-22T21:56:00' -> 'dom 22/11 21:56' (siempre con el día de la semana)
+  const d = new Date(t);
+  return `${_DIAS_SEM[d.getDay()]} ${t.slice(8, 10)}/${t.slice(5, 7)} ${t.slice(11, 16)}`;
+}
+function duracionIot(seg) {          // 5400 -> '1 h 30 min'
+  const h = Math.floor(seg / 3600), m = Math.round((seg % 3600) / 60);
+  return h ? `${h} h ${m} min` : `${m} min`;
+}
+
+// Historial de un sensor digital: una línea escalonada (arriba = activo) y la lista de los últimos cambios.
+function pintarHistorialDigitalIot(d) {
+  const r = d.resumen;
+  document.getElementById('iot-hist-resumen').innerHTML = [
+    [`Tiempo «${d.texto_activo}»`, r.pct_activo == null ? '—' : `${duracionIot(r.activo_s)} (${fmt(r.pct_activo)} %)`],
+    ['Activaciones', r.activaciones.toLocaleString('es-AR')],
+    ['Última activación', r.ultima_activacion ? fechaCortaIot(r.ultima_activacion) : '—'],
+  ].map(([t, v]) => `<div><span class="lac-caption">${escHtml(t)}</span><b>${escHtml(String(v))}</b></div>`).join('');
+  const t0 = new Date(d.desde).getTime(), t1 = new Date(d.hasta).getTime();
+  const puntos = [];
+  d.tramos.forEach(t => { puntos.push({ x: new Date(t.desde).getTime(), y: t.activo ? 1 : 0 }); });
+  if (d.tramos.length) puntos.push({ x: new Date(d.tramos[d.tramos.length - 1].hasta).getTime(), y: d.tramos[d.tramos.length - 1].activo ? 1 : 0 });
+  const opts = baseOpts(false);
+  const aLocal = v => new Date(v - new Date().getTimezoneOffset() * 60000).toISOString();   // epoch -> hora de pared
+  opts.scales.x = { ...opts.scales.x, type: 'linear', min: t0, max: t1,
+    ticks: { ...(opts.scales.x && opts.scales.x.ticks), maxTicksLimit: 8, maxRotation: 0, callback: v => etiquetaHistIot(aLocal(v).slice(0, 16), d.rango) } };
+  opts.scales.y = { ...opts.scales.y, min: -0.1, max: 1.1, beginAtZero: false,
+    ticks: { ...(opts.scales.y && opts.scales.y.ticks), stepSize: 1, callback: v => v === 1 ? d.texto_activo : v === 0 ? d.texto_inactivo : '' } };
+  opts.plugins.tooltip = { callbacks: {
+    title: items => fechaCortaIot(aLocal(items[0].parsed.x).slice(0, 19)),
+    label: c => c.parsed.y ? d.texto_activo : d.texto_inactivo } };
+  chartIotHist = dibujar('iot-hist-canvas', chartIotHist, { type: 'line', data: { datasets: [{
+    label: d.label, data: puntos, stepped: 'after', borderColor: css('--accent'), backgroundColor: css('--accent') + '26',
+    fill: 'origin', borderWidth: 2, pointRadius: 0 }] }, options: opts });
+  const caja = document.getElementById('iot-hist-cambios');
+  caja.innerHTML = d.cambios.length
+    ? '<table style="font-size:13px"><tbody>' + d.cambios.map(c =>
+        `<tr><td style="padding:2px 18px 2px 0;white-space:nowrap">${escHtml(fechaCortaIot(c.fecha_hora))}</td>
+         <td><span class="iot-zona ${c.zona || ''}" style="margin:0">${escHtml(c.estado)}</span></td></tr>`).join('') + '</tbody></table>'
+    : '';
+}
+
 function pintarHistorialIot(d) {
+  const dig = d.tipo === 'digital';
+  document.getElementById('iot-hist-explica-an').hidden = dig;
+  document.getElementById('iot-hist-explica-dig').hidden = !dig;
+  document.getElementById('iot-hist-cambios').hidden = !dig;
   document.getElementById('iot-hist-titulo').textContent = `Historial · ${d.label}`;
+  if (dig) return pintarHistorialDigitalIot(d);
   const u = d.unidad ? ' ' + d.unidad : '';
   const r = d.resumen;
   document.getElementById('iot-hist-resumen').innerHTML = [['Mínimo', r.min], ['Promedio', r.prom], ['Máximo', r.max]]
@@ -11513,7 +11569,8 @@ async function cargarHistorialIot() {
     const d = await pedirJSON(`/api/iot/historial?sensor=${encodeURIComponent(iotHistSensor)}&rango=${iotHistRango}`);
     if (pedido !== iotHistPedido) return;
     pintarHistorialIot(d);
-    estado.textContent = d.puntos.length ? '' : 'Todavía no hay lecturas en este período.';
+    const hay = d.tipo === 'digital' ? d.tramos.length : d.puntos.length;
+    estado.textContent = hay ? '' : (d.tipo === 'digital' ? 'Todavía no hay cambios registrados en este período.' : 'Todavía no hay lecturas en este período.');
   } catch (e) {
     if (pedido === iotHistPedido) estado.textContent = 'Error: ' + e.message;
   }

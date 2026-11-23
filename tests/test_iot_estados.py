@@ -12,6 +12,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+import app
 import iot_lavado
 import iot_monitoreo
 import iot_sensores as sen
@@ -134,6 +135,90 @@ class TestEstadoGeneral(Base):
         self.evento("lavado_rotativa", True, hace_min=20)
         self.latido("lavado_rotativa", True, hace_min=0)
         self.assertEqual(self.estado()["desde"], (AHORA - datetime.timedelta(minutes=20)).isoformat(timespec="seconds"))
+
+
+class TestHistorialDigital(Base):
+    """El historial de un sensor digital sale de los cambios de su entrada (`eventos_di`)."""
+
+    def setUp(self):
+        super().setUp()
+        self.sumar(label="Lavadora de tanque", entrada="di_3", estado_nombre="LAVADORA", texto_activo="En marcha",
+                   texto_inactivo="Parada")
+        self.sensor = sen.estados()[-1]
+
+    def cambio(self, activo, hace_min):
+        self.evento("di_3", activo, hace_min)
+
+    def hist(self, rango="dia"):
+        return iot_monitoreo.historial_digital(self.sensor, rango, AHORA)
+
+    def test_los_tramos_y_el_tiempo_activo_salen_de_los_cambios(self):
+        self.cambio(False, 600)        # ya estaba parada antes de la ventana de 24 h? no: dentro, hace 10 h
+        self.cambio(True, 120)
+        self.cambio(False, 60)
+        h = self.hist()
+        self.assertEqual([t["activo"] for t in h["tramos"]], [False, True, False])
+        self.assertEqual(h["resumen"]["activo_s"], 3600)
+        self.assertEqual(h["resumen"]["activaciones"], 1)
+        self.assertEqual(h["resumen"]["ultima_activacion"], (AHORA - datetime.timedelta(minutes=120)).isoformat(timespec="seconds"))
+
+    def test_el_estado_de_antes_de_la_ventana_cuenta_desde_el_comienzo(self):
+        self.cambio(True, 3000)        # hace ~50 h: antes de la ventana de 24 h
+        self.cambio(False, 60)
+        h = self.hist()
+        self.assertEqual(h["tramos"][0]["desde"], h["desde"])
+        self.assertTrue(h["tramos"][0]["activo"])
+        self.assertEqual(h["resumen"]["pct_activo"], round(100 * (23 * 3600) / (24 * 3600), 1))
+
+    def test_lo_que_se_ignora_es_el_tramo_anterior_al_primer_cambio_conocido(self):
+        self.cambio(True, 60)
+        h = self.hist()
+        self.assertEqual(h["resumen"]["conocido_s"], 3600)           # las 23 h de antes no se saben
+        self.assertEqual(h["resumen"]["pct_activo"], 100.0)
+
+    def test_dos_cambios_seguidos_al_mismo_estado_se_funden(self):
+        self.cambio(True, 300)         # el gateway reiniciado anota otra vez el estado en que está
+        self.cambio(True, 200)
+        self.cambio(False, 100)
+        h = self.hist()
+        self.assertEqual(h["resumen"]["cambios"], 2)
+        self.assertEqual(h["resumen"]["activaciones"], 1)
+
+    def test_los_cambios_llevan_el_texto_del_tambo_y_el_mas_nuevo_va_primero(self):
+        self.cambio(True, 120)
+        self.cambio(False, 60)
+        self.assertEqual([c["estado"] for c in self.hist()["cambios"]], ["Parada", "En marcha"])
+
+    def test_sin_cambios_ni_entrada_no_inventa_nada(self):
+        h = self.hist()
+        self.assertEqual((h["tramos"], h["resumen"]["pct_activo"], h["resumen"]["activaciones"]), ([], None, 0))
+        sin_entrada = {**self.sensor, "entrada": None}
+        self.assertEqual(iot_monitoreo.historial_digital(sin_entrada, "dia", AHORA)["tramos"], [])
+
+    def test_el_endpoint_atiende_a_un_sensor_digital_y_rechaza_un_rango_malo(self):
+        ahora = (datetime.datetime.now() - datetime.timedelta(minutes=30)).isoformat(timespec="seconds")
+        self.con.execute("INSERT INTO eventos_di (canal, fecha_hora, estado) VALUES ('di_3', ?, 1)", (ahora,))
+        self.con.commit()
+        cli = app.app.test_client()
+        with cli.session_transaction() as ses:
+            ses["rol"], ses["usuario"] = "admin", "x"
+        r = cli.get(f"/api/iot/historial?sensor={self.sensor['clave']}&rango=dia")
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertEqual((d["tipo"], d["label"], d["texto_activo"], d["con_entrada"]),
+                         ("digital", "Lavadora de tanque", "En marcha", True))
+        self.assertEqual(d["resumen"]["activaciones"], 1)
+        self.assertEqual(cli.get(f"/api/iot/historial?sensor={self.sensor['clave']}&rango=siglo").status_code, 400)
+
+    def test_un_rango_invalido_se_rechaza(self):
+        with self.assertRaises(ValueError):
+            self.hist("siglo")
+
+    def test_la_semana_ve_lo_que_el_dia_no(self):
+        self.cambio(True, 3 * 24 * 60)
+        self.cambio(False, 3 * 24 * 60 - 90)
+        self.assertEqual(self.hist("dia")["resumen"]["activaciones"], 0)
+        self.assertEqual(self.hist("semana")["resumen"]["activaciones"], 1)
 
 
 class TestValidacion(Base):
