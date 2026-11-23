@@ -1,21 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Nombres personalizados de las 8 SALIDAS (actuadores) del gateway PUSR
-M300 (ver iot_monitoreo.SALIDAS_PANEL), cargados por el tambo desde
-⚙ Configuración › 🔌 Entradas/Salidas -- reemplazan el "Actuador 1" genérico en
-el panel de Actuadores de la pantalla ESP32, en el selector de relés del Lavado
-Automático y en los comandos de voz.
+"""Los canales del gateway PUSR M300 (hasta 32 entradas analógicas, 32 digitales y 32 salidas) y los nombres que el tambo
+les pone desde ⚙ Configuración › 🔌 Entradas/Salidas.
 
-Las ENTRADAS ya no tienen nombre propio: lo que se ve de una entrada es el nombre
-del sensor que el tambo le ató (`iot_sensores`), o «Entrada N» si no tiene ninguno.
-Un archivo viejo con nombres de entrada se lee igual, pero esos nombres se ignoran.
+Es la única lista de canales que existe: el gateway (`iot_lavado`), el catálogo de sensores (`iot_sensores`), las entradas
+analógicas (`iot_analogicas`), el lavado automático y los comandos de voz la toman de acá. 32 es el tope que se puede
+nombrar y asignar, no lo que el hardware tiene hoy (2 digitales, 6 analógicas y 14 salidas con los módulos de
+expansión): el gateway solo consulta lo que está asignado a un sensor o tiene nombre (ver `iot_lavado.canales_a_leer`).
 
-Se guarda en un archivo JSON chico junto al código, mismo criterio que
-alertas_canales.json/whatsapp_ia_autorizados.json: es contenido propio de
-cada instalación, no del código.
+Claves (no cambian nunca: están en el historial y en los sensores guardados):
+  * entradas digitales 1..32: `lavado_rotativa` (1), `barrido_rotativa` (2), `di_3` .. `di_32`;
+  * entradas analógicas 1..32: `ai_1` .. `ai_32`;
+  * salidas 1..32: `do_1` .. `do_32`.
 
-Deliberadamente SIN import de iot_monitoreo/iot_lavado (que sí importan este
-módulo para pintar los nombres): la lista de claves válidas se declara acá
-misma para no armar un import circular.
+Los nombres se guardan en un archivo JSON chico junto al código, mismo criterio que alertas_canales.json: es contenido propio
+de cada instalación, no del código. Deliberadamente SIN import de ningún módulo del proyecto (todos los demás importan a éste):
+así no se arma un ciclo.
 """
 import json
 import os
@@ -25,26 +24,54 @@ import unicodedata
 _RUTA = os.path.join(os.path.dirname(__file__), "iot_canales_nombres.json")
 _lock = threading.Lock()
 
-CLAVES_VALIDAS = {
-    "lavado_rotativa", "barrido_rotativa",
-    "di_3", "di_4", "di_5", "di_6", "di_7", "di_8",
-    "do_1", "do_2", "do_3", "do_4", "do_5", "do_6", "do_7", "do_8",
+CANTIDAD = 32
+
+ENTRADAS_DIGITALES = tuple(
+    {1: "lavado_rotativa", 2: "barrido_rotativa"}.get(i, f"di_{i}") for i in range(1, CANTIDAD + 1))
+ENTRADAS_ANALOGICAS = tuple(f"ai_{i}" for i in range(1, CANTIDAD + 1))
+SALIDAS = tuple(f"do_{i}" for i in range(1, CANTIDAD + 1))
+
+CLAVES_VALIDAS = set(ENTRADAS_DIGITALES) | set(ENTRADAS_ANALOGICAS) | set(SALIDAS)
+
+# Nombre genérico (el que se ve mientras el tambo no pone uno), por clave.
+_GENERICOS = {
+    **{c: f"Entrada {i}" for i, c in enumerate(ENTRADAS_DIGITALES, 1)},
+    "lavado_rotativa": "Entrada 1 (lavado)", "barrido_rotativa": "Entrada 2 (barrido)",
+    **{c: f"Analógica {i}" for i, c in enumerate(ENTRADAS_ANALOGICAS, 1)},
+    **{c: f"Actuador {i}" for i, c in enumerate(SALIDAS, 1)},
 }
 
 
-SALIDAS = {c for c in CLAVES_VALIDAS if c.startswith("do_")}
+def generico(clave: str) -> str:
+    return _GENERICOS[clave]
+
+
+def numero(clave: str) -> int:
+    """1..32: el lugar del canal dentro de su grupo (entrada digital 3, salida 12…)."""
+    for grupo in (ENTRADAS_DIGITALES, ENTRADAS_ANALOGICAS, SALIDAS):
+        if clave in grupo:
+            return grupo.index(clave) + 1
+    raise KeyError(clave)
+
+
+def _grupo(clave: str):
+    return next(g for g in (ENTRADAS_DIGITALES, ENTRADAS_ANALOGICAS, SALIDAS) if clave in g)
 
 
 def nombres() -> dict:
-    """clave -> nombre personalizado. Solo trae lo que el tambo cambió; lo
-    que no está acá se queda con la etiqueta genérica default (ver
-    iot_monitoreo.ENTRADAS_PANEL/SALIDAS_PANEL)."""
+    """clave -> nombre personalizado. Solo trae lo que el tambo cambió; lo que no está acá se queda con el nombre genérico."""
     try:
         with open(_RUTA, "r", encoding="utf-8") as f:
             datos = json.load(f)
     except (FileNotFoundError, ValueError):
         return {}
-    return {c: n for c, n in datos.items() if c in SALIDAS} if isinstance(datos, dict) else {}
+    return {c: n for c, n in datos.items() if c in CLAVES_VALIDAS and isinstance(n, str) and n.strip()} \
+        if isinstance(datos, dict) else {}
+
+
+def nombre(clave: str) -> str:
+    """El nombre con que se ve un canal: el del tambo, o el genérico."""
+    return nombres().get(clave) or generico(clave)
 
 
 def _comparable(nombre: str) -> str:
@@ -60,27 +87,27 @@ def _comparable(nombre: str) -> str:
 
 def guardar(nombres_nuevos: dict) -> None:
     limpio = {}
-    vistos = {}   # nombre comparable -> primera clave que lo usó
+    vistos = {}   # (grupo, nombre comparable) -> primera clave que lo usó
     for clave, nombre in (nombres_nuevos or {}).items():
         if clave not in CLAVES_VALIDAS:
             raise ValueError(f"Canal desconocido: {clave!r}.")
-        if clave not in SALIDAS:
-            continue                  # las entradas se muestran con el nombre de su sensor: no llevan nombre propio
         nombre = str(nombre).strip()
         if nombre:   # vacío = "usar el nombre generico", no hace falta guardarlo
-            # Nombres repetidos NO se aceptan: los comandos de voz eligen el
-            # actuador por su nombre ("prender bomba de agua"), y con dos
-            # salidas llamadas igual no hay forma de saber cuál se pidió --
-            # antes de este chequeo se activaba siempre la primera, en
-            # silencio (ver voz_comandos._buscar_actuador).
-            repetido = vistos.get(_comparable(nombre))
+            # Nombres repetidos DENTRO de un mismo grupo NO se aceptan: los
+            # comandos de voz eligen el actuador por su nombre ("prender bomba
+            # de agua"), y con dos salidas llamadas igual no hay forma de saber
+            # cuál se pidió -- antes de este chequeo se activaba siempre la
+            # primera, en silencio (ver voz_comandos._buscar_actuador). En las
+            # entradas el mismo nombre dos veces haría ilegible el desplegable.
+            llave = (id(_grupo(clave)), _comparable(nombre))
+            repetido = vistos.get(llave)
             if repetido:
                 raise ValueError(
                     f"El nombre {nombre!r} está repetido ({repetido} y {clave}). "
-                    "Cada entrada/salida necesita un nombre distinto: los "
+                    "Cada canal del mismo tipo necesita un nombre distinto: los "
                     "comandos de voz eligen el actuador por su nombre."
                 )
-            vistos[_comparable(nombre)] = clave
+            vistos[llave] = clave
             limpio[clave] = nombre
     with _lock:
         with open(_RUTA, "w", encoding="utf-8") as f:

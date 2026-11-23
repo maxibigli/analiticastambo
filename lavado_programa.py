@@ -25,12 +25,14 @@ import os
 import sqlite3
 import threading
 
+import iot_canales
+
 RUTA_DB = "iot_sensores.db"
 _RUTA_CONFIG = os.path.join(os.path.dirname(__file__), "lavado_programa.json")
 _lock = threading.Lock()
 
 MAX_ETAPAS = 3
-RELES_VALIDOS = {"do_1", "do_2", "do_3", "do_4", "do_5", "do_6", "do_7", "do_8"}
+RELES_VALIDOS = set(iot_canales.SALIDAS)
 
 
 def _conectar_db() -> sqlite3.Connection:

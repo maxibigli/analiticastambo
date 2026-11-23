@@ -32,6 +32,7 @@ import tempfile
 import threading
 import unicodedata
 
+import iot_canales
 from iot_analogicas import numero as _numero
 
 _RUTA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iot_sensores.json")
@@ -43,8 +44,8 @@ MAX_UNIDAD = 12
 MAX_TEXTO = 24
 CLAVE_RESERVADA = "ith"           # el ITH se calcula con la temperatura y la humedad ambiente: no es un sensor de la lista
 
-# Las entradas digitales del gateway (las mismas claves que `iot_lavado.CANALES`; una prueba lo verifica).
-ENTRADAS = ("lavado_rotativa", "barrido_rotativa", "di_3", "di_4", "di_5", "di_6", "di_7", "di_8")
+# Las entradas digitales del gateway: hasta 32 (las mismas claves que `iot_lavado.CANALES`; una prueba lo verifica).
+ENTRADAS = iot_canales.ENTRADAS_DIGITALES
 ROLES = ("alarma", "indicador", "estado")
 VERSION = 2
 ESTADOS_RESERVADOS = ("ORDEÑO", "ORDENO", "APAGADO")   # los dos de abajo del estado general: no se pueden usar de nombre

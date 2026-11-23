@@ -2166,11 +2166,19 @@ aplica estos nombres por encima de `ENTRADAS_PANEL`/`SALIDAS_PANEL` — tanto
 la pantalla ESP32 (que lee `/api/iot/pantalla/io`) como cualquier pantalla
 web futura ven el nombre que cargó el tambo, sin tocar código.
 
-> **Actualización (22/11/2026): solo las SALIDAS llevan nombre propio.** Con el catálogo de sensores (`iot_sensores`) el nombre de una entrada era un
-> segundo nombre para lo mismo. Ahora `iot_canales.nombres()` devuelve solo `do_1`..`do_8` (un archivo viejo con nombres de entrada se lee sin ellos y
-> `guardar` ya no los escribe) y la tabla de ⚙ Configuración › 🔌 Entradas/Salidas tiene solo las 8 salidas. Una entrada se muestra con el nombre del
-> sensor atado a ella (pestaña Entradas de la pantalla ESP32, `panel_io`) o «Entrada N»; el desplegable «Entrada» del editor de sensores usa siempre el
-> nombre genérico. Las salidas siguen siendo lo que entienden los comandos de voz y lo que se elige en el Lavado Automático. Pruebas: `tests/test_iot_canales.py`.
+> **Actualización (22/11/2026): hasta 32 entradas analógicas, 32 digitales y 32 salidas, las tres con nombre propio y numeradas del 1 al 32.**
+> `iot_canales.py` es ahora LA lista de canales (`ENTRADAS_DIGITALES`, `ENTRADAS_ANALOGICAS`, `SALIDAS`) y de ahí la toman `iot_lavado`
+> (`CANALES`, `ACTUADORES`), `iot_sensores.ENTRADAS`, `iot_analogicas.CANALES`, `lavado_programa.RELES_VALIDOS` y `voz_comandos.ACTUADORES_VALIDOS`.
+> Las claves de siempre no cambian (la entrada digital 1 sigue siendo `lavado_rotativa`, la 2 `barrido_rotativa`, después `di_3`..`di_32`; `ai_1`..`ai_32`;
+> `do_1`..`do_32`): están en el historial y en los sensores guardados. La dirección Modbus es el número menos uno (solo comprobado con DI01/DI02 y DO11 =
+> bobina 0). **32 es el tope que se puede nombrar y asignar, no lo que el hardware tiene**: el M300 solo expone los puntos que se cargan en su tabla de mapeo
+> y consultar uno que no existe da «Illegal Data Address». Por eso `iot_lavado.canales_a_leer()` consulta únicamente lavado, barrido, las entradas con un
+> sensor asignado y las que tienen nombre (antes leía siempre las 8; ahora una DI3..DI8 sin sensor ni nombre ya no se consulta), y
+> `iot_lavado.actuadores_en_uso()` — las 8 salidas de siempre, las nombradas, las de una etapa del lavado y las sostenidas o con apagado pendiente por voz —
+> es lo único que se apaga al arrancar y se recorre en cada ciclo de voz (si no, el apagado de seguridad de arranque daría «no se pudo confirmar» por 24 salidas que
+> no existen). Un nombre repetido solo se rechaza dentro del mismo grupo (una entrada y una salida sí pueden llamarse igual). Una entrada se ve con su nombre
+> propio, o el de su sensor, o «Entrada N». **La pantalla ESP32 sigue recibiendo solo las primeras 8 entradas y 8 salidas** (`panel_io(maximo=8)` en
+> `/api/iot/pantalla/io`): su firmware tiene 16 tarjetas fijas y un buffer de respuesta, y más datos lo romperían. Pruebas: `tests/test_iot_canales.py`.
 
 **Pendiente, y es una decisión del tambo, no del código**: qué actuador
 físico va en cada una de las 8 salidas todavía no está definido — hoy son

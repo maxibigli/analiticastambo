@@ -131,27 +131,20 @@ def _desde_del_estado(sensor: dict):
     return fila[0] if fila else None
 
 
-# Panel de entradas/salidas del M300 (pestaña Actuadores de la pantalla
-# ESP32) -- 8 DI + 8 DO, ver iot_lavado.CANALES/ACTUADORES. Los dos primeros
-# DI ya tienen semántica propia (lavado/barrido, con su badge de estado en
-# la pestaña Sensores); el resto son genéricos hasta que el tambo defina qué
-# sensor/actuador va en cada uno.
-ENTRADAS_PANEL = [
-    ("lavado_rotativa", "Entrada 1 (lavado)"),
-    ("barrido_rotativa", "Entrada 2 (barrido)"),
-    ("di_3", "Entrada 3"),
-    ("di_4", "Entrada 4"),
-    ("di_5", "Entrada 5"),
-    ("di_6", "Entrada 6"),
-    ("di_7", "Entrada 7"),
-    ("di_8", "Entrada 8"),
-]
-SALIDAS_PANEL = [(f"do_{i}", f"Actuador {i}") for i in range(1, 9)]
+# Entradas digitales y salidas del M300 (hasta 32 de cada una, ver iot_canales) con su nombre genérico. Los dos primeros
+# DI ya tienen semántica propia (lavado/barrido); el resto son genéricos hasta que el tambo les ponga nombre o les ate un sensor.
+ENTRADAS_PANEL = [(c, iot_canales.generico(c)) for c in iot_canales.ENTRADAS_DIGITALES]
+SALIDAS_PANEL = [(c, iot_canales.generico(c)) for c in iot_canales.SALIDAS]
+
+# La pantalla ESP32 tiene lugar para 8 entradas y 8 salidas (16 tarjetas fijas en su firmware, y un buffer para la respuesta):
+# le mandamos solo las primeras 8 de cada una aunque haya hasta 32.
+MAXIMO_PANTALLA_ESP32 = 8
 
 
-def panel_io() -> dict:
-    """Estado de las 8 entradas (on/off) y las 8 salidas del M300, para la
-    pestaña Actuadores de la pantalla ESP32.
+def panel_io(maximo: int = None) -> dict:
+    """Estado de las entradas (on/off) y las salidas del M300, para la
+    pestaña Actuadores de la pantalla ESP32 (que pide `maximo=MAXIMO_PANTALLA_ESP32`: las primeras 8 de cada una).
+    Sin `maximo` salen todas. Una entrada se ve con el nombre que le puso el tambo, o el de su sensor, o «Entrada N».
 
     De cada salida se informan DOS cosas distintas:
     - `ultima_activacion`: cuándo se le mandó el último PULSO (el botón de
@@ -172,17 +165,18 @@ def panel_io() -> dict:
     ninguno de los dos."""
     nombres_custom = iot_canales.nombres()
     sostenidos = voz_comandos.estado()   # clave -> encendido_desde (ISO)
-    de_sensor = {s["entrada"]: s["label"] for s in iot_sensores.digitales() if s["entrada"]}   # la entrada lleva el nombre de su sensor
+    de_sensor = {s["entrada"]: s["label"] for s in iot_sensores.digitales() if s["entrada"]}
     entradas = [
-        {"clave": clave, "label": de_sensor.get(clave, label), "estado": estado, "desde": desde}
-        for clave, label in ENTRADAS_PANEL
+        {"clave": clave, "label": nombres_custom.get(clave) or de_sensor.get(clave) or label, "estado": estado,
+         "desde": desde}
+        for clave, label in ENTRADAS_PANEL[:maximo]
         for estado, desde in [_ultimo_estado_canal(clave)]
     ]
 
     con = _conectar_db()
     try:
         salidas = []
-        for clave, label in SALIDAS_PANEL:
+        for clave, label in SALIDAS_PANEL[:maximo]:
             fila = con.execute(
                 "SELECT fecha_hora FROM comandos_actuador WHERE canal = ? AND resultado = 'ok' "
                 "ORDER BY fecha_hora DESC LIMIT 1", (clave,)
@@ -216,7 +210,9 @@ def panel_analogicas() -> dict:
         con.close()
 
     canales = []
+    nombres_custom = iot_canales.nombres()
     for clave, label in iot_analogicas.CANALES:
+        label = nombres_custom.get(clave) or label
         cfg = configuradas.get(clave) or {}
         raw, fecha = crudos.get(clave, (None, None))
         conv = iot_analogicas.convertir(raw, cfg) if cfg else None

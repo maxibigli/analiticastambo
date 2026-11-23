@@ -4442,14 +4442,15 @@
   <section class="card" id="config-iot-canales-card" hidden>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">🔌 Entradas y Salidas del Gateway IoT</h2>
-      <span class="aviso">Nombres de los actuadores: los ve la pantalla táctil, el Lavado Automático y los comandos de voz.</span>
+      <span class="aviso">Hasta 32 entradas analógicas, 32 entradas digitales y 32 salidas, numeradas del 1 al 32.</span>
     </div>
     <p class="explica" style="margin-top:10px">
-      El gateway PUSR M300 tiene 8 salidas (actuadores tipo pulsador, se activan un instante y se
-      sueltan solas). Ponele un nombre a cada una: es el que se dice en voz alta («prender bomba de
-      agua»), el que aparece en el selector de relés del Lavado Automático y en la pantalla táctil.
-      Dejar el campo vacío vuelve al nombre genérico. Las entradas no llevan nombre acá: se ven con el
-      nombre del sensor que les asignes más abajo, en «Sensores del tambo».
+      Ponele nombre a cada canal del gateway PUSR M300; dejar el campo vacío vuelve al nombre genérico.
+      <b>Salidas</b>: el nombre es el que se dice en voz alta («prender bomba de agua») y el que aparece
+      en el selector de relés del Lavado Automático y en la pantalla táctil (que muestra las primeras 8
+      entradas y 8 salidas). <b>Entradas</b>: el nombre es el del borne y aparece al asignarlas a un
+      sensor. Que haya 32 de cada una es lo máximo que se puede nombrar: el gateway solo consulta las
+      entradas que tienen un nombre o un sensor, y solo maneja las salidas con nombre (o las 8 de siempre).
     </p>
     <div style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-bottom:16px">
       <div style="font-weight:600;margin-bottom:8px">Dirección del gateway M300</div>
@@ -16892,7 +16893,11 @@ async function cargarCanalesGateway() {
   estado.textContent = 'Cargando…';
   try {
     const d = await pedirJSON('/api/iot/canales');
-    canalesGatewayTodos = (d.salidas || []).map(c => ({ ...c, tipo: 'Salida' }));
+    canalesGatewayTodos = [
+      ...(d.analogicas || []).map(c => ({ ...c, tipo: 'Entradas analógicas' })),
+      ...(d.digitales || []).map(c => ({ ...c, tipo: 'Entradas digitales' })),
+      ...(d.salidas || []).map(c => ({ ...c, tipo: 'Salidas' })),
+    ];
     canalesGatewayActual = {};
     canalesGatewayTodos.forEach(c => {
       canalesGatewayActual[c.clave] = (c.nombre !== c.default) ? c.nombre : '';
@@ -16907,15 +16912,20 @@ async function cargarCanalesGateway() {
 
 function pintarCanalesGateway() {
   const t = document.getElementById('config-iot-canales-tabla');
-  t.innerHTML = `
-    <thead><tr><th style="width:90px">Tipo</th><th style="width:220px">Canal</th>
-      <th>Nombre personalizado</th></tr></thead>
-    <tbody>${canalesGatewayTodos.map(c => `<tr>
-      <td>${escHtml(c.tipo)}</td>
-      <td>${escHtml(c.default)}</td>
+  // Tres grupos con su encabezado; cada fila lleva su número (1 a 32) al costado.
+  let grupoActual = '';
+  const filas = canalesGatewayTodos.map(c => {
+    const encabezado = c.tipo === grupoActual ? '' : `<tr><th colspan="3" style="padding-top:14px;font-size:14px">${escHtml(c.tipo)}</th></tr>`;
+    grupoActual = c.tipo;
+    return `${encabezado}<tr>
+      <td style="width:46px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${c.numero}</td>
+      <td style="width:190px">${escHtml(c.default)}</td>
       <td><input data-clave="${escHtml(c.clave)}" value="${escHtml(canalesGatewayActual[c.clave] || '')}"
-          placeholder="${escHtml(c.default)}" style="width:100%;padding:6px"></td>
-    </tr>`).join('')}</tbody>`;
+          placeholder="${escHtml(c.default)}" style="width:100%;padding:4px 6px"></td>
+    </tr>`;
+  }).join('');
+  t.innerHTML = `<thead><tr><th style="width:46px;text-align:right">N°</th><th style="width:190px">Canal</th>
+      <th>Nombre personalizado</th></tr></thead><tbody>${filas}</tbody>`;
   const cambiado = JSON.stringify(canalesGatewayActual) !== canalesGatewayOriginal;
   document.getElementById('config-iot-canales-guardar').disabled = !cambiado;
 }
@@ -17217,7 +17227,7 @@ function pintarSensoresConfig() {
         ${equipo ? `<label class="aviso" style="margin:0" title="Lo que dice el cartel de la rotativa mientras este equipo está activo">Cartel ${campo(i, 'estado_nombre', s.estado_nombre, 120, 'text', 'maxlength="24" placeholder="(igual al nombre)"')}</label>` : ''}
         <label class="aviso" style="margin:0">Entrada <select data-i="${i}" data-sen="entrada" style="padding:6px;min-width:150px">
           <option value="">(sin entrada)</option>
-          ${senEntradas.map(e => `<option value="${escHtml(e.clave)}"${s.entrada === e.clave ? ' selected' : ''}>${escHtml(e.label)}</option>`).join('')}
+          ${senEntradas.map(e => `<option value="${escHtml(e.clave)}"${s.entrada === e.clave ? ' selected' : ''}>${e.numero}. ${escHtml(e.label.replace(/^Entrada \d+/, 'Entrada'))}</option>`).join('')}
         </select></label>
         <label class="aviso" style="margin:0">Activo dice ${campo(i, 'texto_activo', s.texto_activo, 110, 'text', 'maxlength="24"')}</label>
         ${equipo ? '' : colores(i, 'color_activo', s.color_activo, alarma)}

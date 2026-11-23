@@ -20,10 +20,12 @@ import os
 import tempfile
 import threading
 
+import iot_canales
+
 _RUTA = os.path.join(os.path.dirname(__file__), "iot_analogicas.json")
 _lock = threading.Lock()
 
-CANALES = [(f"ai_{i}", f"Analógica {i}") for i in range(1, 7)]
+CANALES = [(c, iot_canales.generico(c)) for c in iot_canales.ENTRADAS_ANALOGICAS]
 CLAVES_VALIDAS = {c for c, _ in CANALES}
 
 # Un lazo 4-20 mA sano nunca baja de 4 mA: por debajo de ~3,5 mA es un cable cortado o un transmisor apagado, no una

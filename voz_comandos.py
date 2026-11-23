@@ -45,7 +45,7 @@ import iot_canales
 import lavado_programa
 
 RUTA_DB = "iot_sensores.db"
-ACTUADORES_VALIDOS = {"do_1", "do_2", "do_3", "do_4", "do_5", "do_6", "do_7", "do_8"}
+ACTUADORES_VALIDOS = set(iot_canales.SALIDAS)
 
 # --- Umbrales de comparación difusa -------------------------------------
 # Los tres salen de la batería de medición del scratchpad

@@ -27,6 +27,7 @@ import time
 from pymodbus.client import ModbusTcpClient
 
 import iot_analogicas
+import iot_canales
 import iot_conexion
 import iot_sensores
 import lavado_programa
@@ -46,16 +47,10 @@ INTENTOS_APAGADO_ARRANQUE = 3   # ver apagar_actuadores_voz_al_arrancar
 # dos están cableadas a algo con nombre (lavado/barrido) -- las otras seis
 # quedan con nombre genérico "di_N" hasta que el tambo defina qué miden. Ver
 # iot_monitoreo.panel_io, que arma el panel de 8 tarjetas con estos canales.
-CANALES = {
-    "lavado_rotativa": {"direccion": 0, "invertido": False},
-    "barrido_rotativa": {"direccion": 1, "invertido": False},
-    "di_3": {"direccion": 2, "invertido": False},
-    "di_4": {"direccion": 3, "invertido": False},
-    "di_5": {"direccion": 4, "invertido": False},
-    "di_6": {"direccion": 5, "invertido": False},
-    "di_7": {"direccion": 6, "invertido": False},
-    "di_8": {"direccion": 7, "invertido": False},
-}
+# Hasta 32 entradas digitales (`iot_canales`): la n-ésima es la dirección n-1. La numeración secuencial solo se comprobó
+# con DI01 y DI02; el M300 expone únicamente los puntos que se cargan en su tabla de mapeo, así que una entrada que no está
+# mapeada contesta «Illegal Data Address» (se ignora). Por eso NO se consultan las 32 en cada ciclo: ver `canales_a_leer`.
+CANALES = {clave: {"direccion": i, "invertido": False} for i, clave in enumerate(iot_canales.ENTRADAS_DIGITALES)}
 
 # Salidas (DO) del M300 -- 8 disponibles, ninguna con actuador físico
 # definido todavía. Se manejan como PULSADOR (se activa un ratito y se
@@ -64,10 +59,8 @@ CANALES = {
 # un botón de arranque de un tablero real. Dirección Modbus 0-based de la
 # bobina (coil) -- espacio de direcciones DISTINTO al de las DI de arriba,
 # aunque los números se repitan (0 a 7 en los dos casos).
-ACTUADORES = {
-    "do_1": 0, "do_2": 1, "do_3": 2, "do_4": 3,
-    "do_5": 4, "do_6": 5, "do_7": 6, "do_8": 7,
-}
+ACTUADORES = {clave: i for i, clave in enumerate(iot_canales.SALIDAS)}   # hasta 32, la n-ésima es la bobina n-1
+SALIDAS_DE_SIEMPRE = tuple(iot_canales.SALIDAS[:8])   # las 8 que existían antes de ampliar a 32: siempre en uso
 DURACION_PULSO_S = 0.5
 
 RUTA_DB = "iot_sensores.db"
@@ -170,6 +163,26 @@ def latir(con: sqlite3.Connection, canal: str, estado: bool, ultimo: dict, ahora
                 (canal, ahora.isoformat(timespec="seconds"), int(estado)))
     con.commit()
     ultimo[canal] = (estado, ahora)
+
+
+def canales_a_leer() -> list:
+    """Las entradas digitales que hay que consultar en este ciclo: lavado y barrido de siempre, las que tienen un sensor
+    asignado y las que el tambo nombró. Las otras no se consultan: no hay nada que mostrar ahí, y en un M300 sin esos puntos
+    mapeados cada consulta sería un error."""
+    usados = {"lavado_rotativa", "barrido_rotativa"}
+    usados |= {d["entrada"] for d in iot_sensores.digitales() if d["entrada"]}
+    usados |= set(iot_canales.nombres()) & set(CANALES)
+    return [c for c in CANALES if c in usados]
+
+
+def actuadores_en_uso() -> set:
+    """Las salidas que este proceso maneja de verdad: las 8 de siempre, las que tienen nombre, las que usa una etapa del
+    lavado automático y las que están sostenidas (o con un apagado pendiente) por voz. Las demás de las 32 no se tocan: no
+    se las apaga al arrancar ni se las recorre en cada ciclo, porque en un M300 donde no existen darían error."""
+    nombradas = set(iot_canales.nombres()) & set(ACTUADORES)
+    de_lavado = {r for etapa in lavado_programa.etapas() for r in etapa.get("reles", [])} & set(ACTUADORES)
+    de_voz = (set(voz_comandos.estado()) | set(voz_comandos.apagados_pendientes())) & set(ACTUADORES)
+    return set(SALIDAS_DE_SIEMPRE) | nombradas | de_lavado | de_voz
 
 
 def entradas_invertidas() -> dict:
@@ -466,7 +479,7 @@ def procesar_comandos_voz(con: sqlite3.Connection, client: ModbusTcpClient,
     deseado = voz_comandos.estado()  # clave -> encendido_desde, solo las que están ON
     apagados_pendientes = voz_comandos.apagados_pendientes()
     nuevo = {}
-    for clave in sorted(voz_comandos.ACTUADORES_VALIDOS):
+    for clave in sorted(actuadores_en_uso()):
         on = clave in deseado
         apagado_explicito = clave in apagados_pendientes
         anterior = anteriores_voz.get(clave, False)
@@ -569,7 +582,7 @@ def apagar_actuadores_voz_al_arrancar(client: ModbusTcpClient) -> set:
     `client.connected` no sirve como señal de éxito (una respuesta de error
     del M300 deja el socket sano y, además, sólo reflejaría el resultado del
     ÚLTIMO relé de la vuelta)."""
-    claves = sorted(voz_comandos.ACTUADORES_VALIDOS)
+    claves = sorted(actuadores_en_uso())
     for clave in claves:
         voz_comandos.limpiar_estado(clave)
 
@@ -622,7 +635,7 @@ def main():
     cfg = iot_conexion.config()
     client = ModbusTcpClient(cfg["host"], port=cfg["port"])
     anteriores = {canal: None for canal in CANALES}
-    anteriores_voz = {clave: False for clave in voz_comandos.ACTUADORES_VALIDOS}
+    anteriores_voz = {clave: False for clave in actuadores_en_uso()}
     ultimo_guardado_analogicas = {}
     ultimo_latido = {}
     print(f"Conectando a {cfg['host']}:{cfg['port']}... (Ctrl+C para salir)")
@@ -638,7 +651,8 @@ def main():
             if not client.connected:
                 client.connect()
             invertidas = entradas_invertidas()
-            for canal, cfg in CANALES.items():
+            for canal in canales_a_leer():
+                cfg = CANALES[canal]
                 # El contacto normalmente cerrado de un sensor digital se suma al propio de la entrada (si ambos, se anulan).
                 estado = _leer_estado(client, cfg["direccion"], cfg["invertido"] != invertidas.get(canal, False))
                 if estado is None:

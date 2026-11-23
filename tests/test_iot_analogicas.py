@@ -339,9 +339,9 @@ class TestPanel(Base):
         super().setUp()
         self.parchar_conexion_del_panel()
 
-    def test_el_panel_trae_los_6_canales_y_los_sensores_asignables(self):
+    def test_el_panel_trae_los_32_canales_y_los_sensores_asignables(self):
         d = iot_monitoreo.panel_analogicas()
-        self.assertEqual([c["clave"] for c in d["canales"]], [f"ai_{i}" for i in range(1, 7)])
+        self.assertEqual([c["clave"] for c in d["canales"]], [f"ai_{i}" for i in range(1, 33)])
         claves = {s["clave"] for s in d["sensores"]}
         self.assertIn("temp_leche", claves)
         self.assertNotIn("ith", claves)
@@ -378,7 +378,7 @@ class TestApi(Base):
     def test_get_trae_los_canales(self):
         r = self.cli.get("/api/iot/analogicas")
         self.assertEqual(r.status_code, 200)
-        self.assertEqual(len(r.get_json()["canales"]), 6)
+        self.assertEqual(len(r.get_json()["canales"]), 32)
 
     def test_post_guarda_y_get_lo_devuelve(self):
         r = self.cli.post("/api/iot/analogicas", json={"canales": {

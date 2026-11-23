@@ -3014,10 +3014,9 @@ def _pedido_via_tunel() -> bool:
 
 @app.get("/api/iot/pantalla/io")
 def api_iot_pantalla_io():
-    """Estado de las 8 entradas + 8 salidas del M300 para la pestaña
-    Actuadores de la pantalla ESP32 -- mismo criterio público que
-    /api/iot/pantalla (de solo lectura, sin nada sensible)."""
-    return jsonify(iot_monitoreo.panel_io())
+    """Estado de las primeras 8 entradas + 8 salidas del M300 (la pantalla ESP32 no tiene lugar para más) para la pestaña
+    Actuadores -- mismo criterio público que /api/iot/pantalla (de solo lectura, sin nada sensible)."""
+    return jsonify(iot_monitoreo.panel_io(maximo=iot_monitoreo.MAXIMO_PANTALLA_ESP32))
 
 
 @app.post("/api/iot/pantalla/actuador")
@@ -3326,11 +3325,15 @@ def api_tv_seccion_dispositivo(indice):
 @app.get("/api/iot/canales")
 @auth.requiere_rol("admin")
 def api_iot_canales_listar():
-    """Nombres (custom o genérico) de las 8 salidas del M300, para el editor de ⚙ Configuración › 🔌 Entradas/Salidas.
-    Las entradas no llevan nombre propio: se muestran con el de su sensor."""
+    """Nombres (custom o genérico) de los canales del M300 —hasta 32 entradas digitales, 32 analógicas y 32 salidas, cada
+    una con su número— para el editor de ⚙ Configuración › 🔌 Entradas/Salidas."""
     custom = iot_canales.nombres()
-    salidas = [{"clave": c, "default": l, "nombre": custom.get(c, l)} for c, l in iot_monitoreo.SALIDAS_PANEL]
-    return jsonify({"salidas": salidas})
+
+    def grupo(claves):
+        return [{"clave": c, "numero": i, "default": iot_canales.generico(c), "nombre": custom.get(c, iot_canales.generico(c))}
+                for i, c in enumerate(claves, 1)]
+    return jsonify({"digitales": grupo(iot_canales.ENTRADAS_DIGITALES), "analogicas": grupo(iot_canales.ENTRADAS_ANALOGICAS),
+                    "salidas": grupo(iot_canales.SALIDAS)})
 
 
 @app.post("/api/iot/canales")
@@ -3359,7 +3362,9 @@ def api_iot_analogicas_listar():
 def api_iot_sensores_listar():
     """El catálogo de sensores del Monitoreo IoT (analógicos y digitales) para el editor de ⚙ Configuración › 🔌 Entradas/
     Salidas, con las entradas digitales del gateway que se les pueden asignar y cuáles están en uso por un analógico."""
-    entradas = [{"clave": clave, "label": label} for clave, label in iot_monitoreo.ENTRADAS_PANEL]
+    custom = iot_canales.nombres()
+    entradas = [{"clave": clave, "numero": i, "label": custom.get(clave, label)}
+                for i, (clave, label) in enumerate(iot_monitoreo.ENTRADAS_PANEL, 1)]
     return jsonify({"sensores": iot_sensores.cargar(), "entradas": entradas,
                     "asignados": sorted({c["sensor"] for c in iot_analogicas.cargar().values() if c.get("sensor")})})
 
