@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
 """Monitoreo IoT en tiempo real: estado de la rotativa (ORDEÑO / LAVANDO /
-BARRIDO / APAGADO) y sensores de temperatura/humedad del tambo.
+BARRIDO / APAGADO) y sensores de temperatura/humedad del tambo. LAVANDO y BARRIDO ya no están escritos: son dos
+sensores de estado de la lista que arma el tambo (`iot_sensores`), igual que cualquier otro equipo que quiera sumar.
 
 Fuentes de datos:
 - ORDEÑO: NO es un sensor propio — se deriva de la actividad reciente en
   MilkingDeviceVisit (base DDM de DelPro). Si hubo una visita hace poco,
   la rotativa está ordeñando.
-- LAVANDO / BARRIDO: contactos secos DI01/DI02 del gateway PUSR M300,
-  leídos y guardados por iot_lavado.py en iot_sensores.db (tabla eventos_di).
+- LAVANDO / BARRIDO (y los demás estados de equipo): contactos secos del gateway PUSR M300 (DI01/DI02 de
+  siempre), leídos por iot_lavado.py en iot_sensores.db (tablas eventos_di y digitales_estado).
 - Sensores de temperatura/humedad: en `lecturas_sensor` de la misma base —
-  todavía SIN hardware instalado (ver SENSORES_PLANEADOS). El tablero los
+  según el catálogo de `iot_sensores`. El tablero los
   muestra como "a instalar" hasta que aparezcan filas reales; no hace falta
   tocar este código cuando se cableen, empiezan a mostrarse solos.
 
@@ -84,31 +85,57 @@ def _ordeno_activo(tambo: str) -> bool:
     return resultado
 
 
-def estado_sistema(tambo: str) -> dict:
-    lavando, fecha_lavado = _ultimo_estado_canal("lavado_rotativa")
-    barriendo, fecha_barrido = _ultimo_estado_canal("barrido_rotativa")
+def estado_sistema(tambo: str, ahora: datetime.datetime = None) -> dict:
+    """El estado general de la rotativa, el cartel de arriba del panel.
+
+    Manda el PRIMER sensor de estado (`iot_sensores.estados()`, en el orden que dejó el tambo) que esté activo y hablando:
+    LAVANDO y BARRIDO de siempre, o lo que el tambo haya sumado (la lavadora, un portón). Si ninguno está activo, ORDEÑO
+    cuando hay visitas recientes en DelPro; si no, APAGADO. Un sensor de estado que dejó de mandar datos (`sin_datos`) no
+    cuenta como activo: mejor «APAGADO» que un «LAVANDO» de hace tres horas. Antes de que `iot_lavado.py` escriba su primer
+    latido (recién actualizado, todavía sin reiniciar) se usa el último cambio registrado, como se hacía siempre.
+
+    `equipo` dice si el estado viene de un sensor (True) o es ORDEÑO/APAGADO; `estados` es cada uno con si está activo."""
+    ahora = ahora or datetime.datetime.now()
+    lecturas = {s["clave"]: s for s in lecturas_actuales(ahora)}
+    estados, elegido = [], None
+    for sensor in iot_sensores.estados():
+        lectura = lecturas.get(sensor["clave"]) or {}
+        activo = lectura.get("activo")
+        if activo is None and not lectura.get("sin_datos") and sensor["entrada"]:
+            activo = _ultimo_estado_canal(sensor["entrada"])[0]            # sin latido todavía: el último cambio
+        estados.append({"clave": sensor["clave"], "estado": sensor["estado_nombre"], "activo": bool(activo),
+                        "sin_datos": bool(lectura.get("sin_datos"))})
+        if activo and elegido is None:
+            elegido = (sensor["estado_nombre"], _desde_del_estado(sensor))
     ordenando = _ordeno_activo(tambo)
-
-    if lavando:
-        estado, desde = "LAVANDO", fecha_lavado
-    elif barriendo:
-        estado, desde = "BARRIDO", fecha_barrido
+    if elegido:
+        estado, desde, equipo = elegido[0], elegido[1], True
     elif ordenando:
-        estado, desde = "ORDEÑO", None
+        estado, desde, equipo = "ORDEÑO", None, False
     else:
-        estado, desde = "APAGADO", None
+        estado, desde, equipo = "APAGADO", None, False
+    return {"estado": estado, "desde": desde, "equipo": equipo, "ordenando": ordenando, "estados": estados}
 
-    return {
-        "estado": estado, "desde": desde,
-        "lavando": lavando, "barriendo": barriendo, "ordenando": ordenando,
-    }
+
+def _desde_del_estado(sensor: dict):
+    """Desde cuándo está activo un estado: la hora del último CAMBIO de su entrada (los latidos de cada 30 s no sirven,
+    dicen «ahora» siempre). Sin cambio registrado (el gateway recién se conectó) queda sin hora."""
+    if not sensor.get("entrada"):
+        return None
+    con = _conectar_db()
+    try:
+        fila = con.execute("SELECT fecha_hora FROM eventos_di WHERE canal = ? AND estado = 1 "
+                           "ORDER BY fecha_hora DESC LIMIT 1", (sensor["entrada"],)).fetchone()
+    finally:
+        con.close()
+    return fila[0] if fila else None
 
 
 # Panel de entradas/salidas del M300 (pestaña Actuadores de la pantalla
 # ESP32) -- 8 DI + 8 DO, ver iot_lavado.CANALES/ACTUADORES. Los dos primeros
 # DI ya tienen semántica propia (lavado/barrido, con su badge de estado en
 # la pestaña Sensores); el resto son genéricos hasta que el tambo defina qué
-# sensor/actuador va en cada uno -- mismo criterio que SENSORES_PLANEADOS.
+# sensor/actuador va en cada uno.
 ENTRADAS_PANEL = [
     ("lavado_rotativa", "Entrada 1 (lavado)"),
     ("barrido_rotativa", "Entrada 2 (barrido)"),

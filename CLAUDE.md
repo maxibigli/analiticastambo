@@ -3977,7 +3977,7 @@ Costos conocidos: un sensor que oscila mudo/vivo cada rato manda un aviso por ca
 ### Catálogo de sensores dinámico: analógicos, alarmas e indicadores digitales (22/11/2026)
 
 Pedido del usuario: «esto deberia ser configurable en cantidad de sensores segun el proyecto» y que haya sensores digitales para una alarma, un
-fin de carrera o algo que se asigne a un estado (como la lavadora). **Paso 1 de 2** (el paso 2 es la lista de estados configurable, ver abajo).
+fin de carrera o algo que se asigne a un estado (como la lavadora). **Paso 1 de 2** (el paso 2, los estados de equipo, está al final de esta sección).
 
 **Se separaron la entrada física y el sensor.** Las ENTRADAS las fija el hardware (6 analógicas y 8 digitales del M300; **solo 2 digitales existen de
 verdad: DI01 y DI02**, las otras 6 no tienen nada atrás hasta que se agregue un módulo de expansión de entradas o sensores LoRa). Los SENSORES son una lista que arma el tambo
@@ -3999,4 +3999,15 @@ no se distinguiría de un gateway apagado). **Reglas de «sin datos» (30 min) i
 (`ultimo_evento` en `iot_avisos.json`): una alarma que entró y salió entre dos pasadas igual se avisa; la primera vez no repite el historial, solo lo que ya está en alarma; hasta 10 líneas por mensaje.
 **Pantalla ESP32**: `/api/iot/pantalla` deja `sensores` solo con los analógicos (el firmware espera números) y agrega `digitales` (`label`, `estado`, `zona`, `sin_datos`).
 **Panel IoT**: la tarjeta digital muestra el texto del estado en su color; no tiene dial ni historial (las tarjetas analógicas siguen abriendo el historial). El Tablero cuenta los digitales por color igual que a los demás.
-**Falta (paso 2)**: la lista de estados configurable que reemplaza el estado fijo de la rotativa (hoy DI01 = LAVANDO, DI02 = BARRIDO, ordeño, APAGADO en `iot_monitoreo.estado_sistema`). Pruebas: `tests/test_iot_sensores.py`, `test_iot_digitales.py`, `test_iot_avisos.py`.
+**Paso 2 (22/11/2026): los estados de equipo reemplazan el estado fijo de la rotativa.** Un tercer `rol` de sensor digital, `estado` («Estado de un
+equipo»), con un `estado_nombre` que es lo que dice el cartel de arriba del panel mientras ese equipo está activo. `iot_monitoreo.estado_sistema`
+ya no tiene LAVANDO/BARRIDO escritos: recorre `iot_sensores.estados()` y **manda el primero activo de la lista, o sea la prioridad es el orden** (▲▼ en
+el editor); si ninguno está activo, ORDEÑO (visitas recientes en DelPro) y si no APAGADO, que **no se tocan ni se pueden usar de nombre**.
+`lavado_rotativa` y `barrido_rotativa` vienen **precargados** (`PREDEFINIDOS`, DI01/DI02): un archivo de antes de los estados los recibe al leerlo
+(salvo que su entrada o su nombre ya los use otro sensor); el primer guardado le pone `version: 2` y de ahí en más lo que el tambo saque no vuelve.
+Un estado no tiene color ni aviso (no es una alarma) y dos estados no pueden llamarse igual. **Un estado cuyo sensor dejó de mandar datos (más de
+30 min) NO cuenta como activo**: antes un gateway caído dejaba «LAVANDO» pegado para siempre, ahora cae a ORDEÑO/APAGADO y el sensor sale «Sin datos»
+(y avisa). Sin latido todavía (recién actualizado, `iot_lavado.py` sin reiniciar) se usa el último cambio de `eventos_di`, como antes. `desde` es la hora
+del último encendido en `eventos_di`, no la del latido. El endpoint devuelve además `equipo` (True si viene de un sensor) y `estados`. La pantalla
+ESP32 lee `estado` como texto: **un nombre que el firmware no conozca (por ejemplo «LAVADORA») hay que verlo en la pantalla**, no se probó con el
+hardware. Pruebas: `tests/test_iot_estados.py`; además `test_iot_sensores.py`, `test_iot_digitales.py`, `test_iot_avisos.py`.

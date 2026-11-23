@@ -38,10 +38,10 @@ def digital(label="Puerta sala", **kw):
 class TestLista(Base):
     def test_sin_archivo_la_lista_son_los_11_sensores_de_siempre(self):
         claves = [s["clave"] for s in sen.cargar()]
-        self.assertEqual(len(claves), 11)
+        self.assertEqual(len(claves), 13)
         self.assertEqual(claves[0], "temp_leche")
         self.assertIn("vacio_general", claves)
-        self.assertTrue(all(s["tipo"] == "analogico" for s in sen.cargar()))
+        self.assertTrue(all(s["tipo"] == "analogico" for s in sen.cargar()[:11]))
 
     def test_las_entradas_validas_son_las_del_gateway(self):
         self.assertEqual(set(sen.ENTRADAS), set(iot_lavado.CANALES))
@@ -49,12 +49,12 @@ class TestLista(Base):
     def test_guardar_y_volver_a_cargar(self):
         sen.guardar(sen.cargar() + [analogico("Temp. silo")])
         self.assertEqual(sen.cargar()[-1]["label"], "Temp. silo")
-        self.assertEqual(len(sen.cargar()), 12)
+        self.assertEqual(len(sen.cargar()), 14)
 
     def test_un_archivo_roto_cae_a_la_lista_de_siempre(self):
         with open(sen._RUTA, "w", encoding="utf-8") as f:
             f.write("{no es json")
-        self.assertEqual(len(sen.cargar()), 11)
+        self.assertEqual(len(sen.cargar()), 13)
 
 
 class TestClaves(Base):
@@ -173,7 +173,7 @@ class TestSacarSensores(Base):
         with self.assertRaises(ValueError):
             sen.guardar(sen.cargar() + [analogico("Malo", min=5, max=5)])
         self.assertEqual(sen.cargar()[-1]["label"], "Bueno")
-        self.assertEqual(len(sen.cargar()), 12)
+        self.assertEqual(len(sen.cargar()), 14)
 
     def test_no_se_guardan_mas_de_60(self):
         with self.assertRaises(ValueError):
@@ -194,7 +194,7 @@ class TestApi(Base):
 
     def test_get_trae_la_lista_las_entradas_y_los_asignados(self):
         d = self.cli.get("/api/iot/sensores").get_json()
-        self.assertEqual(len(d["sensores"]), 11)
+        self.assertEqual(len(d["sensores"]), 13)
         self.assertEqual([e["clave"] for e in d["entradas"]], list(sen.ENTRADAS))
         self.assertEqual(d["asignados"], [])
 
@@ -212,7 +212,7 @@ class TestApi(Base):
         r = self.cli.post("/api/iot/sensores", json={"sensores": lista})
         self.assertEqual(r.status_code, 400)
         self.assertIn("escala", r.get_json()["error"])
-        self.assertEqual(len(self.cli.get("/api/iot/sensores").get_json()["sensores"]), 11)
+        self.assertEqual(len(self.cli.get("/api/iot/sensores").get_json()["sensores"]), 13)
 
     def test_post_no_deja_sacar_un_sensor_asignado_a_una_entrada_analogica(self):
         iot_analogicas.guardar({"ai_1": {"sensor": "temp_leche", "direccion": 0, "raw_4": 4000, "raw_20": 20000}},

@@ -4471,6 +4471,7 @@
       <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
         <button class="secundario" id="config-iot-sen-agregar-an" type="button">➕ Sensor analógico</button>
         <button class="secundario" id="config-iot-sen-agregar-dig" type="button">➕ Alarma o indicador digital</button>
+        <button class="secundario" id="config-iot-sen-agregar-est" type="button" title="Un equipo que, mientras está activo, cambia el cartel de estado de la rotativa">➕ Estado de un equipo</button>
         <button id="config-iot-sen-guardar" type="button" disabled>Guardar sensores</button>
       </div>
     </div>
@@ -11309,12 +11310,13 @@ const FASE_ICONO = { 'ORDEÑO': '🥛', 'LAVANDO': '🧼', 'BARRIDO': '💨', 'A
 
 function pintarIotEstado(sistema) {
   const cont = document.getElementById('iot-estado-cuerpo');
-  const cls = FASE_CLASE[sistema.estado] || 'fase-apagado';
+  // Un estado que dio el tambo (la lavadora, un portón…) no está en la tabla de arriba: se pinta como los de equipo.
+  const cls = FASE_CLASE[sistema.estado] || (sistema.equipo ? 'fase-lavando' : 'fase-apagado');
   const desde = sistema.desde ? `desde ${String(sistema.desde).replace('T', ' ').slice(0, 16)}` : '';
   cont.innerHTML = `<div class="iot-estado ${cls}">
     <div class="iot-estado-punto"></div>
     <div>
-      <div class="iot-estado-texto">${FASE_ICONO[sistema.estado] || ''} ${sistema.estado}</div>
+      <div class="iot-estado-texto">${FASE_ICONO[sistema.estado] || (sistema.equipo ? '⚙️' : '')} ${escHtml(sistema.estado)}</div>
       <div class="iot-estado-desde">${desde}</div>
     </div>
   </div>`;
@@ -17125,24 +17127,30 @@ function pintarSensoresConfig() {
         <label class="aviso" style="margin:0">hasta ${campo(i, 'max', s.max, 74, 'number')}</label>
         ${borrar}</div>`;
     }
-    const alarma = s.rol === 'alarma';
+    const alarma = s.rol === 'alarma', equipo = s.rol === 'estado';
+    // La prioridad de los estados es el orden de la lista: ▲▼ cambian de lugar con el estado vecino.
+    const orden = equipo ? `<span style="display:flex;gap:2px">
+        <button class="secundario" type="button" data-i="${i}" data-sen-mover="-1" title="Más prioridad: si dos estados están activos a la vez, gana el de arriba">▲</button>
+        <button class="secundario" type="button" data-i="${i}" data-sen-mover="1" title="Menos prioridad">▼</button></span>` : '';
     return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         ${base}
         <span class="aviso" style="min-width:70px;font-weight:600;margin:0">Digital</span>
         <select data-i="${i}" data-sen="rol" style="padding:6px">
           <option value="alarma"${alarma ? ' selected' : ''}>Alarma</option>
-          <option value="indicador"${!alarma ? ' selected' : ''}>Indicador</option></select>
+          <option value="indicador"${s.rol === 'indicador' ? ' selected' : ''}>Indicador</option>
+          <option value="estado"${equipo ? ' selected' : ''}>Estado de un equipo</option></select>
+        ${equipo ? `<label class="aviso" style="margin:0" title="Lo que dice el cartel de la rotativa mientras este equipo está activo">Cartel ${campo(i, 'estado_nombre', s.estado_nombre, 120, 'text', 'maxlength="24" placeholder="LAVANDO"')}</label>` : ''}
         <label class="aviso" style="margin:0">Entrada <select data-i="${i}" data-sen="entrada" style="padding:6px;min-width:150px">
           <option value="">(sin entrada)</option>
           ${senEntradas.map(e => `<option value="${escHtml(e.clave)}"${s.entrada === e.clave ? ' selected' : ''}>${escHtml(e.label)}</option>`).join('')}
         </select></label>
         <label class="aviso" style="margin:0">Activo dice ${campo(i, 'texto_activo', s.texto_activo, 110, 'text', 'maxlength="24"')}</label>
-        ${colores(i, 'color_activo', s.color_activo, alarma)}
+        ${equipo ? '' : colores(i, 'color_activo', s.color_activo, alarma)}
         <label class="aviso" style="margin:0">Inactivo dice ${campo(i, 'texto_inactivo', s.texto_inactivo, 110, 'text', 'maxlength="24"')}</label>
-        ${colores(i, 'color_inactivo', s.color_inactivo, alarma)}
+        ${equipo ? '' : colores(i, 'color_inactivo', s.color_inactivo, alarma)}
         <label class="aviso" style="margin:0"><input type="checkbox" data-i="${i}" data-sen="invertido"${s.invertido ? ' checked' : ''}> Contacto NC</label>
-        <label class="aviso" style="margin:0"><input type="checkbox" data-i="${i}" data-sen="avisar"${s.avisar ? ' checked' : ''}> Avisar</label>
-        ${borrar}</div>`;
+        ${equipo ? '' : `<label class="aviso" style="margin:0"><input type="checkbox" data-i="${i}" data-sen="avisar"${s.avisar ? ' checked' : ''}> Avisar</label>`}
+        ${orden}${borrar}</div>`;
   }).join('') || '<div class="aviso">No hay sensores. Agregá uno con los botones de abajo.</div>';
   document.getElementById('config-iot-sen-guardar').disabled = JSON.stringify(senLista) === senOriginal;
 }
@@ -17156,8 +17164,10 @@ function pintarSensoresConfig() {
   if (ev.target.type === 'checkbox') s[k] = ev.target.checked;
   else s[k] = ev.target.value;
   if (k === 'rol' && evento === 'change') {
-    // Una alarma es siempre roja/verde; al pasar a indicador los colores quedan como estaban.
+    // Una alarma es siempre roja/verde; al pasar a indicador los colores quedan como estaban; un estado de equipo no
+    // lleva color ni aviso.
     if (s.rol === 'alarma') { s.color_activo = 'rojo'; s.color_inactivo = 'verde'; s.avisar = true; }
+    if (s.rol === 'estado') { s.color_activo = 'neutro'; s.color_inactivo = 'neutro'; s.avisar = false; }
     pintarSensoresConfig();
     return;
   }
@@ -17165,6 +17175,16 @@ function pintarSensoresConfig() {
 }));
 
 document.getElementById('config-iot-sen-lista').addEventListener('click', ev => {
+  if (ev.target.dataset.senMover) {
+    // Cambia de lugar con el estado más cercano en esa dirección (saltea los sensores que no son estados).
+    const i = Number(ev.target.dataset.i), paso = Number(ev.target.dataset.senMover);
+    let j = i + paso;
+    while (senLista[j] && senLista[j].rol !== 'estado') j += paso;
+    if (!senLista[j]) return;
+    [senLista[i], senLista[j]] = [senLista[j], senLista[i]];
+    pintarSensoresConfig();
+    return;
+  }
   if (!ev.target.dataset.senBorrar) return;
   senLista.splice(Number(ev.target.dataset.i), 1);
   pintarSensoresConfig();
@@ -17178,6 +17198,12 @@ document.getElementById('config-iot-sen-agregar-an').addEventListener('click', (
 document.getElementById('config-iot-sen-agregar-dig').addEventListener('click', () => {
   senLista.push({ label: '', tipo: 'digital', rol: 'alarma', entrada: '', invertido: false, texto_activo: '',
     texto_inactivo: '', color_activo: 'rojo', color_inactivo: 'verde', avisar: true });
+  pintarSensoresConfig();
+});
+
+document.getElementById('config-iot-sen-agregar-est').addEventListener('click', () => {
+  senLista.push({ label: '', tipo: 'digital', rol: 'estado', entrada: '', invertido: false, estado_nombre: '',
+    texto_activo: '', texto_inactivo: '', color_activo: 'neutro', color_inactivo: 'neutro', avisar: false });
   pintarSensoresConfig();
 });
 

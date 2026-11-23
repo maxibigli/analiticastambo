@@ -64,10 +64,10 @@ class TestLatido(Base):
     def test_el_contacto_normalmente_cerrado_se_toma_de_la_ficha_del_sensor(self):
         sen.guardar(sen.cargar() + [{"label": "NC", "tipo": "digital", "entrada": "di_4", "invertido": True},
                                     {"label": "NA", "tipo": "digital", "entrada": "di_5"}])
-        self.assertEqual(iot_lavado.entradas_invertidas(), {"di_4": True, "di_5": False})
+        self.assertEqual(iot_lavado.entradas_invertidas(), {"lavado_rotativa": False, "barrido_rotativa": False, "di_4": True, "di_5": False})
 
     def test_sin_sensores_digitales_nadie_esta_invertido(self):
-        self.assertEqual(iot_lavado.entradas_invertidas(), {})
+        self.assertEqual(iot_lavado.entradas_invertidas(), {"lavado_rotativa": False, "barrido_rotativa": False})
 
 
 class TestAlarma(Base):
