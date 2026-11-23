@@ -17214,7 +17214,7 @@ function pintarSensoresConfig() {
           <option value="alarma"${alarma ? ' selected' : ''}>Alarma</option>
           <option value="indicador"${s.rol === 'indicador' ? ' selected' : ''}>Indicador</option>
           <option value="estado"${equipo ? ' selected' : ''}>Estado de un equipo</option></select>
-        ${equipo ? `<label class="aviso" style="margin:0" title="Lo que dice el cartel de la rotativa mientras este equipo está activo">Cartel ${campo(i, 'estado_nombre', s.estado_nombre, 120, 'text', 'maxlength="24" placeholder="LAVANDO"')}</label>` : ''}
+        ${equipo ? `<label class="aviso" style="margin:0" title="Lo que dice el cartel de la rotativa mientras este equipo está activo">Cartel ${campo(i, 'estado_nombre', s.estado_nombre, 120, 'text', 'maxlength="24" placeholder="(igual al nombre)"')}</label>` : ''}
         <label class="aviso" style="margin:0">Entrada <select data-i="${i}" data-sen="entrada" style="padding:6px;min-width:150px">
           <option value="">(sin entrada)</option>
           ${senEntradas.map(e => `<option value="${escHtml(e.clave)}"${s.entrada === e.clave ? ' selected' : ''}>${escHtml(e.label)}</option>`).join('')}
