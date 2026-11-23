@@ -2226,6 +2226,15 @@ cambio se toma **sin reiniciar** (la IP y el puerto siguen pidiendo reinicio). U
     gateway y lo frena (lavado automático y voz incluidos) mientras dura.
   * «Contacto NC» de la entrada se suma al del sensor (`entradas_invertidas`): si los dos están tildados se anulan.
 
+**Cambiar el mapa con una salida prendida (revisión final).** Las salidas sostenidas (lavado automático, voz) se prenden y se apagan
+en ciclos distintos: `iot_lavado._escribir_reles` recuerda en `_encendidas` dónde se prendió cada una y el apagado va TAMBIÉN a esa
+bobina si el mapa cambió. **Límite conocido**: esa memoria vive solo en el proceso; si `iot_lavado.py` se reinicia con una salida
+sostenida y el mapa cambió, el apagado de arranque usa el mapa nuevo. Conviene no editar el mapa mientras hay un lavado o una salida
+sostenida por voz. Un archivo `iot_mapa.json` tomado un instante (en Windows, mientras Flask lo reemplaza) se reintenta y, si sigue
+tomado, se usa lo último que se leyó bien; uno que deja dos canales en el mismo punto cae a fábrica (con aviso en el log).
+Menores diferidos de esa revisión: el POST acepta un cuerpo sin las dos claves (`{}` borra el mapa), no hay pulso mínimo, y un
+número inválido en un campo de la pantalla se guarda como «fábrica» sin avisar.
+
 **NO se probó contra el M300 real.** Las pruebas usan un cliente Modbus de mentira. Hacerlo con un jumper en una entrada
 (mirando que cambie la tarjeta) y con un pulso en una salida sin nada conectado, antes de cargar un mapa distinto al de fábrica. La
 pantalla se verificó en el navegador (guardar, rechazo por dirección repetida, volver a fábrica). Etapas siguientes: más de un

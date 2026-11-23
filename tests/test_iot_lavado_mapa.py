@@ -73,7 +73,8 @@ class Base(unittest.TestCase):
                   mock.patch.object(iot_canales, "_RUTA", os.path.join(d, "nombres.json")),
                   mock.patch.object(sen, "_RUTA", os.path.join(d, "iot_sensores.json")),
                   mock.patch.object(iv, "_RUTA", os.path.join(d, "iot_vumetros.json")),
-                  mock.patch.object(iot_lavado, "AUDIO_ACTIVADO", False)):
+                  mock.patch.object(iot_lavado, "AUDIO_ACTIVADO", False),
+                  mock.patch.dict(iot_lavado._encendidas, clear=True)):
             p.start()
             self.addCleanup(p.stop)
         self.con = iot_lavado._conectar_db(os.path.join(d, "iot.db"))
@@ -172,6 +173,38 @@ class TestConMapa(Base):
         iot_mapa.guardar({}, {"do_3": {"direccion": 40, "unit_id": 2}})
         self.assertEqual(iot_lavado._escribir_reles(self.cliente, ["do_3"], False), set())
         self.assertEqual(self.cliente.llamadas, [("write_coil", 40, False, 2)])
+
+    def test_si_cambia_el_mapa_con_la_salida_prendida_se_apaga_la_bobina_que_se_prendio(self):
+        # Revisión final: un relé sostenido (lavado, voz) se prende y se apaga en ciclos distintos. Si en el medio se movió la
+        # bobina en el mapa, el apagado tiene que llegar también a la que se prendió, o queda energizada.
+        iot_mapa.guardar({}, {"do_3": {"direccion": 40, "unit_id": 2}})
+        self.assertEqual(iot_lavado._escribir_reles(self.cliente, ["do_3"], True), set())
+        iot_mapa.guardar({}, {"do_3": {"direccion": 41, "unit_id": 2}})
+        self.cliente.llamadas.clear()
+        self.assertEqual(iot_lavado._escribir_reles(self.cliente, ["do_3"], False), set())
+        self.assertCountEqual(self.cliente.llamadas, [("write_coil", 41, False, 2), ("write_coil", 40, False, 2)])
+        # ya apagada: el próximo apagado va solo a la bobina actual
+        self.cliente.llamadas.clear()
+        iot_lavado._escribir_reles(self.cliente, ["do_3"], False)
+        self.assertEqual(self.cliente.llamadas, [("write_coil", 41, False, 2)])
+
+    def test_prender_y_apagar_sin_cambiar_el_mapa_es_una_sola_escritura_cada_vez(self):
+        iot_lavado._escribir_reles(self.cliente, ["do_3"], True)
+        iot_lavado._escribir_reles(self.cliente, ["do_3"], False)
+        self.assertEqual(self.cliente.llamadas, [("write_coil", 2, True, 1), ("write_coil", 2, False, 1)])
+
+    def test_si_el_apagado_de_la_bobina_vieja_falla_se_informa_y_se_sigue_recordando(self):
+        iot_mapa.guardar({}, {"do_3": {"direccion": 40}})
+        iot_lavado._escribir_reles(self.cliente, ["do_3"], True)
+        iot_mapa.guardar({}, {"do_3": {"direccion": 41}})
+        escribir = self.cliente.write_coil
+        self.cliente.write_coil = lambda address, value, device_id=1: (
+            Respuesta(error=True) if address == 40 else escribir(address, value, device_id))
+        self.assertEqual(iot_lavado._escribir_reles(self.cliente, ["do_3"], False), {"do_3"})
+        self.cliente.write_coil = escribir
+        self.cliente.llamadas.clear()
+        self.assertEqual(iot_lavado._escribir_reles(self.cliente, ["do_3"], False), set())   # reintento: ahora sí
+        self.assertIn(("write_coil", 40, False, 1), self.cliente.llamadas)
 
     def test_un_canal_desconocido_sigue_dando_el_mismo_error(self):
         self.encolar("do_99")

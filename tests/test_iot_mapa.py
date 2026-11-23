@@ -19,9 +19,11 @@ class Base(unittest.TestCase):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
         self.ruta = os.path.join(self.dir.name, "iot_mapa.json")
-        p = mock.patch.object(iot_mapa, "_RUTA", self.ruta)
-        p.start()
-        self.addCleanup(p.stop)
+        for p in (mock.patch.object(iot_mapa, "_RUTA", self.ruta),
+                  mock.patch.object(iot_mapa, "_ultimo_bueno", None),
+                  mock.patch.object(iot_mapa.time, "sleep")):   # los reintentos no esperan de verdad
+            p.start()
+            self.addCleanup(p.stop)
 
     def escribir(self, texto):
         with open(self.ruta, "w", encoding="utf-8") as f:
@@ -118,9 +120,74 @@ class TestMapa(Base):
                 self.assertEqual(len(iot_mapa.salidas()), 32)
 
     def test_un_cambio_guardado_a_medias_en_el_archivo_se_completa_con_fabrica(self):
-        self.escribir(json.dumps({"entradas": {"di_4": {"direccion": 7}}}))
+        self.escribir(json.dumps({"entradas": {"di_4": {"direccion": 70}}}))
         self.assertEqual(iot_mapa.entrada("di_4"),
-                         {"funcion": "discrete_input", "direccion": 7, "unit_id": 1, "invertido": False})
+                         {"funcion": "discrete_input", "direccion": 70, "unit_id": 1, "invertido": False})
+
+
+class TestRevisionFinal(Base):
+    """Hallazgos de la revisión final de la etapa 1 (cada uno falló antes de arreglarlo)."""
+
+    def test_un_numero_enorme_no_tira_al_gateway_ni_se_guarda(self):
+        texto = '{"salidas": {"do_3": {"pulso_s": 1' + "0" * 400 + "}}}"
+        self.escribir(texto)
+        self.assertEqual(iot_mapa.salida("do_3"), iot_mapa.de_fabrica_salida("do_3"))
+        with self.assertRaises(ValueError):
+            iot_mapa.guardar({}, {"do_3": {"pulso_s": 10 ** 400}})
+        with open(self.ruta, encoding="utf-8") as f:
+            self.assertEqual(f.read(), texto)   # el guardado rechazado no tocó el archivo
+
+    def test_si_el_archivo_esta_tomado_se_reintenta_y_no_se_cae_a_fabrica(self):
+        iot_mapa.guardar({}, {"do_3": {"direccion": 40}})
+        with open(self.ruta, encoding="utf-8") as f:
+            texto = f.read()
+        with mock.patch.object(iot_mapa, "_leer_texto",
+                               side_effect=[PermissionError(13, "tomado"), PermissionError(13, "tomado"), texto]):
+            self.assertEqual(iot_mapa.salida("do_3")["direccion"], 40)
+
+    def test_si_el_archivo_sigue_tomado_se_usa_el_ultimo_mapa_bueno(self):
+        iot_mapa.guardar({}, {"do_3": {"direccion": 40}})
+        self.assertEqual(iot_mapa.salida("do_3")["direccion"], 40)        # una lectura buena
+        with mock.patch.object(iot_mapa, "_leer_texto", side_effect=PermissionError(13, "tomado")):
+            self.assertEqual(iot_mapa.salida("do_3")["direccion"], 40)
+
+    def test_archivo_tomado_y_sin_lectura_previa_cae_a_fabrica_sin_excepcion(self):
+        with mock.patch.object(iot_mapa, "_leer_texto", side_effect=PermissionError(13, "tomado")):
+            self.assertEqual(iot_mapa.salida("do_3"), iot_mapa.de_fabrica_salida("do_3"))
+
+    def test_guardar_reintenta_si_el_reemplazo_falla_un_momento(self):
+        real = os.replace
+        intentos = []
+
+        def reemplazo(origen, destino):
+            intentos.append(1)
+            if len(intentos) < 3:
+                raise PermissionError(13, "tomado un momento")
+            real(origen, destino)
+        with mock.patch.object(iot_mapa.os, "replace", reemplazo):
+            iot_mapa.guardar({}, {"do_3": {"direccion": 40}})
+        self.assertEqual(len(intentos), 3)
+        self.assertEqual(iot_mapa.salida("do_3")["direccion"], 40)
+
+    def test_guardar_con_el_archivo_tomado_da_un_error_legible_y_no_deja_temporales(self):
+        iot_mapa.guardar({}, {"do_3": {"direccion": 40}})
+        with mock.patch.object(iot_mapa.os, "replace", side_effect=PermissionError(13, "tomado")):
+            with self.assertRaises(ValueError) as cm:
+                iot_mapa.guardar({}, {"do_3": {"direccion": 41}})
+        self.assertIn("reintent", str(cm.exception).lower())
+        self.assertEqual(iot_mapa.salida("do_3")["direccion"], 40)
+        self.assertEqual([n for n in os.listdir(self.dir.name) if n.endswith(".tmp")], [])
+
+    def test_un_archivo_que_deja_dos_canales_en_el_mismo_punto_cae_a_fabrica(self):
+        # do_5 queda con un campo roto (vuelve a su bobina de fábrica, la 4) y do_3 se movió a la 4: se pisarían.
+        self.escribir(json.dumps({"salidas": {"do_3": {"direccion": 4}, "do_5": {"direccion": "x"}}}))
+        self.assertEqual(iot_mapa.salida("do_3")["direccion"], 2)
+        self.assertEqual(iot_mapa.salida("do_5")["direccion"], 4)
+
+    def test_un_archivo_con_bom_se_lee(self):
+        with open(self.ruta, "w", encoding="utf-8-sig") as f:
+            f.write(json.dumps({"salidas": {"do_3": {"direccion": 40}}}))
+        self.assertEqual(iot_mapa.salida("do_3")["direccion"], 40)
 
 
 class TestApi(Base):

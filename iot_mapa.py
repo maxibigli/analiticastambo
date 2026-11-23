@@ -15,11 +15,16 @@ import math
 import os
 import tempfile
 import threading
+import time
 
 import iot_canales
 
 _RUTA = os.path.join(os.path.dirname(__file__), "iot_mapa.json")
 _lock = threading.Lock()
+_ultimo_bueno = None      # lo último que se leyó bien del archivo: si el archivo está tomado un momento, se sigue con eso
+_ultimo_aviso = None      # para no repetir cada 3 s el mismo aviso de mapa inválido
+_REINTENTOS = 5           # lectura y reemplazo del archivo: en Windows fallan un instante si el otro lado lo tiene abierto
+_ESPERA_REINTENTO_S = 0.02
 
 FUNCIONES_ENTRADA = ("discrete_input", "coil", "input_register", "holding_register")
 UNIT_ID_DEFECTO = 1
@@ -95,8 +100,11 @@ def _pulso(v) -> float:
             v = float(v.strip().replace(",", "."))
         except ValueError:
             raise ValueError(f"El pulso: «{v}» no es un número.") from None
-    if not isinstance(v, (int, float)) or not math.isfinite(v):
-        raise ValueError("El pulso tiene que ser un número de segundos.")
+    try:
+        if not isinstance(v, (int, float)) or not math.isfinite(v):
+            raise ValueError("El pulso tiene que ser un número de segundos.")
+    except OverflowError:   # un entero de cientos de dígitos
+        raise ValueError("El pulso tiene que ser un número de segundos.") from None
     if not 0 < v <= PULSO_MAX_S:
         raise ValueError(f"El pulso tiene que ser mayor que 0 y de {PULSO_MAX_S} segundos como máximo "
                          "(mientras dura, el gateway no atiende otra cosa).")
@@ -113,17 +121,38 @@ def _invertido(v) -> bool:
 
 # ---- lectura ----
 
+def _leer_texto() -> str:
+    with open(_RUTA, "r", encoding="utf-8-sig") as f:   # utf-8-sig: un archivo guardado con BOM (Bloc de notas) también se lee
+        return f.read()
+
+
 def _leer_archivo() -> dict:
-    """Lo guardado, tolerante: cualquier forma rara cae a «nada guardado» (el gateway sigue con los valores de fábrica)."""
-    try:
-        with open(_RUTA, "r", encoding="utf-8") as f:
-            datos = json.load(f)
-    except (OSError, ValueError):
-        return {"entradas": {}, "salidas": {}}
-    if not isinstance(datos, dict):
-        return {"entradas": {}, "salidas": {}}
-    return {"entradas": datos["entradas"] if isinstance(datos.get("entradas"), dict) else {},
-            "salidas": datos["salidas"] if isinstance(datos.get("salidas"), dict) else {}}
+    """Lo guardado, tolerante: un archivo ausente, roto o de forma rara es «nada guardado» (el gateway sigue con los valores
+    de fábrica). Un archivo que está TOMADO un instante (en Windows pasa si Flask lo reemplaza justo cuando el gateway lo lee,
+    o por un antivirus) NO es «nada guardado»: se reintenta y, si sigue tomado, se usa lo último que se leyó bien."""
+    global _ultimo_bueno
+    texto = None
+    for intento in range(_REINTENTOS):
+        try:
+            texto = _leer_texto()
+            break
+        except FileNotFoundError:
+            break
+        except OSError:
+            if intento == _REINTENTOS - 1:
+                return _ultimo_bueno if _ultimo_bueno is not None else {"entradas": {}, "salidas": {}}
+            time.sleep(_ESPERA_REINTENTO_S)
+    resultado = {"entradas": {}, "salidas": {}}
+    if texto is not None:
+        try:
+            datos = json.loads(texto)
+        except ValueError:
+            datos = None
+        if isinstance(datos, dict):
+            resultado = {"entradas": datos["entradas"] if isinstance(datos.get("entradas"), dict) else {},
+                         "salidas": datos["salidas"] if isinstance(datos.get("salidas"), dict) else {}}
+    _ultimo_bueno = resultado
+    return resultado
 
 
 def _efectiva(fabrica: dict, guardada, campos: tuple) -> dict:
@@ -146,35 +175,56 @@ def _efectiva(fabrica: dict, guardada, campos: tuple) -> dict:
                 fila[campo] = _pulso(guardada[campo])
             elif campo == "invertido":
                 fila[campo] = _invertido(guardada[campo])
-        except ValueError:
+        except (ValueError, OverflowError, TypeError):
             pass   # un campo roto vuelve al de fábrica, no tira abajo al gateway
     return fila
 
 
+def _mapas(guardado: dict = None) -> tuple:
+    """(entradas, salidas) efectivas. Si lo guardado deja dos canales en el mismo punto del equipo (un archivo tocado a mano,
+    o con un campo roto que volvió a fábrica y chocó con otro canal movido), ese grupo cae ENTERO a los valores de fábrica:
+    peor que un mapa a medias es comandar el relé de otro canal sin avisar. Se avisa en el log (una vez por mensaje)."""
+    global _ultimo_aviso
+    guardado = guardado if guardado is not None else _leer_archivo()
+    ent = {c: _efectiva(de_fabrica_entrada(c), guardado["entradas"].get(c), _CAMPOS_ENTRADA)
+           for c in iot_canales.ENTRADAS_DIGITALES}
+    sal = {c: _efectiva(de_fabrica_salida(c), guardado["salidas"].get(c), _CAMPOS_SALIDA) for c in iot_canales.SALIDAS}
+    for nombre in ("entradas", "salidas"):
+        try:
+            _chequear_pisadas(ent if nombre == "entradas" else {}, sal if nombre == "salidas" else {})
+        except ValueError as exc:
+            if _ultimo_aviso != str(exc):
+                _ultimo_aviso = str(exc)
+                print(f"iot_mapa: el mapa guardado de las {nombre} es inválido ({exc}) -- se usan los valores de fábrica.", flush=True)
+            if nombre == "entradas":
+                ent = {c: de_fabrica_entrada(c) for c in iot_canales.ENTRADAS_DIGITALES}
+            else:
+                sal = {c: de_fabrica_salida(c) for c in iot_canales.SALIDAS}
+    return ent, sal
+
+
 def entradas() -> dict:
     """{clave: fila efectiva} de las 32 entradas digitales. Lee el archivo una sola vez."""
-    guardado = _leer_archivo()["entradas"]
-    return {c: _efectiva(de_fabrica_entrada(c), guardado.get(c), _CAMPOS_ENTRADA) for c in iot_canales.ENTRADAS_DIGITALES}
+    return _mapas()[0]
 
 
 def salidas() -> dict:
     """{clave: fila efectiva} de las 32 salidas. Lee el archivo una sola vez."""
-    guardado = _leer_archivo()["salidas"]
-    return {c: _efectiva(de_fabrica_salida(c), guardado.get(c), _CAMPOS_SALIDA) for c in iot_canales.SALIDAS}
+    return _mapas()[1]
 
 
 def entrada(clave: str) -> dict:
-    return _efectiva(de_fabrica_entrada(clave), _leer_archivo()["entradas"].get(clave), _CAMPOS_ENTRADA)
+    return _mapas()[0][clave]
 
 
 def salida(clave: str) -> dict:
-    return _efectiva(de_fabrica_salida(clave), _leer_archivo()["salidas"].get(clave), _CAMPOS_SALIDA)
+    return _mapas()[1][clave]
 
 
 def cambios() -> dict:
     """Solo lo guardado (filas completas), para marcar en la web cuáles se modificaron."""
-    todas_e, todas_s = entradas(), salidas()
     guardado = _leer_archivo()
+    todas_e, todas_s = _mapas(guardado)
     return {"entradas": {c: todas_e[c] for c in guardado["entradas"] if c in todas_e and todas_e[c] != de_fabrica_entrada(c)},
             "salidas": {c: todas_s[c] for c in guardado["salidas"] if c in todas_s and todas_s[c] != de_fabrica_salida(c)}}
 
@@ -255,10 +305,19 @@ def guardar(entradas_nuevas: dict, salidas_nuevas: dict) -> None:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(datos, f, ensure_ascii=False, indent=2)
-            os.replace(tmp, _RUTA)   # el gateway lo lee en cada ciclo: nunca puede ver un archivo a medias
-        except BaseException:
+            for intento in range(_REINTENTOS):   # en Windows falla un instante si el gateway lo está leyendo
+                try:
+                    os.replace(tmp, _RUTA)   # el gateway lo lee en cada ciclo: nunca puede ver un archivo a medias
+                    break
+                except PermissionError:
+                    if intento == _REINTENTOS - 1:
+                        raise
+                    time.sleep(_ESPERA_REINTENTO_S)
+        except BaseException as exc:
             try:
                 os.unlink(tmp)
             except OSError:
                 pass
+            if isinstance(exc, OSError):
+                raise ValueError("No se pudo guardar el mapa porque el archivo está en uso. Reintentá en unos segundos.") from exc
             raise

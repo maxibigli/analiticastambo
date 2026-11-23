@@ -356,6 +356,11 @@ def _alarma(*lineas: str) -> None:
     print(borde + "\n", flush=True)
 
 
+# clave -> (unit ID, bobina) donde se la prendió por última vez y todavía no se confirmó apagada. Vive solo en este proceso:
+# si se reinicia con una salida sostenida y el mapa cambió, el apagado de arranque usa el mapa nuevo (límite conocido).
+_encendidas = {}
+
+
 def _escribir_reles(client: ModbusTcpClient, claves, prender: bool) -> set:
     """Escribe `prender` en cada relé de `claves`. Devuelve el SET de claves
     que NO se pudieron CONFIRMAR -- vacío = las escribió todas y el M300 las
@@ -375,21 +380,35 @@ def _escribir_reles(client: ModbusTcpClient, claves, prender: bool) -> set:
             fallidas.add(clave)
             continue
         cfg = iot_mapa.salida(clave)
-        direccion = cfg["direccion"]
-        try:
-            if not client.connected:
-                client.connect()
-            resultado = client.write_coil(address=direccion, value=prender, device_id=cfg["unit_id"])
-            if resultado is None or resultado.isError():
+        destinos = [(cfg["unit_id"], cfg["direccion"])]
+        if not prender:
+            # Un relé sostenido se prende y se apaga en ciclos distintos. Si en el medio el tambo cambió la bobina de esta
+            # salida en el mapa, el apagado tiene que llegar TAMBIÉN a la que se prendió (si no, queda energizada).
+            previa = _encendidas.get(clave)
+            if previa and previa not in destinos:
+                destinos.append(previa)
+        todo_ok = True
+        for unit_id, direccion in destinos:
+            try:
+                if not client.connected:
+                    client.connect()
+                resultado = client.write_coil(address=direccion, value=prender, device_id=unit_id)
+                if resultado is None or resultado.isError():
+                    print(f"{datetime.datetime.now().isoformat(timespec='seconds')}  "
+                          f"el M300 RECHAZÓ {'prender' if prender else 'apagar'} {clave} "
+                          f"(dirección {direccion}): {resultado}")
+                    todo_ok = False
+            except Exception as e:  # noqa: BLE001
                 print(f"{datetime.datetime.now().isoformat(timespec='seconds')}  "
-                      f"el M300 RECHAZÓ {'prender' if prender else 'apagar'} {clave} "
-                      f"(dirección {direccion}): {resultado}")
-                fallidas.add(clave)
-        except Exception as e:  # noqa: BLE001
-            print(f"{datetime.datetime.now().isoformat(timespec='seconds')}  "
-                  f"error {'prendiendo' if prender else 'apagando'} {clave}: {e}")
+                      f"error {'prendiendo' if prender else 'apagando'} {clave}: {e}")
+                todo_ok = False
+                client.close()   # mismo motivo que en ejecutar_comandos_pendientes: forzar reconexion
+        if not todo_ok:
             fallidas.add(clave)
-            client.close()   # mismo motivo que en ejecutar_comandos_pendientes: forzar reconexion
+        elif prender:
+            _encendidas[clave] = destinos[0]
+        else:
+            _encendidas.pop(clave, None)
     return fallidas
 
 
