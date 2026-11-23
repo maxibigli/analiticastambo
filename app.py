@@ -3326,12 +3326,11 @@ def api_tv_seccion_dispositivo(indice):
 @app.get("/api/iot/canales")
 @auth.requiere_rol("admin")
 def api_iot_canales_listar():
-    """Nombres (custom o genérico) de las 8 entradas + 8 salidas del M300,
-    para el editor de ⚙ Configuración › 🔌 Entradas/Salidas."""
+    """Nombres (custom o genérico) de las 8 salidas del M300, para el editor de ⚙ Configuración › 🔌 Entradas/Salidas.
+    Las entradas no llevan nombre propio: se muestran con el de su sensor."""
     custom = iot_canales.nombres()
-    entradas = [{"clave": c, "default": l, "nombre": custom.get(c, l)} for c, l in iot_monitoreo.ENTRADAS_PANEL]
     salidas = [{"clave": c, "default": l, "nombre": custom.get(c, l)} for c, l in iot_monitoreo.SALIDAS_PANEL]
-    return jsonify({"entradas": entradas, "salidas": salidas})
+    return jsonify({"salidas": salidas})
 
 
 @app.post("/api/iot/canales")
@@ -3360,8 +3359,7 @@ def api_iot_analogicas_listar():
 def api_iot_sensores_listar():
     """El catálogo de sensores del Monitoreo IoT (analógicos y digitales) para el editor de ⚙ Configuración › 🔌 Entradas/
     Salidas, con las entradas digitales del gateway que se les pueden asignar y cuáles están en uso por un analógico."""
-    nombres = iot_canales.nombres()
-    entradas = [{"clave": clave, "label": nombres.get(clave, label)} for clave, label in iot_monitoreo.ENTRADAS_PANEL]
+    entradas = [{"clave": clave, "label": label} for clave, label in iot_monitoreo.ENTRADAS_PANEL]
     return jsonify({"sensores": iot_sensores.cargar(), "entradas": entradas,
                     "asignados": sorted({c["sensor"] for c in iot_analogicas.cargar().values() if c.get("sensor")})})
 

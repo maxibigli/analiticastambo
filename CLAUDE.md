@@ -2166,6 +2166,12 @@ aplica estos nombres por encima de `ENTRADAS_PANEL`/`SALIDAS_PANEL` — tanto
 la pantalla ESP32 (que lee `/api/iot/pantalla/io`) como cualquier pantalla
 web futura ven el nombre que cargó el tambo, sin tocar código.
 
+> **Actualización (22/11/2026): solo las SALIDAS llevan nombre propio.** Con el catálogo de sensores (`iot_sensores`) el nombre de una entrada era un
+> segundo nombre para lo mismo. Ahora `iot_canales.nombres()` devuelve solo `do_1`..`do_8` (un archivo viejo con nombres de entrada se lee sin ellos y
+> `guardar` ya no los escribe) y la tabla de ⚙ Configuración › 🔌 Entradas/Salidas tiene solo las 8 salidas. Una entrada se muestra con el nombre del
+> sensor atado a ella (pestaña Entradas de la pantalla ESP32, `panel_io`) o «Entrada N»; el desplegable «Entrada» del editor de sensores usa siempre el
+> nombre genérico. Las salidas siguen siendo lo que entienden los comandos de voz y lo que se elige en el Lavado Automático. Pruebas: `tests/test_iot_canales.py`.
+
 **Pendiente, y es una decisión del tambo, no del código**: qué actuador
 físico va en cada una de las 8 salidas todavía no está definido — hoy son
 genéricas y no hay ningún cable conectado a la mayoría. Activar un pulso en

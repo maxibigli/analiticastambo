@@ -490,6 +490,8 @@
   .iot-tarjeta.t-chico .lac-metric__value { font-size: var(--lac-size-xl, 1.25rem); }
   .iot-tarjeta.t-grande { grid-column: span 2; grid-row: span 2; padding: 18px 20px; }
   .iot-tarjeta.t-grande, .iot-tarjeta.t-chico { min-width: 0; }
+  /* Un digital no tiene dial: grande = el doble de ancho y la cifra grande, pero de una sola fila (si no, queda un hueco debajo). */
+  .iot-tarjeta.dig.t-grande { grid-row: span 1; }
   .iot-tarjeta.t-grande .iot-dial { width: 240px; height: 134px; align-self: center; }
   .iot-tarjeta.t-grande .lac-metric__value { font-size: 2.6rem; }
   .iot-tarjeta.fija { cursor: default; }
@@ -4440,13 +4442,14 @@
   <section class="card" id="config-iot-canales-card" hidden>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <h2 style="margin:0">🔌 Entradas y Salidas del Gateway IoT</h2>
-      <span class="aviso">Nombres que ve la pantalla táctil del tambo, en la pestaña Actuadores.</span>
+      <span class="aviso">Nombres de los actuadores: los ve la pantalla táctil, el Lavado Automático y los comandos de voz.</span>
     </div>
     <p class="explica" style="margin-top:10px">
-      El gateway PUSR M300 tiene 8 entradas (sensores on/off) y 8 salidas (actuadores tipo
-      pulsador, se activan un instante y se sueltan solas). Dos entradas ya tienen nombre fijo
-      (lavado y barrido de la rotativa); el resto se muestran con un nombre genérico hasta que
-      les pongas uno acá. Dejar el campo vacío vuelve al nombre genérico.
+      El gateway PUSR M300 tiene 8 salidas (actuadores tipo pulsador, se activan un instante y se
+      sueltan solas). Ponele un nombre a cada una: es el que se dice en voz alta («prender bomba de
+      agua»), el que aparece en el selector de relés del Lavado Automático y en la pantalla táctil.
+      Dejar el campo vacío vuelve al nombre genérico. Las entradas no llevan nombre acá: se ven con el
+      nombre del sensor que les asignes más abajo, en «Sensores del tambo».
     </p>
     <div style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-bottom:16px">
       <div style="font-weight:600;margin-bottom:8px">Dirección del gateway M300</div>
@@ -11411,7 +11414,7 @@ function iotTarjetaDigitalHTML(s) {
   // Con entrada asignada es un botón: clic = historial de cambios. Sin entrada no hay nada que mostrar.
   const clic = s.entrada ? `data-sensor="${escHtml(s.clave)}" aria-label="Ver el historial de ${escHtml(s.label)}"` : '';
   const etiqueta = s.entrada ? 'button type="button"' : 'div';
-  return `<${etiqueta} class="lac-metric iot-tarjeta${s.entrada ? '' : ' fija'} t-${s.tamano || 'mediano'}${s.zona ? ' zona-' + s.zona : ''}${s.sin_datos ? ' sin-datos' : ''}" ${clic}>
+  return `<${etiqueta} class="lac-metric iot-tarjeta dig${s.entrada ? '' : ' fija'} t-${s.tamano || 'mediano'}${s.zona ? ' zona-' + s.zona : ''}${s.sin_datos ? ' sin-datos' : ''}" ${clic}>
     <div class="lac-metric__label">${escHtml(s.label)}</div>
     <div class="lac-metric__value">${escHtml(s.estado || '—')}</div>
     ${chip}
@@ -16889,10 +16892,7 @@ async function cargarCanalesGateway() {
   estado.textContent = 'Cargando…';
   try {
     const d = await pedirJSON('/api/iot/canales');
-    canalesGatewayTodos = [
-      ...(d.entradas || []).map(c => ({ ...c, tipo: 'Entrada' })),
-      ...(d.salidas || []).map(c => ({ ...c, tipo: 'Salida' })),
-    ];
+    canalesGatewayTodos = (d.salidas || []).map(c => ({ ...c, tipo: 'Salida' }));
     canalesGatewayActual = {};
     canalesGatewayTodos.forEach(c => {
       canalesGatewayActual[c.clave] = (c.nombre !== c.default) ? c.nombre : '';

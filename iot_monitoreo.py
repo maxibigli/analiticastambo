@@ -172,8 +172,9 @@ def panel_io() -> dict:
     ninguno de los dos."""
     nombres_custom = iot_canales.nombres()
     sostenidos = voz_comandos.estado()   # clave -> encendido_desde (ISO)
+    de_sensor = {s["entrada"]: s["label"] for s in iot_sensores.digitales() if s["entrada"]}   # la entrada lleva el nombre de su sensor
     entradas = [
-        {"clave": clave, "label": nombres_custom.get(clave, label), "estado": estado, "desde": desde}
+        {"clave": clave, "label": de_sensor.get(clave, label), "estado": estado, "desde": desde}
         for clave, label in ENTRADAS_PANEL
         for estado, desde in [_ultimo_estado_canal(clave)]
     ]

@@ -1,9 +1,13 @@
 # -*- coding: utf-8 -*-
-"""Nombres personalizados de las 8 entradas + 8 salidas del gateway PUSR
-M300 (ver iot_monitoreo.ENTRADAS_PANEL/SALIDAS_PANEL), cargados por el tambo
-desde ⚙ Configuración › 🔌 Entradas/Salidas -- reemplazan el "Entrada 3"/
-"Actuador 1" genérico tanto en el panel de Actuadores de la pantalla ESP32
-como en cualquier otra pantalla que use iot_monitoreo.panel_io().
+"""Nombres personalizados de las 8 SALIDAS (actuadores) del gateway PUSR
+M300 (ver iot_monitoreo.SALIDAS_PANEL), cargados por el tambo desde
+⚙ Configuración › 🔌 Entradas/Salidas -- reemplazan el "Actuador 1" genérico en
+el panel de Actuadores de la pantalla ESP32, en el selector de relés del Lavado
+Automático y en los comandos de voz.
+
+Las ENTRADAS ya no tienen nombre propio: lo que se ve de una entrada es el nombre
+del sensor que el tambo le ató (`iot_sensores`), o «Entrada N» si no tiene ninguno.
+Un archivo viejo con nombres de entrada se lee igual, pero esos nombres se ignoran.
 
 Se guarda en un archivo JSON chico junto al código, mismo criterio que
 alertas_canales.json/whatsapp_ia_autorizados.json: es contenido propio de
@@ -28,15 +32,19 @@ CLAVES_VALIDAS = {
 }
 
 
+SALIDAS = {c for c in CLAVES_VALIDAS if c.startswith("do_")}
+
+
 def nombres() -> dict:
     """clave -> nombre personalizado. Solo trae lo que el tambo cambió; lo
     que no está acá se queda con la etiqueta genérica default (ver
     iot_monitoreo.ENTRADAS_PANEL/SALIDAS_PANEL)."""
     try:
         with open(_RUTA, "r", encoding="utf-8") as f:
-            return json.load(f)
+            datos = json.load(f)
     except (FileNotFoundError, ValueError):
         return {}
+    return {c: n for c, n in datos.items() if c in SALIDAS} if isinstance(datos, dict) else {}
 
 
 def _comparable(nombre: str) -> str:
@@ -56,6 +64,8 @@ def guardar(nombres_nuevos: dict) -> None:
     for clave, nombre in (nombres_nuevos or {}).items():
         if clave not in CLAVES_VALIDAS:
             raise ValueError(f"Canal desconocido: {clave!r}.")
+        if clave not in SALIDAS:
+            continue                  # las entradas se muestran con el nombre de su sensor: no llevan nombre propio
         nombre = str(nombre).strip()
         if nombre:   # vacío = "usar el nombre generico", no hace falta guardarlo
             # Nombres repetidos NO se aceptan: los comandos de voz eligen el
