@@ -4469,7 +4469,7 @@
     </div>
 
     <div class="aviso" id="config-iot-canales-estado" style="margin:8px 0"></div>
-    <div style="overflow-x:auto"><table class="tabla" id="config-iot-canales-tabla"></table></div>
+    <div id="config-iot-canales-tabla" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(270px,1fr));gap:18px;align-items:start"></div>
     <div style="margin-top:14px">
       <button id="config-iot-canales-guardar" disabled>Guardar</button>
     </div>
@@ -16912,20 +16912,17 @@ async function cargarCanalesGateway() {
 
 function pintarCanalesGateway() {
   const t = document.getElementById('config-iot-canales-tabla');
-  // Tres grupos con su encabezado; cada fila lleva su número (1 a 32) al costado.
-  let grupoActual = '';
-  const filas = canalesGatewayTodos.map(c => {
-    const encabezado = c.tipo === grupoActual ? '' : `<tr><th colspan="3" style="padding-top:14px;font-size:14px">${escHtml(c.tipo)}</th></tr>`;
-    grupoActual = c.tipo;
-    return `${encabezado}<tr>
-      <td style="width:46px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${c.numero}</td>
-      <td style="width:190px">${escHtml(c.default)}</td>
+  // Tres columnas lado a lado (analógicas, digitales, salidas); cada fila lleva su número (1 a 32) al costado y, como
+  // texto de ejemplo del campo, el nombre genérico del canal.
+  const grupos = ['Entradas analógicas', 'Entradas digitales', 'Salidas'];
+  t.innerHTML = grupos.map(g => `<div>
+    <div style="font-weight:600;margin-bottom:6px">${escHtml(g)}</div>
+    <table class="tabla" style="width:100%"><thead><tr><th style="width:34px;text-align:right">N°</th><th>Nombre personalizado</th></tr></thead>
+    <tbody>${canalesGatewayTodos.filter(c => c.tipo === g).map(c => `<tr>
+      <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${c.numero}</td>
       <td><input data-clave="${escHtml(c.clave)}" value="${escHtml(canalesGatewayActual[c.clave] || '')}"
-          placeholder="${escHtml(c.default)}" style="width:100%;padding:4px 6px"></td>
-    </tr>`;
-  }).join('');
-  t.innerHTML = `<thead><tr><th style="width:46px;text-align:right">N°</th><th style="width:190px">Canal</th>
-      <th>Nombre personalizado</th></tr></thead><tbody>${filas}</tbody>`;
+          placeholder="${escHtml(c.default)}" style="width:100%;padding:3px 6px"></td>
+    </tr>`).join('')}</tbody></table></div>`).join('');
   const cambiado = JSON.stringify(canalesGatewayActual) !== canalesGatewayOriginal;
   document.getElementById('config-iot-canales-guardar').disabled = !cambiado;
 }
