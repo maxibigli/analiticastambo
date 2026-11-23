@@ -50,6 +50,7 @@ import iot_analogicas
 import iot_avisos
 import iot_canales
 import iot_conexion
+import iot_mapa
 import iot_monitoreo
 import iot_sensores
 import iot_vumetros
@@ -3344,6 +3345,39 @@ def api_iot_canales_guardar():
         return jsonify({"error": "Formato inválido."}), 400
     try:
         iot_canales.guardar(nombres)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.get("/api/iot/mapa")
+@auth.requiere_rol("admin")
+def api_iot_mapa_listar():
+    """Dónde está cada entrada digital y cada salida del equipo Modbus principal (función, dirección, unit ID, contacto
+    invertido, pulso): el valor que se usa hoy, el de fábrica y si el tambo lo cambió. Para ⚙ Configuración › 🔌 Entradas/Salidas."""
+    nombres = iot_canales.nombres()
+    cambios = iot_mapa.cambios()
+
+    def filas(grupo, efectivas, de_fabrica, cambiadas):
+        return [{"clave": c, "numero": iot_canales.numero(c), "nombre": nombres.get(c, iot_canales.generico(c)),
+                 **efectivas[c], "defecto": de_fabrica(c), "modificada": c in cambiadas} for c in grupo]
+    return jsonify({"funciones": list(iot_mapa.FUNCIONES_ENTRADA), "pulso_max_s": iot_mapa.PULSO_MAX_S,
+                    "entradas": filas(iot_canales.ENTRADAS_DIGITALES, iot_mapa.entradas(), iot_mapa.de_fabrica_entrada,
+                                      cambios["entradas"]),
+                    "salidas": filas(iot_canales.SALIDAS, iot_mapa.salidas(), iot_mapa.de_fabrica_salida,
+                                     cambios["salidas"])})
+
+
+@app.post("/api/iot/mapa")
+@auth.requiere_rol("admin")
+def api_iot_mapa_guardar():
+    """Reemplaza el mapa guardado. Lo toma iot_lavado.py en su próximo ciclo, sin reiniciar."""
+    cuerpo = request.json or {}
+    entradas, salidas = cuerpo.get("entradas") or {}, cuerpo.get("salidas") or {}
+    if not isinstance(entradas, dict) or not isinstance(salidas, dict):
+        return jsonify({"error": "Formato inválido."}), 400
+    try:
+        iot_mapa.guardar(entradas, salidas)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True})

@@ -29,6 +29,7 @@ from pymodbus.client import ModbusTcpClient
 import iot_analogicas
 import iot_canales
 import iot_conexion
+import iot_mapa
 import iot_sensores
 import lavado_programa
 import voz_comandos
@@ -61,7 +62,10 @@ CANALES = {clave: {"direccion": i, "invertido": False} for i, clave in enumerate
 # aunque los números se repitan (0 a 7 en los dos casos).
 ACTUADORES = {clave: i for i, clave in enumerate(iot_canales.SALIDAS)}   # hasta 32, la n-ésima es la bobina n-1
 SALIDAS_DE_SIEMPRE = tuple(iot_canales.SALIDAS[:8])   # las 8 que existían antes de ampliar a 32: siempre en uso
-DURACION_PULSO_S = 0.5
+# CANALES y ACTUADORES son la forma de FÁBRICA (entrada n = discrete_input n-1, salida n = bobina n-1, unit ID 1). Lo que el
+# tambo cambió desde la web (función, dirección, unit ID, contacto, pulso) lo da `iot_mapa`, que se vuelve a leer en cada
+# ciclo; sin archivo `iot_mapa.json` las llamadas Modbus son idénticas a las de siempre.
+DURACION_PULSO_S = iot_mapa.PULSO_DEFECTO_S
 
 RUTA_DB = "iot_sensores.db"
 
@@ -138,13 +142,26 @@ def _conectar_db(ruta: str = RUTA_DB) -> sqlite3.Connection:
     return con
 
 
-def _leer_estado(client: ModbusTcpClient, direccion: int, invertido: bool):
-    """True/False = estado leído; None = error de lectura (no se toca el estado anterior)."""
+def _leer_estado(client: ModbusTcpClient, direccion: int, invertido: bool,
+                 funcion: str = "discrete_input", unit_id: int = 1):
+    """True/False = estado leído; None = error de lectura (no se toca el estado anterior).
+    `funcion`: discrete_input y coil devuelven un bit; input_register y holding_register un registro (distinto de 0 = activo).
+    Un error, una respuesta sin datos o una excepción dan None: nunca se toman como «apagado»."""
     try:
-        resultado = client.read_discrete_inputs(address=direccion, count=1, device_id=1)
+        if funcion == "coil":
+            resultado = client.read_coils(address=direccion, count=1, device_id=unit_id)
+        elif funcion == "input_register":
+            resultado = client.read_input_registers(address=direccion, count=1, device_id=unit_id)
+        elif funcion == "holding_register":
+            resultado = client.read_holding_registers(address=direccion, count=1, device_id=unit_id)
+        else:
+            resultado = client.read_discrete_inputs(address=direccion, count=1, device_id=unit_id)
         if resultado.isError():
             return None
-        valor = bool(resultado.bits[0])
+        datos = resultado.registers if funcion in ("input_register", "holding_register") else resultado.bits
+        if not datos:
+            return None
+        valor = bool(datos[0])
         return (not valor) if invertido else valor
     except Exception:  # noqa: BLE001
         client.close()   # ver el comentario igual en _escribir_reles: fuerza reconexion
@@ -254,6 +271,27 @@ def registrar_si_cambio(con: sqlite3.Connection, canal: str, estado: bool, estad
     return estado
 
 
+def procesar_entradas(con: sqlite3.Connection, client: ModbusTcpClient, anteriores: dict, ultimo_latido: dict) -> None:
+    """Lee las entradas digitales en uso con la función, dirección y unit ID del mapa de `iot_mapa` (que se vuelve a leer en
+    cada ciclo) y deja el latido, los cambios y el aviso por voz. `anteriores` y `ultimo_latido` son del llamador (viven entre
+    ciclos)."""
+    mapa = iot_mapa.entradas()
+    invertidas = entradas_invertidas()
+    for canal in canales_a_leer():
+        cfg = mapa[canal]
+        # El contacto normalmente cerrado de un sensor digital se suma al propio de la entrada (si ambos, se anulan).
+        estado = _leer_estado(client, cfg["direccion"], cfg["invertido"] != invertidas.get(canal, False),
+                              cfg["funcion"], cfg["unit_id"])
+        if estado is None:
+            continue  # error de lectura puntual: se reintenta el próximo ciclo
+        latir(con, canal, estado, ultimo_latido)
+        anterior = anteriores.get(canal)
+        arranco = estado and estado != anterior
+        anteriores[canal] = registrar_si_cambio(con, canal, estado, anterior)
+        if arranco and AUDIO_ACTIVADO and canal in MENSAJES_VOZ:
+            _anunciar_voz(MENSAJES_VOZ[canal])
+
+
 def ejecutar_comandos_pendientes(con: sqlite3.Connection, client: ModbusTcpClient):
     """Busca pulsos de actuador pedidos desde la pantalla (tabla
     comandos_actuador, cargada por Flask) y los ejecuta ACA -- este proceso
@@ -263,10 +301,11 @@ def ejecutar_comandos_pendientes(con: sqlite3.Connection, client: ModbusTcpClien
         "SELECT id, canal FROM comandos_actuador WHERE ejecutado = 0 ORDER BY id"
     ).fetchall()
     for cmd_id, canal in pendientes:
-        direccion = ACTUADORES.get(canal)
-        if direccion is None:
+        if canal not in ACTUADORES:
             resultado = f"error: canal desconocido ({canal})"
         else:
+            cfg = iot_mapa.salida(canal)   # bobina, unit ID y largo del pulso (de fábrica o lo que cargó el tambo)
+            direccion = cfg["direccion"]
             try:
                 if not client.connected:
                     client.connect()
@@ -275,9 +314,9 @@ def ejecutar_comandos_pendientes(con: sqlite3.Connection, client: ModbusTcpClien
                 # (ExceptionResponse) sin que se caiga el socket, y un pulso
                 # que nunca ocurrió quedaba guardado como "ok" y se mostraba
                 # en la pantalla como última activación.
-                r_on = client.write_coil(address=direccion, value=True, device_id=1)
-                time.sleep(DURACION_PULSO_S)
-                r_off = client.write_coil(address=direccion, value=False, device_id=1)
+                r_on = client.write_coil(address=direccion, value=True, device_id=cfg["unit_id"])
+                time.sleep(cfg["pulso_s"])
+                r_off = client.write_coil(address=direccion, value=False, device_id=cfg["unit_id"])
                 fallo_on = r_on is None or r_on.isError()
                 fallo_off = r_off is None or r_off.isError()
                 if fallo_off:
@@ -330,16 +369,17 @@ def _escribir_reles(client: ModbusTcpClient, claves, prender: bool) -> set:
     un apagado que no ocurrió pasaba por hecho."""
     fallidas = set()
     for clave in claves:
-        direccion = ACTUADORES.get(clave)
-        if direccion is None:
+        if clave not in ACTUADORES:
             print(f"{datetime.datetime.now().isoformat(timespec='seconds')}  "
                   f"_escribir_reles: canal desconocido ({clave})")
             fallidas.add(clave)
             continue
+        cfg = iot_mapa.salida(clave)
+        direccion = cfg["direccion"]
         try:
             if not client.connected:
                 client.connect()
-            resultado = client.write_coil(address=direccion, value=prender, device_id=1)
+            resultado = client.write_coil(address=direccion, value=prender, device_id=cfg["unit_id"])
             if resultado is None or resultado.isError():
                 print(f"{datetime.datetime.now().isoformat(timespec='seconds')}  "
                       f"el M300 RECHAZÓ {'prender' if prender else 'apagar'} {clave} "
@@ -650,18 +690,7 @@ def main():
         while True:
             if not client.connected:
                 client.connect()
-            invertidas = entradas_invertidas()
-            for canal in canales_a_leer():
-                cfg = CANALES[canal]
-                # El contacto normalmente cerrado de un sensor digital se suma al propio de la entrada (si ambos, se anulan).
-                estado = _leer_estado(client, cfg["direccion"], cfg["invertido"] != invertidas.get(canal, False))
-                if estado is None:
-                    continue  # error de lectura puntual: se reintenta el próximo ciclo
-                latir(con, canal, estado, ultimo_latido)
-                arranco = estado and estado != anteriores[canal]
-                anteriores[canal] = registrar_si_cambio(con, canal, estado, anteriores[canal])
-                if arranco and AUDIO_ACTIVADO and canal in MENSAJES_VOZ:
-                    _anunciar_voz(MENSAJES_VOZ[canal])
+            procesar_entradas(con, client, anteriores, ultimo_latido)
             procesar_analogicas(con, client, ultimo_guardado_analogicas)
             ejecutar_comandos_pendientes(con, client)
             reles_lavado = procesar_ciclo_lavado(con, client)

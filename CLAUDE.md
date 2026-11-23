@@ -2199,6 +2199,42 @@ probarla en el lugar con un jumper/botón y mirar qué tarjeta prende en la
 pantalla -- no asumir que el número de la tarjeta es el terminal físico
 sin haberlo visto andar una vez.
 
+## Mapa Modbus por canal del equipo principal (23/11/2026)
+
+Etapa 1 de 4 de `docs/superpowers/specs/2026-11-23-iot-origenes-design.md` (plan: `docs/superpowers/plans/2026-11-23-iot-origenes-etapa-1.md`).
+Antes, la función Modbus, la dirección y el unit ID de las entradas digitales y las salidas del M300 estaban escritos en
+`iot_lavado.py` (`read_discrete_inputs(n-1)`, `write_coil(n-1, device_id=1)`) y solo las analógicas se editaban. Ahora cada entrada
+digital y cada salida se edita en ⚙ Configuración › 🔌 Entradas/Salidas › «Dónde está cada canal en el equipo (mapa Modbus)»
+(`GET/POST /api/iot/mapa`, admin).
+
+**`iot_mapa.py`** (solo importa `iot_canales`): guarda en `iot_mapa.json` (en `.gitignore`, escritura atómica) **únicamente lo que el
+tambo cambió**; lo demás es el valor de siempre (entrada n = `discrete_input` en la dirección n-1, salida n = `coil` en la n-1,
+unit ID 1, pulso 0,5 s). **Sin archivo, el gateway hace las mismas llamadas Modbus de antes**: lo fija
+`tests/test_iot_lavado_mapa.py::TestSinMapa`. `iot_lavado.procesar_entradas` y las salidas lo vuelven a leer en cada ciclo, así que un
+cambio se toma **sin reiniciar** (la IP y el puerto siguen pidiendo reinicio). Un archivo roto cae a los valores de fábrica.
+`CANALES` y `ACTUADORES` de `iot_lavado` quedan como la forma de fábrica.
+
+  * Funciones de una entrada: `discrete_input`, `coil`, `input_register`, `holding_register`. Las de registro cuentan como activas
+    con un valor distinto de 0 (un registro). Un error o una respuesta sin datos NO es «apagado»: el canal conserva su estado.
+  * Las salidas solo escriben bobinas (`write_coil`). `modo` pulso/sostenida, `write_register`, `tipo_dato` y `factor`/`offset`
+    quedan para las etapas siguientes.
+  * Notación Modicon: `discrete_input` 10001–19999, `input_register` 30001–39999 y `holding_register` 40001–49999 se convierten
+    (`10001` se guarda como `0`). Los `coil` y las salidas no se convierten (1 a 9999 son direcciones válidas).
+  * Dos canales no pueden usar el mismo punto: entradas por (unit ID, función, dirección), salidas por (unit ID, dirección). El
+    mensaje nombra los dos. Validación al guardar: dirección 0–65535, unit ID 1–247.
+  * **`PULSO_MAX_S = 10` es un tope técnico, no un umbral del tambo**: el pulso se hace con `time.sleep` dentro del ciclo de 3 s del
+    gateway y lo frena (lavado automático y voz incluidos) mientras dura.
+  * «Contacto NC» de la entrada se suma al del sensor (`entradas_invertidas`): si los dos están tildados se anulan.
+
+**NO se probó contra el M300 real.** Las pruebas usan un cliente Modbus de mentira. Hacerlo con un jumper en una entrada
+(mirando que cambie la tarjeta) y con un pulso en una salida sin nada conectado, antes de cargar un mapa distinto al de fábrica. La
+pantalla se verificó en el navegador (guardar, rechazo por dirección repetida, volver a fábrica). Etapas siguientes: más de un
+equipo Modbus, origen HTTP de solo lectura (ESP32 / ChirpStack) y comandar un ESP32.
+
+**Para correr toda la suite**: `python -m unittest discover -s tests -t .` NO funciona (`tests` no es un paquete). Con `-s tests` suelto,
+la corrida combinada termina con un error de `tkinter` («main thread is not in main loop») en las pruebas del panel de despliegue
+antes de imprimir el resumen; corriendo cada módulo por separado (`python -m unittest tests.test_xxx`) los 44 pasan.
+
 ## Lavado Automático: secuenciador de etapas real (29/08/2026)
 
 Aclaración importante del usuario sobre lo que "Lavado Automático" tenía

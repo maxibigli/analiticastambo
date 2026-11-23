@@ -4474,6 +4474,32 @@
       <button id="config-iot-canales-guardar" disabled>Guardar</button>
     </div>
 
+    <div id="config-iot-mapa" style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-top:22px">
+      <div style="font-weight:600;margin-bottom:8px">Dónde está cada canal en el equipo (mapa Modbus)</div>
+      <p class="explica">
+        Cómo se lee cada entrada digital y cómo se comanda cada salida del gateway. <b>Un campo en blanco es el valor de
+        fábrica del M300</b> (el que se usa hoy, y se ve en gris como ejemplo): si no tocás nada, todo sigue igual.
+        Las direcciones se pueden cargar como las muestra el equipo (10001, 30001, 40001) o como las usa el protocolo
+        (0, 2…): <code>10001</code> se guarda como <code>0</code>. Las bobinas (las salidas y las entradas tipo «bobina») se
+        cargan tal cual. «Contacto NC» se suma al del sensor: si los dos están tildados se anulan. El pulso detiene el
+        ciclo del gateway mientras dura (máximo <span id="config-iot-mapa-pulsomax">10</span> segundos). Dos canales no
+        pueden usar el mismo punto del equipo. Los cambios los toma el gateway solo, sin reiniciar.
+      </p>
+      <div class="aviso" id="config-iot-mapa-estado" style="margin:8px 0"></div>
+      <div style="font-weight:600;margin:10px 0 6px">Entradas digitales</div>
+      <div style="overflow:auto;max-height:420px">
+        <table class="tabla" id="config-iot-mapa-entradas" style="width:100%"></table>
+      </div>
+      <div style="font-weight:600;margin:16px 0 6px">Salidas</div>
+      <div style="overflow:auto;max-height:420px">
+        <table class="tabla" id="config-iot-mapa-salidas" style="width:100%"></table>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <button id="config-iot-mapa-guardar" disabled>Guardar mapa</button>
+        <button class="secundario" id="config-iot-mapa-fabrica">Volver a los valores del M300</button>
+      </div>
+    </div>
+
     <div style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-top:22px">
       <div style="font-weight:600;margin-bottom:8px">Sensores del tambo</div>
       <p class="explica">
@@ -16173,6 +16199,7 @@ async function cargarConfiguracion() {
     cargarVigilante();
     cargarConexionIot();
     cargarCanalesGateway();
+    cargarMapaModbus();
     cargarSensoresConfig();
     cargarAnalogicas(true);
     cargarVumetrosConfig();
@@ -16947,6 +16974,148 @@ document.getElementById('config-iot-canales-guardar').addEventListener('click', 
     estado.textContent = '✔ Guardado.';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
+  }
+});
+
+// --- Mapa Modbus de las entradas digitales y las salidas del gateway principal ------------------------------------
+// mapaActual[clave] = lo que se está editando, campo por campo; '' (o false en «Contacto NC») = valor de fábrica. El servidor
+// guarda solo las filas que difieren de fábrica, así que acá se mandan solo las que tienen algo cargado.
+let mapaFilas = { entradas: [], salidas: [] };
+let mapaActual = {};
+let mapaOriginal = '';
+let mapaFunciones = [];
+const MAPA_CAMPOS = {
+  entradas: ['funcion', 'direccion', 'unit_id', 'invertido'],
+  salidas: ['direccion', 'unit_id', 'pulso_s'],
+};
+const MAPA_FUNCION_TXT = {
+  discrete_input: 'Entrada discreta (1X)', coil: 'Bobina (0X)',
+  input_register: 'Registro de entrada (3X)', holding_register: 'Registro de retención (4X)',
+};
+
+function mapaFilaVacia(grupo) {
+  const f = {};
+  MAPA_CAMPOS[grupo].forEach(c => { f[c] = c === 'invertido' ? false : ''; });
+  return f;
+}
+
+function mapaFilaCambiada(fila) {
+  return Object.values(fila).some(v => v !== '' && v !== false);
+}
+
+async function cargarMapaModbus() {
+  const estado = document.getElementById('config-iot-mapa-estado');
+  estado.textContent = 'Cargando…';
+  try {
+    const d = await pedirJSON('/api/iot/mapa');
+    mapaFunciones = d.funciones || [];
+    document.getElementById('config-iot-mapa-pulsomax').textContent = d.pulso_max_s;
+    mapaFilas = { entradas: d.entradas || [], salidas: d.salidas || [] };
+    mapaActual = {};
+    ['entradas', 'salidas'].forEach(grupo => mapaFilas[grupo].forEach(fila => {
+      const e = mapaFilaVacia(grupo);
+      MAPA_CAMPOS[grupo].forEach(c => {
+        if (c === 'invertido') e[c] = !!fila[c];
+        else e[c] = (fila[c] === fila.defecto[c]) ? '' : String(fila[c]);
+      });
+      mapaActual[fila.clave] = e;
+    }));
+    mapaOriginal = JSON.stringify(mapaActual);
+    pintarMapaModbus();
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+function mapaActualizarGuardar() {
+  document.getElementById('config-iot-mapa-guardar').disabled = JSON.stringify(mapaActual) === mapaOriginal;
+}
+
+function pintarMapaModbus() {
+  const ent = mapaFilas.entradas.map(f => {
+    const a = mapaActual[f.clave];
+    const opciones = ['<option value="">de fábrica: ' + escHtml(MAPA_FUNCION_TXT[f.defecto.funcion] || f.defecto.funcion) + '</option>']
+      .concat(mapaFunciones.map(fn => '<option value="' + escHtml(fn) + '"' + (a.funcion === fn ? ' selected' : '') + '>'
+        + escHtml(MAPA_FUNCION_TXT[fn] || fn) + '</option>')).join('');
+    return `<tr class="${mapaFilaCambiada(a) ? 'pm-modificado' : ''}">
+      <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${f.numero}</td>
+      <td>${escHtml(f.nombre)}</td>
+      <td><select data-mapa-clave="${escHtml(f.clave)}" data-mapa-campo="funcion" style="padding:3px 6px">${opciones}</select></td>
+      <td><input type="number" min="0" step="1" data-mapa-clave="${escHtml(f.clave)}" data-mapa-campo="direccion"
+          value="${escHtml(a.direccion)}" placeholder="${f.defecto.direccion}" style="width:90px;padding:3px 6px"></td>
+      <td><input type="number" min="1" max="247" step="1" data-mapa-clave="${escHtml(f.clave)}" data-mapa-campo="unit_id"
+          value="${escHtml(a.unit_id)}" placeholder="${f.defecto.unit_id}" style="width:70px;padding:3px 6px"></td>
+      <td style="text-align:center"><input type="checkbox" data-mapa-clave="${escHtml(f.clave)}" data-mapa-campo="invertido"${a.invertido ? ' checked' : ''}></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('config-iot-mapa-entradas').innerHTML =
+    '<thead><tr><th style="width:34px;text-align:right">N°</th><th>Canal</th><th>Función</th><th>Dirección</th>'
+    + '<th>Unit ID</th><th>Contacto NC</th></tr></thead><tbody>' + ent + '</tbody>';
+  const sal = mapaFilas.salidas.map(f => {
+    const a = mapaActual[f.clave];
+    return `<tr class="${mapaFilaCambiada(a) ? 'pm-modificado' : ''}">
+      <td style="text-align:right;font-variant-numeric:tabular-nums;font-weight:600">${f.numero}</td>
+      <td>${escHtml(f.nombre)}</td>
+      <td><input type="number" min="0" step="1" data-mapa-clave="${escHtml(f.clave)}" data-mapa-campo="direccion"
+          value="${escHtml(a.direccion)}" placeholder="${f.defecto.direccion}" style="width:90px;padding:3px 6px"></td>
+      <td><input type="number" min="1" max="247" step="1" data-mapa-clave="${escHtml(f.clave)}" data-mapa-campo="unit_id"
+          value="${escHtml(a.unit_id)}" placeholder="${f.defecto.unit_id}" style="width:70px;padding:3px 6px"></td>
+      <td><input type="number" min="0" step="0.1" data-mapa-clave="${escHtml(f.clave)}" data-mapa-campo="pulso_s"
+          value="${escHtml(a.pulso_s)}" placeholder="${f.defecto.pulso_s}" style="width:80px;padding:3px 6px"></td>
+    </tr>`;
+  }).join('');
+  document.getElementById('config-iot-mapa-salidas').innerHTML =
+    '<thead><tr><th style="width:34px;text-align:right">N°</th><th>Canal</th><th>Bobina</th><th>Unit ID</th>'
+    + '<th>Pulso (s)</th></tr></thead><tbody>' + sal + '</tbody>';
+  mapaActualizarGuardar();
+}
+
+// Un solo oyente por tabla (delegado): no se vuelve a pintar al escribir, para no perder el foco.
+['config-iot-mapa-entradas', 'config-iot-mapa-salidas'].forEach(id => {
+  document.getElementById(id).addEventListener('input', ev => {
+    const clave = ev.target.dataset.mapaClave, campo = ev.target.dataset.mapaCampo;
+    if (!clave || !campo || !mapaActual[clave]) return;
+    mapaActual[clave][campo] = ev.target.type === 'checkbox' ? ev.target.checked : ev.target.value;
+    ev.target.closest('tr').classList.toggle('pm-modificado', mapaFilaCambiada(mapaActual[clave]));
+    mapaActualizarGuardar();
+  });
+});
+
+document.getElementById('config-iot-mapa-fabrica').addEventListener('click', () => {
+  if (!confirm('¿Volver todas las entradas y salidas a los valores de fábrica del M300? Se aplica recién al tocar «Guardar mapa».')) return;
+  mapaFilas.entradas.forEach(f => { mapaActual[f.clave] = mapaFilaVacia('entradas'); });
+  mapaFilas.salidas.forEach(f => { mapaActual[f.clave] = mapaFilaVacia('salidas'); });
+  pintarMapaModbus();
+});
+
+document.getElementById('config-iot-mapa-guardar').addEventListener('click', async () => {
+  const estado = document.getElementById('config-iot-mapa-estado');
+  const armar = grupo => {
+    const salida = {};
+    mapaFilas[grupo].forEach(f => {
+      const a = mapaActual[f.clave];
+      if (!mapaFilaCambiada(a)) return;
+      const fila = {};
+      MAPA_CAMPOS[grupo].forEach(c => {
+        if (c === 'funcion') fila[c] = a[c] || null;
+        else if (c === 'invertido') fila[c] = !!a[c];
+        else fila[c] = (a[c] === '' ? null : Number(a[c]));
+      });
+      salida[f.clave] = fila;
+    });
+    return salida;
+  };
+  estado.textContent = 'Guardando…';
+  try {
+    await pedirJSON('/api/iot/mapa', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entradas: armar('entradas'), salidas: armar('salidas') }),
+    });
+    await cargarMapaModbus();
+    estado.textContent = '✔ Guardado.';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;   // lo escrito queda como está para corregirlo
   }
 });
 
