@@ -33,6 +33,7 @@ import threading
 import unicodedata
 
 import iot_canales
+import iot_origenes
 from iot_analogicas import numero as _numero
 
 _RUTA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "iot_sensores.json")
@@ -83,8 +84,12 @@ def _texto(valor, nombre, maximo) -> str:
     return t
 
 
-def normalizar(s: dict) -> dict:
-    """Valida UN sensor y lo deja con todos sus campos. `clave` queda como vino (puede faltar: la pone `guardar`)."""
+def normalizar(s: dict, estricto: bool = True) -> dict:
+    """Valida UN sensor y lo deja con todos sus campos. `clave` queda como vino (puede faltar: la pone `guardar`).
+
+    `estricto=False` es para LEER el archivo (`cargar`): una entrada con forma de origen («esp32.puerta») se conserva aunque ese
+    origen ya no exista, así el sensor queda visible como «sin datos» en vez de desaparecer del panel en silencio. Al guardar
+    (estricto) la entrada tiene que existir: la del gateway o la de un canal digital de algún origen."""
     if not isinstance(s, dict):
         raise ValueError("Cada sensor tiene que ser un objeto.")
     label = _texto(s.get("label"), "Nombre", MAX_NOMBRE)
@@ -110,8 +115,9 @@ def normalizar(s: dict) -> dict:
     if rol not in ROLES:
         raise ValueError(f"{label}: la función tiene que ser «alarma», «indicador» o «estado».")
     entrada = s.get("entrada") or None
-    if entrada is not None and entrada not in ENTRADAS:
-        raise ValueError(f"{label}: la entrada {entrada!r} no existe en el gateway.")
+    if entrada is not None and entrada not in ENTRADAS and entrada not in iot_origenes.entradas_digitales():
+        if estricto or not (isinstance(entrada, str) and "." in entrada):
+            raise ValueError(f"{label}: la entrada {entrada!r} no existe en el gateway ni en ningún origen de datos.")
     por_defecto_activo, por_defecto_inactivo = TEXTOS_DE_ROL[rol]
     texto_activo = _texto(s.get("texto_activo"), "Texto activo", MAX_TEXTO) or por_defecto_activo
     texto_inactivo = _texto(s.get("texto_inactivo"), "Texto inactivo", MAX_TEXTO) or por_defecto_inactivo
@@ -172,7 +178,7 @@ def cargar() -> list:
     salida = []
     for s in lista:
         try:
-            n = normalizar(s)
+            n = normalizar(s, estricto=False)
         except ValueError:
             continue
         if n["clave"]:

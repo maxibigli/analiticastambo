@@ -2244,6 +2244,65 @@ equipo Modbus, origen HTTP de solo lectura (ESP32 / ChirpStack) y comandar un ES
 la corrida combinada termina con un error de `tkinter` («main thread is not in main loop») en las pruebas del panel de despliegue
 antes de imprimir el resumen; corriendo cada módulo por separado (`python -m unittest tests.test_xxx`) los 44 pasan.
 
+## Orígenes HTTP de datos: un ESP32 o ChirpStack que MANDA lecturas (23/11/2026)
+
+Etapa 3 de 4 de `docs/superpowers/specs/2026-11-23-iot-origenes-design.md` (plan: `docs/superpowers/plans/2026-11-23-iot-origenes-etapa-3.md`).
+Protocolo y ejemplos para quien programa el equipo: `docs/iot-ingreso-http.md`. En ⚙ Configuración › 🔌 Entradas/Salidas, la tarjeta
+«Otros equipos que mandan datos por HTTP» (entre el mapa Modbus y «Sensores del tambo»).
+
+**Cómo encaja sin tocar el panel.** `iot_ingreso.recibir` escribe en las MISMAS tablas de `iot_sensores.db` que `iot_lavado` (`digitales_estado`,
+`eventos_di`, `lecturas_sensor`), así que el panel, el historial, los colores y los avisos no saben de dónde viene una lectura. Un canal
+digital de un origen es una entrada más (`<id>.<canal>`, por ejemplo `esp32.puerta`) que se asigna a un sensor digital como cualquier otra; un canal
+analógico alimenta directamente un sensor del catálogo (no pasa por las 32 entradas del M300). El equipo principal es el origen `principal`
+y no se guarda: sin `iot_origenes.json` TODO se comporta como antes (lo fijan las suites IoT existentes).
+
+  * **`iot_origenes.py`** (estado en `iot_origenes.json`, fuera de git): orígenes, canales y token. NO importa `iot_sensores`/`iot_monitoreo` (ellos lo
+    importan a él): lo que necesita del catálogo se lo pasan por parámetro (`guardar_origen(..., sensores_analogicos, sensores_ocupados, entradas_en_uso)`).
+    El `id` sale del nombre al crear y no cambia nunca. Topes técnicos: 20 orígenes, 32 canales, clave de canal `[A-Za-z0-9_-]{1,40}`.
+    **Solo entradas**: un canal `salida` se rechaza («todavía no manejan salidas»; eso es la etapa 4).
+  * **Token**: `secrets.token_urlsafe(32)`, se muestra UNA vez al crear o regenerar; en disco solo su SHA-256; `hmac.compare_digest`. Token malo, sin token y
+    origen inexistente contestan el MISMO `403` (y `token_valido` compara igual contra un hash de relleno), y 5 fallos seguidos desde una IP la bloquean 10
+    minutos (`auth`, con una clave propia `iot:<ip>`: no toca el login). Cabecera `X-Token`; **`?token=` solo en orígenes `chirpstack`** (queda en la URL).
+  * **`POST /api/iot/ingreso/<id>`** es público (el prefijo lleva la barra final: `/api/iot/ingresoX` no queda abierto) y se defiende solo con el token. Tope de
+    65.536 bytes (413), acepta JSON sin `Content-Type`, 400 (nunca 500) con un cuerpo que no es un objeto o con `lecturas` que no es un objeto, y el error
+    queda en el estado del origen (se ve en la tarjeta). `?event=` es el evento de ChirpStack.
+  * **Reglas de `recibir`** (`tests/test_iot_ingreso.py`): analógico = `crudo × factor + offset`; NaN, infinito, texto, booleano en un analógico, texto en un
+    digital y canales no declarados cuentan como `ignorados`, no son un error. Hora ISO 8601: con zona se pasa a hora local, **inválida o EN EL FUTURO se
+    reemplaza por la del servidor** (un reloj roto no clava el último estado en el futuro), en el pasado se respeta. Una lectura digital más vieja que el estado
+    guardado se ignora. Dos lecturas analógicas a menos de 30 s (en cualquier orden) guardan una. Un lock de módulo evita `eventos_di` duplicados.
+  * **La ventana de «Sin datos» es por origen** (`ventana_lectura_min`, **obligatoria y sin valor por defecto**: la sabe el tambo, un número nuestro marcaría
+    mudo a un nodo lento o taparía uno caído). El equipo principal conserva sus 30 minutos. `lecturas_actuales` pide `iot_origenes.ventanas()` una vez por
+    llamada. El ITH conserva la ventana de siempre.
+  * **Un sensor atado a un origen no desaparece en silencio**: `iot_sensores.cargar()` conserva una entrada con forma de origen (`x.y`) aunque el origen ya
+    no exista (queda «Sin datos», y el editor la muestra como «⚠ … (ya no existe)»); `guardar()` sí es estricto. No se puede sacar un canal digital ni eliminar un
+    origen que un sensor usa, ni borrar del catálogo un sensor analógico que un canal alimenta, ni asignarlo además a una entrada del M300.
+  * **ChirpStack NO está confirmado.** La documentación oficial de su HTTP integration no muestra cómo mandar una cabecera propia ni lista el campo `object` (el
+    payload ya decodificado) del evento `up`; solo `data` en base64. Por eso se acepta `?token=` y un `up` sin `object` da un error legible («falta el códec en
+    ChirpStack»). **Probar con un ChirpStack real antes de usarlo**; el formato `generico` (ESP32) es el confirmado por las pruebas. Con `?token=`, un registro
+    intermedio (Cloudflare, un proxy) ve el token: conviene que ChirpStack hable con LactIA por la red local.
+  * **No hay máximo de antigüedad para la hora**, salvo una: **anterior a la creación del origen** se reemplaza por la del servidor (un ESP32 sin NTP manda 1970 y
+    quedaría «sin datos» con la tarjeta diciendo que recibe bien). Un reloj roto que cae entre la creación y hoy deja lecturas con fecha vieja (el «último valor» no
+    se rompe, se ordena por fecha).
+  * **Bloqueo por IP**: la clave es una tupla `("iot", ip, origen)` (el login usa texto: no puede llenarla) y por origen (un ChirpStack atiende varios desde una IP). Las cabeceras
+    `CF-Connecting-IP`/`X-Forwarded-For` solo se creen si la conexión viene de `127.0.0.1` (el túnel de Cloudflare corre en la PC); un equipo de la LAN se identifica por su
+    IP real. **El login (`auth.ip_cliente`) sigue creyéndolas siempre**: un equipo de la LAN puede bloquear a otro de LOGIN poniendo esa cabecera. Es de antes de esta etapa.
+  * **ChirpStack: una Application = un origen.** LactIA ignora `deviceInfo`: dos nodos que mandan las mismas claves en la misma Application se pisan (el sensor muestra el último
+    uplink). Hay que usar una Application por nodo o claves distintas. Un `up` de `fPort` 0 (solo comandos MAC) se ignora sin error; join/status no cuentan como recepción.
+  * **El ITH** está mudo si cualquiera de sus dos datos (`temp_ambiente`, `hum_ambiente`) lo está, cada uno con la ventana de su origen (`_dato_limitante`).
+  * **Estado propio**: al eliminar un equipo se borra su estado derivado (`iot_ingreso.olvidar`: último valor, contadores, latido) pero NO `eventos_di` ni `lecturas_sensor`
+    (el historial de sus sensores). Un `iot_origenes.json` ilegible se aparta como `iot_origenes.json.roto-<fecha>` antes de crear otro (nunca se pisa).
+  * **Límites conocidos (revisión final, no resueltos)**: la ruta contesta `503` si el gateway tiene la base tomada más de 5 s; `GET /api/iot/origenes` abre una conexión
+    SQLite por canal (con 20 orígenes × 32 canales serían cientos: no es el caso real); dos administradores guardando a la vez pueden asignar el mismo sensor a una entrada
+    del M300 y a un canal de origen (tres archivos, tres locks); con `iot_origenes.json` perdido no se puede guardar «Sensores del tambo» hasta reasignar cada sensor huérfano
+    (es visible, no silencioso).
+
+**NO se probó con un ESP32 ni un ChirpStack reales.** Las pruebas son con el `test_client` de Flask y datos de mentira; la pantalla se verificó en el navegador.
+Un ESP32 dentro de la red del tambo tiene que apuntar a la IP de la PC del servidor, no al nombre público.
+**Pruebas** (una por módulo): `python -m unittest tests.test_iot_origenes tests.test_iot_ingreso` (cada una en su comando), `tests.test_iot_origenes_integracion`,
+`tests.test_iot_origenes_api`, más las IoT de siempre (`test_iot_sensores`, `test_iot_digitales`, `test_iot_analogicas`, `test_iot_estados`, `test_iot_avisos`,
+`test_iot_alarmas_tablero`, `test_iot_vumetros`, `test_iot_mapa`, `test_iot_lavado_mapa`, `test_iot_canales`) y `test_ups_api`.
+**Reiniciar `iot_lavado.py` no hace falta para RECIBIR datos** (el ingreso lo hace el servidor web) pero sí para que el gateway tome un catálogo de sensores nuevo; no hacerlo en pleno lavado.
+
 ## Lavado Automático: secuenciador de etapas real (29/08/2026)
 
 Aclaración importante del usuario sobre lo que "Lavado Automático" tenía

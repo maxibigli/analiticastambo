@@ -4500,6 +4500,40 @@
       </div>
     </div>
 
+    <div id="config-iot-origenes" style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-top:22px">
+      <div style="font-weight:600;margin-bottom:8px">Otros equipos que mandan datos por HTTP (ESP32, LoRaWAN)</div>
+      <p class="explica">
+        Un equipo que <b>manda</b> sus lecturas a LactIA (un ESP32, o un servidor LoRaWAN como ChirpStack) en vez de que
+        LactIA las lea por Modbus. Cada equipo tiene su dirección de envío, un token (la contraseña con la que se presenta) y
+        los canales que manda: cada uno es una <b>entrada digital</b> (un contacto) o una <b>entrada analógica</b> (un valor,
+        que se puede ajustar con <i>factor</i> y <i>offset</i>: valor = lo que llega × factor + offset) que alimenta un
+        sensor del panel. Los canales digitales se asignan después a una alarma, indicador o estado en «Sensores del tambo».
+        <b>La ventana</b> es cada cuántos minutos tiene que llegar algo de ese equipo para que no figure «Sin datos»: tiene
+        que ser mayor que cada cuánto manda (la sabés vos; LactIA no la inventa). El token se muestra <b>una sola vez</b>.
+        Un equipo que está dentro de la red del tambo tiene que usar la IP de esta PC en la dirección, no el nombre
+        público. <b>ChirpStack</b>: la dirección es de toda una <i>Application</i>, así que dos nodos con las mismas claves
+        en la misma Application se pisarían: usá una Application por nodo, o claves distintas en cada uno.
+        Solo se reciben lecturas: por ahora no se comanda nada de estos equipos.
+      </p>
+      <div class="aviso" id="config-iot-origenes-estado" style="margin:8px 0"></div>
+      <div id="config-iot-origenes-token"></div>
+      <div id="config-iot-origenes-lista" style="display:flex;flex-direction:column;gap:14px"></div>
+      <div id="config-iot-origenes-nuevo" style="display:none;margin-top:14px;border:1px dashed var(--border);border-radius:8px;padding:10px;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <label class="aviso" style="margin:0">Nombre <input type="text" id="config-iot-origenes-nuevo-nombre" maxlength="40"
+            placeholder="ESP32 del corral" style="width:190px;padding:6px"></label>
+        <label class="aviso" style="margin:0">Formato <select id="config-iot-origenes-nuevo-formato" style="padding:6px">
+            <option value="generico">ESP32 / genérico</option><option value="chirpstack">ChirpStack (LoRaWAN)</option></select></label>
+        <label class="aviso" style="margin:0">Ventana (minutos) <input type="number" min="1" step="1"
+            id="config-iot-origenes-nuevo-ventana" placeholder="obligatoria" style="width:110px;padding:6px"></label>
+        <button type="button" id="config-iot-origenes-crear">Crear equipo</button>
+        <button type="button" class="secundario" id="config-iot-origenes-cancelar">Cancelar</button>
+      </div>
+      <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
+        <button class="secundario" id="config-iot-origenes-agregar" type="button">➕ Agregar equipo</button>
+        <button class="secundario" id="config-iot-origenes-actualizar" type="button" title="Vuelve a leer el estado y los últimos valores recibidos">↻ Actualizar</button>
+      </div>
+    </div>
+
     <div style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-top:22px">
       <div style="font-weight:600;margin-bottom:8px">Sensores del tambo</div>
       <p class="explica">
@@ -4768,7 +4802,9 @@ function fmt(n) {
 // desde una cuarta tiraba "esc is not defined" — que rompe la página entera, no
 // solo el pedazo que lo llamó.
 function escHtml(s) {
-  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // Las comillas también: casi todo se usa dentro de atributos (value="…"), y un nombre con « " » lo cortaba o abría un atributo.
+  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 function baseOpts(mostrarLeyenda) {
@@ -16200,6 +16236,7 @@ async function cargarConfiguracion() {
     cargarConexionIot();
     cargarCanalesGateway();
     cargarMapaModbus();
+    cargarOrigenes();
     cargarSensoresConfig();
     cargarAnalogicas(true);
     cargarVumetrosConfig();
@@ -17119,6 +17156,285 @@ document.getElementById('config-iot-mapa-guardar').addEventListener('click', asy
   }
 });
 
+// --- Otros equipos que mandan datos por HTTP (ESP32, LoRaWAN): los orígenes de datos --------------------------
+// Las claves de canal de un origen no van en ids ni en selectores CSS: cada fila lleva sus datos en atributos data-.
+let orgDatos = { origenes: [], sensores_analogicos: [] };
+let orgEdit = {};        // id del origen -> lo que se está editando (textos tal cual se escriben)
+let orgOriginal = {};    // id del origen -> JSON de lo guardado, para saber si hay cambios sin guardar
+let orgToken = null;     // { nombre, token }: el token recién creado o regenerado, visible UNA sola vez
+const ORG_LISTA = document.getElementById('config-iot-origenes-lista');
+const ORG_TIPOS = { entrada_digital: 'Digital', entrada_analogica: 'Analógica' };
+
+function orgFecha(iso, largo) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('es-AR', { weekday: largo ? 'long' : 'short', day: '2-digit', month: '2-digit', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', hour12: false });
+}
+
+function orgCopia(o) {
+  return { nombre: o.nombre, formato: o.formato, ventana: String(o.ventana_lectura_min),
+    canales: o.canales.map(c => ({ clave: c.clave, grupo: c.grupo, nombre: c.nombre || '',
+      factor: c.factor === 1 ? '' : String(c.factor), offset: c.offset === 0 ? '' : String(c.offset), sensor: c.sensor || '' })) };
+}
+
+function orgCambiado(id) { return JSON.stringify(orgEdit[id]) !== orgOriginal[id]; }
+
+async function cargarOrigenes() {
+  const estado = document.getElementById('config-iot-origenes-estado');
+  try {
+    const d = await pedirJSON('/api/iot/origenes');
+    const nuevos = {}, originales = {};
+    d.origenes.forEach(o => {
+      const copia = orgCopia(o);
+      originales[o.id] = JSON.stringify(copia);
+      // Lo que se está escribiendo y no se guardó no se pisa al volver a leer.
+      nuevos[o.id] = (orgEdit[o.id] && orgOriginal[o.id] !== undefined && orgCambiado(o.id)) ? orgEdit[o.id] : copia;
+    });
+    orgDatos = d; orgEdit = nuevos; orgOriginal = originales;
+    pintarOrigenes();
+    estado.textContent = '';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+}
+
+function orgUrl(o) {
+  const chirp = orgEdit[o.id].formato === 'chirpstack';
+  return location.origin + o.url_ingreso + (chirp ? '?event=up&token=<TOKEN>' : '');
+}
+
+// ¿Se abrió LactIA por un nombre (el público, por ejemplo) y no por una IP o «localhost»?
+function orgNombrePublico() {
+  return !/^[\d.:\[\]]+$/.test(location.hostname) && location.hostname !== 'localhost';
+}
+
+function orgCurl(o) {
+  const clave = (orgEdit[o.id].canales[0] || {}).clave || 'canal';
+  if (orgEdit[o.id].formato === 'chirpstack') {
+    return 'curl -X POST "' + orgUrl(o) + '" -H "Content-Type: application/json" -d \'{"deviceInfo": {}, "object": {"' + clave + '": 21.5}}\'';
+  }
+  return 'curl -X POST ' + orgUrl(o) + ' -H "X-Token: <TOKEN>" -H "Content-Type: application/json" -d \'{"lecturas": {"' + clave + '": 21.5}}\'';
+}
+
+// Los sensores que ya lee otro canal (de este u otro equipo): no se ofrecen dos veces.
+function orgSensoresUsados(idActual, iActual) {
+  const usados = {};
+  Object.keys(orgEdit).forEach(id => orgEdit[id].canales.forEach((c, i) => {
+    if (c.sensor && !(id === idActual && i === iActual)) usados[c.sensor] = true;
+  }));
+  return usados;
+}
+
+function orgFilaCanal(id, c, i) {
+  const guardado = (orgDatos.origenes.find(o => o.id === id) || { canales: [] }).canales.find(x => x.clave === c.clave);
+  const ultimo = guardado && guardado.ultimo;
+  const dig = c.grupo === 'entrada_digital';
+  const attrs = 'data-org="' + escHtml(id) + '" data-i="' + i + '"';
+  const campo = (k, valor, ancho, extra) => '<input ' + attrs + ' data-campo="' + k + '" value="' + escHtml(valor) + '" style="width:'
+    + ancho + 'px;padding:3px 6px" ' + (extra || '') + '>';
+  let sensor = '<span class="aviso" style="margin:0">—</span>', ajuste = '<td></td><td></td>';
+  if (!dig) {
+    const usados = orgSensoresUsados(id, i);
+    sensor = '<select ' + attrs + ' data-campo="sensor" style="padding:3px 6px"><option value="">(ninguno)</option>'
+      + orgDatos.sensores_analogicos.map(s => {
+        const ocupado = usados[s.clave] && c.sensor !== s.clave;
+        return '<option value="' + escHtml(s.clave) + '"' + (c.sensor === s.clave ? ' selected' : '') + (ocupado ? ' disabled' : '') + '>'
+          + escHtml(s.label) + (ocupado ? ' (ya asignado)' : '') + '</option>';
+      }).join('') + '</select>';
+    // Texto y no «number»: un valor mal escrito tiene que llegar al servidor y rechazarse, no convertirse en vacío (= 1 o 0).
+    ajuste = '<td>' + campo('factor', c.factor, 56, 'inputmode="decimal" placeholder="1"') + '</td><td>'
+      + campo('offset', c.offset, 56, 'inputmode="decimal" placeholder="0"') + '</td>';
+  }
+  const ult = !ultimo ? '—' : (dig ? (ultimo.valor ? 'activo' : 'inactivo') : fmt(ultimo.valor)) + ' · ' + orgFecha(ultimo.fecha_hora);
+  return '<tr><td>' + campo('clave', c.clave, 96, 'maxlength="40"') + '</td><td>' + (ORG_TIPOS[c.grupo] || c.grupo) + '</td><td>'
+    + campo('nombre', c.nombre, 120, 'maxlength="40"') + '</td>' + ajuste + '<td>' + sensor + '</td><td class="aviso" style="margin:0">'
+    + escHtml(ult) + '</td><td><button class="secundario" type="button" data-org-accion="borrar-canal" ' + attrs
+    + ' title="Sacar este canal">✕</button></td></tr>';
+}
+
+function pintarOrigenes() {
+  ORG_LISTA.innerHTML = orgDatos.origenes.map(o => {
+    const e = orgEdit[o.id], id = escHtml(o.id), st = o.estado || {};
+    const fila = 'style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"';
+    let estado = !st.ultima_recepcion ? 'Todavía no llegó nada.'
+      : 'Última recepción: ' + orgFecha(st.ultima_recepcion, true) + ' · ' + (st.recibidas || 0) + ' recibidas · ' + (st.ignorados || 0) + ' ignoradas';
+    const error = st.ultimo_error ? '<div class="aviso" style="margin:4px 0;color:var(--lac-danger,#e5534b)">Último error ('
+      + escHtml(orgFecha(st.error_fecha, true)) + '): ' + escHtml(st.ultimo_error) + '</div>' : '';
+    const canales = e.canales.length
+      ? '<div style="overflow:auto"><table class="tabla" style="width:100%"><thead><tr><th>Clave</th><th>Tipo</th><th>Nombre</th><th>Factor</th><th>Offset</th>'
+        + '<th>Sensor</th><th>Último valor recibido</th><th></th></tr></thead><tbody>' + e.canales.map((c, i) => orgFilaCanal(o.id, c, i)).join('')
+        + '</tbody></table></div>'
+      : '<div class="aviso">Sin canales todavía: agregá los que manda el equipo (la clave es la que usa el equipo en su envío).</div>';
+    return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px"><div ' + fila + '>'
+      + '<label class="aviso" style="margin:0">Nombre <input data-org="' + id + '" data-campo-origen="nombre" value="' + escHtml(e.nombre)
+      + '" maxlength="40" style="width:190px;padding:6px"></label>'
+      + '<label class="aviso" style="margin:0">Formato <select data-org="' + id + '" data-campo-origen="formato" style="padding:6px">'
+      + '<option value="generico"' + (e.formato === 'generico' ? ' selected' : '') + '>ESP32 / genérico</option>'
+      + '<option value="chirpstack"' + (e.formato === 'chirpstack' ? ' selected' : '') + '>ChirpStack (LoRaWAN)</option></select></label>'
+      + '<label class="aviso" style="margin:0" title="Si no llega nada de este equipo en este tiempo, sus sensores figuran «Sin datos»">Ventana (minutos) '
+      + '<input type="number" min="1" step="1" data-org="' + id + '" data-campo-origen="ventana" value="' + escHtml(e.ventana)
+      + '" style="width:90px;padding:6px"></label></div>'
+      + '<div class="aviso" style="margin:8px 0 2px">Dirección de envío: <code style="user-select:all;word-break:break-all">' + escHtml(orgUrl(o))
+      + '</code> <button class="secundario" type="button" data-org-accion="copiar-url" data-org="' + id + '">Copiar</button>'
+      + (orgNombrePublico() ? '<div style="margin-top:4px">⚠ Esta dirección usa el nombre con el que abriste LactIA. Un equipo dentro de la red del tambo tiene que usar la IP de esta PC en su lugar (y, en ChirpStack, el token no debería viajar por internet).</div>' : '')
+      + '</div>'
+      + '<details style="margin:4px 0"><summary class="aviso" style="cursor:pointer">Ejemplo para probar con curl</summary>'
+      + '<pre style="white-space:pre-wrap;word-break:break-all;margin:6px 0">' + escHtml(orgCurl(o)) + '</pre>'
+      + '<button class="secundario" type="button" data-org-accion="copiar-curl" data-org="' + id + '">Copiar ejemplo</button></details>'
+      + '<div class="aviso" style="margin:6px 0 2px">' + escHtml(estado) + '</div>' + error + canales
+      + '<div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">'
+      + '<button class="secundario" type="button" data-org-accion="canal-an" data-org="' + id + '">➕ Canal analógico</button>'
+      + '<button class="secundario" type="button" data-org-accion="canal-dig" data-org="' + id + '">➕ Canal digital</button>'
+      + '<button type="button" data-org-accion="guardar" data-org="' + id + '"' + (orgCambiado(o.id) ? '' : ' disabled') + '>Guardar equipo</button>'
+      + '<button class="secundario" type="button" data-org-accion="token" data-org="' + id + '">Nuevo token</button>'
+      + '<button class="secundario" type="button" data-org-accion="eliminar" data-org="' + id + '">Eliminar equipo</button></div></div>';
+  }).join('') || '<div class="aviso">Todavía no hay equipos. Agregá uno con el botón de abajo.</div>';
+  pintarTokenOrigen();
+}
+
+function pintarTokenOrigen() {
+  const cont = document.getElementById('config-iot-origenes-token');
+  if (!orgToken) { cont.innerHTML = ''; return; }
+  cont.innerHTML = '<div style="border:2px solid var(--lac-warn,#d9a21b);border-radius:8px;padding:10px;margin-bottom:12px">'
+    + '<div style="font-weight:600">Token de «' + escHtml(orgToken.nombre) + '»</div>'
+    + '<div class="aviso" style="margin:6px 0">No se vuelve a mostrar. Copialo ahora y cargalo en el equipo.</div>'
+    + '<code style="user-select:all;word-break:break-all">' + escHtml(orgToken.token) + '</code>'
+    + '<div style="margin-top:8px;display:flex;gap:10px"><button type="button" data-token-accion="copiar">Copiar</button>'
+    + '<button type="button" class="secundario" data-token-accion="cerrar">Ya lo copié</button></div></div>';
+}
+
+async function orgCopiar(texto, boton) {
+  let ok = false;
+  try { await navigator.clipboard.writeText(texto); ok = true; } catch (e) { /* sin HTTPS no hay portapapeles: se prueba el método viejo */ }
+  if (!ok) {
+    const t = document.createElement('textarea');
+    t.value = texto; t.style.position = 'fixed'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select();
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    t.remove();
+  }
+  if (boton) {
+    const antes = boton.textContent;
+    boton.textContent = ok ? '✔ Copiado' : 'Seleccionalo y copialo a mano';
+    setTimeout(() => { boton.textContent = antes; }, 2000);
+  }
+}
+
+// Las entradas digitales del editor de sensores incluyen las de los orígenes: se vuelven a pedir sin tocar lo que se edita.
+async function orgRefrescarSensores() {
+  try {
+    const d = await pedirJSON('/api/iot/sensores');
+    senEntradas = d.entradas || [];
+    senAsignadosOrigen = d.asignados_origen || {};
+    pintarSensoresConfig();
+  } catch (e) { /* el editor de sensores se actualiza solo la próxima vez que se abra la pantalla */ }
+}
+
+function orgActualizarBoton(id) {
+  ORG_LISTA.querySelectorAll('[data-org-accion="guardar"]').forEach(b => { if (b.dataset.org === id) b.disabled = !orgCambiado(id); });
+}
+
+['input', 'change'].forEach(evento => ORG_LISTA.addEventListener(evento, ev => {
+  const t = ev.target, id = t.dataset.org;
+  if (!id || !orgEdit[id]) return;
+  if (t.dataset.campoOrigen) {
+    orgEdit[id][t.dataset.campoOrigen] = t.value;
+    if (evento === 'change' && t.dataset.campoOrigen === 'formato') { pintarOrigenes(); return; }   // cambia la dirección y el ejemplo
+  } else if (t.dataset.campo && t.dataset.i != null) {
+    const c = orgEdit[id].canales[Number(t.dataset.i)];
+    if (!c) return;
+    c[t.dataset.campo] = t.value;
+    if (evento === 'change' && t.dataset.campo === 'sensor') { pintarOrigenes(); return; }   // los demás desplegables marcan «(ya asignado)»
+  } else return;
+  orgActualizarBoton(id);
+}));
+
+ORG_LISTA.addEventListener('click', async ev => {
+  const b = ev.target.closest('[data-org-accion]');
+  if (!b) return;
+  const id = b.dataset.org, accion = b.dataset.orgAccion, o = orgDatos.origenes.find(x => x.id === id);
+  const estado = document.getElementById('config-iot-origenes-estado');
+  if (!o || !orgEdit[id]) return;
+  if (accion === 'copiar-url') return orgCopiar(orgUrl(o), b);
+  if (accion === 'copiar-curl') return orgCopiar(orgCurl(o), b);
+  if (accion === 'canal-an' || accion === 'canal-dig') {
+    orgEdit[id].canales.push({ clave: '', grupo: accion === 'canal-an' ? 'entrada_analogica' : 'entrada_digital', nombre: '', factor: '', offset: '', sensor: '' });
+    return pintarOrigenes();
+  }
+  if (accion === 'borrar-canal') {
+    orgEdit[id].canales.splice(Number(b.dataset.i), 1);
+    return pintarOrigenes();
+  }
+  try {
+    if (accion === 'guardar') {
+      const e = orgEdit[id];
+      estado.textContent = 'Guardando…';
+      await pedirJSON('/api/iot/origenes/' + encodeURIComponent(id), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nombre: e.nombre, formato: e.formato, ventana_lectura_min: e.ventana.trim() === '' ? null : Number(e.ventana),
+          canales: e.canales.map(c => ({ clave: c.clave.trim(), grupo: c.grupo, nombre: c.nombre,
+          factor: c.factor.trim().replace(',', '.'), offset: c.offset.trim().replace(',', '.'), sensor: c.sensor || null })) }),
+      });
+      orgOriginal[id] = JSON.stringify(e);      // lo guardado deja de contar como «cambiado» aunque falle la relectura
+      await cargarOrigenes();
+      await orgRefrescarSensores();
+      estado.textContent = '✔ Guardado.';
+    } else if (accion === 'token') {
+      if (!confirm('El token anterior deja de servir YA: el equipo no va a poder mandar datos hasta que le cargues el nuevo. ¿Seguir?')) return;
+      const r = await pedirJSON('/api/iot/origenes/' + encodeURIComponent(id) + '/token', { method: 'POST' });
+      orgToken = { nombre: o.nombre, token: r.token };
+      pintarTokenOrigen();
+      estado.textContent = '';
+    } else if (accion === 'eliminar') {
+      if (!confirm('¿Eliminar el equipo «' + o.nombre + '»? Deja de recibir sus datos. Lo ya guardado de sus sensores no se borra.')) return;
+      await pedirJSON('/api/iot/origenes/' + encodeURIComponent(id), { method: 'DELETE' });
+      delete orgEdit[id];
+      await cargarOrigenes();
+      await orgRefrescarSensores();
+      estado.textContent = '✔ Equipo eliminado.';
+    }
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;     // lo escrito queda como está para corregirlo
+  }
+});
+
+document.getElementById('config-iot-origenes-token').addEventListener('click', ev => {
+  const accion = ev.target.dataset.tokenAccion;
+  if (accion === 'copiar' && orgToken) orgCopiar(orgToken.token, ev.target);
+  if (accion === 'cerrar') { orgToken = null; pintarTokenOrigen(); }
+});
+
+function orgCerrarAlta() {
+  document.getElementById('config-iot-origenes-nuevo').style.display = 'none';
+  ['nombre', 'ventana'].forEach(k => { document.getElementById('config-iot-origenes-nuevo-' + k).value = ''; });
+}
+document.getElementById('config-iot-origenes-agregar').addEventListener('click', () => {
+  document.getElementById('config-iot-origenes-nuevo').style.display = 'flex';
+  document.getElementById('config-iot-origenes-nuevo-nombre').focus();
+});
+document.getElementById('config-iot-origenes-cancelar').addEventListener('click', orgCerrarAlta);
+document.getElementById('config-iot-origenes-actualizar').addEventListener('click', cargarOrigenes);
+document.getElementById('config-iot-origenes-crear').addEventListener('click', async () => {
+  const estado = document.getElementById('config-iot-origenes-estado');
+  const ventana = document.getElementById('config-iot-origenes-nuevo-ventana').value.trim();
+  estado.textContent = 'Creando…';
+  try {
+    const r = await pedirJSON('/api/iot/origenes', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nombre: document.getElementById('config-iot-origenes-nuevo-nombre').value,
+        formato: document.getElementById('config-iot-origenes-nuevo-formato').value, ventana_lectura_min: ventana === '' ? null : Number(ventana) }),
+    });
+    orgToken = { nombre: r.origen.nombre, token: r.token };
+    orgCerrarAlta();
+    await cargarOrigenes();
+    estado.textContent = '✔ Equipo creado. Copiá el token de arriba: no se vuelve a mostrar.';
+  } catch (e) {
+    estado.textContent = 'Error: ' + e.message;
+  }
+});
+
 // --- Entradas analógicas (4-20 mA) del M300 -> vúmetros del panel IoT --------
 // El servidor manda la configuración guardada MÁS la lectura en vivo de cada entrada. Lo que se está editando vive
 // aparte (anaActual) para que el refresco de cada 3 s solo toque la columna «En vivo» y nunca pise lo que se escribe.
@@ -17334,6 +17650,7 @@ let senLista = [];
 let senOriginal = '';
 let senEntradas = [];
 let senAsignados = [];
+let senAsignadosOrigen = {};   // sensor -> nombre del equipo (origen HTTP) que lo alimenta
 const SEN_COLORES = [['neutro', 'sin color'], ['verde', 'verde'], ['amarillo', 'amarillo'], ['rojo', 'rojo']];
 
 async function cargarSensoresConfig() {
@@ -17343,6 +17660,7 @@ async function cargarSensoresConfig() {
     senLista = d.sensores || [];
     senEntradas = d.entradas || [];
     senAsignados = d.asignados || [];
+    senAsignadosOrigen = d.asignados_origen || {};
     senOriginal = JSON.stringify(senLista);
     pintarSensoresConfig();
     estado.textContent = '';
@@ -17358,9 +17676,24 @@ function pintarSensoresConfig() {
   const colores = (i, k, actual, bloqueado) => `<select data-i="${i}" data-sen="${k}" style="padding:6px"${bloqueado ? ' disabled' : ''}>
       ${SEN_COLORES.map(([v, t]) => `<option value="${v}"${actual === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`;
   document.getElementById('config-iot-sen-lista').innerHTML = senLista.map((s, i) => {
-    const enUso = s.clave && senAsignados.includes(s.clave);
+    const enOrigen = s.clave && senAsignadosOrigen[s.clave];
+    const enUso = s.clave && (senAsignados.includes(s.clave) || enOrigen);
     const borrar = `<button class="secundario" type="button" data-i="${i}" data-sen-borrar="1"
-        ${enUso ? 'disabled title="Tiene una entrada analógica asignada: sacalo de ahí primero"' : 'title="Sacar este sensor"'}>✕</button>`;
+        ${enUso ? 'disabled title="Tiene una entrada asignada: sacalo de ahí primero"' : 'title="Sacar este sensor"'}>✕</button>`;
+    // Las entradas digitales: las del M300 y las de cada equipo que manda por HTTP, cada grupo con su nombre. Una entrada
+    // que el sensor tiene guardada y ya no existe (se sacó el canal o el equipo) se ve igual, marcada, en vez de desaparecer.
+    const opcionEntrada = (e, texto) => `<option value="${escHtml(e.clave)}"${s.entrada === e.clave ? ' selected' : ''}>${escHtml(texto)}</option>`;
+    const gruposOrigen = {};
+    senEntradas.filter(e => e.origen).forEach(e => {
+      (gruposOrigen[e.origen] = gruposOrigen[e.origen] || { nombre: e.origen_nombre || e.origen, filas: [] }).filas.push(opcionEntrada(e, e.label));
+    });
+    const delM300 = senEntradas.filter(e => !e.origen)
+      .map(e => opcionEntrada(e, e.numero + '. ' + e.label.replace(/^Entrada \d+/, 'Entrada'))).join('');
+    const opcionesEntrada = '<option value="">(sin entrada)</option>'
+      + (Object.keys(gruposOrigen).length ? '<optgroup label="Equipo principal (M300)">' + delM300 + '</optgroup>' : delM300)
+      + Object.values(gruposOrigen).map(g => '<optgroup label="' + escHtml(g.nombre) + '">' + g.filas.join('') + '</optgroup>').join('')
+      + (s.entrada && !senEntradas.some(e => e.clave === s.entrada)
+        ? '<option value="' + escHtml(s.entrada) + '" selected>⚠ ' + escHtml(s.entrada) + ' (ya no existe)</option>' : '');
     const lugar = `<span class="sen-asa" data-i="${i}" title="Arrastrá para cambiar de lugar (el orden de acá es el del panel)"
         style="cursor:grab;font-size:18px;line-height:1;user-select:none;padding:0 4px">⠿</span>
       <span style="display:flex;flex-direction:column;gap:2px">
@@ -17375,6 +17708,7 @@ function pintarSensoresConfig() {
       return `<div class="sen-fila" data-i="${i}" style="border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         ${base}
         <span class="aviso" style="min-width:70px;font-weight:600;margin:0">Analógico</span>
+        ${enOrigen ? `<span class="aviso" style="margin:0">asignado en ${escHtml(enOrigen)}</span>` : ''}
         <label class="aviso" style="margin:0">Unidad ${campo(i, 'unidad', s.unidad, 64, 'text', 'maxlength="12"')}</label>
         <label class="aviso" style="margin:0">Dial desde ${campo(i, 'min', s.min, 74, 'number')}</label>
         <label class="aviso" style="margin:0">hasta ${campo(i, 'max', s.max, 74, 'number')}</label>
@@ -17392,8 +17726,7 @@ function pintarSensoresConfig() {
           <option value="estado"${equipo ? ' selected' : ''}>Estado de un equipo</option></select>
         ${equipo ? `<label class="aviso" style="margin:0" title="Lo que dice el cartel de la rotativa mientras este equipo está activo">Cartel ${campo(i, 'estado_nombre', s.estado_nombre, 120, 'text', 'maxlength="24" placeholder="(igual al nombre)"')}</label>` : ''}
         <label class="aviso" style="margin:0">Entrada <select data-i="${i}" data-sen="entrada" style="padding:6px;min-width:150px">
-          <option value="">(sin entrada)</option>
-          ${senEntradas.map(e => `<option value="${escHtml(e.clave)}"${s.entrada === e.clave ? ' selected' : ''}>${e.numero}. ${escHtml(e.label.replace(/^Entrada \d+/, 'Entrada'))}</option>`).join('')}
+          ${opcionesEntrada}
         </select></label>
         <label class="aviso" style="margin:0">Activo dice ${campo(i, 'texto_activo', s.texto_activo, 110, 'text', 'maxlength="24"')}</label>
         ${equipo ? '' : colores(i, 'color_activo', s.color_activo, alarma)}

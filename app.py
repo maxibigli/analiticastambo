@@ -15,6 +15,7 @@ from flask import (Flask, Response, jsonify, make_response, redirect,
 
 import datetime
 import hmac
+import sqlite3
 
 import os
 
@@ -50,8 +51,10 @@ import iot_analogicas
 import iot_avisos
 import iot_canales
 import iot_conexion
+import iot_ingreso
 import iot_mapa
 import iot_monitoreo
+import iot_origenes
 import iot_sensores
 import iot_vumetros
 import lavado_programa
@@ -134,7 +137,10 @@ _RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla", "/api/iot
 
 @app.before_request
 def _requerir_login():
-    if request.path in _RUTAS_PUBLICAS or request.path.startswith("/static/"):
+    # `/api/iot/ingreso/<origen>`: un ESP32 o ChirpStack EMPUJAN lecturas (ver `api_iot_ingreso`). Sin sesión, pero NO abierta:
+    # exige el token del origen. El prefijo lleva la barra final: `/api/iot/ingresoX` no queda público.
+    if (request.path in _RUTAS_PUBLICAS or request.path.startswith("/static/")
+            or request.path.startswith("/api/iot/ingreso/")):
         return None
     if "usuario" not in session:
         if request.path.startswith("/api/"):
@@ -3399,7 +3405,14 @@ def api_iot_sensores_listar():
     custom = iot_canales.nombres()
     entradas = [{"clave": clave, "numero": i, "label": custom.get(clave, label)}
                 for i, (clave, label) in enumerate(iot_monitoreo.ENTRADAS_PANEL, 1)]
-    return jsonify({"sensores": iot_sensores.cargar(), "entradas": entradas,
+    for o in iot_origenes.cargar():     # las entradas digitales de cada origen HTTP: `<id>.<canal>`, sin número de borne
+        entradas += [{"clave": iot_origenes.canal_global(o["id"], c["clave"]), "numero": None,
+                      "label": f"{o['nombre']} · {c['nombre'] or c['clave']}", "origen": o["id"],
+                      "origen_nombre": o["nombre"]}
+                     for c in o["canales"] if c["grupo"] == "entrada_digital"]
+    # sensor -> nombre del origen que lo alimenta: la pantalla lo muestra como «asignado en …» y no deja borrarlo
+    en_origen = {c["sensor"]: o["nombre"] for o in iot_origenes.cargar() for c in o["canales"] if c["sensor"]}
+    return jsonify({"sensores": iot_sensores.cargar(), "entradas": entradas, "asignados_origen": en_origen,
                     "asignados": sorted({c["sensor"] for c in iot_analogicas.cargar().values() if c.get("sensor")})})
 
 
@@ -3409,7 +3422,7 @@ def api_iot_sensores_guardar():
     lista = (request.json or {}).get("sensores")
     if not isinstance(lista, list):
         return jsonify({"error": "Formato inválido."}), 400
-    en_uso = {c["sensor"] for c in iot_analogicas.cargar().values() if c.get("sensor")}
+    en_uso = {c["sensor"] for c in iot_analogicas.cargar().values() if c.get("sensor")} | iot_origenes.sensores_asignados()
     try:
         iot_sensores.guardar(lista, en_uso)
     except ValueError as exc:
@@ -3475,10 +3488,153 @@ def api_iot_analogicas_guardar():
     canales = (request.json or {}).get("canales")
     if not isinstance(canales, dict):
         return jsonify({"error": "Formato inválido."}), 400
+    # Un sensor que ya lee de un canal de un origen HTTP no se puede asignar también a una entrada del M300 (los dos
+    # escribirían en el mismo sensor): se lo saca de los asignables y `iot_analogicas.guardar` lo rechaza como siempre.
+    ocupados = iot_origenes.sensores_asignados()
+    asignables = {c: v for c, v in iot_monitoreo.sensores_asignables().items() if c not in ocupados}
     try:
-        iot_analogicas.guardar(canales, iot_monitoreo.sensores_asignables())
+        iot_analogicas.guardar(canales, asignables)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+# --- Orígenes HTTP de datos (ESP32 / ChirpStack) ----------------------------
+# Un equipo dentro del tambo que MANDA lecturas por HTTP (en vez de que LactIA las lea por Modbus). La lógica está en
+# `iot_origenes` (qué orígenes y canales hay, y su token) e `iot_ingreso` (qué se escribe). Acá solo el cable: autenticar y
+# traducir a HTTP.
+_INGRESO_MAX_BYTES = 65_536
+_INGRESO_NO_AUTORIZADO = ({"error": "Token inválido."}, 403)       # el MISMO cuerpo para token malo, sin token u origen inexistente
+
+
+def _ip_para_el_bloqueo() -> str:
+    """La IP del que llama. CF-Connecting-IP y X-Forwarded-For los pone cualquiera, así que solo se creen cuando la conexión viene
+    del túnel de Cloudflare (que corre en esta misma PC); un equipo de la red del tambo se identifica por la IP de su conexión."""
+    if request.remote_addr in ("127.0.0.1", "::1"):
+        return auth.ip_cliente()
+    return request.remote_addr or "desconocida"
+
+
+@app.post("/api/iot/ingreso/<origen_id>")
+def api_iot_ingreso(origen_id):
+    """Recibe lecturas de un origen. Autoriza SOLO con el token del origen: cabecera `X-Token` (o `?token=` si el formato es
+    `chirpstack`, cuyo servidor puede no dejar poner cabeceras propias). El token no se loguea ni se devuelve."""
+    from werkzeug.exceptions import RequestEntityTooLarge
+    origen = iot_origenes.obtener(origen_id)
+    # Contador propio (una tupla: el login usa texto y no puede llenarlo) por IP Y por origen: un servidor LoRaWAN que atiende
+    # varios orígenes es una sola IP, y un token viejo en uno no debe frenar a los otros. Un origen que no existe comparte
+    # una sola clave por IP: así probar ids inventados no agranda la tabla.
+    clave_intentos = ("iot", _ip_para_el_bloqueo(), origen["id"] if origen else None)
+    if auth.login_bloqueado(clave_intentos):
+        return jsonify({"error": "Demasiados intentos con un token incorrecto. Esperá unos minutos."}), 429
+    candidato = request.headers.get("X-Token", "").strip()
+    if not candidato and origen is not None and origen["formato"] == "chirpstack":
+        candidato = request.args.get("token", "").strip()
+    if not iot_origenes.token_valido(origen_id, candidato):
+        auth.registrar_intento_fallido(clave_intentos)
+        cuerpo, codigo = _INGRESO_NO_AUTORIZADO
+        return jsonify(cuerpo), codigo
+    auth.limpiar_intentos(clave_intentos)
+    request.max_content_length = _INGRESO_MAX_BYTES    # también corta un cuerpo sin Content-Length (chunked)
+    if (request.content_length or 0) > _INGRESO_MAX_BYTES:
+        return jsonify({"error": "El pedido es demasiado grande."}), 413
+    try:
+        cuerpo = request.get_json(force=True, silent=True)       # un ESP32 a veces no manda el Content-Type
+    except RequestEntityTooLarge:
+        return jsonify({"error": "El pedido es demasiado grande."}), 413
+    except RecursionError:                                        # «[[[[…» miles de veces: json no lo atrapa como error de formato
+        cuerpo = None
+    try:
+        if not isinstance(cuerpo, dict):
+            texto = "El cuerpo tiene que ser un objeto JSON."
+            iot_ingreso.anotar_error(origen_id, texto)
+            return jsonify({"error": texto}), 400
+        r = iot_ingreso.recibir(origen_id, cuerpo, request.args.get("event"))      # un cuerpo mal formado ya deja su error anotado
+    except iot_ingreso.IngresoError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except sqlite3.OperationalError:                              # iot_lavado tiene la base tomada: el equipo reintenta
+        return jsonify({"error": "La base de datos está ocupada. Reintentá en unos segundos."}), 503
+    return jsonify({"ok": True, **r})
+
+
+def _contexto_de_origenes() -> dict:
+    """Lo que `iot_origenes` necesita saber del catálogo para validar sin importarlo (ver su docstring)."""
+    return {"sensores_analogicos": iot_monitoreo.sensores_asignables(),
+            "sensores_ocupados": {c["sensor"] for c in iot_analogicas.cargar().values() if c.get("sensor")},
+            "entradas_en_uso": {s["entrada"] for s in iot_sensores.digitales() if s["entrada"]}}
+
+
+def _origen_para_pantalla(o: dict) -> dict:
+    """Un origen con lo que la pantalla muestra: nunca el hash del token. `ultimo` es lo último que llegó a cada canal."""
+    canales = [{**c, "ultimo": iot_ingreso.ultimo_de_canal(o["id"], c["clave"])} for c in o["canales"]]
+    resto = {k: v for k, v in o.items() if k not in ("token_hash", "canales")}
+    return {**resto, "url_ingreso": f"/api/iot/ingreso/{o['id']}", "canales": canales,
+            "estado": iot_ingreso.estado(o["id"])}
+
+
+def _cuerpo_objeto():
+    cuerpo = request.get_json(silent=True)
+    return cuerpo if isinstance(cuerpo, dict) else None
+
+
+@app.get("/api/iot/origenes")
+@auth.requiere_rol("admin")
+def api_iot_origenes_listar():
+    """Los orígenes de datos (el equipo principal y los HTTP) para ⚙ Configuración › 🔌 Entradas/Salidas."""
+    return jsonify({
+        "principal": {"id": iot_origenes.PRINCIPAL_ID, "nombre": "Equipo principal (gateway M300)", "tipo": "modbus_tcp",
+                      "ventana_lectura_min": iot_origenes.VENTANA_PRINCIPAL_MIN},
+        "origenes": [_origen_para_pantalla(o) for o in iot_origenes.cargar()],
+        "sensores_analogicos": [{"clave": s["clave"], "label": s["label"], "unidad": s["unidad"]}
+                                for s in iot_sensores.analogicos()]})
+
+
+@app.post("/api/iot/origenes")
+@auth.requiere_rol("admin")
+def api_iot_origenes_crear():
+    """Alta de un origen. Devuelve el token UNA vez: en disco solo queda su hash."""
+    cuerpo = _cuerpo_objeto()
+    if cuerpo is None:
+        return jsonify({"error": "Formato inválido."}), 400
+    try:
+        origen, token = iot_origenes.crear(cuerpo.get("nombre"), cuerpo.get("formato"), cuerpo.get("ventana_lectura_min"))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"origen": _origen_para_pantalla(origen), "token": token})
+
+
+@app.post("/api/iot/origenes/<origen_id>")
+@auth.requiere_rol("admin")
+def api_iot_origenes_guardar(origen_id):
+    cuerpo = _cuerpo_objeto()
+    if cuerpo is None:
+        return jsonify({"error": "Formato inválido."}), 400
+    try:
+        iot_origenes.guardar_origen(origen_id, cuerpo.get("nombre"), cuerpo.get("formato"), cuerpo.get("ventana_lectura_min"),
+                                    cuerpo.get("canales"), **_contexto_de_origenes())
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True})
+
+
+@app.post("/api/iot/origenes/<origen_id>/token")
+@auth.requiere_rol("admin")
+def api_iot_origenes_token(origen_id):
+    """Token nuevo: el anterior deja de servir YA (el equipo tiene que cargar el nuevo)."""
+    try:
+        return jsonify({"token": iot_origenes.regenerar_token(origen_id)})
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.delete("/api/iot/origenes/<origen_id>")
+@auth.requiere_rol("admin")
+def api_iot_origenes_eliminar(origen_id):
+    try:
+        iot_origenes.eliminar(origen_id, _contexto_de_origenes()["entradas_en_uso"])
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    iot_ingreso.olvidar(origen_id)      # que otro equipo con el mismo nombre no herede la «última recepción» de este
     return jsonify({"ok": True})
 
 

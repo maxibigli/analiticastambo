@@ -24,6 +24,7 @@ import sqlite3
 import db
 import iot_analogicas
 import iot_canales
+import iot_origenes
 import iot_sensores
 import iot_vumetros
 import voz_comandos
@@ -316,6 +317,7 @@ def lecturas_actuales(ahora: datetime.datetime = None) -> list:
     """)
     con.commit()
 
+    ventanas = iot_origenes.ventanas()      # una sola vez: los sensores de un origen HTTP tienen la ventana de su origen
     valores = {}
     for s in catalogo:
         if s["tipo"] != "analogico":
@@ -339,23 +341,48 @@ def lecturas_actuales(ahora: datetime.datetime = None) -> list:
             v = valores[s["clave"]]
             cfg = iot_vumetros.config_de(s["clave"], configuradas)
             con_limites = any(cfg[k] is not None for k in iot_vumetros.LIMITES)
-            mudo = _sin_datos_si_esta_mudo({**s, "valor": v["valor"], "fecha_hora": v["fecha_hora"]}, con_limites, ahora)
+            mudo = _sin_datos_si_esta_mudo({**s, "valor": v["valor"], "fecha_hora": v["fecha_hora"]}, con_limites, ahora,
+                                           ventanas["sensores"].get(s["clave"]))
             salida.append(_con_vumetro(mudo, configuradas))
         else:
-            salida.append(_digital_actual(s, latidos, ahora))
-    # El ITH es tan reciente como el más viejo de los dos datos de los que sale.
+            salida.append(_digital_actual(s, latidos, ahora, ventanas["entradas"].get(s["entrada"])))
+    # El ITH es tan reciente como el más viejo de los dos datos de los que sale, y está mudo si cualquiera de los dos lo está
+    # con SU ventana (la de su origen HTTP, o la de siempre): se decide con el dato que menos margen le deja.
     fechas_ith = [temp["fecha_hora"], hum["fecha_hora"]]
+    fecha_ith = None if None in fechas_ith else min(fechas_ith)
+    fecha_decision, ventana_ith = fecha_ith, None
+    if fecha_ith is not None:
+        limitante = _dato_limitante([(temp["fecha_hora"], ventanas["sensores"].get("temp_ambiente")),
+                                     (hum["fecha_hora"], ventanas["sensores"].get("hum_ambiente"))], ahora)
+        if limitante:
+            fecha_decision, ventana_ith = limitante
     cfg = iot_vumetros.config_de("ith", configuradas)
     ith_mudo = _sin_datos_si_esta_mudo(
         {"clave": "ith", "label": "ITH (estrés calórico)", "tipo": "analogico", "tamano": "mediano", "unidad": "",
          "min": 50, "max": 90,
-         "valor": ith, "fecha_hora": None if None in fechas_ith else min(fechas_ith)},
-        any(cfg[k] is not None for k in iot_vumetros.LIMITES), ahora)
+         "valor": ith, "fecha_hora": fecha_decision},
+        any(cfg[k] is not None for k in iot_vumetros.LIMITES), ahora, ventana_ith)
+    ith_mudo["fecha_hora"] = fecha_ith
     salida.append(_con_vumetro(ith_mudo, configuradas))
     return salida
 
 
-def _digital_actual(s: dict, latidos: dict, ahora: datetime.datetime) -> dict:
+def _dato_limitante(datos: list, ahora: datetime.datetime):
+    """De varios [(fecha, ventana_min o None)], (fecha, ventana_min) del que está más cerca de quedar mudo (o ya lo está):
+    el que menos margen tiene entre su ventana y lo viejo que es. None si alguna fecha no se entiende."""
+    mejor = None
+    for fecha, ventana in datos:
+        ventana = VENTANA_LECTURA_RECIENTE_MIN if ventana is None else ventana
+        try:
+            margen = ventana * 60 - (ahora - datetime.datetime.fromisoformat(fecha)).total_seconds()
+        except (TypeError, ValueError):
+            return None
+        if mejor is None or margen < mejor[0]:
+            mejor = (margen, fecha, ventana)
+    return None if mejor is None else (mejor[1], mejor[2])
+
+
+def _digital_actual(s: dict, latidos: dict, ahora: datetime.datetime, ventana_min: int = None) -> dict:
     """Un sensor digital con su estado de ahora, tomado del último latido de su entrada (`digitales_estado`, que escribe
     iot_lavado.py en cada lectura del gateway, no solo cuando cambia). Sin entrada asignada es «sin instalar»."""
     latido = latidos.get(s["entrada"]) if s["entrada"] else None
@@ -363,7 +390,7 @@ def _digital_actual(s: dict, latidos: dict, ahora: datetime.datetime) -> dict:
     texto, color = iot_sensores.estado_de(s, activo) if activo is not None else (None, None)
     item = {**s, "valor": None if activo is None else (1.0 if activo else 0.0), "activo": activo, "estado": texto,
             "zona": color, "fecha_hora": fecha, "limites": {}, "con_color": iot_sensores.tiene_color(s)}
-    return _sin_datos_si_esta_mudo(item, item["con_color"] and bool(s["entrada"]), ahora)
+    return _sin_datos_si_esta_mudo(item, item["con_color"] and bool(s["entrada"]), ahora, ventana_min)
 
 
 # Un sensor que no mandó nada en este tiempo está MUDO: no se muestra su última medición como si fuera la de ahora (sería
@@ -374,9 +401,10 @@ def _digital_actual(s: dict, latidos: dict, ahora: datetime.datetime) -> dict:
 VENTANA_LECTURA_RECIENTE_MIN = 30
 
 
-def _sin_datos_si_esta_mudo(sensor: dict, con_limites: bool, ahora: datetime.datetime) -> dict:
+def _sin_datos_si_esta_mudo(sensor: dict, con_limites: bool, ahora: datetime.datetime, ventana_min: int = None) -> dict:
     """Marca `sin_datos` en un sensor INSTALADO (alguna vez leyó, o el tambo le cargó límites/colores) cuya última lectura es
-    más vieja que `VENTANA_LECTURA_RECIENTE_MIN`. En ese caso `valor` pasa a None (nunca el último conocido, que queda en
+    más vieja que `VENTANA_LECTURA_RECIENTE_MIN` (o que `ventana_min`, la que el tambo fijó para el origen HTTP del que
+    viene el sensor: un nodo que manda cada 60 min no puede figurar mudo a los 30). En ese caso `valor` pasa a None (nunca el último conocido, que queda en
     `ultimo_valor` solo para informar) y `sin_datos_hace_min` dice cuánto hace. Uno que nunca leyó y no tiene límites
     es «sin instalar»: no es una falla, todavía no existe."""
     hace_min = None
@@ -385,7 +413,8 @@ def _sin_datos_si_esta_mudo(sensor: dict, con_limites: bool, ahora: datetime.dat
             hace_min = int((ahora - datetime.datetime.fromisoformat(sensor["fecha_hora"])).total_seconds() // 60)
     except ValueError:
         pass
-    mudo = con_limites if hace_min is None else hace_min > VENTANA_LECTURA_RECIENTE_MIN
+    ventana = VENTANA_LECTURA_RECIENTE_MIN if ventana_min is None else ventana_min
+    mudo = con_limites if hace_min is None else hace_min > ventana
     if not mudo:
         return {**sensor, "sin_datos": False, "ultimo_valor": None, "sin_datos_hace_min": None}
     callado = {**sensor, "valor": None, "sin_datos": True, "ultimo_valor": sensor["valor"],

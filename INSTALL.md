@@ -587,3 +587,15 @@ mismo nombre (la app lo rechaza al guardar): si se llaman igual, no hay
 forma de saber cuál se pidió. Y si dos nombres se parecen mucho ("bomba de
 agua fría" / "bomba de agua caliente"), hay que decir el nombre COMPLETO —
 ante la duda la pantalla contesta "No entendí, repetí" en vez de elegir una.
+
+### Equipos que mandan datos por HTTP (ESP32, LoRaWAN)
+
+Se cargan en **⚙ Configuración → 🔌 Entradas/Salidas → «Otros equipos que mandan datos por HTTP»** (protocolo y ejemplos en `docs/iot-ingreso-http.md`).
+Cada equipo tiene su token (se muestra una sola vez) y su propia ventana de «Sin datos» (la carga el tambo: no hay valor por defecto). El estado vive en
+`iot_origenes.json` (fuera de git, propio de cada instalación) y los datos recibidos van a `iot_sensores.db`, junto con los del gateway.
+
+- **Recibir datos no requiere reiniciar `iot_lavado.py`**: el ingreso lo hace el servidor web. Sí hace falta reiniciarlo para que el gateway tome un catálogo de
+  sensores nuevo; **no hacerlo en pleno lavado**.
+- El ingreso es un endpoint **público** (sin sesión) protegido solo por el token del equipo: un equipo con token incorrecto repetido se bloquea 10 minutos por IP.
+  Un ESP32 dentro de la red del tambo tiene que usar la IP de la PC del servidor, no el nombre público.
+- Después de actualizar con `git pull`: reiniciar el servidor web (cambios en `.py`). Sin `iot_origenes.json` todo sigue como antes.
