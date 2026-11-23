@@ -350,7 +350,8 @@ def lecturas_actuales(ahora: datetime.datetime = None) -> list:
     fechas_ith = [temp["fecha_hora"], hum["fecha_hora"]]
     cfg = iot_vumetros.config_de("ith", configuradas)
     ith_mudo = _sin_datos_si_esta_mudo(
-        {"clave": "ith", "label": "ITH (estrés calórico)", "tipo": "analogico", "unidad": "", "min": 50, "max": 90,
+        {"clave": "ith", "label": "ITH (estrés calórico)", "tipo": "analogico", "tamano": "mediano", "unidad": "",
+         "min": 50, "max": 90,
          "valor": ith, "fecha_hora": None if None in fechas_ith else min(fechas_ith)},
         any(cfg[k] is not None for k in iot_vumetros.LIMITES), ahora)
     salida.append(_con_vumetro(ith_mudo, configuradas))

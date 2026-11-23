@@ -4010,4 +4010,9 @@ Un estado no tiene color ni aviso (no es una alarma) y dos estados no pueden lla
 (y avisa). Sin latido todavía (recién actualizado, `iot_lavado.py` sin reiniciar) se usa el último cambio de `eventos_di`, como antes. `desde` es la hora
 del último encendido en `eventos_di`, no la del latido. El endpoint devuelve además `equipo` (True si viene de un sensor) y `estados`. La pantalla
 ESP32 lee `estado` como texto: **un nombre que el firmware no conozca (por ejemplo «LAVADORA») hay que verlo en la pantalla**, no se probó con el
-hardware. Pruebas: `tests/test_iot_estados.py`; además `test_iot_sensores.py`, `test_iot_digitales.py`, `test_iot_avisos.py`.
+hardware. **Orden y tamaño de las tarjetas (22/11/2026).** El orden de la lista de sensores ES el orden de las tarjetas del panel; se cambia arrastrando
+del asa ⠿ de cada fila o con ▲▼ (un lugar). Cada sensor tiene `tamano`: `chico` (solo la cifra, sin dial), `mediano` (como siempre) o `grande`
+(2 columnas × 2 filas, dial y cifra grandes). El panel es una grilla con `grid-auto-flow: dense`, así que las tarjetas chicas rellenan los huecos
+al lado de una grande y el orden visual puede adelantar una tarjeta cuando eso evita un hueco. El ITH (calculado, no está en la lista) va siempre
+al final y mediano. Un sensor sin `tamano` es mediano. El arrastre usa el asa (no la fila entera) para no pelearse con los campos de texto; no
+funciona con el dedo en un celular (ahí están ▲▼). Pruebas: `tests/test_iot_estados.py`; además `test_iot_sensores.py`, `test_iot_digitales.py`, `test_iot_avisos.py`.

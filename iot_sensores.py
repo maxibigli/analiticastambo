@@ -21,6 +21,7 @@ Sin archivo, la lista son los 11 sensores analógicos de siempre (mismas claves:
 más los dos estados de siempre de la rotativa, LAVANDO y BARRIDO (`PREDEFINIDOS`, atados a DI01 y DI02). Un archivo guardado
 antes de que existieran los estados (sin `version`) los recibe una vez al leerlo, si sus entradas están libres; el primer
 guardado le pone `version` y de ahí en más se respeta lo que el tambo deje (puede sacarlos).
+El ORDEN de la lista es el orden de las tarjetas del panel, y `tamano` (chico / mediano / grande) cuánto lugar ocupa cada una.
 La `clave` es interna y no cambia nunca (el nombre sí). Se guarda en `iot_sensores.json` (estado propio de cada instalación,
 fuera de git). Deliberadamente SIN import de `iot_monitoreo`/`iot_lavado`, que son los que lo importan a él.
 """
@@ -48,6 +49,7 @@ ROLES = ("alarma", "indicador", "estado")
 VERSION = 2
 ESTADOS_RESERVADOS = ("ORDEÑO", "ORDENO", "APAGADO")   # los dos de abajo del estado general: no se pueden usar de nombre
 COLORES = ("verde", "amarillo", "rojo", "neutro")
+TAMANOS = ("chico", "mediano", "grande")      # cuánto lugar ocupa la tarjeta en el panel: por importancia
 TEXTOS_DE_ROL = {"alarma": ("ALARMA", "Normal"), "indicador": ("Activo", "Inactivo"), "estado": ("Activo", "Inactivo")}
 
 DEFECTO = [
@@ -90,7 +92,10 @@ def normalizar(s: dict) -> dict:
     tipo = s.get("tipo")
     if tipo not in ("analogico", "digital"):
         raise ValueError(f"{label}: el tipo tiene que ser «analogico» o «digital».")
-    salida = {"clave": s.get("clave") or None, "label": label, "tipo": tipo}
+    tamano = s.get("tamano") or "mediano"
+    if tamano not in TAMANOS:
+        raise ValueError(f"{label}: el tamaño tiene que ser «chico», «mediano» o «grande».")
+    salida = {"clave": s.get("clave") or None, "label": label, "tipo": tipo, "tamano": tamano}
     if tipo == "analogico":
         minimo, maximo = _numero(s.get("min"), "Escala desde", label), _numero(s.get("max"), "Escala hasta", label)
         if minimo is None or maximo is None:

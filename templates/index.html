@@ -481,6 +481,17 @@
   .iot-zona::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
   .iot-zona.sin-datos { color: var(--warning); }
   .iot-tarjeta.sin-datos { border-color: var(--warning); }
+  /* Tres tamaños, por importancia (los elige el tambo en el editor de sensores): chico = solo la cifra, mediano = como
+     siempre, grande = el doble de ancho, dial y cifra grandes. */
+  /* Grilla que rellena huecos: la tarjeta grande ocupa 2 columnas y 2 filas, las chicas se acomodan al lado. */
+  #iot-sensores-cuerpo { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); grid-auto-flow: dense; align-items: start; }
+  .iot-tarjeta.t-chico { min-width: 0; padding: 10px 12px; }
+  .iot-tarjeta.t-chico .iot-dial { display: none; }
+  .iot-tarjeta.t-chico .lac-metric__value { font-size: var(--lac-size-xl, 1.25rem); }
+  .iot-tarjeta.t-grande { grid-column: span 2; grid-row: span 2; padding: 18px 20px; }
+  .iot-tarjeta.t-grande, .iot-tarjeta.t-chico { min-width: 0; }
+  .iot-tarjeta.t-grande .iot-dial { width: 240px; height: 134px; align-self: center; }
+  .iot-tarjeta.t-grande .lac-metric__value { font-size: 2.6rem; }
   .iot-tarjeta.fija { cursor: default; }
   .iot-tarjeta.fija:hover { border-color: var(--border); }
   .iot-tarjeta.fija.sin-datos:hover { border-color: var(--warning); }
@@ -11391,7 +11402,7 @@ function iotTarjetaDigitalHTML(s) {
     : !s.entrada ? 'sin entrada asignada'
     : s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : 'esperando lectura';
   const chip = s.sin_datos ? '<div class="iot-zona sin-datos">Sin datos</div>' : '';
-  return `<div class="lac-metric iot-tarjeta fija${s.zona ? ' zona-' + s.zona : ''}${s.sin_datos ? ' sin-datos' : ''}">
+  return `<div class="lac-metric iot-tarjeta fija t-${s.tamano || 'mediano'}${s.zona ? ' zona-' + s.zona : ''}${s.sin_datos ? ' sin-datos' : ''}">
     <div class="lac-metric__label">${escHtml(s.label)}</div>
     <div class="lac-metric__value">${escHtml(s.estado || '—')}</div>
     ${chip}
@@ -11409,7 +11420,7 @@ function iotTarjetaHTML(s) {
     : (s.fecha_hora ? String(s.fecha_hora).replace('T', ' ').slice(0, 16) : '');
   const chip = s.sin_datos ? '<div class="iot-zona sin-datos">Sin datos</div>'
     : s.zona ? `<div class="iot-zona ${s.zona}">${ZONA_TEXTO[s.zona]}</div>` : '';
-  return `<button type="button" class="lac-metric iot-tarjeta${s.zona ? ' zona-' + s.zona : ''}${s.sin_datos ? ' sin-datos' : ''}"
+  return `<button type="button" class="lac-metric iot-tarjeta t-${s.tamano || 'mediano'}${s.zona ? ' zona-' + s.zona : ''}${s.sin_datos ? ' sin-datos' : ''}"
       data-sensor="${escHtml(s.clave)}" aria-label="Ver el historial de ${escHtml(s.label)}">
     <div class="lac-metric__label">${escHtml(s.label)}</div>
     ${s.estilo === 'analogico' ? dialIotSVG(s) : ''}
@@ -17117,9 +17128,18 @@ function pintarSensoresConfig() {
     const enUso = s.clave && senAsignados.includes(s.clave);
     const borrar = `<button class="secundario" type="button" data-i="${i}" data-sen-borrar="1"
         ${enUso ? 'disabled title="Tiene una entrada analógica asignada: sacalo de ahí primero"' : 'title="Sacar este sensor"'}>✕</button>`;
-    const base = `<label class="aviso" style="margin:0">Nombre ${campo(i, 'label', s.label, 190, 'text', 'maxlength="40"')}</label>`;
+    const lugar = `<span class="sen-asa" data-i="${i}" title="Arrastrá para cambiar de lugar (el orden de acá es el del panel)"
+        style="cursor:grab;font-size:18px;line-height:1;user-select:none;padding:0 4px">⠿</span>
+      <span style="display:flex;flex-direction:column;gap:2px">
+        <button class="secundario" type="button" data-i="${i}" data-sen-mover="-1" style="padding:0 6px;line-height:1.1" title="Subir un lugar"${i === 0 ? ' disabled' : ''}>▲</button>
+        <button class="secundario" type="button" data-i="${i}" data-sen-mover="1" style="padding:0 6px;line-height:1.1" title="Bajar un lugar"${i === senLista.length - 1 ? ' disabled' : ''}>▼</button></span>
+      <label class="aviso" style="margin:0" title="Cuánto lugar ocupa la tarjeta en el panel: chico = solo la cifra, grande = el doble con el dial grande">Tamaño
+        <select data-i="${i}" data-sen="tamano" style="padding:6px">
+          ${[['grande', 'Grande'], ['mediano', 'Mediano'], ['chico', 'Chico']].map(([v, t]) =>
+            `<option value="${v}"${(s.tamano || 'mediano') === v ? ' selected' : ''}>${t}</option>`).join('')}</select></label>`;
+    const base = `${lugar}<label class="aviso" style="margin:0">Nombre ${campo(i, 'label', s.label, 190, 'text', 'maxlength="40"')}</label>`;
     if (s.tipo === 'analogico') {
-      return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      return `<div class="sen-fila" data-i="${i}" style="border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         ${base}
         <span class="aviso" style="min-width:70px;font-weight:600;margin:0">Analógico</span>
         <label class="aviso" style="margin:0">Unidad ${campo(i, 'unidad', s.unidad, 64, 'text', 'maxlength="12"')}</label>
@@ -17128,11 +17148,9 @@ function pintarSensoresConfig() {
         ${borrar}</div>`;
     }
     const alarma = s.rol === 'alarma', equipo = s.rol === 'estado';
-    // La prioridad de los estados es el orden de la lista: ▲▼ cambian de lugar con el estado vecino.
-    const orden = equipo ? `<span style="display:flex;gap:2px">
-        <button class="secundario" type="button" data-i="${i}" data-sen-mover="-1" title="Más prioridad: si dos estados están activos a la vez, gana el de arriba">▲</button>
-        <button class="secundario" type="button" data-i="${i}" data-sen-mover="1" title="Menos prioridad">▼</button></span>` : '';
-    return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    // La prioridad de los estados de equipo es el orden de la lista: si dos están activos a la vez, gana el de más arriba.
+    const orden = equipo ? '<span class="aviso" style="margin:0" title="Si dos estados están activos a la vez, gana el que está más arriba en la lista">↑ gana el de arriba</span>' : '';
+    return `<div class="sen-fila" data-i="${i}" style="border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
         ${base}
         <span class="aviso" style="min-width:70px;font-weight:600;margin:0">Digital</span>
         <select data-i="${i}" data-sen="rol" style="padding:6px">
@@ -17176,10 +17194,7 @@ function pintarSensoresConfig() {
 
 document.getElementById('config-iot-sen-lista').addEventListener('click', ev => {
   if (ev.target.dataset.senMover) {
-    // Cambia de lugar con el estado más cercano en esa dirección (saltea los sensores que no son estados).
-    const i = Number(ev.target.dataset.i), paso = Number(ev.target.dataset.senMover);
-    let j = i + paso;
-    while (senLista[j] && senLista[j].rol !== 'estado') j += paso;
+    const i = Number(ev.target.dataset.i), j = i + Number(ev.target.dataset.senMover);
     if (!senLista[j]) return;
     [senLista[i], senLista[j]] = [senLista[j], senLista[i]];
     pintarSensoresConfig();
@@ -17189,6 +17204,40 @@ document.getElementById('config-iot-sen-lista').addEventListener('click', ev => 
   senLista.splice(Number(ev.target.dataset.i), 1);
   pintarSensoresConfig();
 });
+
+// Arrastrar y soltar: la fila solo se puede agarrar del asa (⠿), para no pelearse con los campos de texto.
+(() => {
+  const lista = document.getElementById('config-iot-sen-lista');
+  let origen = null;
+  const fila = el => el.closest('.sen-fila');
+  const limpiar = () => lista.querySelectorAll('.sen-fila').forEach(f => { f.style.outline = ''; f.draggable = false; });
+  lista.addEventListener('mousedown', ev => { const f = ev.target.closest('.sen-asa') && fila(ev.target); if (f) f.draggable = true; });
+  lista.addEventListener('dragstart', ev => {
+    const f = fila(ev.target);
+    if (!f || !f.draggable) return;
+    origen = Number(f.dataset.i);
+    ev.dataTransfer.effectAllowed = 'move';
+    ev.dataTransfer.setData('text/plain', String(origen));
+  });
+  lista.addEventListener('dragover', ev => {
+    const f = origen != null && fila(ev.target);
+    if (!f) return;
+    ev.preventDefault();
+    lista.querySelectorAll('.sen-fila').forEach(x => { x.style.outline = ''; });
+    f.style.outline = '2px solid var(--accent)';
+  });
+  lista.addEventListener('drop', ev => {
+    const f = origen != null && fila(ev.target);
+    if (!f) return;
+    ev.preventDefault();
+    const destino = Number(f.dataset.i);
+    const [movido] = senLista.splice(origen, 1);
+    senLista.splice(destino, 0, movido);
+    origen = null;
+    pintarSensoresConfig();
+  });
+  lista.addEventListener('dragend', () => { origen = null; limpiar(); });
+})();
 
 document.getElementById('config-iot-sen-agregar-an').addEventListener('click', () => {
   senLista.push({ label: '', tipo: 'analogico', unidad: '', min: 0, max: 100 });

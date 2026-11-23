@@ -157,6 +157,29 @@ class TestDigitales(Base):
         self.assertEqual(sen.estado_de(neutro, True), ("Activo", None))      # neutro: sin color, no cuenta como alarma
 
 
+class TestTamanoYOrden(Base):
+
+    def test_sin_tamano_es_mediano(self):
+        self.assertTrue(all(s["tamano"] == "mediano" for s in sen.cargar()))
+
+    def test_el_tamano_se_guarda_en_analogicos_y_digitales(self):
+        sen.guardar(sen.cargar() + [analogico("Temp. silo", tamano="grande"),
+                                    {"label": "Portón", "tipo": "digital", "entrada": "di_3", "tamano": "chico"}])
+        por_nombre = {s["label"]: s["tamano"] for s in sen.cargar()}
+        self.assertEqual((por_nombre["Temp. silo"], por_nombre["Portón"]), ("grande", "chico"))
+
+    def test_un_tamano_inexistente_se_rechaza(self):
+        with self.assertRaises(ValueError):
+            sen.guardar(sen.cargar() + [analogico("Temp. silo", tamano="enorme")])
+
+    def test_el_orden_que_deja_el_tambo_es_el_que_se_lee(self):
+        lista = sen.cargar()
+        lista.insert(0, lista.pop(5))
+        esperado = [s["clave"] for s in lista]
+        sen.guardar(lista)
+        self.assertEqual([s["clave"] for s in sen.cargar()], esperado)
+
+
 class TestSacarSensores(Base):
     def test_sacar_un_sensor_asignado_a_una_entrada_analogica_se_rechaza_con_el_motivo(self):
         lista = [s for s in sen.cargar() if s["clave"] != "temp_leche"]
