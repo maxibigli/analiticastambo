@@ -119,6 +119,18 @@ class TestIndicador(Base):
         c = iot_monitoreo.conteo_alarmas(AHORA)
         self.assertEqual((c["rojo"], c["amarillo"], c["verde"]), (0, 0, 0))
 
+    def test_un_indicador_con_color_en_un_solo_estado_no_rompe_el_conteo_en_el_otro(self):
+        # Rojo solo cuando está activo; apagado no tiene color. Antes el conteo hacía c[None] y tiraba KeyError(None), que el
+        # Tablero mostraba como «Error al leer el monitoreo IoT: None».
+        clave = self.agregar(label="Bomba", rol="indicador", color_activo="rojo", color_inactivo="neutro")
+        self.latido("di_3", False)
+        self.assertIsNone(self.sensor(clave)["zona"])
+        c = iot_monitoreo.conteo_alarmas(AHORA)
+        self.assertEqual((c["rojo"], c["amarillo"], c["verde"], c["sin_datos"]), (0, 0, 1, 0))
+        self.latido("di_3", True)
+        c = iot_monitoreo.conteo_alarmas(AHORA)
+        self.assertEqual((c["rojo"], c["en_rojo"]), (1, ["Bomba"]))
+
     def test_un_indicador_neutro_que_dejo_de_latir_tambien_esta_mudo(self):
         clave = self.agregar(label="Libre", rol="indicador")
         self.latido("di_3", True, hace_min=120)

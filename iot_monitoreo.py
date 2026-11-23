@@ -483,7 +483,9 @@ def conteo_alarmas(ahora: datetime.datetime = None) -> dict:
             c["sin_limites"] += 1
             continue
         c["con_limites"] += 1
-        c[s["zona"]] += 1
+        # Un digital con color en un solo estado (rojo al activarse, sin color al apagarse) queda con zona None en el otro:
+        # no está en alarma, cuenta como verde. Sin esto era c[None] -> KeyError y el Tablero decía «Error ...: None».
+        c[s["zona"] or "verde"] += 1
         if s["zona"] == "rojo":
             c["en_rojo"].append(s["label"])
         elif s["zona"] == "amarillo":
