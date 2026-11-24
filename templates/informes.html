@@ -133,6 +133,47 @@ td.nul{color:var(--subtle)}
 .st-Seca{background:#232B33;color:var(--muted)}
 .empty{padding:36px 16px;text-align:center;color:var(--muted)}
 .note{font-size:12px;color:var(--subtle);padding:2px 2px 0}
+
+/* Fase 2: agrupar, resumir y campos calculados */
+.groupbar{display:flex;gap:8px 10px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.groupbar .lbl{font-size:12px;color:var(--muted)}
+.groupbar select.in{height:30px;max-width:240px}
+.chip select{height:22px;border:1px solid var(--line-2);border-radius:5px;background:var(--sunken);font-size:11.5px;padding:0 2px;color:var(--muted);max-width:108px;cursor:pointer}
+.chip select.on{color:var(--accent-hi);border-color:var(--accent)}
+.chip.calc{border-style:dashed}
+.fld .ty.fx{color:var(--accent-hi)}
+.calcrow{display:flex;align-items:center;gap:2px}
+.calcrow .fld{flex:1;min-width:0}
+.mini{flex:none;width:26px;height:26px;border:0;background:none;border-radius:6px;color:var(--subtle)}
+.mini:hover{background:var(--raised);color:var(--fg)}
+.btn.newcalc{width:calc(100% - 4px);margin:2px 2px 8px;justify-content:center}
+tr.grp td{background:#14222D;font-weight:600;cursor:pointer}
+tr.grp.l2 td{background:#101C26;font-weight:500}
+tr.grp:hover td{background:#1A2B38}
+tr.subt td{background:#14222D;font-weight:600}
+tr.grp:focus-visible{outline-offset:-2px}
+.glabel{white-space:nowrap}
+.car{display:inline-block;width:14px;color:var(--accent-hi);transition:transform .12s}
+tr.fold .car{transform:rotate(-90deg)}
+.cnt{color:var(--muted);font-weight:400}
+.k{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--subtle);margin-right:6px;font-weight:600}
+tfoot td{position:sticky;bottom:0;z-index:2;background:#16232E;font-weight:700;border-top:2px solid var(--line-2);border-bottom:0}
+td.dim{color:var(--subtle)}
+td.sub{color:var(--muted);font-style:italic}
+.tools{display:inline-flex;gap:6px;margin-left:auto}
+dialog{background:var(--surface);color:var(--fg);border:1px solid var(--line-2);border-radius:14px;padding:0;width:min(620px,94vw);max-height:92vh}
+dialog::backdrop{background:rgba(5,10,15,.72)}
+.dlg{display:grid;gap:12px;padding:18px}
+.dlg h2{font-size:16px}
+.dlg label{display:grid;gap:5px;font-size:12px;color:var(--muted)}
+.dlg .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dlg textarea.in{height:auto;min-height:62px;padding:8px 10px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:13px}
+.dlg .read{font-size:12.5px;color:var(--muted);background:var(--sunken);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:34px;overflow-wrap:anywhere}
+.dlg .okline{font-size:12.5px;min-height:20px;overflow-wrap:anywhere}
+.dlg .okline.ok{color:var(--ok)}
+.dlg .okline.bad{color:var(--bad)}
+.dlg .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+@media (max-width:560px){.dlg .row2{grid-template-columns:1fr}}
 .toast{position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:#16232E;border:1px solid var(--accent);border-radius:10px;padding:10px 16px;font-weight:500;z-index:50;box-shadow:0 12px 30px rgba(0,0,0,.55);max-width:min(92vw,520px);text-align:center}
 .only-s{display:none}
 @media (max-width:980px){
@@ -143,7 +184,7 @@ td.nul{color:var(--subtle)}
   .fields .ftree{max-height:48vh}
   .head .acts{margin-left:0}
 }
-@media (prefers-reduced-motion:reduce){.cat-h .ch{transition:none}}
+@media (prefers-reduced-motion:reduce){.cat-h .ch,.car{transition:none}}
 </style>
 </head>
 <body>
@@ -180,9 +221,11 @@ td.nul{color:var(--subtle)}
           </div>
         </section>
         <section class="filters" id="filters" aria-label="Condiciones"></section>
+        <section class="groupbar" id="groupbar" aria-label="Agrupación del informe"></section>
         <div id="aviso"></div>
         <div class="strip" id="strip"></div>
         <div class="cols"><ul class="chips" id="chips" aria-label="Columnas del informe (arrastrá para ordenar)"></ul></div>
+        <div class="note">Cada columna puede llevar un resumen (suma, promedio, mínimo, máximo o conteo). Se calcula sobre todos los animales del informe, aunque la lista se corte.</div>
         <div class="tablewrap" id="twrap"></div>
       </main>
       <aside class="fields" id="fields" aria-label="Árbol de elementos del informe">
@@ -195,6 +238,29 @@ td.nul{color:var(--subtle)}
     </div>
   </section>
 </div>
+<dialog id="calc" aria-labelledby="calc-t">
+  <div class="dlg">
+    <h2 id="calc-t">Nuevo campo calculado</h2>
+    <p class="muted" style="margin:0;font-size:12.5px">Una cuenta entre campos de cada animal, por ejemplo la producción sobre los días en ordeño. Después se usa como cualquier otro campo: columna, condición, orden, resumen.</p>
+    <label>Nombre del campo<input class="in" id="c-nombre" maxlength="40" autocomplete="off" placeholder="Ej.: Kg por día de ordeño"></label>
+    <label>Fórmula<textarea class="in" id="c-formula" maxlength="300" rows="2" spellcheck="false" autocomplete="off" placeholder="[SevenDayAverage] / [CurrentDIM]"></textarea></label>
+    <div class="row2">
+      <label>Insertar un campo en la fórmula<select class="in" id="c-ins"></select></label>
+      <div class="row2">
+        <label>Decimales<input class="in" id="c-dec" type="number" min="0" max="6" value="2"></label>
+        <label>Unidad (opcional)<input class="in" id="c-unidad" maxlength="12" autocomplete="off" placeholder="kg"></label>
+      </div>
+    </div>
+    <div class="read" id="c-lee" aria-live="polite"></div>
+    <div class="okline" id="c-estado" role="status" aria-live="polite"></div>
+    <div class="acts">
+      <button type="button" class="btn ghost" id="c-borrar" hidden>Eliminar campo</button>
+      <span style="flex:1"></span>
+      <button type="button" class="btn" id="c-cancelar">Cancelar</button>
+      <button type="button" class="btn pri" id="c-guardar" disabled>Guardar campo</button>
+    </div>
+  </div>
+</dialog>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script>
@@ -232,18 +298,47 @@ const OPS = {
   txt: [['contiene', 'contiene'], ['es', 'es']],
 };
 const TIPO_LETRA = {num: '#', txt: 'A', fecha: 'F'};
+/* Los resúmenes que admite cada tipo de campo (los mismos que valida el servidor). */
+const RES_TIPO = {num: ['sum', 'avg', 'min', 'max', 'count'], fecha: ['min', 'max', 'count'], txt: ['count']};
+const RES_NOMBRE = {sum: 'Suma', avg: 'Promedio', min: 'Mínimo', max: 'Máximo', count: 'Conteo'};
+const RES_CORTO = {sum: 'Suma', avg: 'Prom.', min: 'Mín.', max: 'Máx.', count: 'Conteo'};
+const CALC_MAX = 10;
+const SIN_DATO = '(sin dato)';
+
+/* Un campo calculado se parece a uno del catálogo, para pintarlo igual en el árbol, las condiciones y las columnas. */
+function calcCampo(c) { return {id: c.id, etiqueta: c.etiqueta, tipo: 'num', unidad: c.unidad || '', decimales: c.decimales == null ? 2 : c.decimales, verificado: true, calculado: true, agrupable: false}; }
+function campoDe(d, id) { if (CAMPOS[id]) return CAMPOS[id]; const c = (d.def.calculados || []).filter(x => x.id === id)[0]; return c ? calcCampo(c) : null; }
+function camposDe(d) { return Object.keys(CAMPOS).map(k => CAMPOS[k]).concat((d.def.calculados || []).map(calcCampo)); }
+/* La clave de un grupo se compara como la compara SQL Server al agrupar: sin distinguir mayúsculas ni espacios al final. */
+const nk = v => v == null ? null : (typeof v === 'number' ? v : String(v).replace(/\s+$/, '').toLowerCase());
+const llave = ks => JSON.stringify(ks.map(nk));
 
 /* ---------- documentos abiertos ---------- */
-function defVacia() { return {columnas: [{campo: 'Number'}], condiciones: [], orden: null, incluir_descartados: false}; }
+function defVacia() { return {columnas: [{campo: 'Number'}], calculados: [], agrupar_por: [], detalle: true, condiciones: [], orden: null, incluir_descartados: false}; }
 function limpiaDef(d) {
-  const out = {columnas: d.columnas.map(c => ({campo: c.campo})), incluir_descartados: !!d.incluir_descartados};
+  const out = {columnas: d.columnas.map(c => c.resumen ? {campo: c.campo, resumen: c.resumen} : {campo: c.campo}), incluir_descartados: !!d.incluir_descartados};
   out.condiciones = d.condiciones.filter(c => c.campo && c.valor !== '' && c.valor != null).map(c => ({campo: c.campo, op: c.op, valor: c.valor}));
   if (d.orden && d.columnas.some(c => c.campo === d.orden.campo)) out.orden = {campo: d.orden.campo, dir: d.orden.dir};
+  if (d.calculados && d.calculados.length) out.calculados = d.calculados.map(c => ({id: c.id, etiqueta: c.etiqueta, formula: c.formula, decimales: c.decimales, unidad: c.unidad || ''}));
+  if (d.agrupar_por && d.agrupar_por.length) out.agrupar_por = d.agrupar_por.slice();
+  if (d.detalle === false) out.detalle = false;
   return out;
+}
+/* Deja la definición coherente después de cada cambio: sin resúmenes que el tipo del campo no admita, sin grupos que no se puedan
+   agrupar, y sin «solo resumen» si ya no hay nada que resumir. */
+function normalizar(d) {
+  const df = d.def;
+  df.columnas.forEach(c => {
+    if (!c.resumen) return;
+    const f = campoDe(d, c.campo);
+    if (!f || (RES_TIPO[f.tipo] || []).indexOf(c.resumen) < 0) delete c.resumen;
+  });
+  df.agrupar_por = (df.agrupar_por || []).filter((id, i, a) => CAMPOS[id] && CAMPOS[id].agrupable && a.indexOf(id) === i).slice(0, 2);
+  if (!df.agrupar_por.length && !df.columnas.some(c => c.resumen)) df.detalle = true;
 }
 const foto = d => JSON.stringify([d.nombre, d.def]);
 function nuevoDoc(base) {
-  const d = Object.assign({id: 'd' + (docSeq++), sid: null, nombre: 'Informe nuevo', def: defVacia(), hoy: '', res: null, estado: 'sin', error: '', stale: true, base: ''}, base || {});
+  const d = Object.assign({id: 'd' + (docSeq++), sid: null, nombre: 'Informe nuevo', def: defVacia(), hoy: '', res: null, estado: 'sin', error: '', stale: true, base: '', plegados: {}}, base || {});
   d.base = base && base.guardado ? foto(d) : '';
   delete d.guardado;
   docs.push(d);
@@ -259,6 +354,9 @@ async function abrirInforme(id) {
     const j = await api('/api/informes/' + id);
     const def = Object.assign(defVacia(), j.definicion);
     def.condiciones = (def.condiciones || []).map(c => Object.assign({}, c));
+    def.columnas = (def.columnas || []).map(c => Object.assign({}, c));
+    def.calculados = (def.calculados || []).map(c => Object.assign({}, c));
+    def.agrupar_por = (def.agrupar_por || []).slice();
     const d = nuevoDoc({sid: j.id, nombre: j.nombre, def, guardado: true});
     activar(d.id);
     ejecutar(d);
@@ -278,7 +376,7 @@ function render() {
   renderTabs();
   $('#pg-list').hidden = activeId !== 'list';
   $('#pg-rep').hidden = activeId === 'list';
-  if (activeId === 'list') renderList(); else { renderHead(); renderFields(); renderFilters(); renderChips(); renderResultado(); }
+  if (activeId === 'list') renderList(); else { renderHead(); renderFields(); renderFilters(); renderGroup(); renderChips(); renderResultado(); }
 }
 function renderTabs() {
   let h = '<span class="dt solo' + (activeId === 'list' ? ' on' : '') + '"><button class="go" data-act="tab" data-id="list"><span class="t">Informes</span></button></span>';
@@ -307,24 +405,36 @@ function renderHead() {
   $('#btn-run').textContent = d.estado === 'cargando' ? 'Calculando…' : 'Actualizar';
   $('#btn-xls').disabled = d.estado === 'cargando';
 }
+function filaCampo(f, usados) {
+  const u = usados[f.id];
+  return '<li' + (f.calculado ? ' class="calcrow"' : '') + '><button class="fld ' + (u ? 'used' : '') + '" data-act="campo" data-id="' + esc(f.id) + '" aria-pressed="' + !!u + '" title="' + esc(f.aviso || '') + '"><span class="ty' + (f.calculado ? ' fx' : '') + '">' + (f.calculado ? 'ƒ' : TIPO_LETRA[f.tipo]) + '</span><span class="tx">' + esc(f.etiqueta) + (f.unidad ? ' <span class="u">(' + esc(f.unidad) + ')</span>' : '') + (f.verificado ? '' : ' <span class="sv" title="Todavía no se comparó con DelPro">⚠</span>') + '</span><span class="add">' + (u ? '✓' : '+') + '</span></button>' +
+    (f.calculado ? '<button class="mini" data-act="editcalc" data-id="' + esc(f.id) + '" aria-label="Editar ' + esc(f.etiqueta) + '" title="Editar el campo calculado">✎</button>' : '') + '</li>';
+}
+function seccionCampos(nombre, n, abierta, cuerpo) {
+  return '<section><button class="cat-h" data-act="cat" data-c="' + esc(nombre) + '" aria-expanded="' + abierta + '"><svg class="ch" viewBox="0 0 10 10" width="10" height="10"><path d="M3 1l5 4-5 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>' + esc(nombre) + '<span class="n">' + n + '</span></button>' + (abierta ? cuerpo : '') + '</section>';
+}
 function renderFields() {
   const d = docAct(), usados = {};
   d.def.columnas.forEach(c => { usados[c.campo] = 1; });
   const q = fq.trim().toLowerCase();
-  const cats = CATS.map(c => ({nombre: c.nombre, campos: c.campos.filter(f => !q || f.etiqueta.toLowerCase().indexOf(q) >= 0)})).filter(c => c.campos.length);
-  $('#ftree').innerHTML = cats.map(c => {
-    const abierta = q ? true : openCats[c.nombre] !== false;
-    return '<section><button class="cat-h" data-act="cat" data-c="' + esc(c.nombre) + '" aria-expanded="' + abierta + '"><svg class="ch" viewBox="0 0 10 10" width="10" height="10"><path d="M3 1l5 4-5 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>' + esc(c.nombre) + '<span class="n">' + c.campos.length + '</span></button>' +
-      (abierta ? '<ul>' + c.campos.map(f => '<li><button class="fld ' + (usados[f.id] ? 'used' : '') + '" data-act="campo" data-id="' + f.id + '" aria-pressed="' + !!usados[f.id] + '" title="' + esc(f.aviso || '') + '"><span class="ty">' + TIPO_LETRA[f.tipo] + '</span><span class="tx">' + esc(f.etiqueta) + (f.unidad ? ' <span class="u">(' + esc(f.unidad) + ')</span>' : '') + (f.verificado ? '' : ' <span class="sv" title="Todavía no se comparó con DelPro">⚠</span>') + '</span><span class="add">' + (usados[f.id] ? '✓' : '+') + '</span></button></li>').join('') + '</ul>' : '') + '</section>';
-  }).join('') || '<div class="empty">Ningún elemento coincide.</div>';
+  const coincide = f => !q || f.etiqueta.toLowerCase().indexOf(q) >= 0;
+  const cats = CATS.map(c => ({nombre: c.nombre, campos: c.campos.filter(coincide)})).filter(c => c.campos.length);
+  let h = cats.map(c => seccionCampos(c.nombre, c.campos.length, q ? true : openCats[c.nombre] !== false, '<ul>' + c.campos.map(f => filaCampo(f, usados)).join('') + '</ul>')).join('');
+  const calc = (d.def.calculados || []).map(calcCampo).filter(coincide);
+  if (!q || calc.length) {
+    const lleno = (d.def.calculados || []).length >= CALC_MAX;
+    h += seccionCampos('Calculados', calc.length, q ? true : openCats['Calculados'] !== false,
+      '<button class="btn sm newcalc" data-act="nuevocalc"' + (lleno ? ' disabled title="Hasta ' + CALC_MAX + ' campos calculados por informe"' : '') + '>ƒ Nuevo campo calculado</button><ul>' + calc.map(f => filaCampo(f, usados)).join('') + '</ul>');
+  }
+  $('#ftree').innerHTML = h || '<div class="empty">Ningún elemento coincide.</div>';
   $('#fcount').textContent = d.def.columnas.length + ' en el informe';
 }
 function opt(v, l, sel) { return '<option value="' + esc(v) + '"' + (sel ? ' selected' : '') + '>' + esc(l) + '</option>'; }
 function renderFilters() {
   const d = docAct();
-  const campos = Object.keys(CAMPOS).map(k => CAMPOS[k]);
+  const campos = camposDe(d);
   let h = d.def.condiciones.map((c, i) => {
-    const f = CAMPOS[c.campo] || campos[0], ops = OPS[f.tipo];
+    const f = campoDe(d, c.campo) || campos[0], ops = OPS[f.tipo];
     const entrada = f.tipo === 'fecha' ? '<input class="in v" type="date" data-chg="cv" data-i="' + i + '" value="' + esc(c.valor || '') + '" aria-label="Valor">'
                                        : '<input class="in v" data-chg="cv" data-i="' + i + '" value="' + esc(c.valor == null ? '' : c.valor) + '" aria-label="Valor" autocomplete="off">';
     return '<span class="cond"><select class="in" data-chg="ck" data-i="' + i + '" aria-label="Campo">' + campos.map(x => opt(x.id, x.etiqueta, x.id === c.campo)).join('') + '</select>' +
@@ -339,10 +449,24 @@ function renderFilters() {
 function renderChips() {
   const d = docAct();
   $('#chips').innerHTML = d.def.columnas.map((c, i) => {
-    const f = CAMPOS[c.campo];
+    const f = campoDe(d, c.campo);
     const et = f ? f.etiqueta : c.campo;
-    return '<li class="chip" draggable="true" data-i="' + i + '">' + esc(et.length > 30 ? et.slice(0, 29) + '…' : et) + '<button data-act="quitarcol" data-i="' + i + '" aria-label="Quitar ' + esc(et) + '">×</button></li>';
+    const opciones = opt('none', 'Sin resumen', !c.resumen) + (f ? RES_TIPO[f.tipo] || [] : []).map(k => opt(k, RES_NOMBRE[k], c.resumen === k)).join('');
+    return '<li class="chip' + (f && f.calculado ? ' calc' : '') + '" draggable="true" data-i="' + i + '">' + esc(et.length > 30 ? et.slice(0, 29) + '…' : et) +
+      '<select class="' + (c.resumen ? 'on' : '') + '" data-chg="rs" data-i="' + i + '" aria-label="Resumen de ' + esc(et) + '" title="Resumen de esta columna: se calcula sobre todos los animales del informe">' + opciones + '</select>' +
+      '<button data-act="quitarcol" data-i="' + i + '" aria-label="Quitar ' + esc(et) + '">×</button></li>';
   }).join('') || '<li class="muted">Elegí elementos en el árbol de la derecha para armar el informe.</li>';
+}
+function renderGroup() {
+  const d = docAct(), df = d.def, g = df.agrupar_por || [];
+  const agr = camposDe(d).filter(f => f.agrupable);
+  const sel = (n, otro) => '<select class="in" data-chg="g' + n + '" aria-label="' + (n === 1 ? 'Agrupar por' : 'Agrupar luego por') + '">' +
+    opt('', n === 1 ? 'Sin agrupar' : 'Sin segundo nivel', !g[n - 1]) + agr.filter(f => f.id !== otro).map(f => opt(f.id, f.etiqueta, g[n - 1] === f.id)).join('') + '</select>';
+  const hay = g.length > 0 || df.columnas.some(c => c.resumen);
+  const ae = document.activeElement, foco = ae && ae.closest && ae.closest('#groupbar') ? ae.dataset.chg : null;      // que el teclado no pierda el lugar
+  $('#groupbar').innerHTML = '<span class="lbl">Agrupar por</span>' + sel(1, g[1]) + (g[0] ? '<span class="lbl">y luego por</span>' + sel(2, g[0]) : '') +
+    '<label class="opt" style="margin-left:auto"' + (hay ? '' : ' title="Elegí un grupo, o un resumen en alguna columna."') + '><input type="checkbox" data-chg="solo"' + (df.detalle === false ? ' checked' : '') + (hay ? '' : ' disabled') + '> Solo el resumen (sin la lista de animales)</label>';
+  if (foco) { const e = $('#groupbar [data-chg="' + foco + '"]'); if (e) e.focus(); }
 }
 function celda(f, v) {
   if (v == null) return '<td class="nul' + (f.tipo === 'num' ? ' num' : '') + '">—</td>';
@@ -352,26 +476,98 @@ function celda(f, v) {
   if (f.id === 'Number') return '<td class="rp">' + esc(v) + '</td>';
   return '<td>' + esc(v) + '</td>';
 }
+const animales = n => fmtNum(n) + (n === 1 ? ' animal' : ' animales');
+function textoClave(v, meta) {
+  if (v == null) return SIN_DATO;
+  if (meta.tipo === 'fecha') return fmtFecha(v);
+  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : fmtNum(v, Math.max(meta.decimales || 0, 1));
+  return String(v);
+}
+/* Un conteo es siempre entero y un promedio lleva al menos un decimal; lo demás conserva los decimales de su columna. */
+function decResumen(c, k) { return k === 'count' ? 0 : (k === 'avg' ? Math.max(c.decimales || 0, 1) : (c.decimales || 0)); }
+function celdaResumen(c, v, rotulo) {
+  const k = c.resumen;
+  if (!k || k === 'none') return '<td></td>';
+  const fecha = c.tipo === 'fecha' && k !== 'count';
+  const txt = v == null ? '—' : (fecha ? fmtFecha(v) : fmtNum(v, decResumen(c, k)));
+  return '<td class="' + (fecha ? '' : 'num') + '">' + (rotulo ? '<span class="k">' + RES_CORTO[k] + '</span>' : '') + txt + '</td>';
+}
+function thColumna(d, c) {
+  const on = d.def.orden && d.def.orden.campo === c.id;
+  return '<th class="' + (c.tipo === 'num' ? 'num' : '') + '" aria-sort="' + (on ? (d.def.orden.dir > 0 ? 'ascending' : 'descending') : 'none') + '"><button class="sortb" data-act="orden" data-id="' + esc(c.id) + '">' + esc(c.etiqueta) + (c.unidad ? ' (' + esc(c.unidad) + ')' : '') + (c.verificado ? '' : ' <span class="sv" title="Todavía no se comparó con un informe de DelPro: los valores pueden diferir.">⚠</span>') + (on ? '<span class="ar">' + (d.def.orden.dir > 0 ? '▲' : '▼') + '</span>' : '') + '</button></th>';
+}
+function filaAnimal(cols, f, rot) { return '<tr class="an">' + (rot ? '<td></td>' : '') + cols.map((c, j) => celda(CAMPOS[c.id] || c, f[j])).join('') + '</tr>'; }
+/* La lista de animales: sola, con un renglón de totales abajo, o repartida en grupos plegables (hasta dos niveles). Los grupos
+   salen en el orden que arma el servidor («Rodeo 2» antes que «Rodeo 10»); las filas se reparten por la clave de su grupo. */
+function tablaDetalle(d, r) {
+  const cols = r.columnas, agr = r.agrupar || [], tot = r.totales, rot = agr.length > 0 || !!tot, ncol = cols.length + (rot ? 1 : 0);
+  const th = (rot ? '<th>' + (agr.length ? 'Grupo' : '') + '</th>' : '') + cols.map(c => thColumna(d, c)).join('');
+  const vacio = '<tr><td colspan="' + ncol + '" class="empty">Ningún animal cumple las condiciones.</td></tr>';
+  let cuerpo = '';
+  if (!agr.length) {
+    cuerpo = r.filas.length ? r.filas.map(f => filaAnimal(cols, f, rot)).join('') : vacio;
+  } else {
+    const n = agr.length, por = {}, usadas = {};
+    (r.claves_filas || []).forEach((k, i) => { const l = llave(k.slice(0, n)); (por[l] = por[l] || []).push(i); });
+    r.grupos.forEach(g => {
+      const l = llave(g.claves), padre = g.nivel > 1 ? llave(g.claves.slice(0, 1)) : null;
+      usadas[l] = 1;
+      if (padre && d.plegados[padre]) return;                          // el grupo de arriba está plegado: no se muestra
+      const meta = agr[g.nivel - 1], plegado = !!d.plegados[l], filas = g.nivel === n ? (por[l] || []) : [];
+      cuerpo += '<tr class="grp l' + g.nivel + (plegado ? ' fold' : '') + '" data-act="plegar" data-k="' + esc(l) + '" tabindex="0" aria-expanded="' + !plegado + '">' +
+        '<td class="glabel" style="padding-left:' + (12 + (g.nivel - 1) * 20) + 'px"><span class="car">▾</span>' + esc(meta.etiqueta) + ': ' + esc(textoClave(g.claves[g.nivel - 1], meta)) +
+        ' <span class="cnt">· ' + animales(g.n) + (g.nivel === n && filas.length < g.n ? ' (se listan ' + fmtNum(filas.length) + ')' : '') + '</span></td>' +
+        cols.map(c => celdaResumen(c, g.resumenes[c.alias], true)).join('') + '</tr>';
+      if (!plegado) filas.forEach(i => { cuerpo += filaAnimal(cols, r.filas[i], rot); });
+    });
+    const sueltas = [];
+    Object.keys(por).forEach(l => { if (!usadas[l]) por[l].forEach(i => sueltas.push(i)); });
+    if (sueltas.length) cuerpo += '<tr class="grp l1"><td class="glabel" colspan="' + ncol + '">Sin grupo identificado</td></tr>' + sueltas.map(i => filaAnimal(cols, r.filas[i], rot)).join('');
+    if (!cuerpo) cuerpo = vacio;
+  }
+  const pie = tot ? '<tfoot><tr class="tot"><td class="glabel">Total · ' + animales(tot.n) + '</td>' + cols.map(c => celdaResumen(c, tot.resumenes[c.alias], true)).join('') + '</tr></tfoot>' : '';
+  return '<table><thead><tr>' + th + '</tr></thead><tbody>' + cuerpo + '</tbody>' + pie + '</table>';
+}
+/* Solo el resumen: una fila por grupo (y subgrupo) con la cantidad de animales y los resúmenes, sin la lista. */
+function tablaResumen(d, r) {
+  const agr = r.agrupar || [], k = agr.length, tot = r.totales || {n: 0, resumenes: {}};
+  const con = r.columnas.filter(c => c.resumen && c.resumen !== 'none');
+  const th = agr.map(g => '<th class="' + (g.tipo === 'num' ? 'num' : '') + '">' + esc(g.etiqueta) + '</th>').join('') + '<th class="num">Animales</th>' +
+    con.map(c => '<th class="num">' + esc(c.etiqueta) + (c.unidad ? ' (' + esc(c.unidad) + ')' : '') + ' · ' + RES_NOMBRE[c.resumen] + (c.verificado ? '' : ' <span class="sv" title="Todavía no se comparó con un informe de DelPro: los valores pueden diferir.">⚠</span>') + '</th>').join('');
+  const cifras = (n, res) => '<td class="num">' + fmtNum(n) + '</td>' + con.map(c => celdaResumen(c, res[c.alias], false)).join('');
+  let cuerpo = '';
+  r.grupos.forEach(g => {
+    const sub = g.nivel < k;
+    let rot = '';
+    for (let j = 0; j < k; j++) {
+      if (j < g.nivel) rot += '<td class="' + (agr[j].tipo === 'num' ? 'num ' : '') + (j < g.nivel - 1 ? 'dim' : 'rp') + '">' + esc(textoClave(g.claves[j], agr[j])) + '</td>';
+      else if (j === g.nivel && sub) rot += '<td class="sub">Subtotal</td>';
+      else rot += '<td></td>';
+    }
+    cuerpo += '<tr' + (sub ? ' class="subt"' : '') + '>' + rot + cifras(g.n, g.resumenes) + '</tr>';
+  });
+  const pie = '<tfoot><tr class="tot">' + (k ? '<td class="glabel">Total</td>' + '<td></td>'.repeat(k - 1) : '') + cifras(tot.n, tot.resumenes) + '</tr></tfoot>';
+  return '<table><thead><tr>' + th + '</tr></thead><tbody>' + cuerpo + '</tbody>' + pie + '</table>';
+}
 function renderResultado() {
   const d = docAct(), r = d.res;
   $('#aviso').innerHTML = d.error ? '<div class="msg err">' + esc(d.error) + '</div>' : '';
   let s = '';
   if (d.estado === 'cargando') s = '<span>Calculando…</span>';
-  else if (r) s = '<span><b>' + fmtNum(r.filas.length) + '</b>animales' + (r.truncado ? ' (hay más)' : '') + '</span><span>' + fmtNum(r.segundos, 1) + ' s</span>' +
-    (d.stale ? '<span class="stale">Cambiaste el informe: tocá «Actualizar» para ver los datos nuevos.</span>' : '');
+  else if (r) {
+    const tot = r.totales, conLista = r.detalle !== false, n = tot ? tot.n : r.filas.length;
+    s = '<span><b>' + fmtNum(n) + '</b>animales' + (conLista && r.truncado ? (tot ? ' · se listan los primeros ' + fmtNum(r.filas.length) : ' (hay más)') : '') + '</span><span>' + fmtNum(r.segundos, 1) + ' s</span>' +
+      (d.stale ? '<span class="stale">Cambiaste el informe: tocá «Actualizar» para ver los datos nuevos.</span>' : '') +
+      (conLista && (r.agrupar || []).length ? '<span class="tools"><button class="btn sm ghost" data-act="plegartodo">Plegar todo</button><button class="btn sm ghost" data-act="desplegartodo">Desplegar todo</button></span>' : '');
+  }
   else if (!d.error) s = '<span class="stale">Tocá «Actualizar» para ver los datos.</span>';
   $('#strip').innerHTML = s;
   const w = $('#twrap');
   if (!r) { w.innerHTML = d.estado === 'cargando' ? '<div class="empty">Calculando…</div>' : ''; return; }
-  const extra = r.truncado ? '<div class="msg warn" style="margin-bottom:8px">La lista se cortó en ' + fmtNum(r.filas.length) + ' filas: hay más animales. Agregá una condición para acotarla.</div>' : '';
-  const cols = r.columnas;
-  const th = cols.map(c => {
-    const on = d.def.orden && d.def.orden.campo === c.id;
-    return '<th class="' + (c.tipo === 'num' ? 'num' : '') + '" aria-sort="' + (on ? (d.def.orden.dir > 0 ? 'ascending' : 'descending') : 'none') + '"><button class="sortb" data-act="orden" data-id="' + c.id + '">' + esc(c.etiqueta) + (c.unidad ? ' (' + esc(c.unidad) + ')' : '') + (c.verificado ? '' : ' <span class="sv" title="Todavía no se comparó con un informe de DelPro: los valores pueden diferir.">⚠</span>') + (on ? '<span class="ar">' + (d.def.orden.dir > 0 ? '▲' : '▼') + '</span>' : '') + '</button></th>';
-  }).join('');
-  const cuerpo = r.filas.length ? r.filas.map(f => '<tr>' + cols.map((c, j) => celda(CAMPOS[c.id] || c, f[j])).join('') + '</tr>').join('')
-                               : '<tr><td colspan="' + cols.length + '" class="empty">Ningún animal cumple las condiciones.</td></tr>';
-  w.innerHTML = extra + '<table><thead><tr>' + th + '</tr></thead><tbody>' + cuerpo + '</tbody></table>';
+  const extra = r.truncado && r.detalle !== false ? '<div class="msg warn" style="margin-bottom:8px">La lista se cortó en ' + fmtNum(r.filas.length) + ' filas: hay más animales. Agregá una condición para acotarla.' + (r.totales ? ' Los totales y resúmenes cuentan a todos los animales.' : '') + '</div>' : '';
+  const y = w.scrollTop;
+  w.innerHTML = extra + (r.detalle === false ? tablaResumen(d, r) : tablaDetalle(d, r));
+  w.scrollTop = y;
 }
 let tt;
 function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(tt); tt = setTimeout(() => { t.hidden = true; }, 3200); }
@@ -422,7 +618,86 @@ function alternarCampo(id) {
   const d = docAct(), i = d.def.columnas.findIndex(c => c.campo === id);
   if (i >= 0) { d.def.columnas.splice(i, 1); if (d.def.orden && d.def.orden.campo === id) d.def.orden = null; }
   else d.def.columnas.push({campo: id});
-  renderFields(); renderChips(); marcarCambio(d);
+  normalizar(d); renderFields(); renderChips(); renderGroup(); marcarCambio(d);
+}
+
+/* ---------- campo calculado ---------- */
+let calcEd = {id: null, ok: false}, calcSeq = 0, calcTimer = 0;
+const leer = f => f.replace(/\[([A-Za-z][A-Za-z0-9_]{0,60})\]/g, (m, id) => CAMPOS[id] ? '«' + CAMPOS[id].etiqueta + '»' : m);
+function botonCalc() { $('#c-guardar').disabled = !(calcEd.ok && $('#c-nombre').value.trim()); }
+function estadoCalc(clase, ok, texto) {
+  const e = $('#c-estado');
+  e.className = 'okline' + (clase ? ' ' + clase : '');
+  e.textContent = texto || '';
+  calcEd.ok = ok;
+  botonCalc();
+}
+/* Pregunta al servidor si la fórmula sirve (sin tocar la base) y qué campos usa. Se espera un momento después de la última tecla. */
+function validarFormula(ya) {
+  clearTimeout(calcTimer);
+  const f = $('#c-formula').value;
+  $('#c-lee').textContent = f.trim() ? leer(f) : 'Escribí la fórmula con los campos entre corchetes, o elegí uno en «Insertar un campo».';
+  if (!f.trim()) { estadoCalc('', false, ''); return; }
+  calcEd.ok = false; botonCalc();
+  const mi = ++calcSeq;
+  calcTimer = setTimeout(async () => {
+    try {
+      const j = await post('/api/informes/formula', {formula: f});
+      if (mi !== calcSeq) return;
+      estadoCalc('ok', true, '✓ Usa ' + j.campos.map(c => c.etiqueta).join(', ') + (j.verificado ? '.' : '. ⚠ Incluye un campo que todavía no se comparó con DelPro: el resultado puede diferir.'));
+    } catch (e) { if (mi === calcSeq) estadoCalc('bad', false, e.message); }
+  }, ya ? 0 : 350);
+}
+function abrirCalc(id) {
+  const d = docAct(), ex = id ? (d.def.calculados || []).filter(c => c.id === id)[0] : null;
+  calcEd = {id: ex ? ex.id : null, ok: false};
+  $('#calc-t').textContent = ex ? 'Editar campo calculado' : 'Nuevo campo calculado';
+  $('#c-nombre').value = ex ? ex.etiqueta : '';
+  $('#c-formula').value = ex ? ex.formula : '';
+  $('#c-dec').value = ex && ex.decimales != null ? ex.decimales : 2;
+  $('#c-unidad').value = ex ? (ex.unidad || '') : '';
+  $('#c-borrar').hidden = !ex;
+  $('#c-ins').innerHTML = opt('', 'Elegí un campo…') + CATS.map(c => {
+    const num = c.campos.filter(f => f.tipo === 'num');
+    return num.length ? '<optgroup label="' + esc(c.nombre) + '">' + num.map(f => opt(f.id, f.etiqueta + (f.unidad ? ' (' + f.unidad + ')' : ''))).join('') + '</optgroup>' : '';
+  }).join('');
+  validarFormula(true);
+  $('#calc').showModal();
+  $('#c-nombre').focus();
+}
+function idLibre(d) {
+  const ya = {};
+  (d.def.calculados || []).forEach(c => { ya[c.id] = 1; });
+  let n = 1;
+  while (ya['calc_' + n]) n++;
+  return 'calc_' + n;
+}
+function guardarCalc() {
+  const d = docAct(), nombre = $('#c-nombre').value.trim().replace(/\s+/g, ' '), formula = $('#c-formula').value.trim(), unidad = $('#c-unidad').value.trim();
+  const dec = Math.max(0, Math.min(6, parseInt($('#c-dec').value, 10) || 0));
+  if (!nombre || !calcEd.ok) return;
+  const aviso = t => { const e = $('#c-estado'); e.className = 'okline bad'; e.textContent = t; };
+  if (!/^[A-Za-z0-9%\/·. ºª-]{0,12}$/.test(unidad)) { aviso('La unidad admite letras, números y % / · . º ª - (hasta 12 caracteres).'); return; }
+  if (camposDe(d).some(f => f.id !== calcEd.id && f.etiqueta.toLowerCase() === nombre.toLowerCase())) { aviso('Ya hay un campo con ese nombre: elegí otro para no confundirlos.'); return; }
+  if (calcEd.id) Object.assign(d.def.calculados.filter(x => x.id === calcEd.id)[0], {etiqueta: nombre, formula, decimales: dec, unidad});
+  else {
+    if (d.def.calculados.length >= CALC_MAX) { aviso('Hasta ' + CALC_MAX + ' campos calculados por informe.'); return; }
+    const id = idLibre(d);
+    d.def.calculados.push({id, etiqueta: nombre, formula, decimales: dec, unidad});
+    d.def.columnas.push({campo: id});
+  }
+  $('#calc').close();
+  normalizar(d); renderFields(); renderFilters(); renderGroup(); renderChips(); marcarCambio(d);
+}
+/* Eliminar un campo calculado lo saca también de las columnas, las condiciones y el orden que lo usaban. */
+function borrarCalc() {
+  const d = docAct(), id = calcEd.id;
+  d.def.calculados = d.def.calculados.filter(c => c.id !== id);
+  d.def.columnas = d.def.columnas.filter(c => c.campo !== id);
+  d.def.condiciones = d.def.condiciones.filter(c => c.campo !== id);
+  if (d.def.orden && d.def.orden.campo === id) d.def.orden = null;
+  $('#calc').close();
+  normalizar(d); renderFields(); renderFilters(); renderGroup(); renderChips(); marcarCambio(d);
 }
 
 document.addEventListener('click', e => {
@@ -439,12 +714,18 @@ document.addEventListener('click', e => {
   }
   else if (a === 'cat') { const c = b.dataset.c; openCats[c] = openCats[c] === false; renderFields(); }
   else if (a === 'campo') alternarCampo(b.dataset.id);
-  else if (a === 'quitarcol') { d.def.columnas.splice(+b.dataset.i, 1); renderFields(); renderChips(); marcarCambio(d); }
+  else if (a === 'quitarcol') { d.def.columnas.splice(+b.dataset.i, 1); normalizar(d); renderFields(); renderChips(); renderGroup(); marcarCambio(d); }
+  else if (a === 'nuevocalc') abrirCalc(null);
+  else if (a === 'editcalc') abrirCalc(b.dataset.id);
+  else if (a === 'plegar') { const k = b.dataset.k; if (d.plegados[k]) delete d.plegados[k]; else d.plegados[k] = true; renderResultado(); }
+  else if (a === 'plegartodo') { (d.res.grupos || []).forEach(g => { if (g.nivel === 1) d.plegados[llave(g.claves)] = true; }); renderResultado(); }
+  else if (a === 'desplegartodo') { d.plegados = {}; renderResultado(); }
   else if (a === 'agregarcond') { d.def.condiciones.push({campo: 'CurrentDIM', op: '>=', valor: ''}); renderFilters(); renderTabs(); renderHead(); }
   else if (a === 'quitarcond') { d.def.condiciones.splice(+b.dataset.i, 1); renderFilters(); marcarCambio(d); }
   else if (a === 'orden') {
     const o = d.def.orden;
-    d.def.orden = (o && o.campo === b.dataset.id) ? (o.dir === 1 ? {campo: o.campo, dir: -1} : null) : {campo: b.dataset.id, dir: CAMPOS[b.dataset.id] && CAMPOS[b.dataset.id].tipo === 'txt' ? 1 : -1};
+    const fo = campoDe(d, b.dataset.id);
+    d.def.orden = (o && o.campo === b.dataset.id) ? (o.dir === 1 ? {campo: o.campo, dir: -1} : null) : {campo: b.dataset.id, dir: fo && fo.tipo === 'txt' ? 1 : -1};
     renderTabs(); ejecutar(d);
   }
 });
@@ -452,11 +733,15 @@ document.addEventListener('change', e => {
   const el = e.target.closest('[data-chg]');
   if (!el) return;
   const d = docAct(), a = el.dataset.chg, i = +el.dataset.i;
-  if (a === 'ck') { const c = d.def.condiciones[i]; c.campo = el.value; c.op = OPS[CAMPOS[c.campo].tipo][0][0]; c.valor = ''; renderFilters(); }
+  if (a === 'ck') { const c = d.def.condiciones[i]; c.campo = el.value; c.op = OPS[campoDe(d, c.campo).tipo][0][0]; c.valor = ''; renderFilters(); }
   else if (a === 'co') d.def.condiciones[i].op = el.value;
   else if (a === 'cv') d.def.condiciones[i].valor = el.value;
   else if (a === 'desc') d.def.incluir_descartados = el.checked;
   else if (a === 'hoy') d.hoy = el.value;
+  else if (a === 'rs') { const c = d.def.columnas[i]; if (el.value === 'none') delete c.resumen; else c.resumen = el.value; el.className = c.resumen ? 'on' : ''; normalizar(d); renderGroup(); }
+  else if (a === 'g1') { d.def.agrupar_por = el.value ? [el.value].concat((d.def.agrupar_por || []).slice(1).filter(x => x !== el.value)) : []; normalizar(d); renderGroup(); }
+  else if (a === 'g2') { d.def.agrupar_por = el.value ? [d.def.agrupar_por[0], el.value] : [d.def.agrupar_por[0]]; normalizar(d); renderGroup(); }
+  else if (a === 'solo') d.def.detalle = !el.checked;
   marcarCambio(d);
 });
 $('#rname').addEventListener('input', e => { const d = docAct(); d.nombre = e.target.value; renderTabs(); $('#unsaved').hidden = !sucio(d); });
@@ -468,6 +753,25 @@ $('#btn-xls').addEventListener('click', () => exportar(docAct()));
 $('#btn-guardar').addEventListener('click', () => guardar(docAct(), false));
 $('#btn-copia').addEventListener('click', () => guardar(docAct(), true));
 $('#btn-dock').addEventListener('click', () => { $('#work').classList.toggle('nodock'); $('#shell').classList.toggle('showf'); });
+$('#c-formula').addEventListener('input', () => validarFormula());
+$('#c-nombre').addEventListener('input', botonCalc);
+$('#c-ins').addEventListener('change', e => {
+  const id = e.target.value;
+  if (!id) return;
+  const t = $('#c-formula'), a = t.selectionStart, b = t.selectionEnd, txt = '[' + id + ']';
+  t.value = t.value.slice(0, a) + txt + t.value.slice(b);
+  t.selectionStart = t.selectionEnd = a + txt.length;
+  e.target.value = '';
+  t.focus();
+  validarFormula();
+});
+$('#c-guardar').addEventListener('click', guardarCalc);
+$('#c-cancelar').addEventListener('click', () => $('#calc').close());
+$('#c-borrar').addEventListener('click', borrarCalc);
+document.addEventListener('keydown', e => {
+  const tr = e.target.closest && e.target.closest('tr.grp[data-act="plegar"]');
+  if (tr && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); tr.click(); }
+});
 let dragI = null;
 document.addEventListener('dragstart', e => { const c = e.target.closest && e.target.closest('.chip'); if (c) { dragI = +c.dataset.i; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(dragI)); } catch (x) { /* */ } } });
 document.addEventListener('dragover', e => { const c = e.target.closest && e.target.closest('.chip'); if (c && dragI != null) { e.preventDefault(); document.querySelectorAll('.chip.over').forEach(x => x.classList.remove('over')); c.classList.add('over'); } });

@@ -96,6 +96,7 @@ import tambos
 import ups_registro
 import informes_catalogo
 import informes_excel
+import informes_formula
 import informes_guardados
 import informes_motor
 import telegram_bot
@@ -6680,7 +6681,7 @@ def api_informes_campos():
     for c in informes_catalogo.CATALOGO.values():
         cats.setdefault(c.categoria, []).append({
             "id": c.id, "etiqueta": c.etiqueta, "tipo": c.tipo, "unidad": c.unidad, "decimales": c.decimales,
-            "verificado": c.verificado,
+            "verificado": c.verificado, "agrupable": c.agrupable,
             "aviso": "" if c.verificado else "Todavía no se comparó con un informe de DelPro: los valores pueden diferir."})
     return jsonify({"categorias": [{"nombre": n, "campos": cs} for n, cs in cats.items()]})
 
@@ -6706,6 +6707,23 @@ def api_informes_ejecutar():
         return jsonify({"error": "No se pudo leer la base de datos para este informe."}), 502
     r.pop("sql", None)
     return jsonify(r)
+
+
+@app.post("/api/informes/formula")
+@auth.requiere_rol("admin")
+def api_informes_formula():
+    """Dice si una fórmula de campo calculado es válida (y qué campos usa) sin tocar la base: la pantalla lo llama mientras se
+    escribe. Nunca devuelve el SQL."""
+    cuerpo = _cuerpo_json_o_400()
+    if cuerpo is None:
+        return jsonify({"error": "La fórmula tiene que enviarse como JSON."}), 400
+    catalogo = informes_catalogo.CATALOGO
+    try:
+        _, usados = informes_formula.traducir(cuerpo.get("formula"), catalogo)
+    except informes_formula.FormulaError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify({"ok": True, "campos": [{"id": u, "etiqueta": catalogo[u].etiqueta} for u in usados],
+                    "verificado": all(catalogo[u].verificado for u in usados)})
 
 
 def _cuerpo_json_o_400():

@@ -62,5 +62,66 @@ class TestCatalogo(unittest.TestCase):
             self.assertIn(esperado, cat.CATALOGO)
 
 
+class TestInformesAgrupadosSobreElCatalogoReal(unittest.TestCase):
+    """Fase 2 con el catálogo REAL (no uno de mentira): cada combinación de resumen y de agrupación compila a consultas que pasan
+    el validador de solo lectura de db.py, que es el que las dejaría correr en producción."""
+
+    def validar(self, defn):
+        c = im.compilar(defn, herd=1, hoy="2026-07-30")
+        for sql in (c["sql"], c["sql_resumen"]):
+            if sql is not None:
+                db.validate_sql(sql)
+                self.assertNotIn("@HOY", sql)
+        return c
+
+    def un_resumen_por_campo(self):
+        return [{"campo": c.id, "resumen": im.RESUMENES[c.tipo][0]} for c in cat.CATALOGO.values()]
+
+    def test_solo_se_agrupa_por_campos_de_pocas_categorias(self):
+        self.assertEqual({c.id for c in cat.CATALOGO.values() if c.agrupable},
+                         {"AnimalGroupName", "AnimalGroupNumber", "CurrentLactationNumber", "CurrentReproductionStatus"})
+
+    def test_cada_resumen_de_cada_campo(self):
+        for c in cat.CATALOGO.values():
+            for kind in im.RESUMENES[c.tipo]:
+                r = self.validar({"columnas": [{"campo": c.id, "resumen": kind}], "detalle": False})
+                self.assertIsNone(r["sql"], c.id)
+                self.assertIn("COUNT(*) AS n", r["sql_resumen"], f"{c.id} {kind}")
+
+    def test_agrupar_por_cada_campo_agrupable_con_un_resumen_en_cada_columna(self):
+        for g in (c.id for c in cat.CATALOGO.values() if c.agrupable):
+            r = self.validar({"columnas": self.un_resumen_por_campo(), "agrupar_por": [g]})
+            self.assertIn("ROLLUP(", r["sql_resumen"], g)
+            self.assertIn("GROUPING(", r["sql_resumen"], g)
+
+    def test_dos_niveles_en_cualquier_orden(self):
+        ags = [c.id for c in cat.CATALOGO.values() if c.agrupable]
+        for a in ags:
+            for b in ags:
+                if a != b:
+                    self.validar({"columnas": self.un_resumen_por_campo(), "agrupar_por": [a, b]})
+                    self.validar({"columnas": self.un_resumen_por_campo(), "agrupar_por": [a, b], "detalle": False})
+
+    def test_un_campo_calculado_sobre_campos_reales_trae_solo_los_bloques_que_usa(self):
+        defn = {"columnas": [{"campo": "Number"}, {"campo": "calc_1", "resumen": "avg"}],
+                "calculados": [{"id": "calc_1", "etiqueta": "Kg por día de ordeño", "formula": "[SevenDayAverage] / ([CurrentDIM] + 1) * 100"}],
+                "condiciones": [{"campo": "calc_1", "op": ">", "valor": 0.5}], "orden": {"campo": "calc_1", "dir": -1},
+                "agrupar_por": ["AnimalGroupName"]}
+        r = self.validar(defn)
+        for sql in (r["sql"], r["sql_resumen"]):
+            self.assertIn("AnimalDaily", sql)                 # el promedio de 7 días
+            self.assertIn("AnimalReproductionInfo", sql)      # los días en ordeño
+            self.assertNotIn("EventCalving", sql)             # el último parto no entra en la fórmula
+        self.assertIn("NULLIF(", r["sql_resumen"])            # la división no explota con un cero
+
+    def test_una_formula_con_un_campo_sin_verificar_marca_la_columna(self):
+        r = self.validar({"columnas": [{"campo": "calc_1"}],
+                          "calculados": [{"id": "calc_1", "etiqueta": "Pico doble", "formula": "[PeakYieldLastLactation] * 2"}]})
+        self.assertFalse(r["columnas"][0]["verificado"])
+        r = self.validar({"columnas": [{"campo": "calc_1"}],
+                          "calculados": [{"id": "calc_1", "etiqueta": "Días doble", "formula": "[CurrentDIM] * 2"}]})
+        self.assertTrue(r["columnas"][0]["verificado"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,7 @@
 
     C:\\Python314\\python.exe -m unittest tests.test_informes_pagina -v
 """
+import re
 import unittest
 from unittest import mock
 
@@ -48,6 +49,43 @@ class TestPagina(unittest.TestCase):
         import re
         marcas = re.findall(r"\{\{.*?\}\}|\{%.*?%\}", fuente)
         self.assertEqual(sorted(set(marcas)), sorted({"{{ tambo|tojson }}", "{{ embebido|tojson }}"}))
+
+
+def sin_manejador(fuente: str) -> list:
+    """Los `data-act` y `data-chg` que la pantalla genera y ningún manejador atiende (`a === '...'`)."""
+    pedidas = set(re.findall(r'data-(?:act|chg)="([A-Za-z0-9]+)"', fuente))
+    manejadas = set(re.findall(r"a === '([A-Za-z0-9]+)'", fuente))
+    return sorted(pedidas - manejadas)
+
+
+class TestFase2EnLaPantalla(unittest.TestCase):
+    def fuente(self):
+        with open("templates/informes.html", encoding="utf-8") as f:
+            return f.read()
+
+    def test_cada_boton_y_cada_selector_tiene_su_manejador(self):
+        """Un `data-act` sin manejador es un botón que no hace nada y no da error en ningún lado."""
+        self.assertEqual(sin_manejador(self.fuente()), [])
+        # Los dos niveles de agrupación se arman con data-chg="g' + n + '": no los ve la búsqueda de arriba.
+        self.assertTrue({"g1", "g2"} <= set(re.findall(r"a === '([A-Za-z0-9]+)'", self.fuente())))
+
+    def test_el_control_detecta_un_manejador_que_falta(self):
+        falso = "<button data-act=\"nuevo\"></button><select data-chg=\"rs\"></select> if (a === 'rs') {}"
+        self.assertEqual(sin_manejador(falso), ["nuevo"])
+
+    def test_trae_la_barra_de_agrupacion_y_el_cuadro_del_campo_calculado(self):
+        html = cliente("admin").get("/informes/").get_data(as_text=True)
+        for esperado in ('id="groupbar"', '<dialog id="calc"', 'id="c-formula"', "/api/informes/formula",
+                         'data-act="plegar"', 'data-act="nuevocalc"', 'data-chg="rs"', 'data-chg="solo"'):
+            self.assertIn(esperado, html, esperado)
+
+    def test_los_textos_que_escribe_el_usuario_pasan_por_esc(self):
+        """El nombre de un campo calculado y la clave de un grupo se escriben a mano o vienen de la base: nunca van crudos al HTML."""
+        fuente = self.fuente()
+        for pieza in ("esc(f.etiqueta)", "esc(et.length", "esc(meta.etiqueta)", "esc(textoClave(", "esc(g.etiqueta)", "esc(c.etiqueta)"):
+            self.assertIn(pieza, fuente, pieza)
+        self.assertNotIn(".innerHTML = e.message", fuente)          # los mensajes de error van con textContent
+        self.assertIn("e.textContent = texto", fuente)
 
 
 class TestMenu(unittest.TestCase):

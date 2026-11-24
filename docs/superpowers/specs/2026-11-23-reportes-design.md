@@ -56,7 +56,7 @@ DelPro guarda su propio diseñador de informes dentro de la base:
 * **Fase 0 (esta):** catálogo de ~12 campos del nivel «Animal» + compilador + ejecución, reproduciendo el informe
   «Prod. x lactancia» y comparándolo campo por campo con DelPro. Sin pantalla nueva, sin guardado. Valida el enfoque y la velocidad.
 * Fase 1: pantalla (pestañas, árbol, filtros) y guardado con nombre, exportar a Excel.
-* Fase 2: resúmenes, agrupación, totales, campos calculados.
+* Fase 2: resúmenes, agrupación, totales, campos calculados. **Hecha** (ver «Fase 2: estado»).
 * Fase 3: nivel «Animal por día» y gráficos con rango de fechas.
 * Fase 4: importar los informes de DelPro, armarlos por lenguaje natural, envío programado.
 
@@ -130,6 +130,50 @@ en el primer grupo, después de «Consultas e IA» (dentro de un marco con `?emb
 
 **Fuera de la Fase 1, a propósito:** agrupar, resúmenes por columna y campos calculados (Fase 2); gráficos (Fase 3); eliminar
 informes (por la regla de no borrar: se resolverá archivando).
+
+## Fase 2: estado al 24/11/2026
+
+Agrupar, resumir y calcular, en la misma pantalla y con el mismo motor.
+
+* **Resumen por columna:** suma, promedio, mínimo, máximo y conteo (fecha: mínimo, máximo, conteo; texto: conteo). Se calcula **en SQL sobre
+  TODOS los animales del informe**, no sobre las filas que se ven: si la lista se corta en el tope, los totales siguen siendo los de todos.
+  El promedio es el de los animales con dato (`AVG` sobre `CAST ... AS float`, porque el `AVG` de enteros trunca en SQL Server), nunca un
+  promedio de promedios. Queda sin resolver el promedio **ponderado** que pedía la decisión 5: hace falta definir contra qué se pondera.
+* **Agrupar hasta en dos niveles**, solo por campos con pocas categorías (`agrupable` en el catálogo: nombre y número del grupo, nº de
+  lactancia, estado de la reproducción). Un `GROUP BY ROLLUP` da cada grupo, cada subtotal y el total en una consulta. Los grupos salen en
+  orden natural («Rodeo 2» antes que «Rodeo 10»), con «(sin dato)» al final.
+* **«Solo el resumen»:** sin la lista de animales, una sola consulta. Exige agrupar o tener al menos un resumen (la pantalla lo apaga sola
+  si se quita lo último).
+* **Campos calculados** (hasta 10 por informe): cuentas con `[Campo]`, números y + − × ÷ ( ), traducidas a SQL por un analizador propio
+  (`informes_formula.py`; nada de `eval` ni texto libre): todo a `float`, la división con `NULLIF` (un cero da vacío, no un error). Solo con
+  campos del catálogo, no entre calculados. Sirven de columna, condición, orden y resumen; no para agrupar. Si usan un campo sin verificar,
+  el resultado también lo es (⚠). La pantalla valida la fórmula mientras se escribe (`POST /api/informes/formula`, sin tocar la base).
+* **Pantalla:** selector de resumen en cada columna, barra «Agrupar por… y luego por…», grupos plegables con su cantidad
+  de animales y sus resúmenes, «Plegar todo / Desplegar todo», total fijo abajo, y un cuadro para crear, editar y eliminar campos calculados
+  con una línea «Se lee: …» que traduce la fórmula a los nombres en español.
+* **Excel:** tres formas (lista con fila de totales; agrupada, con los grupos plegables con el «−» de Excel y subtotales; solo resumen),
+  apaisado, una hoja de ancho y el encabezado repetido en cada página. Cada cifra de resumen dice cuál es («Prom. 27,5») y sigue siendo un
+  número. Ningún texto se escribe como fórmula, tampoco el nombre que el usuario le pone a un campo calculado.
+
+**Verificado contra la base real** (copia local, «hoy» = 30/07/2026; 1.779 animales con lactancia, agrupados por rodeo y lactancia, con conteo,
+promedio, máximo, mínimo, suma y un campo calculado): las 51 filas de resumen (1 total + 50 grupos) × 7 resúmenes que calculó SQL coinciden
+con lo calculado en Python sobre las mismas filas del detalle: **0 diferencias**. «Solo resumen» da exactamente los mismos grupos y totales.
+Tarda 0,9 s con detalle y 0,1 s sin él. La pantalla se probó en el navegador: abrir un informe guardado, plegar, cambiar resúmenes y grupos,
+crear, editar y eliminar un campo calculado, guardar y reabrir, exportar, y el celular, con datos reales y, cuando el SQL local se quedó sin
+memoria, con 90 animales de ejemplo.
+
+**Pruebas:** 217 de informes (motor 76, catálogo 13, fórmula 20, guardados 18, API 29, Excel 51, página 10). El catálogo comprueba que cada
+combinación de campo, resumen y agrupación pase `db.validate_sql`; la fórmula tiene un fuzz de 7.500 casos; la API prueba el camino completo
+(pedido → motor → Excel) con un informe agrupado y uno de solo resumen.
+
+**Límites conocidos:**
+* Un resumen por columna, y un campo no puede estar en dos columnas: no se ve el promedio **y** la suma del mismo campo a la vez (se
+  resuelve con un campo calculado que lo duplique, por ejemplo `[Campo] * 1`).
+* El plegado de los grupos con el teclado (Enter o espacio sobre el encabezado) está programado pero no se probó a mano.
+* Si el servidor tarda (SQL Express sin memoria), la pantalla dice «Calculando…» sin límite de tiempo.
+* El informe trae todos los animales del rebaño (crianza, piquetes…) salvo que una condición lo acote; falta un filtro «en ordeño».
+* El Excel se verificó leyendo el `.xlsx` y abriendo uno de los archivos en Excel, que en la PC de desarrollo está sin licencia y no deja imprimir
+  ni exportar: la impresión apaisada y el plegado de grupos no se vieron en una hoja real.
 
 ## Riesgos
 

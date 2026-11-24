@@ -25,6 +25,8 @@ class Campo:
     resumenes: tuple = ()     # resúmenes admitidos por columna (Fase 2)
     verificado: bool = True   # False = definido por lectura de DelPro pero SIN comparar contra un informe suyo del mismo momento
     nota: str = ""            # cómo se verificó, o qué falta
+    agrupable: bool = False   # se puede agrupar por este campo: pocas categorías (rodeo, lactancia, estado), no un valor continuo
+    bloques: tuple = ()       # bloques ADEMÁS de `bloque` (un campo calculado usa los de todos los campos de su fórmula)
 
 
 @dataclass(frozen=True)
@@ -69,10 +71,10 @@ _REP = "Reproducción"
 CATALOGO = {c.id: c for c in (
     Campo("Number", "Número del animal", _GEN, "txt", "CAST(b.Number AS nvarchar(20))",
           nota="definición de DelPro: Number"),
-    Campo("AnimalGroupName", "Nombre del grupo", _GEN, "txt", "ag.Name", bloque="grupo",
+    Campo("AnimalGroupName", "Nombre del grupo", _GEN, "txt", "ag.Name", bloque="grupo", agrupable=True,
           nota="definición de DelPro: Group.GroupName (el rodeo de HOY)"),
-    Campo("AnimalGroupNumber", "Número del grupo", _GEN, "num", "ag.Number", bloque="grupo"),
-    Campo("CurrentLactationNumber", "Nº Lactación", _GEN, "num", "r.LactationNumber", bloque="repro",
+    Campo("AnimalGroupNumber", "Número del grupo", _GEN, "num", "ag.Number", bloque="grupo", agrupable=True),
+    Campo("CurrentLactationNumber", "Nº Lactación", _GEN, "num", "r.LactationNumber", bloque="repro", agrupable=True,
           nota="1665 de 1665 vacas coinciden con AnimalDaily.LactationNumber (30/07/2026)"),
     Campo("CurrentDIM", "Días en ordeño", _GEN, "num", "DATEDIFF(day, r.LastLactationChangeDate, @HOY)", bloque="repro",
           nota="1664 de 1665 coinciden con AnimalDaily.DIM de DelPro (30/07/2026); falta contra un informe de DelPro"),
@@ -81,7 +83,7 @@ CATALOGO = {c.id: c for c in (
     Campo("CurrentReproductionStatus", "Estado de la reproducción", _REP, "txt",
           "CASE WHEN r.IsDryingOff = 1 THEN 'Seca' WHEN r.IsPregnant = 1 THEN 'Preñada' "
           "WHEN r.IsInseminated = 1 THEN 'Inseminada' WHEN r.Animal IS NULL THEN NULL ELSE 'Abierta' END",
-          bloque="repro", verificado=False,
+          bloque="repro", verificado=False, agrupable=True,
           nota="por los bits de AnimalReproductionInfo; los códigos de BreedingState 1, 3 y 5 no tienen nombre en la base"),
     Campo("SevenDayAverage", "Promedio producción diaria de leche 7 d.", _ORD, "num", "p7.prom7", bloque="prom7",
           unidad="kg", decimales=1,

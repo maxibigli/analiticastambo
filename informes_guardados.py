@@ -17,7 +17,7 @@ import informes_motor
 
 RUTA_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "informes.db")
 NOMBRE_MAX = 60
-CLAVES_DEFINICION = ("columnas", "condiciones", "orden", "incluir_descartados", "limite")
+CLAVES_DEFINICION = ("columnas", "calculados", "agrupar_por", "detalle", "condiciones", "orden", "incluir_descartados", "limite")
 
 
 class InformeGuardadoError(ValueError):

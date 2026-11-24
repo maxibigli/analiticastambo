@@ -4216,3 +4216,55 @@ del asa ⠿ de cada fila o con ▲▼ (un lugar). Cada sensor tiene `tamano`: `c
 al lado de una grande y el orden visual puede adelantar una tarjeta cuando eso evita un hueco. El ITH (calculado, no está en la lista) va siempre
 al final y mediano. Un sensor sin `tamano` es mediano. El arrastre usa el asa (no la fila entera) para no pelearse con los campos de texto; no
 funciona con el dedo en un celular (ahí están ▲▼). Pruebas: `tests/test_iot_estados.py`; además `test_iot_sensores.py`, `test_iot_digitales.py`, `test_iot_avisos.py`.
+
+## Informes personalizables: «📑 Informes» (23/11/2026)
+
+Diseñador de informes como el de DelPro, en la web: el usuario elige campos de un árbol, filtra, ordena, agrupa, resume, agrega campos calculados y
+**guarda cada informe con nombre**. Diseño y estado por fase: `docs/superpowers/specs/2026-11-23-reportes-design.md`. Pantalla propia `/informes/`
+(`templates/informes.html`, solo administrador; el menú principal la muestra en un marco con `?embebido=1`, primer grupo, después de «Consultas e IA»).
+**Fases 0 a 2 hechas. Faltan la 3 (gráficos con rango de fechas) y la 4 (importar los informes de DelPro, armarlos por lenguaje natural, envío programado).**
+
+**Piezas.** `informes_catalogo.py` (la lista CERRADA de campos y los «bloques» de datos), `informes_motor.py` (compila una definición y la ejecuta),
+`informes_formula.py` (traductor de las fórmulas de campos calculados), `informes_guardados.py` (SQLite propio `informes.db`, fuera de git, por tambo:
+nunca en DDM), `informes_excel.py` (exportación). API, todas de administrador: `GET /api/informes/campos`, `POST /api/informes/ejecutar`, `/exportar`,
+`/formula`, y `GET/POST /api/informes`, `GET/PUT /api/informes/<id>`. No hay «eliminar» (regla de no borrar: se resolvería archivando).
+
+**LA REGLA: la definición es JSON y los valores NUNCA son SQL.** Campo y operador se buscan en listas cerradas; un valor se valida y se escribe como literal
+(`db.run_query` no tiene parámetros y `validate_sql` prohíbe hasta palabras como `insert` dentro de un texto). Una definición pasa por `compilar` antes de
+guardarse: lo guardado siempre se puede volver a correr. Sin esto, un informe guardado sería una vía para meter SQL.
+
+**Definición:** `columnas` [{campo, resumen?}], `calculados` [{id `calc_N`, etiqueta ≤40, formula, decimales 0-6, unidad}] (hasta 10), `agrupar_por` (hasta 2 campos
+`agrupable`), `detalle` (false = solo resumen), `condiciones`, `orden`, `incluir_descartados`, `limite` (2.000 por defecto, 5.000 máximo). El id de un campo es el
+`Name` que DelPro usa en `DDMReportItem` (`CurrentDIM`, `SevenDayAverage`…): así se podrán importar sus informes. `@HOY` = el «hoy» de los datos (la pantalla lo
+llama «Calcular al»; vacío = hoy): la copia local llega al 30/07/2026.
+
+**Cada campo se verificó contra lo que DelPro GUARDA** y lleva `verificado`; los que no, llevan ⚠: estado de la reproducción (los códigos de `BreedingState` 1, 3 y 5 no
+tienen nombre en la base) y pico de la última lactación. **Todavía falta comparar contra una exportación de DelPro del MISMO momento** (aceptación de la Fase 0).
+
+**Resúmenes y grupos (Fase 2) salen de SQL sobre TODOS los animales del informe**, no de las filas que se ven: con la lista cortada en el tope, los totales siguen
+siendo los de todos. Una consulta con `GROUP BY ROLLUP` da cada grupo, cada subtotal y el total; otra, el detalle (`TOP limite+1`, para saber si se cortó). El promedio
+es el de los animales con dato (`AVG` sobre `CAST ... AS float`: el `AVG` de enteros trunca en SQL Server), nunca un promedio de promedios.
+**Orden de los grupos:** natural («Rodeo 2» antes que «Rodeo 10», «sin dato» al final), lo arma el motor; el detalle viene en el orden de SQL. Por eso **las filas se reparten
+por la clave de su grupo comparada como la compara SQL Server: sin distinguir mayúsculas ni espacios al final** (`informes_excel._norm`, `nk()` en la pantalla). Una fila cuyo
+grupo no figura va a «Sin grupo identificado»: no se pierde.
+
+**Campos calculados.** `[Campo]`, números y + − × ÷ ( ); se traducen a SQL con un analizador propio (ni `eval` ni texto libre en la consulta): todo se convierte a
+`float`, la división es `/ NULLIF(den, 0)` (un cero da vacío, no un error), solo se pueden usar campos del catálogo (no otros calculados) y no sirven para agrupar.
+Heredan «sin verificar» de los campos que usan. La pantalla valida la fórmula mientras se escribe (`POST /api/informes/formula`, no toca la base).
+
+**Excel** (`informes_excel.py`): tres formas (lista con fila de totales; agrupada, con los grupos plegables con el «−» de Excel; solo resumen), apaisada y con el encabezado en
+cada página. **Ningún valor se escribe como fórmula**: un texto que empiece con `= + - @` se guarda como TEXTO, y eso incluye el nombre que el usuario le puso a un campo
+calculado. Cada cifra de resumen dice cuál es («Prom. 27,5») y sigue siendo un número. **El Excel de la PC de desarrollo está sin licencia** (modo reducido: no imprime ni exporta
+y rechaza llamadas COM): no sirve para verificar, hay que leer el `.xlsx` con openpyxl.
+
+**Cosas que costaron encontrar:**
+  * **El número de animal NO es único entre rebaños** de la misma base: todo informe filtra por rebaño (`rebano.filtro`).
+  * El motor trae TODOS los animales del rebaño (5.645 en la copia local: crianza, piquetes, recría…); el informe de lactancia de DelPro trae solo vacas en ordeño (1.779 con lactancia).
+    Hoy se acota con una condición (por ejemplo `Días en ordeño ≥ 0`); falta un filtro «en ordeño».
+  * **SQL Express sin memoria**: una consulta puede quedarse en `RESOURCE_SEMAPHORE` (espera memoria de trabajo) por minutos, y la pantalla dice «Calculando…» sin límite. No es un error del informe.
+    En la PC de desarrollo `DDM` volvió a quedar en `RECOVERY_PENDING`: se arregla con `ALTER DATABASE [DDM] SET ONLINE` conectando a `master` (el login tiene a `DDM` de base predeterminada y no entra sin `-d master`).
+  * Abrir la pantalla principal (`/`) dispara varias consultas pesadas que comparten UNA cola hacia SQL: para probar `/informes/` con la base real no hay que pasar por ahí.
+  * La plantilla es un solo `<script>`: nada de `{{` ni `{%` en el JavaScript (la rompe con un 500). `tests/test_informes_pagina.py` lo vigila y además comprueba que cada botón y selector tenga su manejador.
+
+**Pruebas:** `tests/test_informes_*.py` (motor; catálogo, que comprueba que cada combinación de campo, resumen y agrupación pase `db.validate_sql`; fórmula, con un fuzz de 7.500 casos;
+guardados; API; Excel; página). Verificación contra la base real y números: ver «Fase 2» en el documento de diseño.

@@ -14,7 +14,10 @@ from informes_catalogo import Bloque, Campo
 
 CAT = {
     "Number": Campo("Number", "Número del animal", "General", "txt", "b.Number"),
-    "GroupName": Campo("GroupName", "Nombre del grupo", "General", "txt", "ag.Name", bloque="grupo"),
+    "GroupName": Campo("GroupName", "Nombre del grupo", "General", "txt", "ag.Name", bloque="grupo", agrupable=True),
+    "Lact": Campo("Lact", "Nº Lactación", "General", "num", "rep.lact", bloque="rep", agrupable=True),
+    "RepN": Campo("RepN", "Nº de partos", "Reproducción", "num", "rep.n", bloque="rep", decimales=0),
+    "Sin": Campo("Sin", "Sin verificar", "General", "num", "ord.sv", bloque="ord", verificado=False),
     "Dim": Campo("Dim", "Días en ordeño", "General", "num", "ord.dim", bloque="ord", decimales=0),
     "P24": Campo("P24", "Producción 24 h", "Ordeño", "num", "ord.p24", bloque="ord", unidad="kg", decimales=1,
                  resumenes=("sum", "avg", "min", "max", "count")),
@@ -23,7 +26,8 @@ CAT = {
 BLOQUES = {
     "ord": Bloque("ord", "LEFT JOIN (SELECT d.BasicAnimal AS animal, MAX(d.DIM) AS dim, MAX(d.TotalYield) AS p24 "
                          "FROM AnimalDaily d GROUP BY d.BasicAnimal) ord ON ord.animal = b.OID"),
-    "rep": Bloque("rep", "LEFT JOIN (SELECT r.BasicAnimal AS animal, MAX(r.LastLactationChangeDate) AS parto "
+    "rep": Bloque("rep", "LEFT JOIN (SELECT r.BasicAnimal AS animal, MAX(r.LastLactationChangeDate) AS parto, "
+                         "MAX(r.LactationNumber) AS lact, COUNT(*) AS n "
                          "FROM AnimalReproduction r GROUP BY r.BasicAnimal) rep ON rep.animal = b.OID"),
 }
 
@@ -203,6 +207,297 @@ class TestOrden(unittest.TestCase):
 
     def test_sin_orden_se_ordena_por_el_primer_campo_para_que_el_resultado_sea_estable(self):
         self.assertIn("ORDER BY CASE WHEN b.Number IS NULL", comp()["sql"])
+
+
+class TestResumenesPorColumna(unittest.TestCase):
+    """Suma, promedio, mínimo, máximo y conteo por columna (los de DelPro), calculados en SQL sobre TODOS los animales del filtro:
+    así el total es exacto aunque la lista se corte en el tope de filas."""
+
+    def c(self, columnas, **kw):
+        return comp(columnas=columnas, **kw)
+
+    def test_sin_resumenes_no_hay_consulta_de_resumen(self):
+        r = self.c([{"campo": "P24"}])
+        self.assertIsNone(r["sql_resumen"])
+        self.assertEqual(r["columnas"][0]["resumen"], "none")
+
+    def test_cada_resumen(self):
+        casos = {"sum": "SUM(CAST((ord.p24) AS float))", "avg": "AVG(CAST((ord.p24) AS float))",
+                 "min": "MIN(CAST((ord.p24) AS float))", "max": "MAX(CAST((ord.p24) AS float))", "count": "COUNT(ord.p24)"}
+        for kind, esperado in casos.items():
+            r = self.c([{"campo": "P24", "resumen": kind}])
+            self.assertIn(f"{esperado} AS s0", r["sql_resumen"], kind)
+            self.assertIn("COUNT(*) AS n", r["sql_resumen"])
+            self.assertEqual(r["columnas"][0]["resumen"], kind)
+
+    def test_el_promedio_es_en_float_porque_avg_de_enteros_trunca(self):
+        """AVG(int) de SQL Server devuelve un entero: el promedio de lactancias 1 y 2 daría 1 en vez de 1,5."""
+        self.assertIn("AVG(CAST(", self.c([{"campo": "Dim", "resumen": "avg"}])["sql_resumen"])
+
+    def test_fechas_solo_minimo_maximo_y_conteo_y_sin_convertir_a_float(self):
+        r = self.c([{"campo": "Parto", "resumen": "min"}])
+        self.assertIn("MIN(rep.parto) AS s0", r["sql_resumen"])
+        for malo in ("sum", "avg"):
+            with self.assertRaises(im.InformeError):
+                self.c([{"campo": "Parto", "resumen": malo}])
+
+    def test_texto_solo_conteo(self):
+        self.assertIn("COUNT(b.Number)", self.c([{"campo": "Number", "resumen": "count"}])["sql_resumen"])
+        for malo in ("sum", "avg", "min", "max"):
+            with self.assertRaises(im.InformeError):
+                self.c([{"campo": "Number", "resumen": malo}])
+
+    def test_un_resumen_que_no_existe(self):
+        for malo in ("mediana", "", "AVG", None, 3, "avg; DROP"):
+            with self.assertRaises(im.InformeError):
+                self.c([{"campo": "P24", "resumen": malo}])
+
+    def test_la_consulta_de_resumen_comparte_filtros_y_une_solo_lo_que_necesita(self):
+        r = self.c([{"campo": "Number"}, {"campo": "Parto"}, {"campo": "P24", "resumen": "avg"}],
+                   condiciones=[{"campo": "Dim", "op": ">=", "valor": 0}], incluir_descartados=True)
+        res, det = r["sql_resumen"], r["sql"]
+        self.assertIn(" ord ON ord.animal = b.OID", res)
+        self.assertNotIn(" rep ON ", res)                         # «Parto» no tiene resumen: el resumen no lo necesita
+        self.assertIn(" rep ON ", det)
+        for pieza in ("b.GCRecord IS NULL", "b.Number > 0", "ord.dim >= 0", "AnimalDaily d_tb"):
+            self.assertIn(pieza, res)
+            self.assertIn(pieza, det)
+        self.assertNotIn("TOP", res)
+        self.assertNotIn("ORDER BY", res)
+
+    def test_pasa_la_validacion_de_solo_lectura(self):
+        r = self.c([{"campo": "P24", "resumen": "avg"}, {"campo": "Parto", "resumen": "max"}, {"campo": "Number", "resumen": "count"}],
+                   agrupar_por=["GroupName", "Lact"])
+        db.validate_sql(r["sql"])
+        db.validate_sql(r["sql_resumen"])
+
+
+class TestAgrupar(unittest.TestCase):
+    def c(self, agrupar, columnas=None, **kw):
+        return comp(columnas=columnas or [{"campo": "Number"}, {"campo": "P24", "resumen": "avg"}], agrupar_por=agrupar, **kw)
+
+    def test_un_nivel(self):
+        r = self.c(["GroupName"])
+        res = r["sql_resumen"]
+        self.assertIn("ag.Name AS g0, GROUPING(ag.Name) AS gr0", res)
+        self.assertIn("GROUP BY ROLLUP(ag.Name)", res)
+        self.assertIn("AbstractGroup ag", res)
+        self.assertEqual([g["id"] for g in r["agrupar"]], ["GroupName"])
+        self.assertEqual(r["agrupar"][0]["alias"], "g0")
+
+    def test_dos_niveles(self):
+        r = self.c(["GroupName", "Lact"])
+        self.assertIn("GROUP BY ROLLUP(ag.Name, rep.lact)", r["sql_resumen"])
+        self.assertIn("rep.lact AS g1, GROUPING(rep.lact) AS gr1", r["sql_resumen"])
+
+    def test_el_detalle_trae_la_clave_de_cada_grupo_y_se_ordena_por_ella_primero(self):
+        r = self.c(["GroupName"], orden={"campo": "P24", "dir": -1})
+        self.assertIn("ag.Name AS g0", r["sql"])
+        self.assertIn("ORDER BY CASE WHEN ag.Name IS NULL THEN 1 ELSE 0 END, ag.Name, CASE WHEN ord.p24 IS NULL", r["sql"])
+
+    def test_sin_agrupar_el_detalle_no_trae_claves(self):
+        r = comp(columnas=[{"campo": "P24", "resumen": "avg"}])
+        self.assertNotIn(" AS g0", r["sql"])
+        self.assertEqual(r["agrupar"], [])
+        self.assertNotIn("ROLLUP", r["sql_resumen"])
+
+    def test_solo_se_agrupa_por_campos_agrupables(self):
+        for malo in (["P24"], ["Number"], ["NoExiste"], ["GroupName", "Lact", "RepN"], ["GroupName", "GroupName"], "GroupName", [3],
+                     ["GroupName; --"]):
+            with self.assertRaises(im.InformeError):
+                self.c(malo)
+
+    def test_sin_detalle(self):
+        r = self.c(["GroupName"], detalle=False)
+        self.assertIsNone(r["sql"])
+        self.assertIsNotNone(r["sql_resumen"])
+        r = comp(columnas=[{"campo": "P24", "resumen": "avg"}], detalle=False)
+        self.assertIsNone(r["sql"])
+
+    def test_sin_detalle_hace_falta_algo_que_resumir(self):
+        with self.assertRaises(im.InformeError):
+            comp(columnas=[{"campo": "P24"}], detalle=False)
+        with self.assertRaises(im.InformeError):
+            comp(detalle="no")
+
+    def test_agrupar_sin_resumenes_igual_cuenta_animales(self):
+        r = comp(columnas=[{"campo": "Number"}], agrupar_por=["GroupName"])
+        self.assertIn("COUNT(*) AS n", r["sql_resumen"])
+
+
+class TestCalculados(unittest.TestCase):
+    CALC = {"id": "calc_1", "etiqueta": "Kg por día en ordeño", "formula": "[P24] / [Dim]", "decimales": 2, "unidad": "kg"}
+
+    def c(self, calculados=None, columnas=None, **kw):
+        return comp(calculados=[self.CALC] if calculados is None else calculados,
+                    columnas=columnas or [{"campo": "Number"}, {"campo": "calc_1"}], **kw)
+
+    def test_se_traduce_a_sql_en_la_columna(self):
+        r = self.c()
+        self.assertIn("(CAST((ord.p24) AS float) / NULLIF(CAST((ord.dim) AS float), 0)) AS c1", r["sql"])
+
+    def test_metadatos(self):
+        m = self.c()["columnas"][1]
+        self.assertEqual((m["id"], m["etiqueta"], m["tipo"], m["unidad"], m["decimales"], m["calculado"]),
+                         ("calc_1", "Kg por día en ordeño", "num", "kg", 2, True))
+        self.assertFalse(self.c()["columnas"][0]["calculado"])
+
+    def test_trae_los_bloques_de_todos_los_campos_que_usa(self):
+        r = self.c(calculados=[dict(self.CALC, formula="[P24] / [RepN]")])
+        self.assertEqual(r["sql"].count(" ord ON "), 1)
+        self.assertEqual(r["sql"].count(" rep ON "), 1)
+
+    def test_puede_usarse_en_condiciones_orden_y_resumenes(self):
+        r = self.c(columnas=[{"campo": "Number"}, {"campo": "calc_1", "resumen": "avg"}],
+                   condiciones=[{"campo": "calc_1", "op": ">", "valor": 1}], orden={"campo": "calc_1", "dir": -1})
+        self.assertIn("NULLIF(CAST((ord.dim) AS float), 0)) > 1", r["sql"])
+        self.assertIn("AVG(CAST(((CAST((ord.p24) AS float) / NULLIF(CAST((ord.dim) AS float), 0))) AS float))", r["sql_resumen"])
+        self.assertIn("ORDER BY CASE WHEN (CAST((ord.p24) AS float)", r["sql"])
+
+    def test_se_puede_resumir_un_calculado_por_rodeo_sin_detalle(self):
+        r = self.c(columnas=[{"campo": "calc_1", "resumen": "avg"}], agrupar_por=["GroupName"], detalle=False)
+        db.validate_sql(r["sql_resumen"])
+
+    def test_hereda_la_advertencia_de_un_campo_sin_verificar(self):
+        self.assertTrue(self.c()["columnas"][1]["verificado"])
+        r = self.c(calculados=[dict(self.CALC, formula="[Sin] * 2")])
+        self.assertFalse(r["columnas"][1]["verificado"])
+
+    def test_el_que_no_se_usa_igual_se_valida(self):
+        with self.assertRaises(im.InformeError):
+            self.c(calculados=[dict(self.CALC, formula="[NoExiste] * 2")], columnas=[{"campo": "Number"}])
+
+    def test_ids_y_cantidades(self):
+        malos = [dict(self.CALC, id="P24"), dict(self.CALC, id="calc_"), dict(self.CALC, id="calc_1; x"), dict(self.CALC, id="otro"),
+                 dict(self.CALC, id="Number"), dict(self.CALC, id="calc_" + "x" * 30)]
+        for m in malos:
+            with self.assertRaises(im.InformeError):
+                self.c(calculados=[m], columnas=[{"campo": "Number"}])
+        with self.assertRaises(im.InformeError):
+            self.c(calculados=[self.CALC, dict(self.CALC)], columnas=[{"campo": "Number"}])                   # repetido
+        muchos = [dict(self.CALC, id=f"calc_{i}") for i in range(im.CALCULADOS_MAX + 1)]
+        with self.assertRaises(im.InformeError):
+            self.c(calculados=muchos, columnas=[{"campo": "Number"}])
+        for no_lista in ("x", {"id": "calc_1"}, 5):
+            with self.assertRaises(im.InformeError):
+                self.c(calculados=no_lista, columnas=[{"campo": "Number"}])
+
+    def test_etiqueta_decimales_y_unidad(self):
+        for malo in (dict(self.CALC, etiqueta=""), dict(self.CALC, etiqueta="x" * 41), dict(self.CALC, etiqueta="con\nsalto"),
+                     dict(self.CALC, etiqueta=None), dict(self.CALC, decimales=7), dict(self.CALC, decimales=-1),
+                     dict(self.CALC, decimales="2"), dict(self.CALC, decimales=True), dict(self.CALC, unidad="x" * 13),
+                     dict(self.CALC, unidad="kg'; DROP"), dict(self.CALC, unidad=5)):
+            with self.assertRaises(im.InformeError):
+                self.c(calculados=[malo], columnas=[{"campo": "Number"}])
+        m = self.c(calculados=[{"id": "calc_2", "etiqueta": "Sin extras", "formula": "[P24] * 2"}], columnas=[{"campo": "calc_2"}])["columnas"][0]
+        self.assertEqual((m["decimales"], m["unidad"]), (2, ""))
+
+    def test_un_calculado_no_puede_usar_otro_calculado(self):
+        otro = {"id": "calc_2", "etiqueta": "Otro", "formula": "[calc_1] * 2"}
+        with self.assertRaises(im.InformeError):
+            self.c(calculados=[self.CALC, otro], columnas=[{"campo": "calc_2"}])
+
+    def test_un_calculado_no_se_agrupa(self):
+        with self.assertRaises(im.InformeError):
+            self.c(agrupar_por=["calc_1"])
+
+    def test_una_formula_mala_dice_por_que_y_de_cual_campo_calculado_habla(self):
+        with self.assertRaises(im.InformeError) as cm:
+            self.c(calculados=[dict(self.CALC, formula="[P24] +")], columnas=[{"campo": "Number"}])
+        self.assertIn("incompleta", str(cm.exception))
+        self.assertIn("Kg por día en ordeño", str(cm.exception))
+
+    def test_pasa_la_validacion_de_solo_lectura(self):
+        r = self.c(condiciones=[{"campo": "calc_1", "op": ">", "valor": 1}], orden={"campo": "calc_1", "dir": 1})
+        db.validate_sql(r["sql"])
+
+
+class TestDescribirConCalculados(unittest.TestCase):
+    def test_una_condicion_sobre_un_calculado_usa_su_nombre_y_se_dice_como_se_agrupa(self):
+        d = {"columnas": [{"campo": "calc_1"}], "calculados": [{"id": "calc_1", "etiqueta": "Kg por día", "formula": "[P24] / [Dim]"}],
+             "condiciones": [{"campo": "calc_1", "op": ">", "valor": 1}], "agrupar_por": ["GroupName"]}
+        self.assertEqual(im.describir_condiciones(d, CAT), ["Kg por día > 1", "Agrupado por Nombre del grupo"])
+
+
+class TestEjecutarConResumenes(unittest.TestCase):
+    """El ejecutor corre el detalle y/o el resumen y arma {filas, claves_filas, grupos, totales}."""
+
+    def correr(self, defn, detalle=None, resumen=None):
+        llamadas = []
+
+        def falso(sql, validate=True, tambo=None, max_rows=None):
+            es_detalle = " AS c0" in sql
+            llamadas.append("detalle" if es_detalle else "resumen")
+            return {"columns": [], "rows": (detalle if es_detalle else resumen) or [], "truncated": False}
+        r = im.ejecutar(defn, "ponderosa", CAT, BLOQUES, run=falso, herd=1)
+        return r, llamadas
+
+    def test_un_nivel_con_totales(self):
+        defn = {"columnas": [{"campo": "Number"}, {"campo": "P24", "resumen": "avg"}], "agrupar_por": ["GroupName"]}
+        det = [["3250", 30.0, "Rodeo 1"], ["4300", 20.0, "Rodeo 1"], ["4317", 40.0, "Rodeo 10"], ["4400", None, "Rodeo 2"]]
+        res = [["Rodeo 2", 0, 1, None], ["Rodeo 10", 0, 1, 40.0], ["Rodeo 1", 0, 2, 25.0], [None, 1, 4, 30.0]]
+        r, llamadas = self.correr(defn, det, res)
+        self.assertEqual(llamadas, ["detalle", "resumen"])
+        self.assertEqual(r["filas"], [["3250", 30.0], ["4300", 20.0], ["4317", 40.0], ["4400", None]])
+        self.assertEqual(r["claves_filas"], [["Rodeo 1"], ["Rodeo 1"], ["Rodeo 10"], ["Rodeo 2"]])
+        self.assertEqual([(g["nivel"], g["claves"], g["n"]) for g in r["grupos"]],
+                         [(1, ["Rodeo 1"], 2), (1, ["Rodeo 2"], 1), (1, ["Rodeo 10"], 1)])            # orden natural: 2 antes que 10
+        self.assertEqual(r["grupos"][0]["resumenes"], {"c1": 25.0})
+        self.assertEqual(r["totales"], {"n": 4, "resumenes": {"c1": 30.0}})
+        self.assertEqual(r["agrupar"][0]["id"], "GroupName")
+
+    def test_dos_niveles_con_subtotales(self):
+        defn = {"columnas": [{"campo": "P24", "resumen": "sum"}], "agrupar_por": ["GroupName", "Lact"], "detalle": False}
+        res = [["R1", 0, 1, 0, 3, 30.0], ["R1", 0, 2, 0, 1, 10.0], ["R1", 0, None, 1, 4, 40.0], ["R2", 0, 1, 0, 2, 5.0],
+               ["R2", 0, None, 1, 2, 5.0], [None, 1, None, 1, 6, 45.0]]
+        r, llamadas = self.correr(defn, None, res)
+        self.assertEqual(llamadas, ["resumen"])                                   # sin detalle: una sola consulta
+        self.assertEqual(r["filas"], [])
+        self.assertEqual([(g["nivel"], g["claves"], g["n"]) for g in r["grupos"]],
+                         [(1, ["R1"], 4), (2, ["R1", 1], 3), (2, ["R1", 2], 1), (1, ["R2"], 2), (2, ["R2", 1], 2)])
+        self.assertEqual(r["totales"]["n"], 6)
+
+    def test_un_grupo_sin_dato_va_al_final_de_sus_hermanos(self):
+        defn = {"columnas": [{"campo": "P24", "resumen": "sum"}], "agrupar_por": ["Lact"], "detalle": False}
+        res = [[None, 0, 2, 5.0], [1, 0, 3, 7.0], [2, 0, 1, 1.0], [None, 1, 6, 13.0]]
+        r, _ = self.correr(defn, None, res)
+        self.assertEqual([g["claves"] for g in r["grupos"]], [[1], [2], [None]])
+
+    def test_sin_resumenes_ni_grupos_solo_corre_el_detalle(self):
+        r, llamadas = self.correr({"columnas": [{"campo": "Number"}]}, [["3250"]])
+        self.assertEqual(llamadas, ["detalle"])
+        self.assertEqual((r["grupos"], r["totales"], r["claves_filas"]), ([], None, None))
+
+    def test_si_la_consulta_de_resumen_no_trae_la_fila_de_totales_son_cero_animales(self):
+        defn = {"columnas": [{"campo": "P24", "resumen": "avg"}]}
+        r, _ = self.correr(defn, [], [])
+        self.assertEqual(r["totales"], {"n": 0, "resumenes": {"c0": None}})
+
+    def test_sin_agrupar_los_totales_son_la_unica_fila(self):
+        defn = {"columnas": [{"campo": "P24", "resumen": "avg"}]}
+        r, _ = self.correr(defn, [[10.0], [20.0]], [[2, 15.0]])
+        self.assertEqual(r["totales"], {"n": 2, "resumenes": {"c0": 15.0}})
+        self.assertEqual(r["grupos"], [])
+
+    def test_dice_si_el_resultado_trae_la_lista_de_animales(self):
+        # Un informe «solo resumen» y uno con detalle pero sin ningún animal tienen las dos `filas` vacías: el Excel y la pantalla
+        # necesitan saber cuál es cuál para armar la hoja correcta.
+        r, _ = self.correr({"columnas": [{"campo": "P24", "resumen": "sum"}], "detalle": False}, None, [[3, 9.0]])
+        self.assertIs(r["detalle"], False)
+        r, _ = self.correr({"columnas": [{"campo": "Number"}]}, [["3250"]])
+        self.assertIs(r["detalle"], True)
+        r, _ = self.correr({"columnas": [{"campo": "P24", "resumen": "avg"}]}, [], [])
+        self.assertIs(r["detalle"], True)
+
+    def test_el_tope_corta_el_detalle_pero_no_los_totales(self):
+        defn = {"columnas": [{"campo": "P24", "resumen": "sum"}], "limite": 2, "agrupar_por": ["GroupName"]}
+        det = [[1.0, "A"], [2.0, "A"], [3.0, "B"]]                                 # llegó una de más: hay más que el tope
+        res = [["A", 0, 5, 6.0], ["B", 0, 4, 9.0], [None, 1, 9, 15.0]]
+        r, _ = self.correr(defn, det, res)
+        self.assertTrue(r["truncado"])
+        self.assertEqual(len(r["filas"]), 2)
+        self.assertEqual(len(r["claves_filas"]), 2)
+        self.assertEqual(r["totales"]["n"], 9)                                    # el total cuenta TODOS los animales, no solo los 2 que se ven
 
 
 class TestDescribir(unittest.TestCase):

@@ -48,6 +48,26 @@ class TestCrear(Base):
         r = ig.crear(T, "Uno", dict(DEF, basura="x", sql="DROP TABLE x"), "maxi")
         self.assertEqual(set(r["definicion"]), {"columnas", "condiciones", "orden"})
 
+    def test_guarda_resumenes_grupos_y_campos_calculados(self):
+        d = {"columnas": [{"campo": "AnimalGroupName"}, {"campo": "CurrentDIM", "resumen": "avg"}, {"campo": "calc_1", "resumen": "max"}],
+             "calculados": [{"id": "calc_1", "etiqueta": "Días por dos", "formula": "[CurrentDIM] * 2", "decimales": 1, "unidad": "d"}],
+             "agrupar_por": ["AnimalGroupName"], "detalle": False}
+        r = ig.crear(T, "Resumen por rodeo", d, "maxi")
+        self.assertEqual(r["definicion"], d)
+        self.assertEqual(ig.obtener(T, r["id"])["definicion"], d)
+
+    def test_rechaza_un_calculado_con_una_formula_mala_o_un_grupo_que_no_corresponde(self):
+        malos = [
+            {"columnas": [{"campo": "Number"}], "calculados": [{"id": "calc_1", "etiqueta": "X", "formula": "[Number] + 1"}]},
+            {"columnas": [{"campo": "Number"}], "agrupar_por": ["CurrentDIM"]},
+            {"columnas": [{"campo": "Number"}], "detalle": False},
+            {"columnas": [{"campo": "Number", "resumen": "avg"}]},
+        ]
+        for m in malos:
+            with self.assertRaises(ig.InformeGuardadoError):
+                ig.crear(T, "Malo", m, "maxi")
+        self.assertEqual(ig.listar(T), [])
+
     def test_rechaza_una_definicion_que_el_compilador_no_acepta(self):
         for malo in ({"columnas": [{"campo": "NoExiste"}]}, {"columnas": []}, {}, None, "texto"):
             with self.assertRaises(ig.InformeGuardadoError):
