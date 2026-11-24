@@ -889,6 +889,9 @@ def _avisos_de_fechas(fechas_cond: list, cands: list, t: str) -> list:
 def _avisos_de_valores_cerrados(t: str, defn: dict, catalogo) -> list:
     """Un valor de un campo cerrado («preñadas», «secas») que la frase menciona y el informe ni usa ni muestra: una condición que la IA se olvidó."""
     usados = set(_campos_usados(defn))
+    # Hay dos maneras de pedir «preñadas»: el estado de la reproducción («Preñada») o el sí/no `Preñada = Sí`; con «secas», `En secado = Sí`. Si el informe ya usa un campo que
+    # lo nombra (su etiqueta contiene la raíz), no se está olvidando nada.
+    etiquetas = [_sin_tildes(catalogo[u].etiqueta).lower() for u in usados if u in catalogo]
     avisos = []
     for campo in catalogo.values():
         if not campo.valores or campo.id in usados:
@@ -896,7 +899,7 @@ def _avisos_de_valores_cerrados(t: str, defn: dict, catalogo) -> list:
         for v in campo.valores:
             raiz = _sin_tildes(v).lower()
             raiz = raiz[:-1] if raiz[-1:] in ("a", "o") else raiz
-            if len(raiz) >= 3 and re.search(rf"(?<![a-z]){re.escape(raiz)}[ao]s?(?![a-z])", t):
+            if len(raiz) >= 3 and re.search(rf"(?<![a-z]){re.escape(raiz)}[ao]s?(?![a-z])", t) and not any(raiz in e for e in etiquetas):
                 avisos.append(f"Escribiste algo sobre «{v}» pero el informe no tiene ninguna condición ni columna de «{campo.etiqueta}»: revisá que no falte algo.")
     return avisos
 

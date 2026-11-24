@@ -79,7 +79,7 @@ class TestMostrar(unittest.TestCase):
         self.assertEqual(self.m("[A] = 'O''Brien'"), "A = 'O''Brien'")
 
     def test_la_ruta_del_campo_pierde_el_calificador_de_tipo(self):
-        self.assertEqual(self.m("[<AnimalExtended>ReproductionInfo.IsPregnant] = True"), "ReproductionInfo.IsPregnant = Verdadero")
+        self.assertEqual(self.m("[<AnimalExtended>ReproductionInfo.IsExited] = True"), "ReproductionInfo.IsExited = Verdadero")
 
     def test_in_between_y_nulos(self):
         self.assertEqual(self.m("[A] In (1b, 2b)"), "A es uno de (1, 2)")
@@ -252,11 +252,11 @@ class TestCondiciones(unittest.TestCase):
         self.assertEqual(len(pend), 1)
 
     def test_un_campo_que_no_esta_en_el_catalogo_se_cuenta_como_faltante(self):
-        cs, pend = cond("[<AnimalExtended>ReproductionInfo.IsPregnant] = True And [CurrentDIM] > 5")
+        cs, pend = cond("[<AnimalExtended>ReproductionInfo.IsExited] = True And [CurrentDIM] > 5")
         self.assertEqual(cs, [{"campo": "CurrentDIM", "op": ">", "valor": 5}])
         self.assertEqual(len(pend), 1)
-        self.assertEqual(pend[0]["campos"], ["IsPregnant"])
-        self.assertIn("IsPregnant", pend[0]["texto"])
+        self.assertEqual(pend[0]["campos"], ["IsExited"])
+        self.assertIn("IsExited", pend[0]["texto"])
 
     def test_un_campo_del_catalogo_no_figura_como_faltante(self):
         _, pend = cond("[CurrentDIM] = Null")
@@ -377,23 +377,23 @@ class TestTraducirInforme(unittest.TestCase):
         self.assertEqual([c["campo"] for c in r["definicion"]["columnas"]], ["Number", "AnimalGroupName", "CurrentDIM"])
 
     def test_las_columnas_que_no_existen_se_listan_y_el_informe_queda_parcial(self):
-        r = self.tr([informe(1)], columnas_de(1, ["Number", "InMilk", "CurrentDIM", "ToBeCulled"]))
+        r = self.tr([informe(1)], columnas_de(1, ["Number", "DaysDry", "CurrentDIM", "LatestSCC"]))
         self.assertEqual(r["estado"], "parcial")
         self.assertEqual([c["campo"] for c in r["definicion"]["columnas"]], ["Number", "CurrentDIM"])
         self.assertEqual(r["columnas"], {"traidas": 2, "total": 4})
-        self.assertEqual(r["faltan"], ["InMilk", "ToBeCulled"])
+        self.assertEqual(r["faltan"], ["DaysDry", "LatestSCC"])
         d = [x for x in r["diferencias"] if x["tipo"] == "columna"]
         self.assertEqual(len(d), 1)
         self.assertEqual(d[0]["gravedad"], "columnas")
-        self.assertIn("InMilk", d[0]["texto"])
-        self.assertIn("ToBeCulled", d[0]["texto"])
+        self.assertIn("DaysDry", d[0]["texto"])
+        self.assertIn("LatestSCC", d[0]["texto"])
 
     def test_sin_ninguna_columna_utilizable_no_se_puede_traer(self):
-        r = self.tr([informe(1)], columnas_de(1, ["InMilk", "ToBeCulled"]))
+        r = self.tr([informe(1)], columnas_de(1, ["DaysDry", "LatestSCC"]))
         self.assertEqual(r["estado"], "no_disponible")
         self.assertIsNone(r["definicion"])
-        self.assertIn("InMilk", r["motivo"])
-        self.assertEqual(r["faltan"], ["InMilk", "ToBeCulled"])
+        self.assertIn("DaysDry", r["motivo"])
+        self.assertEqual(r["faltan"], ["DaysDry", "LatestSCC"])
 
     def test_un_informe_sin_columnas_no_se_puede_traer(self):
         r = self.tr([informe(1)], [])
@@ -475,7 +475,7 @@ class TestTraducirInforme(unittest.TestCase):
         self.assertEqual(r["estado"], "completo")                       # un segundo orden no cambia qué animales ni qué columnas hay
 
     def test_ordenar_por_una_columna_que_no_se_trae_se_avisa(self):
-        cols = [columna(11, 1, 1, "Number"), columna(12, 1, 2, "InMilk", SortDirection=1, SortIndex=0)]
+        cols = [columna(11, 1, 1, "Number"), columna(12, 1, 2, "DaysDry", SortDirection=1, SortIndex=0)]
         r = self.tr([informe(1)], cols)
         self.assertNotIn("orden", r["definicion"])
         self.assertTrue([x for x in r["diferencias"] if x["tipo"] == "orden"])
@@ -548,7 +548,7 @@ class TestTraducirInforme(unittest.TestCase):
 
     def test_un_filtro_que_no_se_puede_traer_deja_el_informe_parcial_y_dice_cual(self):
         r = self.tr([informe(1, ServerFilter=7)], columnas_de(1, ["Number"]),
-                    [filtro(7, "Preñadas a secar", "[<AnimalExtended>ReproductionInfo.IsPregnant] = True And [<AnimalExtended>InMilk] = True")])
+                    [filtro(7, "Preñadas a secar", "[<AnimalExtended>ReproductionInfo.IsExited] = True And [<AnimalExtended>DaysDry] = True")])
         self.assertEqual(r["estado"], "parcial")
         d = [x for x in r["diferencias"] if x["tipo"] == "filtro"]
         self.assertEqual(len(d), 1)
@@ -556,8 +556,8 @@ class TestTraducirInforme(unittest.TestCase):
         self.assertIn("Preñadas a secar", d[0]["texto"])
         self.assertIn("más animales", d[0]["texto"])
         self.assertLess(len(d[0]["texto"]), 220)                         # el texto es corto: cada condición y su motivo van aparte, en `detalle`
-        self.assertIn("IsPregnant", " ".join(d[0]["detalle"]))
-        self.assertEqual(set(r["faltan"]), {"IsPregnant", "InMilk"})
+        self.assertIn("IsExited", " ".join(d[0]["detalle"]))
+        self.assertEqual(set(r["faltan"]), {"IsExited", "DaysDry"})
 
     def test_un_filtro_de_la_grilla_con_una_columna_que_no_esta_se_avisa(self):
         cols = [columna(2691, 1, 1, "CMSFourteenDayAverage"), columna(2692, 1, 2, "Number")]
@@ -670,8 +670,8 @@ class TestListar(unittest.TestCase):
                     informe(10, "Completo", carpeta=2), informe(11, "Con faltantes", carpeta=2), informe(12, "De otro nivel", nivel="SessionMilkYield"),
                     informe(13, "Sin columnas buenas", carpeta=1), informe(14, "Predefinido", predefinido=True),
                     informe(15, "Un informe fijo de DelPro", tipo="DeLaval.DDM.CommonApp.Module.BasicFeatures.Milking.Report.SCCAllCowsReport")]
-        cols = (columnas_de(10, ["Number", "CurrentDIM"], 100) + columnas_de(11, ["Number", "InMilk", "ToBeCulled"], 200) +
-                columnas_de(12, ["Number", "ZCampoDeOtroNivel"], 300) + columnas_de(13, ["InMilk", "ToBeCulled"], 400) + columnas_de(14, ["Number", "InMilk"], 500))
+        cols = (columnas_de(10, ["Number", "CurrentDIM"], 100) + columnas_de(11, ["Number", "DaysDry", "LatestSCC"], 200) +
+                columnas_de(12, ["Number", "ZCampoDeOtroNivel"], 300) + columnas_de(13, ["DaysDry", "LatestSCC"], 400) + columnas_de(14, ["Number", "DaysDry"], 500))
         return datos(informes, cols)
 
     def test_lista_informes_con_su_estado_y_deja_afuera_carpetas_y_fijos(self):
@@ -700,9 +700,9 @@ class TestListar(unittest.TestCase):
     def test_los_campos_que_mas_faltan(self):
         r = dl.listar(self.armar())
         top = {f["campo"]: f["informes"] for f in r["faltantes"]}
-        self.assertEqual(top["InMilk"], 3)
-        self.assertEqual(top["ToBeCulled"], 2)
-        self.assertEqual(r["faltantes"][0]["campo"], "InMilk")
+        self.assertEqual(top["DaysDry"], 3)
+        self.assertEqual(top["LatestSCC"], 2)
+        self.assertEqual(r["faltantes"][0]["campo"], "DaysDry")
 
     def test_el_ranking_de_faltantes_solo_cuenta_informes_de_animales(self):
         r = dl.listar(self.armar())
@@ -714,7 +714,7 @@ class TestListar(unittest.TestCase):
         r = dl.listar(self.armar(), solo_tambo=True)
         self.assertNotIn(14, {i["oid"] for i in r["informes"]})
         top = {f["campo"]: f["informes"] for f in r["faltantes"]}
-        self.assertEqual(top["InMilk"], 2)
+        self.assertEqual(top["DaysDry"], 2)
 
     def test_sin_informes(self):
         r = dl.listar(datos([], []))

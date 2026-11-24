@@ -372,6 +372,72 @@ caso('foco: cerrar el aviso del informe traído deja el foco en «Ver el aviso»
 });
 
 /* ---------------------------------------------------------------------------------------------------------------------------------------- */
+/* Un campo de lista cerrada («sí/no», el estado de la reproducción): se elige de una lista en vez de escribirlo (tanda 1)                   */
+/* ---------------------------------------------------------------------------------------------------------------------------------------- */
+const opcionesDe = (P, sel) => P.$$(sel + ' option').map(o => o.textContent);
+const conCondicion = (P, cond) => { const d = P.t.nuevoDoc({nombre: 'Con lista', def: Object.assign(P.t.defVacia(), {condiciones: [cond]})}); P.t.activar(d.id); return d; };
+
+caso('lista cerrada: «es» sobre un sí/no se elige de un desplegable con «No» y «Sí»', async () => {
+  const P = await cargar();
+  conCondicion(P, {campo: 'InMilk', op: 'es', valor: 'Sí'});
+  const sel = '#filters select[data-chg="cv"][data-i="0"]';
+  assert.ok(P.$(sel), 'tiene que ser un desplegable, no un campo de texto');
+  assert.deepStrictEqual(opcionesDe(P, sel), ['No', 'Sí']);
+  assert.strictEqual(P.$(sel).value, 'Sí');
+});
+
+caso('lista cerrada: elegir otro valor lo guarda en la condición', async () => {
+  const P = await cargar();
+  const d = conCondicion(P, {campo: 'InMilk', op: 'es', valor: 'Sí'});
+  P.cambiar('#filters select[data-chg="cv"][data-i="0"]', 'No');
+  assert.strictEqual(d.def.condiciones[0].valor, 'No');
+  assert.deepStrictEqual(plano(P.t.limpiaDef(d.def).condiciones), [{campo: 'InMilk', op: 'es', valor: 'No'}]);
+});
+
+caso('lista cerrada: al elegir un sí/no como campo la condición arranca en «es Sí» (y no queda vacía, que se ignoraría)', async () => {
+  const P = await cargar();
+  const d = conCondicion(P, {campo: 'CurrentDIM', op: '>=', valor: '100'});
+  P.cambiar('#filters [data-chg="ck"][data-i="0"]', 'InMilk');
+  assert.strictEqual(d.def.condiciones[0].op, 'es');
+  assert.strictEqual(d.def.condiciones[0].valor, 'Sí');
+  assert.strictEqual(P.$('#filters select[data-chg="cv"][data-i="0"]').value, 'Sí');
+  assert.deepStrictEqual(plano(P.t.limpiaDef(d.def).condiciones), [{campo: 'InMilk', op: 'es', valor: 'Sí'}]);          // lo que se ve es lo que viaja
+});
+
+caso('lista cerrada: el estado de la reproducción arranca en su primer valor', async () => {
+  const P = await cargar();
+  const d = conCondicion(P, {campo: 'CurrentDIM', op: '>=', valor: '100'});
+  P.cambiar('#filters [data-chg="ck"][data-i="0"]', 'CurrentReproductionStatus');
+  assert.deepStrictEqual([d.def.condiciones[0].op, d.def.condiciones[0].valor], ['es', 'Abierta']);
+  assert.deepStrictEqual(opcionesDe(P, '#filters select[data-chg="cv"][data-i="0"]'), ['Abierta', 'Inseminada', 'Preñada', 'Seca']);
+});
+
+caso('lista cerrada: una condición vieja con un valor que no está en la lista se corrige al mostrarla', async () => {
+  const P = await cargar();
+  const d = conCondicion(P, {campo: 'InMilk', op: 'es', valor: ''});
+  assert.strictEqual(d.def.condiciones[0].valor, 'Sí');
+  assert.strictEqual(P.$('#filters select[data-chg="cv"][data-i="0"]').value, 'Sí');
+});
+
+caso('lista cerrada: «contiene» y «es uno de» siguen siendo texto libre; volver a «es» vuelve al desplegable', async () => {
+  const P = await cargar();
+  const d = conCondicion(P, {campo: 'CurrentReproductionStatus', op: 'es', valor: 'Seca'});
+  P.cambiar('#filters [data-chg="co"][data-i="0"]', 'contiene');
+  assert.ok(!P.$('#filters select[data-chg="cv"]'), 'contiene se escribe');
+  assert.ok(P.$('#filters input[data-chg="cv"]'));
+  P.cambiar('#filters [data-chg="co"][data-i="0"]', 'es');
+  assert.ok(P.$('#filters select[data-chg="cv"][data-i="0"]'));
+  assert.ok(['Abierta', 'Inseminada', 'Preñada', 'Seca'].indexOf(d.def.condiciones[0].valor) >= 0, d.def.condiciones[0].valor);
+});
+
+caso('lista cerrada: un campo de texto común sigue siendo un campo de texto', async () => {
+  const P = await cargar();
+  conCondicion(P, {campo: 'Number', op: 'es', valor: '1234'});
+  assert.ok(P.$('#filters input[data-chg="cv"][data-i="0"]'));
+  assert.ok(!P.$('#filters select[data-chg="cv"]'));
+});
+
+/* ---------------------------------------------------------------------------------------------------------------------------------------- */
 /* El aviso de un informe traído de DelPro sobrevive al guardado (completitud #1)                                                           */
 /* ---------------------------------------------------------------------------------------------------------------------------------------- */
 const AVISOS_DELPRO = ['No se trajo la condición «Días en ordeño > 30»: el informe puede mostrar más animales.', 'En DelPro incluía también a los animales descartados.'];

@@ -56,13 +56,17 @@ class TestCatalogo(unittest.TestCase):
     def test_los_bloques_no_multiplican_filas(self):
         """Un LEFT JOIN a algo que puede devolver varias filas por animal duplicaría animales en el informe. Cada bloque
         o agrupa por animal o une por una clave única de una fila por animal (AnimalReproductionInfo, AnimalGroup...)."""
+        # Medido en la copia local (30/07/2026): `AnimalLatestHistoryIndex` tiene UNA fila por animal (0 repetidos en 10.530), `HistoryAnimalLactationInfo` una por (animal, lactancia)
+        # (0 repetidos en 23.949), los eventos se unen por su OID y `ajustes` es un agregado sin grupo: una sola fila.
         for b in cat.BLOQUES.values():
-            ok = "GROUP BY" in b.join.upper() or b.id in ("repro", "lactprev")
+            ok = "GROUP BY" in b.join.upper() or b.id in ("repro", "lactprev", "indice", "ult_insem", "ult_aborto", "insem_efectiva", "insem_lact", "ajustes")
             self.assertTrue(ok, b.id)
 
     def test_lo_que_no_se_comparo_contra_delpro_queda_marcado(self):
         sin = {c.id for c in cat.CATALOGO.values() if not c.verificado}
-        self.assertEqual(sin, {"CurrentReproductionStatus", "PeakYieldLastLactation"})
+        self.assertEqual(sin, {"CurrentReproductionStatus", "PeakYieldLastLactation",
+                               # tanda 1: lo que sale de una cuenta nuestra y no de un dato que DelPro guarda
+                               "InMilk", "AgeInMonths", "DaysSinceLastInsemination", "ExpectedCalvingDate", "DaysToCalving", "ExpectedDryOffDate", "DaysToDryOff"})
         for c in cat.CATALOGO.values():
             if not c.verificado:
                 self.assertTrue(c.nota, f"{c.id} sin verificar y sin nota que diga por qué")
@@ -103,7 +107,8 @@ class TestInformesAgrupadosSobreElCatalogoReal(unittest.TestCase):
 
     def test_solo_se_agrupa_por_campos_de_pocas_categorias(self):
         self.assertEqual({c.id for c in cat.CATALOGO.values() if c.agrupable},
-                         {"AnimalGroupName", "AnimalGroupNumber", "CurrentLactationNumber", "CurrentReproductionStatus"})
+                         {"AnimalGroupName", "AnimalGroupNumber", "CurrentLactationNumber", "CurrentReproductionStatus",
+                          "InMilk", "ToBeCulled", "IsPregnant", "IsDryingOff"})                          # los sí/no: dos valores
 
     def test_cada_resumen_de_cada_campo(self):
         for c in cat.CATALOGO.values():

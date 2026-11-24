@@ -73,6 +73,14 @@ class TestCampos(Base):
         self.assertTrue(ok["verificado"])
         self.assertEqual(ok["aviso"], "")
 
+    def test_un_campo_de_lista_cerrada_publica_sus_valores_para_el_desplegable(self):
+        j = self.admin.get("/api/informes/campos").get_json()
+        por_id = {c["id"]: c for cat in j["categorias"] for c in cat["campos"]}
+        self.assertEqual(por_id["InMilk"]["valores"], ["No", "Sí"])
+        self.assertEqual(por_id["CurrentReproductionStatus"]["valores"], ["Abierta", "Inseminada", "Preñada", "Seca"])
+        for id_ in ("Number", "CurrentDIM", "LastCalvingDate", "DaysToCalving"):                    # los demás no traen la clave: nada de listas vacías por todos lados
+            self.assertNotIn("valores", por_id[id_], id_)
+
 
 class TestFormula(Base):
     def post(self, cuerpo, cliente=None):

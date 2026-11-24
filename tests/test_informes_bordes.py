@@ -55,7 +55,7 @@ class TestPartirEnY(unittest.TestCase):
         self.assertEqual(dl._partir_en_y("Standard = 1 and Android = 2"), ["Standard = 1", "Android = 2"])
 
     def test_y_un_filtro_con_un_termino_ilegible_conserva_los_demas(self):
-        cs, pend = cond("[CurrentDIM] > 5 and ??? and [AnimalGroupNumber] < 6 and [CurrentLactationNumber] = [InMilk]")
+        cs, pend = cond("[CurrentDIM] > 5 and ??? and [AnimalGroupNumber] < 6 and [CurrentLactationNumber] = [DaysDry]")
         self.assertEqual([c["campo"] for c in cs], ["CurrentDIM", "AnimalGroupNumber"])
         self.assertEqual(len(pend), 2)
 
@@ -113,9 +113,9 @@ class TestLoQueSeTraduceYLoQueNo(unittest.TestCase):
 
     def test_un_arbol_que_no_se_puede_escribir_en_palabras_se_muestra_con_el_texto_original(self):
         with mock.patch.object(dl, "mostrar", side_effect=RecursionError()):
-            cs, pend = cond("[CurrentDIM] > 5 and [InMilk] = True")
+            cs, pend = cond("[CurrentDIM] > 5 and [DaysDry] = True")
         self.assertEqual(cs[0]["campo"], "CurrentDIM")
-        self.assertIn("InMilk", pend[0]["texto"])
+        self.assertIn("DaysDry", pend[0]["texto"])
 
 
 class TestElAvisoDeUnFiltro(unittest.TestCase):
@@ -137,14 +137,14 @@ class TestElAvisoDeUnFiltro(unittest.TestCase):
         self.assertEqual(r["estado"], "parcial")
 
     def test_agrupar_por_un_campo_que_no_se_puede_agrupar_o_repetido_o_de_mas(self):
-        cols = [columna(10, 1, 1, "Number"), columna(11, 1, 2, "CurrentDIM", GroupIndex=0), columna(12, 1, 3, "InMilk", GroupIndex=1),
+        cols = [columna(10, 1, 1, "Number"), columna(11, 1, 2, "CurrentDIM", GroupIndex=0), columna(12, 1, 3, "DaysDry", GroupIndex=1),
                 columna(13, 1, 4, "AnimalGroupName", GroupIndex=2), columna(14, 1, 5, "CurrentLactationNumber", GroupIndex=3),
                 columna(15, 1, 6, "CurrentReproductionStatus", GroupIndex=4), columna(16, 1, 7, "AnimalGroupName", GroupIndex=5)]
         r = dl.traducir_informe(datos([informe(1)], cols), 1)
         self.assertEqual(r["definicion"]["agrupar_por"], ["AnimalGroupName", "CurrentLactationNumber"])
         textos = " ".join(x["texto"] for x in r["diferencias"] if x["tipo"] == "agrupacion")
         self.assertIn("demasiados valores distintos", textos)                           # CurrentDIM no se puede agrupar
-        self.assertIn("todavía no existe acá", textos)                                  # InMilk no está en el catálogo
+        self.assertIn("todavía no existe acá", textos)                                  # DaysDry no está en el catálogo
         self.assertIn("más de 2 niveles", textos)                                       # el tercero sobra
 
     def test_si_el_motor_rechazara_lo_armado_no_se_ofrece_un_informe_que_no_corre(self):

@@ -674,6 +674,10 @@ function renderFields() {
   $('#fcount').textContent = d.def.columnas.length + ' en el informe';
 }
 function opt(v, l, sel) { return '<option value="' + esc(v) + '"' + (sel ? ' selected' : '') + '>' + esc(l) + '</option>'; }
+/* Un campo de LISTA CERRADA («sí/no», el estado de la reproducción): su valor se elige de una lista. «Sí» es lo que más se busca de un sí/no; de otra lista, el primero. */
+const valoresDe = f => (f && f.tipo === 'txt' && f.valores) || [];
+const valorInicial = f => { const v = valoresDe(f); return v.indexOf('Sí') >= 0 ? 'Sí' : (v[0] || ''); };
+const esDeLista = (f, op) => valoresDe(f).length > 0 && op === 'es';
 function renderFilters() {
   const d = docAct();
   const campos = camposDe(d);
@@ -681,7 +685,8 @@ function renderFilters() {
     const f = campoDe(d, c.campo) || campos[0], ops = OPS[f.tipo];
     const lista = c.op === 'en';
     const num = f.tipo === 'num', forma = formaDe(f.id, d.def), coma = !num || forma.entero;        // en un campo entero la lista también se escribe con comas
-    const entrada = f.tipo === 'fecha' ? '<input class="in v" type="date" data-chg="cv" data-i="' + i + '" value="' + esc(c.valor || '') + '" aria-label="Valor">'
+    if (esDeLista(f, c.op) && valoresDe(f).indexOf(c.valor) < 0) c.valor = valorInicial(f);          // lo que se ve elegido es lo que se manda: una condición vacía se ignoraría
+    const entrada = esDeLista(f, c.op) ? '<select class="in v" data-chg="cv" data-i="' + i + '" aria-label="Valor">' + valoresDe(f).map(v => opt(v, v, v === c.valor)).join('') + '</select>' : f.tipo === 'fecha' ? '<input class="in v" type="date" data-chg="cv" data-i="' + i + '" value="' + esc(c.valor || '') + '" aria-label="Valor">'
                                        : '<input class="in v' + (lista ? ' wide' : '') + '" data-chg="cv" data-i="' + i + '" value="' + esc(lista ? listaDe(c.valor, f.tipo, forma.entero).join(coma ? ', ' : '; ') : (c.valor == null ? '' : c.valor)) + '" aria-label="' +
                                          (lista ? (num ? (forma.entero ? 'Valores, separados por coma' : 'Valores, separados por punto y coma') : 'Valores, separados por coma') : 'Valor') + '"' +
                                          (lista ? ' placeholder="' + (num ? (forma.entero ? '1, 2, 3' : '1; 2; 3') : 'Rodeo 1, Rodeo 2') + '"' : '') + ' autocomplete="off">';
@@ -1504,14 +1509,15 @@ document.addEventListener('change', e => {
   }
   if (a === 'gsolo') { cambioGrafico(d, {solo_informe: el.checked}); return; }
   if (a === 'ck') {
-    const c = d.def.condiciones[i]; c.campo = el.value; c.op = OPS[campoDe(d, c.campo).tipo][0][0]; c.valor = '';
+    const c = d.def.condiciones[i], nuevo = campoDe(d, el.value); c.campo = el.value;
+    c.op = valoresDe(nuevo).length ? 'es' : OPS[nuevo.tipo][0][0]; c.valor = valoresDe(nuevo).length ? valorInicial(nuevo) : '';        // una lista cerrada arranca en «es» y con un valor elegido
     renderFilters();
     enfocar('#filters [data-chg="ck"][data-i="' + i + '"]');                                                       // el selector se redibujó: el teclado no pierde el lugar
   }
   else if (a === 'co') {
-    const c = d.def.condiciones[i], antes = c.op;
+    const c = d.def.condiciones[i], antes = c.op, lc = valoresDe(campoDe(d, c.campo)).length > 0;
     c.op = el.value;
-    if ((antes === 'en') !== (c.op === 'en')) {                       // solo al entrar o salir de «es uno de» cambia el campo del valor: el resto de los cambios no redibuja
+    if ((antes === 'en') !== (c.op === 'en') || (lc && (antes === 'es') !== (c.op === 'es'))) {      // solo al entrar o salir de «es uno de» (o de «es», en una lista cerrada) cambia el campo del valor: el resto de los cambios no redibuja
       if (antes === 'en') { const f = formaDe(c.campo, d.def), l = listaDe(c.valor, f.tipo, f.entero); c.valor = l.length ? l[0] : ''; }          // el primero de la lista, aunque sea el número 0
       renderFilters();
       enfocar('#filters [data-chg="co"][data-i="' + i + '"]');                                                     // el teclado no pierde el lugar

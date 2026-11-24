@@ -51,6 +51,10 @@ NOMBRE_EN_DELPRO = {"InMilk": "En ordeño", "ToBeCulled": "Para descarte", "IsPr
                     "AgeInMonths": "Edad en meses", "LatestSCC": "Último recuento de células somáticas"}
 # Una ruta de DelPro que es EXACTAMENTE un campo del catálogo (misma columna de la base): se traduce sin dudar.
 ALIAS_DE_RUTAS = {"ReproductionInfo.LactationNumber": "CurrentLactationNumber"}
+# Las propiedades de la reproducción que DelPro usa en sus filtros (`ReproductionInfo.IsPregnant = True`) y que el catálogo tiene con el MISMO nombre y el mismo dato: columnas de la
+# reproducción o cuentas sobre ella. `ReproductionInfo.LastCalvingDate`, en cambio, NO es la «Fecha del último parto» de acá (ver `_campo_de`).
+ALIAS_DE_RUTAS.update({"ReproductionInfo." + n: n for n in ("IsPregnant", "IsDryingOff", "DaysToCalving", "DaysToDryOff", "NumberOfInseminations", "DaysSinceLastInsemination",
+                                                              "ExpectedCalvingDate", "ExpectedDryOffDate", "LastInseminationDate", "LastAbortionDate")})
 NOMBRES_DE_NIVEL = {"SessionMilkYield": "Ordeño por sesión", "AnimalGroup": "Rodeos", "DiagnosisTreatmentEvent": "Diagnósticos y tratamientos",
                     "BcsDailyData": "Condición corporal diaria", "RationCalculationLog": "Cálculo de ración",
                     "AnimalFeedDailyConsumption": "Consumo diario de alimento", "AnimalFeedConsumed": "Alimento consumido",
@@ -571,10 +575,22 @@ def _de_la_lista(campo, texto, parcial=False):
     raise _NoTraducible("Compara con un código de DelPro que acá no existe.")
 
 
+def _es_si_no(campo) -> bool:
+    """Un campo «sí/no» (`En ordeño`, `Preñada`…): de texto con la lista cerrada («No», «Sí»). DelPro lo compara con `True` o `False`."""
+    return campo.tipo == "txt" and tuple(campo.valores) == informes_catalogo.SI_NO
+
+
+_OPUESTO = {"Sí": "No", "No": "Sí"}
+
+
 def _valor_de(campo, lit, parcial=False):
     if lit["t"] != "lit":
         raise _NoTraducible("Compara con algo que no es un valor fijo.")
     k = lit["k"]
+    if _es_si_no(campo):                                                             # un sí/no solo se compara con verdadero o falso, no con un número ni con un texto
+        if k != "bool":
+            raise _NoTraducible(f"«{campo.etiqueta}» se compara con verdadero o falso.")
+        return "Sí" if lit["v"] else "No"
     if k in ("null", "bool", "enum"):
         raise _NoTraducible("Compara con un estado o un valor especial de DelPro que acá no se puede traer.")
     if campo.tipo == "num" and k == "num":
@@ -600,6 +616,8 @@ def _traducir_termino(n, resolver, catalogo):
         campo = _campo_de(izq, resolver, catalogo)
         valor = _valor_de(campo, der)
         if campo.tipo == "txt":
+            if _es_si_no(campo) and op in ("=", "<>"):                               # `X <> True` es «No»; un sí/no nunca queda vacío (sin reproducción es «No»), así que no hay animales sin dato
+                return [_cond(campo.id, "es", valor if op == "=" else _OPUESTO[valor])], None, False
             if op != "=":
                 raise _NoTraducible("De un texto solo se puede traer «es igual a».")
             return [_cond(campo.id, "es", valor)], None, False

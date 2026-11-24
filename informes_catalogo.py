@@ -64,11 +64,39 @@ BLOQUES: dict = {
     "lactprev": Bloque("lactprev",
                        "LEFT JOIN AnimalLactationSummary sp ON sp.Animal = b.OID AND sp.GCRecord IS NULL "
                        "AND sp.LactationNumber = r.LactationNumber - 1", requiere=("repro",)),
+    # El índice de ÚLTIMOS EVENTOS de cada animal: DelPro guarda ahí, por tipo de evento, cuál fue el último (`Animal.LatestHistoryIndex.<Evento>`). Es de donde salen sus campos
+    # «última inseminación» y «último aborto». Medido en la copia local (30/07/2026): el índice de inseminación se REINICIA con cada parto (queda vacío en 165 de 165 vacas cuya última
+    # inseminación es anterior al último parto) y el de aborto y el de parto coinciden con el máximo de sus eventos en el 100 %.
+    "indice": Bloque("indice", "LEFT JOIN AnimalLatestHistoryIndex ix ON ix.Animal = b.OID AND ix.GCRecord IS NULL"),
+    "ult_insem": Bloque("ult_insem", "LEFT JOIN AbstractAnimalEvent ei ON ei.OID = ix.Insemination AND ei.GCRecord IS NULL", requiere=("indice",)),
+    "ult_aborto": Bloque("ult_aborto", "LEFT JOIN AbstractAnimalEvent ea ON ea.OID = ix.Abortion AND ea.GCRecord IS NULL", requiere=("indice",)),
+    "insem_efectiva": Bloque("insem_efectiva", "LEFT JOIN AbstractAnimalEvent ee ON ee.OID = ix.EffectiveInsemination AND ee.GCRecord IS NULL", requiere=("indice",)),
+    # Los días de gestación (código 10) y de secado (código 7) que el tambo tiene configurados en DelPro (`ReproductionSetting`, ver `parametros.py`): no se escriben a mano acá.
+    "ajustes": Bloque("ajustes", "LEFT JOIN (SELECT MAX(CASE WHEN Parameter = 10 THEN ValueInDays END) AS gest, MAX(CASE WHEN Parameter = 7 THEN ValueInDays END) AS secado "
+                                 "FROM ReproductionSetting WHERE GCRecord IS NULL) rs ON 1 = 1"),
+    # Cuántas inseminaciones lleva la lactancia en curso: el resumen de lactancia que DelPro guarda por animal (`HistoryAnimalLactationInfo.InsemCount`).
+    "insem_lact": Bloque("insem_lact", "LEFT JOIN HistoryAnimalLactationInfo hl ON hl.Animal = b.OID AND hl.LactationNumber = r.LactationNumber", requiere=("repro",)),
 }
 
 _GEN = "Generalidades de animal"
 _ORD = "Ordeño"
 _REP = "Reproducción"
+
+# Un «sí/no» de DelPro es un texto con la lista cerrada («No», «Sí»): se agrupa, se cuenta, sale en el Excel y en el mensaje sin tocar nada más, y la IA y el importador de DelPro
+# ya saben qué valores admite (los filtros de DelPro dicen `IsPregnant = True`). Una columna que falta (un animal sin reproducción) es «No», como en DelPro.
+SI_NO = ("No", "Sí")
+
+
+def _si_no(condicion: str) -> str:
+    return f"CASE WHEN {condicion} THEN 'Sí' ELSE 'No' END"
+
+
+# El parto esperado: la inseminación efectiva más los días de gestación del tambo, solo de una vaca preñada y con una inseminación posterior a su último parto (una anterior es un dato
+# viejo que quedó colgado). Es lo mismo que hacen «Partos y secados» y la proyección (`partos_secados.py`, `proyeccion.py`).
+_PARTO_ESPERADO = ("CASE WHEN r.IsPregnant = 1 AND ee.DateAndTime IS NOT NULL AND (r.LastLactationChangeDate IS NULL OR ee.DateAndTime > r.LastLactationChangeDate) "
+                   "THEN DATEADD(day, ISNULL(rs.gest, 280), ee.DateAndTime) END")
+_SECADO_ESPERADO = f"DATEADD(day, -ISNULL(rs.secado, 50), {_PARTO_ESPERADO})"
+_ADEMAS_PARTO = ("insem_efectiva", "ajustes")                 # además del bloque `repro`, que es el principal de estos campos
 
 CATALOGO = {c.id: c for c in (
     Campo("Number", "Número del animal", _GEN, "txt", "CAST(b.Number AS nvarchar(20))", orden_expr="b.Number",
@@ -96,4 +124,38 @@ CATALOGO = {c.id: c for c in (
     Campo("PeakYieldLastLactation", "Pico en la última lactación", _ORD, "num", "sp.PeakYield", bloque="lactprev",
           unidad="kg", decimales=1, verificado=False,
           nota="de AnimalLactationSummary; la función de DelPro (GetPeakYieldInLactation) no existe en esta base"),
+
+    # ---- Tanda 1 de campos de DelPro (24/11/2026): los «sí/no» de la reproducción, sus fechas y días, y la edad. Cada uno lleva el id que DelPro usa en `DDMReportItem`.
+    Campo("InMilk", "En ordeño", _ORD, "txt", _si_no("r.LactationNumber > 0 AND r.IsDryingOff = 0"), bloque="repro", verificado=False, agrupable=True, valores=SI_NO,
+          nota="lactancia en curso y no seca (DelPro la filtra así: LactationNumber > 0 AND IsDryingOff = False). Coincide con la leche medida el 29/07/2026: las 1.636 vacas que dieron leche "
+               "figuran en ordeño y ninguna de las 3.479 que no figuran dio leche; falta compararla con un informe de DelPro"),
+    Campo("ToBeCulled", "Para descarte", _GEN, "txt", _si_no("b.ToBeCulled = 1"), agrupable=True, valores=SI_NO,
+          nota="la columna BasicAnimal.ToBeCulled, que es la que DelPro usa en sus filtros (ToBeCulled = False)"),
+    Campo("IsPregnant", "Preñada", _REP, "txt", _si_no("r.IsPregnant = 1"), bloque="repro", agrupable=True, valores=SI_NO,
+          nota="la columna AnimalReproductionInfo.IsPregnant (DelPro: ReproductionInfo.IsPregnant)"),
+    Campo("IsDryingOff", "En secado", _REP, "txt", _si_no("r.IsDryingOff = 1"), bloque="repro", agrupable=True, valores=SI_NO,
+          nota="la columna AnimalReproductionInfo.IsDryingOff (DelPro: ReproductionInfo.IsDryingOff); es la vaca seca"),
+    Campo("BirthDate", "Fecha de nacimiento", _GEN, "fecha", "b.BirthDate", nota="la columna BasicAnimal.BirthDate"),
+    Campo("ExitDate", "Fecha de salida", _GEN, "fecha", "b.ExitDate",
+          nota="la columna BasicAnimal.ExitDate; un animal que ya salió solo aparece con «Incluir animales descartados»"),
+    Campo("AgeInMonths", "Edad en meses", _GEN, "num", "DATEDIFF(month, b.BirthDate, @HOY) - CASE WHEN DAY(b.BirthDate) > DAY(@HOY) THEN 1 ELSE 0 END", verificado=False,
+          nota="meses cumplidos entre el nacimiento y «Calcular al»; la cuenta es nuestra, falta compararla con un informe de DelPro"),
+    Campo("LastInseminationDate", "Fecha de la última inseminación", _REP, "fecha", "ei.DateAndTime", bloque="ult_insem",
+          nota="el último evento del índice de DelPro (LatestHistoryIndex.Insemination); DelPro lo reinicia con cada parto, así que una vaca que no se inseminó desde su último parto queda sin fecha "
+               "(165 de 165 en la copia local)"),
+    Campo("LastAbortionDate", "Fecha del último aborto", _REP, "fecha", "ea.DateAndTime", bloque="ult_aborto",
+          nota="el último evento del índice de DelPro (LatestHistoryIndex.Abortion); coincide con el último aborto cargado en 91 de 91 animales"),
+    Campo("DaysSinceLastInsemination", "Días desde la última inseminación", _REP, "num", "DATEDIFF(day, ei.DateAndTime, @HOY)", bloque="ult_insem", verificado=False,
+          nota="días entre la fecha del índice de DelPro y «Calcular al»; la cuenta es nuestra, falta compararla con un informe de DelPro"),
+    Campo("NumberOfInseminations", "Cantidad de inseminaciones", _REP, "num", "ISNULL(hl.InsemCount, 0)", bloque="insem_lact",
+          nota="las inseminaciones de la lactancia en curso, del resumen de lactancia de DelPro (InsemCount): coincide con contar los eventos en 433 de 433 vacas; donde DelPro no lo cargó "
+               "(167 vacas) no tiene ninguna"),
+    Campo("ExpectedCalvingDate", "Fecha esperada de parto", _REP, "fecha", _PARTO_ESPERADO, bloque="repro", bloques=_ADEMAS_PARTO, verificado=False,
+          nota="la inseminación efectiva más los días de gestación que el tambo tiene en DelPro, solo de una vaca preñada; falta compararla con un informe de DelPro"),
+    Campo("DaysToCalving", "Días para el parto", _REP, "num", f"DATEDIFF(day, @HOY, {_PARTO_ESPERADO})", bloque="repro", bloques=_ADEMAS_PARTO, verificado=False,
+          nota="días entre «Calcular al» y la fecha esperada de parto (negativo = ya pasó); falta compararlo con un informe de DelPro"),
+    Campo("ExpectedDryOffDate", "Fecha esperada de secado", _REP, "fecha", _SECADO_ESPERADO, bloque="repro", bloques=_ADEMAS_PARTO, verificado=False,
+          nota="la fecha esperada de parto menos los días de secado que el tambo tiene en DelPro; falta compararla con un informe de DelPro"),
+    Campo("DaysToDryOff", "Días para el secado", _REP, "num", f"DATEDIFF(day, @HOY, {_SECADO_ESPERADO})", bloque="repro", bloques=_ADEMAS_PARTO, verificado=False,
+          nota="días entre «Calcular al» y la fecha esperada de secado (negativo = ya pasó); falta compararlo con un informe de DelPro"),
 )}

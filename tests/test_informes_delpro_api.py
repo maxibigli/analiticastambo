@@ -21,9 +21,9 @@ from tests.test_informes_delpro import carpeta, columna, columnas_de, datos, fil
 def _datos():
     informes = [carpeta(1, "Mis informes"), informe(10, "Animales por rodeo", carpeta=1), informe(11, "Con un filtro", carpeta=1, ServerFilter=7),
                 informe(12, "De otro nivel", nivel="SessionMilkYield"), informe(13, "Predefinido", predefinido=True)]
-    cols = (columnas_de(10, ["Number", "AnimalGroupName", "CurrentDIM"], 100) + columnas_de(11, ["Number", "InMilk"], 200) +
+    cols = (columnas_de(10, ["Number", "AnimalGroupName", "CurrentDIM"], 100) + columnas_de(11, ["Number", "DaysDry"], 200) +
             columnas_de(12, ["Number"], 300) + columnas_de(13, ["Number"], 400))
-    return datos(informes, cols, [filtro(7, "Preñadas", "[<AnimalExtended>ReproductionInfo.IsPregnant] = True")])
+    return datos(informes, cols, [filtro(7, "Preñadas", "[<AnimalExtended>ReproductionInfo.IsExited] = True")])
 
 
 class Base(unittest.TestCase):
@@ -68,7 +68,7 @@ class TestListar(Base):
         self.assertEqual(por[12]["estado"], "no_disponible")
         self.assertEqual(por[10]["carpeta"], "Mis informes")
         self.assertEqual(j["cuenta"], {"completo": 2, "parcial": 1, "no_disponible": 1})
-        self.assertEqual(j["faltantes"][0], {"campo": "InMilk", "informes": 1, "nombre": "En ordeño"})       # el nombre en castellano, para que el dueño lo reconozca
+        self.assertEqual(j["faltantes"][0], {"campo": "DaysDry", "informes": 1, "nombre": "Días en seca"})       # el nombre en castellano, para que el dueño lo reconozca
 
     def test_la_lista_no_lleva_la_definicion_ni_sql(self):
         texto = self.admin.get("/api/informes/delpro").get_data(as_text=True)
@@ -133,7 +133,7 @@ class TestTraer(Base):
         self.assertEqual(j["estado"], "parcial")
         self.assertEqual(j["definicion"]["columnas"], [{"campo": "Number"}])
         self.assertEqual({d["tipo"] for d in j["diferencias"]}, {"columna", "filtro"})
-        self.assertEqual(j["faltan"], ["InMilk", "IsPregnant"])
+        self.assertEqual(j["faltan"], ["DaysDry", "IsExited"])
 
     def test_un_informe_que_no_se_puede_traer_igual_se_explica(self):
         j = self.admin.get("/api/informes/delpro/12").get_json()

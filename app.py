@@ -6720,10 +6720,12 @@ def api_informes_campos():
     """El árbol de campos para armar un informe, por categoría. Nunca lleva el SQL de cada campo."""
     cats: dict = {}
     for c in informes_catalogo.CATALOGO.values():
-        cats.setdefault(c.categoria, []).append({
-            "id": c.id, "etiqueta": c.etiqueta, "tipo": c.tipo, "unidad": c.unidad, "decimales": c.decimales,
-            "verificado": c.verificado, "agrupable": c.agrupable,
-            "aviso": "" if c.verificado else "Todavía no se comparó con un informe de DelPro: los valores pueden diferir."})
+        campo = {"id": c.id, "etiqueta": c.etiqueta, "tipo": c.tipo, "unidad": c.unidad, "decimales": c.decimales,
+                 "verificado": c.verificado, "agrupable": c.agrupable,
+                 "aviso": "" if c.verificado else "Todavía no se comparó con un informe de DelPro: los valores pueden diferir."}
+        if c.valores:                                      # una lista cerrada («sí/no», el estado de la reproducción): la pantalla ofrece un desplegable
+            campo["valores"] = list(c.valores)
+        cats.setdefault(c.categoria, []).append(campo)
     return jsonify({"categorias": [{"nombre": n, "campos": cs} for n, cs in cats.items()], "ia": agente.api_disponible()})
 
 

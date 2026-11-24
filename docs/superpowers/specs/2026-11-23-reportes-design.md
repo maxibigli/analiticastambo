@@ -243,7 +243,7 @@ con `;`, `--` o `/*` se descarta y se avisa.
 * **Estados:** `completo` (sin diferencias de contenido ni de columnas), `parcial`, `no_disponible`. La lista los ordena (completos primero, los del tambo antes que los de fábrica) y marca «filtro sin traer».
 * **Pantalla:** «Traer de DelPro…» en la lista abre un cuadro con búsqueda, el estado de cada informe y los campos de DelPro que más faltan; «Traer» abre el informe como **uno nuevo, sin guardar**, con un aviso arriba (qué cambia qué animales
   aparecen, qué falta, qué se ve distinto). API (admin): `GET /api/informes/delpro` y `GET /api/informes/delpro/<oid>`.
-* **Cobertura real, medida sobre el volcado de la copia local** (el catálogo tiene 10 campos). De los 65 informes del tambo que lista el cuadro (sin los predefinidos de fábrica) **1 sale «completo», 56 «parcial» (casi
+* **Cobertura real, medida sobre el volcado de la copia local** (con el catálogo de 10 campos, ANTES de la tanda 1: ver «Tanda 1 de campos de DelPro»). De los 65 informes del tambo que lista el cuadro (sin los predefinidos de fábrica) **1 sale «completo», 56 «parcial» (casi
   siempre por un filtro que no se trae) y 8 no se pueden traer**. Mirando solo las columnas, 4 de los 58 informes de animales caben enteros en el catálogo. Los campos que más faltan, **contados en INFORMES distintos** (no en columnas: una
   columna repetida cuenta una vez): `InMilk` (19), `ToBeCulled` (15), `NumberOfInseminations` (11), `DaysToCalving` (9), `DiagnosisFromDiagnosisTreatmentEvent` (9), `ExpectedCalvingDate` (8), `IsPregnant` (8), `IsDryingOff` (8),
   `YieldYesterdayForAllMilkingInSession` (6) y `CMSTakeOffFlowYesterday` (3). (La primera versión de este párrafo contaba 16 y 9 para los dos últimos: eran apariciones de la columna, con repeticiones dentro del mismo informe.)
@@ -344,6 +344,19 @@ puede arrancar acá; [completitud #9] «`pausar()` no se usa en producción»: l
 **Lo que NO se hizo, a propósito:** (1) la pantalla es **solo oscura** (el marco `/informes/?embebido=1` fija `data-theme="dark"`): en la app con tema claro queda una isla oscura. Era anterior a la Fase 4; llevarlo a los tokens claros es un trabajo aparte. (2) `backup_config.bat` copia los
 archivos sueltos (como con `checklist.db`): con el hilo de envíos escribiendo no es una instantánea perfecta; la API de respaldo de SQLite lo sería. (3) En el importador, la regla del «menor que» depende del orden en que se leen las fuentes: dos columnas del mismo campo con filtro propio
 se ven una a la otra solo en un sentido. (4) `UN-C<oid>` se traduce igual que `C<oid>` (no se sabe qué significa «UN-»). (5) Los avisos de fechas de la IA avisan de menos, nunca de más: «15 ago» (mes abreviado) y «quincena» no se leen como fecha.
+
+## Tanda 1 de campos de DelPro (24/11/2026)
+
+La primera prueba en SERVER-DELPRO mostró que las 4 consultas del importador andan contra el SQL real y que, de 181 informes, solo 1 salía completo y 1 «casi igual»: el catálogo de 10 campos era el límite. La **tanda 1 suma 15 campos (25 en total)**, elegidos por lo que más piden los informes de
+DelPro (`InMilk`, `ToBeCulled`, `IsPregnant`, `IsDryingOff`, `BirthDate`, `ExitDate`, `AgeInMonths`, `LastInseminationDate`, `LastAbortionDate`, `DaysSinceLastInsemination`, `NumberOfInseminations`, `ExpectedCalvingDate`, `DaysToCalving`, `ExpectedDryOffDate`, `DaysToDryOff`).
+
+* **DelPro no guarda la fórmula de sus campos** (en `DDMReportItem` el `Criteria` está vacío; en la base solo hay 72 funciones y ninguna es de estas). Cada campo se definió contra las tablas de DDM y se verificó contra lo que DelPro **sí** guarda: el índice de últimos eventos por animal, el resumen de lactancia y las
+  columnas de la reproducción. Lo que sale de una cuenta nuestra sin un valor de DelPro con que compararlo queda con ⚠ («sin verificar»).
+* **Los «sí/no» son texto con lista cerrada («No», «Sí»)**, no un tipo nuevo: se agrupan, cuentan, exportan y se mandan sin tocar el motor, el Excel ni los mensajes. Se eligen de un desplegable. El importador traduce `= True`, `= False`, `<> True` y `<> False`.
+* **Medido en la copia local (30/07/2026):** `InMilk` coincide con la leche medida (1.636 de las 1.679 en ordeño dieron leche el 29/07; ninguna de las 3.479 fuera de ordeño); el índice de última inseminación se reinicia con cada parto (165 de 165); `NumberOfInseminations` coincide con contar eventos en
+  433 de 433; `LastAbortionDate` en 91 de 91; 820 preñadas, 817 con inseminación efectiva de este ciclo y 3 de hace más de 320 días (datos mal cargados, se muestran como son).
+* **Efecto sobre el importador (volcado):** los informes de animales con TODAS sus columnas en el catálogo pasan de 4 a 9 de 59. La mejora grande se espera en los filtros: casi todos los de DelPro hablan de estos campos.
+* **Quedó afuera a propósito:** la leche «de ayer» y «de hoy» (nombre relativo: un informe guardado se lee días después). **Tanda 2** (en cuántos informes): diagnóstico 9, `LastCutIdTime` 8, leche de ayer/hoy 6, `CMSTransponderID` 6, promedios de 14/21/30 días, `LatestSCC` 5, `IsBred` 4.
 
 ## Pendientes de la Fase 4: lo que decide el tambo o falta probar
 
