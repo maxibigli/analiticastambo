@@ -141,6 +141,33 @@ class TestElImportadorEntiendeLosSiNo(unittest.TestCase):
         self.assertEqual(res("ReproductionInfo.LastCalvingDate")[1], None)                # es la fecha guardada en la reproducción, no la del último parto
 
 
+class TestLaFechaDelUltimoPartoNoAgrupaLosEventos(unittest.TestCase):
+    """Medida del costo de cada campo (24/11/2026): la «Fecha del último parto» agrupaba TODOS los eventos de parto de la base y en un SQL Express con poca memoria se quedaba
+    esperando el permiso de memoria (`RESOURCE_SEMAPHORE`) por minutos: era lo único pesado del catálogo. DelPro ya guarda ese dato por animal en su índice de últimos eventos
+    (`Animal.LatestHistoryIndex.Calving`, en el que se basa la definición de DelPro) y coincide con el máximo de los eventos en 1.772 de 1.772 animales de la copia local."""
+
+    def sql(self):
+        return im.compilar({"columnas": [{"campo": "Number"}, {"campo": "LastCalvingDate"}]}, herd=1, hoy="2026-07-30")["sql"]
+
+    def test_sale_del_indice_de_delpro(self):
+        self.assertIn("AnimalLatestHistoryIndex", self.sql())
+
+    def test_no_agrupa_ni_recorre_los_eventos_de_parto(self):
+        sql = self.sql().upper()
+        self.assertNotIn("GROUP BY", sql)
+        self.assertNotIn("EVENTCALVING", sql)
+        self.assertNotIn("MAX(", sql)
+
+    def test_el_campo_sigue_siendo_el_mismo(self):
+        c = cat.CATALOGO["LastCalvingDate"]
+        self.assertEqual((c.etiqueta, c.tipo, c.verificado), ("Fecha del último parto", "fecha", True))
+
+    def test_se_puede_combinar_con_las_otras_fechas_del_indice(self):
+        sql = im.compilar({"columnas": [{"campo": "LastCalvingDate"}, {"campo": "LastInseminationDate"}, {"campo": "LastAbortionDate"}]}, herd=1, hoy="2026-07-30")["sql"]
+        self.assertEqual(sql.count("LEFT JOIN AnimalLatestHistoryIndex"), 1)              # el índice se une una sola vez
+        db.validate_sql(sql)
+
+
 class TestLaIANoAvisaDeMasConLosSiNo(unittest.TestCase):
     """«Describí el informe» avisa cuando la frase menciona un valor cerrado («preñadas», «secas») y el informe no tiene nada de ese campo. Con los sí/no nuevos hay otra forma
     de pedir lo mismo (`Preñada = Sí`): eso no es una condición olvidada."""

@@ -54,7 +54,8 @@ ALIAS_DE_RUTAS = {"ReproductionInfo.LactationNumber": "CurrentLactationNumber"}
 # Las propiedades de la reproducción que DelPro usa en sus filtros (`ReproductionInfo.IsPregnant = True`) y que el catálogo tiene con el MISMO nombre y el mismo dato: columnas de la
 # reproducción o cuentas sobre ella. `ReproductionInfo.LastCalvingDate`, en cambio, NO es la «Fecha del último parto» de acá (ver `_campo_de`).
 ALIAS_DE_RUTAS.update({"ReproductionInfo." + n: n for n in ("IsPregnant", "IsDryingOff", "DaysToCalving", "DaysToDryOff", "NumberOfInseminations", "DaysSinceLastInsemination",
-                                                              "ExpectedCalvingDate", "ExpectedDryOffDate", "LastInseminationDate", "LastAbortionDate")})
+                                                              "ExpectedCalvingDate", "ExpectedDryOffDate", "LastInseminationDate", "LastAbortionDate",
+                                                              "DaysPregnant", "EffectiveInseminationDate", "LastPregnancyCheckDate")})
 NOMBRES_DE_NIVEL = {"SessionMilkYield": "Ordeño por sesión", "AnimalGroup": "Rodeos", "DiagnosisTreatmentEvent": "Diagnósticos y tratamientos",
                     "BcsDailyData": "Condición corporal diaria", "RationCalculationLog": "Cálculo de ración",
                     "AnimalFeedDailyConsumption": "Consumo diario de alimento", "AnimalFeedConsumed": "Alimento consumido",

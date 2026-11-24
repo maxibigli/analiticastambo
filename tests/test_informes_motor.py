@@ -786,7 +786,7 @@ class TestUnaFechaSeComparaPorDia(unittest.TestCase):
 
     def test_con_el_catalogo_real_la_fecha_del_ultimo_parto_se_compara_por_dia(self):
         sql = im.compilar({"columnas": [{"campo": "LastCalvingDate"}], "condiciones": [{"campo": "LastCalvingDate", "op": "<=", "valor": "2026-08-15"}]}, herd=1)["sql"]
-        self.assertIn("CAST(pa.fecha AS date) <= CONVERT(date, '2026-08-15', 23)", sql)
+        self.assertIn("CAST(pa.DateAndTime AS date) <= CONVERT(date, '2026-08-15', 23)", sql)
 
 
 class TestElLimiteLoPidioElInforme(unittest.TestCase):

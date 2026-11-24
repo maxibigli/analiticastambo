@@ -332,10 +332,10 @@ class TestResolverPorColumnas(unittest.TestCase):
     """El CustomFilter (el filtro de la grilla) llama a cada columna `C` + su OID: ese número es el de la columna."""
 
     def test_un_campo_por_oid_de_columna(self):
-        cols = [columna(2511, 1, 1, "CurrentLactationNumber"), columna(2691, 1, 2, "CMSFourteenDayAverage")]
+        cols = [columna(2511, 1, 1, "CurrentLactationNumber"), columna(2691, 1, 2, "YieldYesterday")]
         res = dl.resolver_por_columnas(cols, cat.CATALOGO)
         self.assertEqual(res("C2511"), ("CurrentLactationNumber", "CurrentLactationNumber"))
-        self.assertEqual(res("C2691"), ("CMSFourteenDayAverage", None))
+        self.assertEqual(res("C2691"), ("YieldYesterday", None))
         self.assertEqual(res("C9999"), ("C9999", None))
         self.assertEqual(res("UN-C2971"), ("UN-C2971", None))
 
@@ -348,12 +348,12 @@ class TestResolverPorColumnas(unittest.TestCase):
         self.assertEqual(pend, [])
 
     def test_una_columna_que_no_existe_en_el_catalogo_se_muestra_con_su_nombre_de_delpro(self):
-        cols = [columna(2691, 1, 1, "CMSFourteenDayAverage")]
+        cols = [columna(2691, 1, 1, "YieldYesterday")]
         res = dl.resolver_por_columnas(cols, cat.CATALOGO)
         cs, pend = dl.condiciones_de("[C2691] < 18.0f And [C2691] Is Not Null", res, cat.CATALOGO, 10)
         self.assertEqual(cs, [])
-        self.assertEqual(pend[0]["campos"], ["CMSFourteenDayAverage"])
-        self.assertIn("CMSFourteenDayAverage < 18", pend[0]["texto"])
+        self.assertEqual(pend[0]["campos"], ["YieldYesterday"])
+        self.assertIn("YieldYesterday < 18", pend[0]["texto"])
 
 
 # ------------------------------------------------------------------------------------------ un informe
@@ -377,23 +377,23 @@ class TestTraducirInforme(unittest.TestCase):
         self.assertEqual([c["campo"] for c in r["definicion"]["columnas"]], ["Number", "AnimalGroupName", "CurrentDIM"])
 
     def test_las_columnas_que_no_existen_se_listan_y_el_informe_queda_parcial(self):
-        r = self.tr([informe(1)], columnas_de(1, ["Number", "DaysDry", "CurrentDIM", "LatestSCC"]))
+        r = self.tr([informe(1)], columnas_de(1, ["Number", "DaysDry", "CurrentDIM", "Sex"]))
         self.assertEqual(r["estado"], "parcial")
         self.assertEqual([c["campo"] for c in r["definicion"]["columnas"]], ["Number", "CurrentDIM"])
         self.assertEqual(r["columnas"], {"traidas": 2, "total": 4})
-        self.assertEqual(r["faltan"], ["DaysDry", "LatestSCC"])
+        self.assertEqual(r["faltan"], ["DaysDry", "Sex"])
         d = [x for x in r["diferencias"] if x["tipo"] == "columna"]
         self.assertEqual(len(d), 1)
         self.assertEqual(d[0]["gravedad"], "columnas")
         self.assertIn("DaysDry", d[0]["texto"])
-        self.assertIn("LatestSCC", d[0]["texto"])
+        self.assertIn("Sex", d[0]["texto"])
 
     def test_sin_ninguna_columna_utilizable_no_se_puede_traer(self):
-        r = self.tr([informe(1)], columnas_de(1, ["DaysDry", "LatestSCC"]))
+        r = self.tr([informe(1)], columnas_de(1, ["DaysDry", "Sex"]))
         self.assertEqual(r["estado"], "no_disponible")
         self.assertIsNone(r["definicion"])
         self.assertIn("DaysDry", r["motivo"])
-        self.assertEqual(r["faltan"], ["DaysDry", "LatestSCC"])
+        self.assertEqual(r["faltan"], ["DaysDry", "Sex"])
 
     def test_un_informe_sin_columnas_no_se_puede_traer(self):
         r = self.tr([informe(1)], [])
@@ -560,7 +560,7 @@ class TestTraducirInforme(unittest.TestCase):
         self.assertEqual(set(r["faltan"]), {"IsExited", "DaysDry"})
 
     def test_un_filtro_de_la_grilla_con_una_columna_que_no_esta_se_avisa(self):
-        cols = [columna(2691, 1, 1, "CMSFourteenDayAverage"), columna(2692, 1, 2, "Number")]
+        cols = [columna(2691, 1, 1, "YieldYesterday"), columna(2692, 1, 2, "Number")]
         r = self.tr([informe(1, CustomFilter="[C2691] < 18.0f And [C2691] Is Not Null")], cols)
         self.assertEqual(r["estado"], "parcial")
         self.assertEqual(r["definicion"]["columnas"], [{"campo": "Number"}])
@@ -670,8 +670,8 @@ class TestListar(unittest.TestCase):
                     informe(10, "Completo", carpeta=2), informe(11, "Con faltantes", carpeta=2), informe(12, "De otro nivel", nivel="SessionMilkYield"),
                     informe(13, "Sin columnas buenas", carpeta=1), informe(14, "Predefinido", predefinido=True),
                     informe(15, "Un informe fijo de DelPro", tipo="DeLaval.DDM.CommonApp.Module.BasicFeatures.Milking.Report.SCCAllCowsReport")]
-        cols = (columnas_de(10, ["Number", "CurrentDIM"], 100) + columnas_de(11, ["Number", "DaysDry", "LatestSCC"], 200) +
-                columnas_de(12, ["Number", "ZCampoDeOtroNivel"], 300) + columnas_de(13, ["DaysDry", "LatestSCC"], 400) + columnas_de(14, ["Number", "DaysDry"], 500))
+        cols = (columnas_de(10, ["Number", "CurrentDIM"], 100) + columnas_de(11, ["Number", "DaysDry", "Sex"], 200) +
+                columnas_de(12, ["Number", "ZCampoDeOtroNivel"], 300) + columnas_de(13, ["DaysDry", "Sex"], 400) + columnas_de(14, ["Number", "DaysDry"], 500))
         return datos(informes, cols)
 
     def test_lista_informes_con_su_estado_y_deja_afuera_carpetas_y_fijos(self):
@@ -701,7 +701,7 @@ class TestListar(unittest.TestCase):
         r = dl.listar(self.armar())
         top = {f["campo"]: f["informes"] for f in r["faltantes"]}
         self.assertEqual(top["DaysDry"], 3)
-        self.assertEqual(top["LatestSCC"], 2)
+        self.assertEqual(top["Sex"], 2)
         self.assertEqual(r["faltantes"][0]["campo"], "DaysDry")
 
     def test_el_ranking_de_faltantes_solo_cuenta_informes_de_animales(self):

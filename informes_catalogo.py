@@ -55,11 +55,10 @@ BLOQUES: dict = {
                     "LEFT JOIN (SELECT d.BasicAnimal AS animal, AVG(d.TotalYield) AS prom7 FROM AnimalDaily d "
                     "WHERE d.GCRecord IS NULL AND d.Date >= DATEADD(day, -7, @HOY) AND d.Date < @HOY "
                     "AND d.TotalYield > 0 AND d.IsYieldValid = 1 GROUP BY d.BasicAnimal) p7 ON p7.animal = b.OID"),
-    # Fecha del último parto: el último evento de parto (DelPro: Animal.LatestHistoryIndex.Calving.EventDate).
-    "parto": Bloque("parto",
-                    "LEFT JOIN (SELECT a.BasicAnimal AS animal, MAX(a.DateAndTime) AS fecha FROM EventCalving e "
-                    "JOIN AbstractAnimalEvent a ON a.OID = e.OID AND a.GCRecord IS NULL GROUP BY a.BasicAnimal) pa "
-                    "ON pa.animal = b.OID"),
+    # Fecha del último parto: el último evento de parto, que DelPro guarda en su índice por animal (Animal.LatestHistoryIndex.Calving.EventDate). Antes se calculaba agrupando TODOS los
+    # eventos de parto de la base (`MAX(...) GROUP BY`): en un SQL Express con poca memoria quedaba esperando el permiso de memoria por minutos, y era lo único pesado del catálogo.
+    # Medido en la copia local (30/07/2026): el índice coincide con ese máximo en 1.772 de 1.772 animales con parto, sin ninguna diferencia.
+    "parto": Bloque("parto", "LEFT JOIN AbstractAnimalEvent pa ON pa.OID = ix.Calving AND pa.GCRecord IS NULL", requiere=("indice",)),
     # La lactancia ANTERIOR a la actual (pico y días al pico).
     "lactprev": Bloque("lactprev",
                        "LEFT JOIN AnimalLactationSummary sp ON sp.Animal = b.OID AND sp.GCRecord IS NULL "
@@ -93,10 +92,29 @@ def _si_no(condicion: str) -> str:
 
 # El parto esperado: la inseminación efectiva más los días de gestación del tambo, solo de una vaca preñada y con una inseminación posterior a su último parto (una anterior es un dato
 # viejo que quedó colgado). Es lo mismo que hacen «Partos y secados» y la proyección (`partos_secados.py`, `proyeccion.py`).
-_PARTO_ESPERADO = ("CASE WHEN r.IsPregnant = 1 AND ee.DateAndTime IS NOT NULL AND (r.LastLactationChangeDate IS NULL OR ee.DateAndTime > r.LastLactationChangeDate) "
-                   "THEN DATEADD(day, ISNULL(rs.gest, 280), ee.DateAndTime) END")
+_PRENEZ_VIGENTE = "r.IsPregnant = 1 AND ee.DateAndTime IS NOT NULL AND (r.LastLactationChangeDate IS NULL OR ee.DateAndTime > r.LastLactationChangeDate)"
+_PARTO_ESPERADO = f"CASE WHEN {_PRENEZ_VIGENTE} THEN DATEADD(day, ISNULL(rs.gest, 280), ee.DateAndTime) END"
 _SECADO_ESPERADO = f"DATEADD(day, -ISNULL(rs.secado, 50), {_PARTO_ESPERADO})"
 _ADEMAS_PARTO = ("insem_efectiva", "ajustes")                 # además del bloque `repro`, que es el principal de estos campos
+
+
+def _bloque_promedio(n: int) -> Bloque:
+    """El promedio de los `n` días anteriores a «Calcular al»: igual que el de 7 días (solo días con leche y con el total válido), con otra ventana."""
+    return Bloque(f"prom{n}", f"LEFT JOIN (SELECT d.BasicAnimal AS animal, AVG(d.TotalYield) AS prom{n} FROM AnimalDaily d "
+                              f"WHERE d.GCRecord IS NULL AND d.Date >= DATEADD(day, -{n}, @HOY) AND d.Date < @HOY "
+                              f"AND d.TotalYield > 0 AND d.IsYieldValid = 1 GROUP BY d.BasicAnimal) p{n} ON p{n}.animal = b.OID")
+
+
+# Tanda 2. Costo medido con la base real (muestra de 600 animales): el último recuento de células, 3.600 lecturas y 72 ms; los punteros del índice, nada más que un join por clave.
+# El último «corte» de la puerta de separación y el último diagnóstico recorren 80 y 340 páginas de eventos por animal: no entraron.
+BLOQUES.update({b.id: b for b in (_bloque_promedio(n) for n in (14, 21, 30))})
+BLOQUES.update({
+    "ult_control": Bloque("ult_control", "LEFT JOIN AbstractAnimalEvent ep ON ep.OID = ix.PregCheck AND ep.GCRecord IS NULL", requiere=("indice",)),
+    "ult_descarte": Bloque("ult_descarte", "LEFT JOIN AbstractAnimalEvent ed ON ed.OID = ix.CullDecision AND ed.GCRecord IS NULL", requiere=("indice",)),
+    # El ÚLTIMO control lechero del animal: se busca por animal (una fila), sin agrupar la tabla entera. Los controles cuelgan de `AnimalHistoricalData` (ver CLAUDE.md, «Trampas del esquema»).
+    "ult_scc": Bloque("ult_scc", "OUTER APPLY (SELECT TOP 1 m.SCC AS scc FROM AnimalHistoricalData h JOIN MilkTest m ON m.OID = h.OID "
+                                 "WHERE h.BasicAnimal = b.OID AND h.GCRecord IS NULL ORDER BY h.DateAndTime DESC) sc"),
+})
 
 CATALOGO = {c.id: c for c in (
     Campo("Number", "Número del animal", _GEN, "txt", "CAST(b.Number AS nvarchar(20))", orden_expr="b.Number",
@@ -108,8 +126,8 @@ CATALOGO = {c.id: c for c in (
           nota="1665 de 1665 vacas coinciden con AnimalDaily.LactationNumber (30/07/2026)"),
     Campo("CurrentDIM", "Días en ordeño", _GEN, "num", "DATEDIFF(day, r.LastLactationChangeDate, @HOY)", bloque="repro",
           nota="1664 de 1665 coinciden con AnimalDaily.DIM de DelPro (30/07/2026); falta contra un informe de DelPro"),
-    Campo("LastCalvingDate", "Fecha del último parto", _REP, "fecha", "pa.fecha", bloque="parto",
-          nota="último EventCalving; difiere de AnimalReproductionInfo.LastLactationChangeDate en ~2% de los animales"),
+    Campo("LastCalvingDate", "Fecha del último parto", _REP, "fecha", "pa.DateAndTime", bloque="parto",
+          nota="el último parto del índice de DelPro (coincide con el máximo de los EventCalving en 1.772 de 1.772 animales); difiere de AnimalReproductionInfo.LastLactationChangeDate en ~2% de los animales"),
     Campo("CurrentReproductionStatus", "Estado de la reproducción", _REP, "txt",
           "CASE WHEN r.IsDryingOff = 1 THEN 'Seca' WHEN r.IsPregnant = 1 THEN 'Preñada' "
           "WHEN r.IsInseminated = 1 THEN 'Inseminada' WHEN r.Animal IS NULL THEN NULL ELSE 'Abierta' END",
@@ -158,4 +176,22 @@ CATALOGO = {c.id: c for c in (
           nota="la fecha esperada de parto menos los días de secado que el tambo tiene en DelPro; falta compararla con un informe de DelPro"),
     Campo("DaysToDryOff", "Días para el secado", _REP, "num", f"DATEDIFF(day, @HOY, {_SECADO_ESPERADO})", bloque="repro", bloques=_ADEMAS_PARTO, verificado=False,
           nota="días entre «Calcular al» y la fecha esperada de secado (negativo = ya pasó); falta compararlo con un informe de DelPro"),
+
+    # ---- Tanda 2 (24/11/2026): punteros del índice de DelPro, el último recuento de células y los promedios de 14, 21 y 30 días.
+    Campo("EffectiveInseminationDate", "Fecha de la inseminación efectiva", _REP, "fecha", "ee.DateAndTime", bloque="insem_efectiva",
+          nota="el evento al que apunta el índice de DelPro (LatestHistoryIndex.EffectiveInsemination): la inseminación con la que quedó preñada; es la que usan «Partos y secados» y la proyección"),
+    Campo("LastPregnancyCheckDate", "Fecha del último diagnóstico de gestación", _REP, "fecha", "ep.DateAndTime", bloque="ult_control",
+          nota="el evento al que apunta el índice de DelPro (LatestHistoryIndex.PregCheck)"),
+    Campo("LastCullDecisionDate", "Fecha de la última decisión de descarte", _GEN, "fecha", "ed.DateAndTime", bloque="ult_descarte", verificado=False,
+          nota="la fecha del evento al que apunta el índice de DelPro (LatestHistoryIndex.CullDecision); falta confirmar si DelPro muestra esa fecha o la del descarte previsto"),
+    Campo("DaysPregnant", "Días de preñez", _REP, "num", f"CASE WHEN {_PRENEZ_VIGENTE} THEN DATEDIFF(day, ee.DateAndTime, @HOY) END", bloque="repro", bloques=("insem_efectiva",),
+          verificado=False, nota="días desde la inseminación efectiva hasta «Calcular al», solo de una vaca preñada; la cuenta es nuestra, falta compararla con un informe de DelPro"),
+    Campo("LatestSCC", "Último recuento de células somáticas", _ORD, "num", "sc.scc", bloque="ult_scc", unidad="mil/ml", verificado=False,
+          nota="el SCC del último control lechero del animal (MilkTest, en miles de células por ml, como lo guarda DelPro); falta compararlo con un informe de DelPro"),
+    Campo("CMSFourteenDayAverage", "Promedio producción diaria de leche 14 d.", _ORD, "num", "p14.prom14", bloque="prom14", unidad="kg", decimales=1, verificado=False,
+          nota="igual que el de 7 días (días con leche y con el total válido, de los 14 anteriores a «Calcular al»); falta compararlo con un informe de DelPro"),
+    Campo("CMSTwentyOneDayAverage", "Promedio producción diaria de leche 21 d.", _ORD, "num", "p21.prom21", bloque="prom21", unidad="kg", decimales=1, verificado=False,
+          nota="igual que el de 7 días, con 21 días; falta compararlo con un informe de DelPro"),
+    Campo("CMSThirtyDayAverage", "Promedio producción diaria de leche 30 d.", _ORD, "num", "p30.prom30", bloque="prom30", unidad="kg", decimales=1, verificado=False,
+          nota="igual que el de 7 días, con 30 días; falta compararlo con un informe de DelPro"),
 )}

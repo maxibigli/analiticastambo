@@ -358,6 +358,16 @@ DelPro (`InMilk`, `ToBeCulled`, `IsPregnant`, `IsDryingOff`, `BirthDate`, `ExitD
 * **Efecto sobre el importador (volcado):** los informes de animales con TODAS sus columnas en el catálogo pasan de 4 a 9 de 59. La mejora grande se espera en los filtros: casi todos los de DelPro hablan de estos campos.
 * **Quedó afuera a propósito:** la leche «de ayer» y «de hoy» (nombre relativo: un informe guardado se lee días después). **Tanda 2** (en cuántos informes): diagnóstico 9, `LastCutIdTime` 8, leche de ayer/hoy 6, `CMSTransponderID` 6, promedios de 14/21/30 días, `LatestSCC` 5, `IsBred` 4.
 
+## Tanda 2 de campos y el costo en la base (24/11/2026)
+
+**Costo.** Se midió con la base real (`SET STATISTICS IO`, muestra de 600 animales o el informe completo de 2.000 filas) el SQL que genera el motor para cada grupo de campos. Un campo del catálogo **no cuesta nada si el informe no lo usa**: la consulta une solo los bloques que las columnas pedidas necesitan. Lo
+que cuesta cuando se usa: el núcleo del animal, 315 lecturas de página; los bloques por clave (reproducción, índice de últimos eventos, resumen de lactancia, inseminación efectiva), 400 a 7.000 lecturas y menos de 100 ms de CPU; el promedio de 7 días, 3.800 lecturas. **Lo único pesado era la «Fecha del último parto»** (agrupaba
+todos los eventos de parto de la base: en un SQL Express con poca memoria quedaba esperando el permiso de memoria por minutos); ahora sale del índice de últimos eventos de DelPro (coincide en 1.772 de 1.772 animales) y es un join por clave. Las cifras son de una PC con SQL Server casi sin RAM; en SERVER-DELPRO no se midieron.
+Los otros dos campos candidatos recorren decenas de páginas de eventos por animal (el último «corte» de la puerta de separación, 80 por animal; el último diagnóstico, 340) y quedaron para una tanda 3 que necesita un índice, un tope de fecha o una copia diaria.
+**Regla de diseño:** nunca agrupar una tabla de eventos entera; el «último» de algo se busca por animal (puntero del índice de DelPro o `OUTER APPLY TOP 1`).
+
+**Tanda 2 (33 campos en total):** `EffectiveInseminationDate`, `LastPregnancyCheckDate`, `LastCullDecisionDate` (punteros del índice de DelPro), `DaysPregnant`, `LatestSCC` (último control lechero, en miles/ml) y los promedios de 14, 21 y 30 días. Los promedios y los días son cuentas nuestras (⚠ hasta compararlos con un informe de DelPro).
+
 ## Pendientes de la Fase 4: lo que decide el tambo o falta probar
 
 1. **Probar en SERVER-DELPRO (en este orden):** (a) `git pull` y `actualizar.bat` **como Administrador**; verificar con el `Get-CimInstance` de `CLAUDE.md` que hay UN solo `servidor.py` y es nuevo (el hilo `envios-informes` arranca ahí, nunca al importar
