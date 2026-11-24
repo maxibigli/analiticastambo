@@ -4222,12 +4222,13 @@ funciona con el dedo en un celular (ahí están ▲▼). Pruebas: `tests/test_io
 Diseñador de informes como el de DelPro, en la web: el usuario elige campos de un árbol, filtra, ordena, agrupa, resume, agrega campos calculados y
 **guarda cada informe con nombre**. Diseño y estado por fase: `docs/superpowers/specs/2026-11-23-reportes-design.md`. Pantalla propia `/informes/`
 (`templates/informes.html`, solo administrador; el menú principal la muestra en un marco con `?embebido=1`, primer grupo, después de «Consultas e IA»).
-**Fases 0 a 2 hechas. Faltan la 3 (gráficos con rango de fechas) y la 4 (importar los informes de DelPro, armarlos por lenguaje natural, envío programado).**
+**Fases 0 a 3 hechas. Falta la 4 (importar los informes de DelPro, armarlos por lenguaje natural, envío programado).**
 
 **Piezas.** `informes_catalogo.py` (la lista CERRADA de campos y los «bloques» de datos), `informes_motor.py` (compila una definición y la ejecuta),
 `informes_formula.py` (traductor de las fórmulas de campos calculados), `informes_guardados.py` (SQLite propio `informes.db`, fuera de git, por tambo:
-nunca en DDM), `informes_excel.py` (exportación). API, todas de administrador: `GET /api/informes/campos`, `POST /api/informes/ejecutar`, `/exportar`,
-`/formula`, y `GET/POST /api/informes`, `GET/PUT /api/informes/<id>`. No hay «eliminar» (regla de no borrar: se resolvería archivando).
+nunca en DDM), `informes_excel.py` (exportación), `informes_serie.py` y `static/js/informes_grafico.js` (el gráfico). API, todas de administrador:
+`GET /api/informes/campos`, `POST /api/informes/ejecutar`, `/exportar`, `/formula`, `/serie`, y `GET/POST /api/informes`, `GET/PUT /api/informes/<id>`.
+No hay «eliminar» (regla de no borrar: se resolvería archivando).
 
 **LA REGLA: la definición es JSON y los valores NUNCA son SQL.** Campo y operador se buscan en listas cerradas; un valor se valida y se escribe como literal
 (`db.run_query` no tiene parámetros y `validate_sql` prohíbe hasta palabras como `insert` dentro de un texto). Una definición pasa por `compilar` antes de
@@ -4257,14 +4258,34 @@ cada página. **Ningún valor se escribe como fórmula**: un texto que empiece c
 calculado. Cada cifra de resumen dice cuál es («Prom. 27,5») y sigue siendo un número. **El Excel de la PC de desarrollo está sin licencia** (modo reducido: no imprime ni exporta
 y rechaza llamadas COM): no sirve para verificar, hay que leer el `.xlsx` con openpyxl.
 
+**El gráfico (Fase 3)** es una pestaña hija del informe («Graficar»): la producción de leche POR DÍA de los animales del informe en un rango de fechas
+(30, 90, 180, 365 días, «todo» = hasta dos años, o desde-hasta a mano). Parte de `AnimalDaily` y **el servidor entrega solo números diarios**: por día y por serie, las
+vacas con lectura válida, los kg de esas vacas y los kg de TODA la leche medida (`informes_serie.py`, `POST /api/informes/serie`, nunca el SQL). **La medida (kg por vaca,
+total, vacas), el resumen (promedio, suma, mínimo, máximo), el intervalo (día, semana, mes) y la forma (línea, área, barras) se resuelven en la pantalla**
+(`static/js/informes_grafico.js`, módulo puro con pruebas en Node: `tests/js/informes_grafico.test.js`, lanzadas por `tests/test_informes_grafico_js.py`): cambiarlos
+no vuelve a la base. Solo la serie (rodeo, lactancia, todo junto), el período, la población y el «Calcular al» piden datos nuevos, y avisan en vez de recalcular solos.
+La configuración (`grafico`) se guarda CON el informe, validada (`informes_serie.validar`), y no cuenta como parte de la tabla.
+  * **Qué animales.** Con condiciones en el informe y «solo los animales del informe», la consulta se restringe a los que HOY las cumplen (`informes_motor.poblacion_sql`: la
+    misma población que filtra la lista; `_donde` y `_unir` se compartieron a propósito). Sin condiciones NO se restringe: son todas las vacas del tambo con su historia,
+    también las que se vendieron después, para que el total de cada día sea el que tuvo el tambo. El rebaño sale del grupo DE ESE DÍA (`ag.Herd`).
+  * **El rodeo es el de ese día** (`AnimalDaily.AnimalGroup`), no el de hoy. La lactancia: 1ª, 2ª y «3ª o más». Más de 8 series: las 7 de más leche y «Otros».
+  * **Dos formas de contar la leche, a propósito.** Los kg «por vaca» y las vacas usan solo lecturas válidas (`IsYieldValid = 1`); el total incluye también las no válidas, que son
+    ordeños reales con el total del día incompleto (3 a 4 % de los kg en La Ponderosa, 2.000 a 3.000 kg por día), como DelPro (`balance_leche.py`). En esta base `AnimalDaily` no tiene leche de vacas sin identificar.
+  * **Días a medio cargar.** DelPro consolida con atraso y el último día suele estar a medias. Se juzga por las vacas con CUALQUIER lectura contra el 60 % de la mediana (`PISO_DIA`); si
+    se juzgara por las válidas se ocultaría el 25/05/2026, que tiene la leche medida (10.112 kg contra ~12.000) pero casi la mitad de las vacas con el total del día no válido. En la copia local solo
+    marca el **27/07/2026** (8.596 kg contra ~61.000: el día al que le faltan ordeños enteros, ya documentado). Esos días no se grafican (hueco y franja amarilla) ni cuentan en el promedio de su semana.
+
 **Cosas que costaron encontrar:**
   * **El número de animal NO es único entre rebaños** de la misma base: todo informe filtra por rebaño (`rebano.filtro`).
   * El motor trae TODOS los animales del rebaño (5.645 en la copia local: crianza, piquetes, recría…); el informe de lactancia de DelPro trae solo vacas en ordeño (1.779 con lactancia).
     Hoy se acota con una condición (por ejemplo `Días en ordeño ≥ 0`); falta un filtro «en ordeño».
   * **SQL Express sin memoria**: una consulta puede quedarse en `RESOURCE_SEMAPHORE` (espera memoria de trabajo) por minutos, y la pantalla dice «Calculando…» sin límite. No es un error del informe.
+    Además, **DelPro deja las bases con `AUTO_CLOSE`**: al cerrarse la última conexión SQL cierra la base y el siguiente login tiene que reabrirla, lo que con poca RAM supera los 10 s de `db.py`
+    («login timeout» aunque el servicio esté andando). Para trabajar con la copia local ayuda dejar UNA conexión ociosa abierta (un `SELECT 1` cada tanto) y soltarla al terminar.
     En la PC de desarrollo `DDM` volvió a quedar en `RECOVERY_PENDING`: se arregla con `ALTER DATABASE [DDM] SET ONLINE` conectando a `master` (el login tiene a `DDM` de base predeterminada y no entra sin `-d master`).
   * Abrir la pantalla principal (`/`) dispara varias consultas pesadas que comparten UNA cola hacia SQL: para probar `/informes/` con la base real no hay que pasar por ahí.
   * La plantilla es un solo `<script>`: nada de `{{` ni `{%` en el JavaScript (la rompe con un 500). `tests/test_informes_pagina.py` lo vigila y además comprueba que cada botón y selector tenga su manejador.
 
 **Pruebas:** `tests/test_informes_*.py` (motor; catálogo, que comprueba que cada combinación de campo, resumen y agrupación pase `db.validate_sql`; fórmula, con un fuzz de 7.500 casos;
-guardados; API; Excel; página). Verificación contra la base real y números: ver «Fase 2» en el documento de diseño.
+guardados; API; Excel; serie; página; y el módulo JavaScript del gráfico, con Node: se salta si esta PC no lo tiene). Verificación contra la base real y números: ver «Fase 2» y «Fase 3» en el
+documento de diseño. **Lo que NO se verificó:** que el gráfico coincida con uno de DelPro del mismo período; solo que SQL coincide con un recálculo independiente sobre las filas crudas.

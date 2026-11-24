@@ -14,10 +14,11 @@ import re
 import sqlite3
 
 import informes_motor
+import informes_serie
 
 RUTA_DB = os.path.join(os.path.dirname(os.path.abspath(__file__)), "informes.db")
 NOMBRE_MAX = 60
-CLAVES_DEFINICION = ("columnas", "calculados", "agrupar_por", "detalle", "condiciones", "orden", "incluir_descartados", "limite")
+CLAVES_DEFINICION = ("columnas", "calculados", "agrupar_por", "detalle", "condiciones", "orden", "incluir_descartados", "limite", "grafico")
 
 
 class InformeGuardadoError(ValueError):
@@ -79,7 +80,11 @@ def _definicion(defn) -> dict:
     limpia = {k: defn[k] for k in CLAVES_DEFINICION if k in defn}
     try:
         informes_motor.compilar(limpia)
-    except informes_motor.InformeError as e:
+        if limpia.get("grafico") is None:
+            limpia.pop("grafico", None)                      # sin gráfico configurado: no se guarda nada
+        else:
+            limpia["grafico"] = informes_serie.validar(limpia["grafico"])       # completa y limpia, y que se pueda volver a correr
+    except (informes_motor.InformeError, informes_serie.SerieError) as e:
         raise InformeGuardadoError(str(e)) from e
     return limpia
 

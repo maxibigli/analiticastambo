@@ -99,6 +99,7 @@ import informes_excel
 import informes_formula
 import informes_guardados
 import informes_motor
+import informes_serie
 import telegram_bot
 import whatsapp
 import whatsapp_ia
@@ -6724,6 +6725,25 @@ def api_informes_formula():
         return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True, "campos": [{"id": u, "etiqueta": catalogo[u].etiqueta} for u in usados],
                     "verificado": all(catalogo[u].verificado for u in usados)})
+
+
+@app.post("/api/informes/serie")
+@auth.requiere_rol("admin")
+def api_informes_serie():
+    """La producción DIARIA de los animales de un informe, para graficarla en un rango de fechas (`informes_serie`). El cuerpo es la
+    definición del informe más `grafico` (la configuración del gráfico, opcional) y `hoy` (el «hoy» de los datos, opcional). Devuelve los
+    números por día y por serie; la pantalla calcula la medida, el intervalo y las estadísticas. Nunca devuelve el SQL."""
+    cuerpo = _cuerpo_json_o_400()
+    if cuerpo is None:
+        return jsonify({"error": "El informe tiene que enviarse como JSON."}), 400
+    informe = {k: v for k, v in cuerpo.items() if k not in ("hoy", "grafico", "nombre", "tambo")}
+    try:
+        r = informes_serie.ejecutar_serie(informe, cuerpo.get("grafico"), _tambo_del_request(), hoy=cuerpo.get("hoy"))
+    except (informes_motor.InformeError, informes_serie.SerieError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:  # noqa: BLE001  -- el detalle (servidor, usuario) no se le muestra a nadie
+        return jsonify({"error": "No se pudo leer la base de datos para este gráfico."}), 502
+    return jsonify(r)
 
 
 def _cuerpo_json_o_400():

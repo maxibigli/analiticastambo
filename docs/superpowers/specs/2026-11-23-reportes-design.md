@@ -57,7 +57,7 @@ DelPro guarda su propio diseñador de informes dentro de la base:
   «Prod. x lactancia» y comparándolo campo por campo con DelPro. Sin pantalla nueva, sin guardado. Valida el enfoque y la velocidad.
 * Fase 1: pantalla (pestañas, árbol, filtros) y guardado con nombre, exportar a Excel.
 * Fase 2: resúmenes, agrupación, totales, campos calculados. **Hecha** (ver «Fase 2: estado»).
-* Fase 3: nivel «Animal por día» y gráficos con rango de fechas.
+* Fase 3: nivel «Animal por día» y gráficos con rango de fechas. **Hecha** (ver «Fase 3: estado»), sin un nivel «Animal por día» general.
 * Fase 4: importar los informes de DelPro, armarlos por lenguaje natural, envío programado.
 
 ## Fase 0: plan y criterio de aceptación
@@ -174,6 +174,47 @@ combinación de campo, resumen y agrupación pase `db.validate_sql`; la fórmula
 * El informe trae todos los animales del rebaño (crianza, piquetes…) salvo que una condición lo acote; falta un filtro «en ordeño».
 * El Excel se verificó leyendo el `.xlsx` y abriendo uno de los archivos en Excel, que en la PC de desarrollo está sin licencia y no deja imprimir
   ni exportar: la impresión apaisada y el plegado de grupos no se vieron en una hoja real.
+
+## Fase 3: estado al 24/11/2026
+
+El gráfico de un informe, en su propia pestaña («Graficar», al lado de la tabla), como en la maqueta elegida (v2): medida, resumen, una serie por…,
+intervalo, forma y período arriba; el gráfico con su leyenda (que prende y apaga series) y una tabla de estadísticas abajo.
+
+**Qué grafica.** La producción de leche **por día** de los animales del informe, en un rango de fechas. No se hizo un nivel «Animal por día» general en el catálogo
+(como pensaba la lista de fases): `AnimalDaily` tiene muy pocos datos diarios (`TotalYield`, `DIM`, `DSLC`, `LactationNumber`, `Duration`, `AvgYieldPrev7d`, el rodeo de ese día
+y si la lectura es válida), y solo la leche está verificada. Se resolvió con un módulo propio, `informes_serie.py`.
+
+* **El servidor entrega números diarios, la pantalla hace el resto.** `POST /api/informes/serie` devuelve, por día y por serie, las vacas con lectura válida, los kg de esas vacas y los
+  kg de toda la leche medida. La medida, el resumen, el intervalo (día, semana de lunes a domingo, mes), la forma y las estadísticas se resuelven en `static/js/informes_grafico.js`,
+  un módulo puro con sus pruebas (Node): cambiarlos no vuelve a la base, que es lenta. Solo la serie, el período, la población y el «Calcular al» piden datos nuevos.
+* **Series:** rodeo **de ese día** (`AnimalDaily.AnimalGroup`), lactancia (1ª, 2ª, 3ª o más) o todo junto; más de 8, las 7 de más leche y «Otros».
+* **Medidas:** producción por vaca (kg de lecturas válidas ÷ vacas con lectura válida), producción total (**toda** la leche medida, también las lecturas no válidas, como DelPro:
+  son 3 a 4 % de los kg en La Ponderosa) y vacas en ordeño (válidas).
+* **Población.** Con condiciones en el informe y «Solo los animales del informe» (tildado por defecto), la consulta se restringe a los que **hoy** las cumplen: la misma población que filtra la
+  lista (`informes_motor.poblacion_sql`, que comparte con `compilar` el filtro y los bloques). Sin condiciones no se restringe: son todas las vacas del tambo con su historia, también las que
+  se vendieron después, para que el total de cada día sea el que tuvo el tambo. La pantalla dice cuál de las dos es y cuántos animales son.
+* **Días a medio cargar.** DelPro consolida con atraso y el último día suele estar a medias. Un día se marca cuando sus vacas con cualquier lectura son menos del 60 % de la mediana del período; no se grafica
+  (hueco y franja amarilla), no cuenta en el promedio de su semana y se nombra bajo el título. Se juzga por lecturas y no por vacas válidas a propósito: el 25/05/2026 casi la mitad de las vacas tiene el
+  total del día no válido, pero la leche está medida (10.112 kg contra ~12.000) y ocultarlo sería esconder un dato real; el 27/07/2026, en cambio, faltan ordeños enteros (8.596 kg contra ~61.000). Es el único
+  día que marca la copia local, y es el hueco que ya estaba documentado.
+* **Período:** 30, 90, 180, 365 días, «todo» (hasta dos años) o desde-hasta a mano, hasta 731 días. El final es el «Calcular al» del informe (vacío = hoy).
+* **Se guarda con el informe** (`grafico` en la definición, validado: lo guardado siempre se puede volver a correr) y no cuenta como parte de la tabla ni la marca «sin guardar» al abrirlo.
+
+**Verificado contra la base real** (copia local, «hoy» = 30/07/2026, 90 días, 120.726 filas crudas de `AnimalDaily`): las tres formas de dividir (rodeo, lactancia, todo) × con y sin la población del informe
+(379 animales con `Días en ordeño ≥ 300`) = seis casos, **1.724 celdas día-serie comparadas contra un recálculo independiente en Python sobre las filas crudas: 0 diferencias**, y los kg totales idénticos
+(4.747.735,2 y 968.593,8). Cada consulta tarda 0,5 a 1,2 s. La pantalla se probó en el navegador (con 90 animales de ejemplo, porque el SQL local se quedó sin memoria): abrir el gráfico, medida, resumen, intervalo,
+forma, leyenda, tooltip, serie, períodos, fechas a mano, rango imposible (mensaje del servidor), guardar y reabrir, informe sin condiciones y el ancho de celular.
+
+**Pruebas:** 292 de informes en Python (motor 86, catálogo 13, fórmula 20, guardados 22, API 38, Excel 51, página 14, serie 46, módulo JavaScript 2) más **29 en Node** del módulo del gráfico (semana que cruza
+el fin de año, días rotos que no arrastran un promedio, huecos que cortan la línea, escala del eje…). Se comprobó con mutaciones que cada grupo de pruebas detecta cambios de comportamiento (4 en Python, 7 en JavaScript).
+
+**Límites conocidos:**
+* **No se comparó contra un gráfico de DelPro del mismo período**: se verificó que el cálculo coincide con las filas crudas de `AnimalDaily`, no que coincida con lo que muestra DelPro.
+* Solo leche. `AnimalDaily` también trae `DIM`, `Duration` y `AvgYieldPrev7d`, pero sin verificar contra DelPro no se ofrecen.
+* Con condiciones, los animales que ya salieron del rebaño no figuran (la población es la de hoy).
+* El gráfico no se exporta a Excel ni a imagen.
+* Si el servidor tarda (SQL Express sin memoria), la pantalla dice «Calculando…» sin límite de tiempo.
+* Barras diarias con varias series quedan muy densas: están pensadas para semana o mes.
 
 ## Riesgos
 

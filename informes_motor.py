@@ -175,6 +175,75 @@ def _sql_resumen(f, kind, H) -> str:
     return f"{kind.upper()}(CAST(({e}) AS float))"
 
 
+def _contexto(defn, campos, bloques, hoy) -> tuple:
+    """Lo que necesitan todas las consultas de un informe: (reemplazo de `@HOY`, bloques, campos del catálogo, catálogo + calculados).
+
+    `@HOY` se reemplaza SOLO en el texto del catálogo, nunca dentro de un valor puesto por el usuario."""
+    ref = _fecha_ref(hoy)
+    H = lambda s: s.replace("@HOY", ref)
+    base = cat.CATALOGO if campos is None else campos
+    todos = dict(cat.BLOQUES_NUCLEO)
+    todos.update(cat.BLOQUES if bloques is None else bloques)
+    if not isinstance(defn, dict):
+        raise InformeError("La definición del informe no es válida.")
+    todos_los_campos = dict(base)
+    todos_los_campos.update(_calculados(defn, base))
+    return H, todos, base, todos_los_campos
+
+
+def _donde(defn, campos, H, herd) -> tuple:
+    """La POBLACIÓN del informe, o sea qué animales entran: (cláusulas del WHERE, bloques que sus condiciones necesitan).
+
+    Las mismas reglas para la lista, los resúmenes y el gráfico: no puede haber dos criterios de «los animales de este informe»."""
+    where = ["b.GCRecord IS NULL", "b.Number > 0"]
+    bloques_cond = []
+    for cd in _como_lista(defn.get("condiciones", []), "condiciones", CONDICIONES_MAX):
+        if not isinstance(cd, dict):
+            raise InformeError("Cada condición tiene que indicar campo, operador y valor.")
+        f = _campo(campos, cd.get("campo"))
+        op = cd.get("op")
+        lit = _literal(f, op, cd.get("valor"))
+        bloques_cond += _bloques_de(f)
+        if f.tipo == "txt":
+            where.append(f"{H(f.expr)} {'LIKE' if op == 'contiene' else '='} {lit}")
+        else:
+            where.append(f"{H(f.expr)} {op} {lit}")
+    import rebano
+    incluir = defn.get("incluir_descartados", False)
+    if not isinstance(incluir, bool):
+        raise InformeError("«incluir_descartados» tiene que ser verdadero o falso.")
+    h = None if herd is _AUTO else herd
+    where.append(rebano.filtro_historico("b", h) if incluir else rebano.filtro("b", h))
+    return where, bloques_cond
+
+
+def _unir(todos, H, ids_bloques) -> str:
+    """Los LEFT JOIN de esos bloques (y de los que ellos requieren), en orden y sin repetir."""
+    joins = []
+
+    def uno(id_b, pila=()):
+        if not id_b or any(id_b == j for j, _ in joins):
+            return
+        if id_b not in todos or id_b in pila:
+            raise InformeError(f"Falta el bloque de datos «{id_b}» en el catálogo.")
+        for req in todos[id_b].requiere:
+            uno(req, pila + (id_b,))
+        joins.append((id_b, H(todos[id_b].join)))
+    for id_b in ids_bloques:
+        uno(id_b)
+    return "".join(j + "\n" for _, j in joins)
+
+
+def poblacion_sql(defn, campos=None, bloques=None, herd=_AUTO, hoy=None) -> str:
+    """`SELECT b.OID ...`: los animales que cumplen las condiciones del informe, para usar como subconsulta (`... IN (...)`).
+
+    Solo mira las condiciones, los descartados y el rebaño; ignora columnas, orden, límite y agrupación. Lo usa el gráfico para
+    seguir, día por día, a los animales del informe."""
+    H, todos, _, campos = _contexto(defn, campos, bloques, hoy)
+    where, bloques_cond = _donde(defn, campos, H, herd)
+    return "SELECT b.OID\nFROM BasicAnimal b\n" + _unir(todos, H, bloques_cond) + "WHERE " + "\n  AND ".join(where)
+
+
 def compilar(defn, campos=None, bloques=None, herd=_AUTO, hoy=None) -> dict:
     """Valida `defn` y arma las consultas.
 
@@ -183,15 +252,7 @@ def compilar(defn, campos=None, bloques=None, herd=_AUTO, hoy=None) -> dict:
 
     `hoy`: el «hoy» de los datos. Las expresiones del catálogo usan la marca `@HOY` para los días en ordeño y los promedios
     de los últimos días; se reemplaza SOLO en el texto del catálogo, nunca dentro de un valor puesto por el usuario."""
-    ref = _fecha_ref(hoy)
-    H = lambda s: s.replace("@HOY", ref)
-    base = cat.CATALOGO if campos is None else campos
-    todos = dict(cat.BLOQUES_NUCLEO)
-    todos.update(cat.BLOQUES if bloques is None else bloques)
-    if not isinstance(defn, dict):
-        raise InformeError("La definición del informe no es válida.")
-    campos = dict(base)
-    campos.update(_calculados(defn, base))
+    H, todos, base, campos = _contexto(defn, campos, bloques, hoy)
 
     cols = _como_lista(defn.get("columnas"), "columnas", COLUMNAS_MAX)
     if not cols:
@@ -233,19 +294,7 @@ def compilar(defn, campos=None, bloques=None, herd=_AUTO, hoy=None) -> dict:
     if not detalle and not grupos and not con_resumen:
         raise InformeError("Un informe sin detalle necesita agrupar o tener al menos una columna con resumen.")
 
-    where = ["b.GCRecord IS NULL", "b.Number > 0"]
-    bloques_cond = []
-    for cd in _como_lista(defn.get("condiciones", []), "condiciones", CONDICIONES_MAX):
-        if not isinstance(cd, dict):
-            raise InformeError("Cada condición tiene que indicar campo, operador y valor.")
-        f = _campo(campos, cd.get("campo"))
-        op = cd.get("op")
-        lit = _literal(f, op, cd.get("valor"))
-        bloques_cond += _bloques_de(f)
-        if f.tipo == "txt":
-            where.append(f"{H(f.expr)} {'LIKE' if op == 'contiene' else '='} {lit}")
-        else:
-            where.append(f"{H(f.expr)} {op} {lit}")
+    where, bloques_cond = _donde(defn, campos, H, herd)
 
     orden = defn.get("orden")
     if orden is None:
@@ -262,29 +311,6 @@ def compilar(defn, campos=None, bloques=None, herd=_AUTO, hoy=None) -> dict:
     if isinstance(limite, bool) or not isinstance(limite, int) or not 1 <= limite <= LIMITE_MAX:
         raise InformeError(f"El límite de filas tiene que estar entre 1 y {LIMITE_MAX}.")
 
-    import rebano
-    incluir = defn.get("incluir_descartados", False)
-    if not isinstance(incluir, bool):
-        raise InformeError("«incluir_descartados» tiene que ser verdadero o falso.")
-    h = None if herd is _AUTO else herd
-    where.append(rebano.filtro_historico("b", h) if incluir else rebano.filtro("b", h))
-
-    def unir(ids_bloques):
-        """Los LEFT JOIN de esos bloques (y de los que ellos requieren), en orden y sin repetir."""
-        joins = []
-
-        def uno(id_b, pila=()):
-            if not id_b or any(id_b == j for j, _ in joins):
-                return
-            if id_b not in todos or id_b in pila:
-                raise InformeError(f"Falta el bloque de datos «{id_b}» en el catálogo.")
-            for req in todos[id_b].requiere:
-                uno(req, pila + (id_b,))
-            joins.append((id_b, H(todos[id_b].join)))
-        for id_b in ids_bloques:
-            uno(id_b)
-        return "".join(j + "\n" for _, j in joins)
-
     bloques_grupo = [b for f in grupos for b in _bloques_de(f)]
     clausula_where = "WHERE " + "\n  AND ".join(where)
     gexprs = [H(f.expr) for f in grupos]
@@ -294,7 +320,7 @@ def compilar(defn, campos=None, bloques=None, herd=_AUTO, hoy=None) -> dict:
         bloques_det = [b for u in usados for b in _bloques_de(campos[u])] + bloques_cond + bloques_grupo
         sel = exprs + [f"{ge} AS g{k}" for k, ge in enumerate(gexprs)]
         orden_sql = "".join(f"CASE WHEN {ge} IS NULL THEN 1 ELSE 0 END, {ge}, " for ge in gexprs)
-        sql = (f"SELECT TOP ({limite + 1}) " + ", ".join(sel) + "\nFROM BasicAnimal b\n" + unir(bloques_det) + clausula_where +
+        sql = (f"SELECT TOP ({limite + 1}) " + ", ".join(sel) + "\nFROM BasicAnimal b\n" + _unir(todos, H, bloques_det) + clausula_where +
                f"\nORDER BY {orden_sql}CASE WHEN {o_expr} IS NULL THEN 1 ELSE 0 END, {o_expr} {o_dir}")
 
     sql_resumen, resumenes = None, []
@@ -307,7 +333,7 @@ def compilar(defn, campos=None, bloques=None, herd=_AUTO, hoy=None) -> dict:
             sel.append(f"{_sql_resumen(f, kind, H)} AS s{j}")
             resumenes.append({"alias": f"s{j}", "columna": f"c{i}", "resumen": kind})
         bloques_res = [b for _, f, _ in con_resumen for b in _bloques_de(f)] + bloques_cond + bloques_grupo
-        sql_resumen = ("SELECT " + ", ".join(sel) + "\nFROM BasicAnimal b\n" + unir(bloques_res) + clausula_where +
+        sql_resumen = ("SELECT " + ", ".join(sel) + "\nFROM BasicAnimal b\n" + _unir(todos, H, bloques_res) + clausula_where +
                        (f"\nGROUP BY ROLLUP({', '.join(gexprs)})" if gexprs else ""))
     return {"sql": sql, "sql_resumen": sql_resumen, "columnas": metas, "agrupar": metas_grupo, "resumenes": resumenes,
             "limite": limite}

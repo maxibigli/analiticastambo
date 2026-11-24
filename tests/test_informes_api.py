@@ -250,6 +250,84 @@ class TestExportar(BaseGuardados):
         self.assertNotIn("SECRETO", r.get_data(as_text=True))
 
 
+class TestSerie(BaseGuardados):
+    """`POST /api/informes/serie`: la producción diaria de los animales del informe, para el gráfico. El motor y el módulo de la serie son
+    los de verdad; lo único falso es la base, y cada consulta pasa antes por el validador de SQL de db.py."""
+
+    FILAS = [["2026-07-29", "7", "Rodeo 1", 100, 4000.0, 4100.0, 102], ["2026-07-30", "7", "Rodeo 1", 110, 4400.0, 4500.0, 112],
+             ["2026-07-30", "8", "Rodeo 2", 50, 1900.0, 1950.0, 51]]
+    CUERPO = {"columnas": [{"campo": "Number"}], "hoy": "2026-07-30", "grafico": {"periodo": "30", "solo_informe": False}}
+
+    def pedir(self, cliente=None, filas=None, conteo=0, **kw):
+        vistas = []
+
+        def run(sql, validate=True, tambo=None, max_rows=None):
+            db.validate_sql(sql)
+            vistas.append(sql)
+            if "COUNT(*) AS n" in sql:
+                return {"columns": ["n"], "rows": [[conteo]], "truncated": False}
+            return {"columns": [], "rows": self.FILAS if filas is None else filas, "truncated": False}
+        cuerpo = dict(self.CUERPO)
+        cuerpo.update(kw)
+        with mock.patch.object(db, "run_query", run):
+            r = (cliente or self.admin).post("/api/informes/serie", json=cuerpo)
+        return r, vistas
+
+    def test_exige_ser_administrador(self):
+        self.assertEqual(self.pedir(self.anon)[0].status_code, 401)
+        self.assertEqual(self.pedir(self.operario)[0].status_code, 403)
+
+    def test_devuelve_la_serie_alineada_por_dia(self):
+        r, vistas = self.pedir()
+        self.assertEqual(r.status_code, 200, r.data[:300])
+        j = r.get_json()
+        self.assertEqual(len(vistas), 1)
+        self.assertEqual((j["desde"], j["hasta"]), ("2026-07-01", "2026-07-30"))
+        self.assertEqual(len(j["fechas"]), 30)
+        self.assertEqual([s["etiqueta"] for s in j["series"]], ["Rodeo 1", "Rodeo 2"])
+        self.assertEqual(j["series"][0]["vacas"][-2:], [100, 110])
+        self.assertEqual(j["series"][1]["vacas"][-2:], [None, 50])
+        self.assertEqual(j["poblacion"], {"restringida": False, "animales": None})
+
+    def test_nunca_devuelve_el_sql(self):
+        r, _ = self.pedir()
+        self.assertNotIn("SELECT", r.get_data(as_text=True))
+        self.assertNotIn("sql", r.get_json())
+
+    def test_con_condiciones_restringe_a_los_animales_del_informe(self):
+        r, vistas = self.pedir(conteo=412, condiciones=[{"campo": "CurrentDIM", "op": ">=", "valor": 300}], grafico={"periodo": "30"})
+        self.assertEqual(r.status_code, 200, r.data[:300])
+        self.assertEqual(len(vistas), 2)
+        self.assertIn("ad.BasicAnimal IN (SELECT b.OID", vistas[0])
+        self.assertEqual(r.get_json()["poblacion"], {"restringida": True, "animales": 412})
+
+    def test_sin_configuracion_del_grafico_usa_la_de_siempre(self):
+        r, _ = self.pedir(grafico=None)
+        self.assertEqual(r.status_code, 200, r.data[:300])
+        self.assertEqual(len(r.get_json()["fechas"]), 90)
+
+    def test_el_nombre_y_el_tambo_del_cuerpo_no_cuentan_como_informe(self):
+        r, _ = self.pedir(nombre="Prod. x lactancia", tambo="otro")
+        self.assertEqual(r.status_code, 200, r.data[:300])
+
+    def test_pedidos_malos_son_un_400_con_el_motivo(self):
+        for malo in ({"grafico": {"medida": "litros"}}, {"grafico": {"periodo": "fechas"}}, {"grafico": "texto"}, {"hoy": "ayer"},
+                     {"condiciones": [{"campo": "NoExiste", "op": "=", "valor": 1}], "grafico": {}}):
+            r, _ = self.pedir(**malo)
+            self.assertEqual(r.status_code, 400, str(malo))
+            self.assertTrue(r.get_json()["error"])
+
+    def test_no_es_json(self):
+        r = self.admin.post("/api/informes/serie", data="no es json", content_type="text/plain")
+        self.assertEqual(r.status_code, 400)
+
+    def test_un_error_de_la_base_no_filtra_el_detalle(self):
+        with mock.patch.object(db, "run_query", side_effect=RuntimeError("Server=SECRETO;Pwd=xyz")):
+            r = self.admin.post("/api/informes/serie", json=self.CUERPO)
+        self.assertEqual(r.status_code, 502)
+        self.assertNotIn("SECRETO", r.get_data(as_text=True))
+
+
 class TestExportarAgrupado(BaseGuardados):
     """De punta a punta con el catálogo REAL: el pedido → el motor (que compila y corre) → el Excel. Lo único falso es la base, y
     cada consulta que el motor arma pasa antes por el validador de SQL de db.py, como pasaría en producción."""

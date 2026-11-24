@@ -500,6 +500,74 @@ class TestEjecutarConResumenes(unittest.TestCase):
         self.assertEqual(r["totales"]["n"], 9)                                    # el total cuenta TODOS los animales, no solo los 2 que se ven
 
 
+class TestPoblacion(unittest.TestCase):
+    """`poblacion_sql`: los animales del informe como subconsulta (`SELECT b.OID ...`), para el gráfico. Aplica las condiciones, el
+    rebaño y los bloques igual que `compilar`: no puede haber dos criterios distintos de «los animales de este informe»."""
+
+    def pob(self, **kw):
+        d = {"columnas": [{"campo": "Number"}]}
+        d.update(kw)
+        return im.poblacion_sql(d, CAT, BLOQUES, herd=1)
+
+    def test_es_una_subconsulta_de_oid_lista_para_un_in(self):
+        sql = self.pob()
+        self.assertTrue(sql.startswith("SELECT b.OID\nFROM BasicAnimal b"))
+        for no_va in ("TOP", "ORDER BY", " AS c0", "GROUP BY"):
+            self.assertNotIn(no_va, sql)                                  # dentro de un IN (...) no puede haber TOP ni ORDER BY
+        for va in ("b.GCRecord IS NULL", "b.Number > 0", "g_tb.Herd = 1"):
+            self.assertIn(va, sql)
+
+    def test_sin_condiciones_no_une_nada(self):
+        self.assertNotIn("LEFT JOIN", self.pob())
+
+    def test_una_condicion_trae_su_bloque_y_solo_ese(self):
+        sql = self.pob(condiciones=[{"campo": "P24", "op": "<", "valor": 30}])
+        self.assertIn(" ord ON ord.animal = b.OID", sql)
+        self.assertNotIn(" rep ON ", sql)
+        self.assertIn("ord.p24 < 30", sql)
+
+    def test_ignora_las_columnas_el_orden_y_el_limite(self):
+        sql = self.pob(columnas=[{"campo": "Number"}, {"campo": "Parto"}, {"campo": "P24", "resumen": "avg"}], orden={"campo": "P24", "dir": -1},
+                       limite=10, agrupar_por=["GroupName"], detalle=False)
+        self.assertNotIn("LEFT JOIN", sql)
+
+    def test_una_condicion_sobre_un_campo_calculado(self):
+        sql = self.pob(calculados=[{"id": "calc_1", "etiqueta": "Doble", "formula": "[P24] * 2"}],
+                       condiciones=[{"campo": "calc_1", "op": ">", "valor": 10}])
+        self.assertIn(" ord ON ord.animal = b.OID", sql)
+        self.assertIn("* CAST(2 AS float)", sql)
+
+    def test_los_descartados_usan_el_historial(self):
+        self.assertIn("AnimalDaily d_tb", self.pob(incluir_descartados=True))
+        self.assertNotIn("AnimalDaily d_tb", self.pob())
+
+    def test_la_fecha_de_referencia_llega_a_las_condiciones(self):
+        cat = dict(CAT, Del=Campo("Del", "Días en ordeño", "General", "num", "DATEDIFF(day, rep.parto, @HOY)", bloque="rep"))
+        sql = im.poblacion_sql({"columnas": [{"campo": "Number"}], "condiciones": [{"campo": "Del", "op": ">=", "valor": 300}]}, cat, BLOQUES,
+                               herd=1, hoy="2026-07-30")
+        self.assertIn("DATEDIFF(day, rep.parto, CONVERT(date, '2026-07-30', 23)) >= 300", sql)
+
+    def test_valida_lo_mismo_que_compilar(self):
+        malos = [{"condiciones": [{"campo": "NoExiste", "op": "=", "valor": 1}]},
+                 {"condiciones": [{"campo": "P24", "op": "like", "valor": 1}]},
+                 {"condiciones": [{"campo": "Number", "op": "es", "valor": "x'; DROP TABLE a;--"}]},
+                 {"condiciones": [{"campo": "P24", "op": "<", "valor": 1}] * (im.CONDICIONES_MAX + 1)},
+                 {"incluir_descartados": "si"}]
+        for malo in malos:
+            with self.assertRaises(im.InformeError, msg=str(malo)[:60]):
+                self.pob(**malo)
+            with self.assertRaises(im.InformeError, msg=str(malo)[:60]):
+                comp(**malo)
+
+    def test_pasa_la_validacion_de_solo_lectura(self):
+        db.validate_sql(self.pob(condiciones=[{"campo": "P24", "op": "<", "valor": 30}], incluir_descartados=True))
+
+    def test_no_es_una_definicion(self):
+        for malo in (None, "texto", [], 5):
+            with self.assertRaises(im.InformeError):
+                im.poblacion_sql(malo, CAT, BLOQUES, herd=1)
+
+
 class TestDescribir(unittest.TestCase):
     def test_las_condiciones_en_palabras_para_el_excel_y_la_pantalla(self):
         d = {"columnas": [{"campo": "Number"}], "incluir_descartados": True,

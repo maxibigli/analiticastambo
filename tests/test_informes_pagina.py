@@ -88,6 +88,34 @@ class TestFase2EnLaPantalla(unittest.TestCase):
         self.assertIn("e.textContent = texto", fuente)
 
 
+class TestFase3EnLaPantalla(unittest.TestCase):
+    def fuente(self):
+        with open("templates/informes.html", encoding="utf-8") as f:
+            return f.read()
+
+    def test_trae_la_pestana_del_grafico_y_sus_controles(self):
+        html = cliente("admin").get("/informes/").get_data(as_text=True)
+        for esperado in ('id="pg-graf"', 'id="btn-graficar"', 'id="chart"', 'id="stats"', 'id="lg"', 'data-act="gseg"', 'data-chg="gs"',
+                         'data-chg="gsolo"', 'data-chg="gd"', "/api/informes/serie", 'src="/static/js/informes_grafico.js"'):
+            self.assertTrue(esperado in html, esperado)
+
+    def test_lo_que_viene_del_servidor_pasa_por_esc_en_el_grafico(self):
+        """Los nombres de rodeo vienen de la base y el mensaje de error del servidor: nunca van crudos al HTML."""
+        fuente = self.fuente()
+        for pieza in ("esc(s.etiqueta)", "esc(GRAF.etiquetaTip(", "esc(d.serieError)", "esc(d.nombre"):
+            self.assertTrue(pieza in fuente, pieza)
+
+    def test_el_grafico_se_guarda_con_el_informe_pero_no_ensucia_la_tabla(self):
+        fuente = self.fuente()
+        self.assertTrue("d.grafico ? {grafico: d.grafico} : {}" in fuente)           # se manda a guardar solo si se configuró
+        self.assertTrue("delete def.grafico;" in fuente)                              # al abrir, sale de la definición de la tabla
+        self.assertTrue("[d.nombre, d.def, d.grafico]" in fuente)                     # y un cambio de gráfico cuenta como «sin guardar»
+
+    def test_la_serie_se_pide_con_la_definicion_del_informe_y_la_configuracion_del_grafico(self):
+        fuente = self.fuente()
+        self.assertTrue("post('/api/informes/serie', Object.assign(limpiaDef(d.def), {grafico: cfgGraf(d)}" in fuente)
+
+
 class TestMenu(unittest.TestCase):
     def test_los_permisos(self):
         admin = auth.PAGINAS_POR_ROL["admin"]

@@ -68,6 +68,32 @@ class TestCrear(Base):
                 ig.crear(T, "Malo", m, "maxi")
         self.assertEqual(ig.listar(T), [])
 
+    def test_guarda_la_configuracion_del_grafico_completa_y_limpia(self):
+        g = {"medida": "kg_total", "serie": "lactancia", "periodo": "fechas", "desde": "2026-05-01", "hasta": "2026-06-30", "sql": "DROP TABLE x"}
+        r = ig.crear(T, "Con gráfico", dict(DEF, grafico=g), "maxi")
+        guardado = r["definicion"]["grafico"]
+        self.assertEqual((guardado["medida"], guardado["serie"], guardado["desde"], guardado["hasta"]), ("kg_total", "lactancia", "2026-05-01", "2026-06-30"))
+        self.assertNotIn("sql", guardado)                                  # lo que no conoce, afuera
+        self.assertEqual(guardado["resumen"], "avg")                       # lo que faltaba, con su valor de siempre
+        self.assertEqual(ig.obtener(T, r["id"])["definicion"]["grafico"], guardado)
+
+    def test_un_grafico_en_null_no_se_guarda(self):
+        self.assertNotIn("grafico", ig.crear(T, "Sin gráfico", dict(DEF, grafico=None), "maxi")["definicion"])
+
+    def test_rechaza_un_grafico_que_no_se_puede_correr(self):
+        for malo in ({"medida": "litros"}, {"periodo": "fechas"}, {"periodo": "fechas", "desde": "2026-06-30", "hasta": "2026-05-01"}, "texto", ["x"]):
+            with self.assertRaises(ig.InformeGuardadoError, msg=str(malo)):
+                ig.crear(T, "Malo", dict(DEF, grafico=malo), "maxi")
+        self.assertEqual(ig.listar(T), [])
+
+    def test_se_puede_cambiar_el_grafico_de_un_informe_ya_guardado(self):
+        r = ig.crear(T, "Uno", DEF, "maxi")
+        a = ig.actualizar(T, r["id"], definicion=dict(DEF, grafico={"serie": "ninguna", "forma": "barras"}))
+        self.assertEqual((a["definicion"]["grafico"]["serie"], a["definicion"]["grafico"]["forma"]), ("ninguna", "barras"))
+        with self.assertRaises(ig.InformeGuardadoError):
+            ig.actualizar(T, r["id"], definicion=dict(DEF, grafico={"serie": "sala"}))
+        self.assertEqual(ig.obtener(T, r["id"])["definicion"]["grafico"]["serie"], "ninguna")      # la mala no cambió nada
+
     def test_rechaza_una_definicion_que_el_compilador_no_acepta(self):
         for malo in ({"columnas": [{"campo": "NoExiste"}]}, {"columnas": []}, {}, None, "texto"):
             with self.assertRaises(ig.InformeGuardadoError):
