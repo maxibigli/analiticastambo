@@ -6948,6 +6948,38 @@ def api_informes_delpro_traer(oid):
         return jsonify({"error": "No se pudo leer ese informe de DelPro."}), 502
 
 
+@app.post("/api/informes/delpro/traer")
+@auth.requiere_rol("admin")
+def api_informes_delpro_traer_varios():
+    """Trae VARIOS informes de DelPro de una vez (los que se eligieron en la lista): cada uno se traduce y se GUARDA en `informes.db` con su nota de origen. No ejecuta nada contra la
+    base. Uno que ya estaba (mismo nombre) no se pisa. `{"oids": [10, 11]}` -> `{"resultado": [{oid, nombre, estado, id?, motivo?}], traidos, ya_estaban, no_se_pudieron}`."""
+    cuerpo = _cuerpo_json_o_400()
+    oids = cuerpo.get("oids") if isinstance(cuerpo, dict) else None
+    if not isinstance(oids, list) or not oids or len(oids) > informes_delpro.TRAER_MAX or not all(type(o) is int and o > 0 for o in oids):
+        return jsonify({"error": f"Elegí entre 1 y {informes_delpro.TRAER_MAX} informes de DelPro para traer."}), 400
+    tambo = _tambo_del_request()
+    try:
+        datos = informes_delpro.cargar(tambo)
+    except informes_delpro.DelProNoDisponible as exc:
+        return jsonify({"error": str(exc)}), 502
+    usuario = auth.usuario_actual()
+
+    def guardar(nombre, definicion, origen):
+        try:
+            return "traido", informes_guardados.crear(tambo, nombre, definicion, usuario, origen=origen)["id"]
+        except informes_guardados.InformeGuardadoError as exc:
+            if str(exc).startswith("Ya hay un informe llamado"):                        # el mismo nombre: ya se había traído, no se pisa
+                return "ya_estaba", None
+            raise
+    try:
+        resultado = informes_delpro.traer_varios(datos, oids, guardar, rebanos=rebano.por_defecto(tambo))
+    except Exception:  # noqa: BLE001  -- nada del texto de la excepción llega a la pantalla
+        return jsonify({"error": "No se pudieron traer los informes de DelPro ahora. Probá de nuevo en un rato."}), 502
+    cuenta = lambda e: sum(1 for r in resultado if r["estado"] == e)
+    return jsonify({"resultado": resultado, "traidos": cuenta("traido"), "ya_estaban": cuenta("ya_estaba"),
+                    "no_se_pudieron": sum(1 for r in resultado if r["estado"] in ("no_se_puede", "no_existe", "error"))})
+
+
 @app.get("/api/informes")
 @auth.requiere_rol("admin")
 def api_informes_listar():

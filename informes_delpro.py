@@ -1184,7 +1184,60 @@ def listar(datos, solo_tambo=False, catalogo=None, rebanos=None) -> dict:
         items.append({"oid": oid, "nombre": t["nombre"], "carpeta": t["carpeta"], "nivel": t["nivel"], "del_tambo": t["del_tambo"],
                       "estado": t["estado"], "motivo": t.get("motivo", ""), "columnas": t["columnas"], "descripcion": t["descripcion"],
                       # «filtro sin traer: puede mostrar MÁS animales»: solo un filtro. Lo de los animales descartados también es «contenido» pero muestra MENOS.
-                      "filtro_sin_traer": any(d["tipo"] == "filtro" and d["gravedad"] == "contenido" for d in t["diferencias"]), "n_diferencias": len(t["diferencias"])})
+                      "filtro_sin_traer": any(d["tipo"] == "filtro" and d["gravedad"] == "contenido" for d in t["diferencias"]), "n_diferencias": len(t["diferencias"]),
+                      # lo que le falta al catálogo para ESTE informe: con eso la pantalla calcula qué le falta a los que se eligieron
+                      "faltan": list(t["faltan"])})
     items.sort(key=lambda i: (ORDEN_DE_ESTADO[i["estado"]], not i["del_tambo"], i["nombre"].casefold()))
     top = sorted(faltantes.items(), key=lambda kv: (-kv[1], kv[0].casefold()))[:FALTANTES_TOP]
     return {"informes": items, "cuenta": cuenta, "faltantes": [{"campo": k, "informes": v, "nombre": NOMBRE_EN_DELPRO.get(k)} for k, v in top]}
+
+
+# ================================================================================================ traer varios de una vez
+
+TRAER_MAX = 200                                  # cuántos informes se traen en un pedido (un tambo tiene unas decenas)
+ORIGEN_TITULO = "Traído de DelPro"
+
+
+def origen_de(t):
+    """La «nota de origen» de un informe traído: las diferencias que cambian QUÉ animales aparecen (un filtro que no se trajo, los animales descartados...), o None si no hay ninguna.
+    Es lo que `informes_guardados` recuerda con el informe, para avisarlo al reabrirlo, al programar su envío y en cada mensaje."""
+    avisos = [d["texto"] for d in t.get("diferencias", []) if d.get("gravedad") == "contenido"]
+    if not avisos:
+        return None
+    return {"titulo": ORIGEN_TITULO, "sub": "«" + str(t.get("nombre") or "") + "»" + (" · " + str(t["carpeta"]) if t.get("carpeta") else ""), "avisos": avisos}
+
+
+def traer_varios(datos, oids, guardar, catalogo=None, rebanos=None) -> list:
+    """Traduce y GUARDA varios informes de DelPro, uno por uno, y dice qué pasó con cada uno: [{"oid", "nombre", "estado", "id"? , "motivo"?}].
+
+    `guardar(nombre, definicion, origen)` -> ("traido", id) o ("ya_estaba", None): lo pone quien llama (acá no se sabe dónde se guarda). Estados: traido, ya_estaba, no_se_puede
+    (con su motivo), no_existe y error. **No ejecuta nada contra la base**: solo traduce y guarda la definición. Un informe que falla no frena a los demás, y de un error nunca se
+    devuelve el texto (puede traer datos de la base o una clave)."""
+    salida, vistos = [], set()
+    for oid in oids:
+        if oid in vistos:
+            continue
+        vistos.add(oid)
+        try:
+            t = traducir_informe(datos, oid, catalogo, rebanos)
+        except InformeNoEncontrado:
+            salida.append({"oid": oid, "nombre": "", "estado": "no_existe"})
+            continue
+        except Exception as exc:  # noqa: BLE001 -- un informe raro de DelPro no frena a los otros
+            log.warning("informe de DelPro %s: no se pudo traducir para traerlo (%s)", oid, type(exc).__name__)
+            salida.append({"oid": oid, "nombre": "", "estado": "error", "motivo": "No se pudo leer este informe de DelPro."})
+            continue
+        if t["definicion"] is None:
+            salida.append({"oid": oid, "nombre": t["nombre"], "estado": "no_se_puede", "motivo": t.get("motivo") or "Este informe no se puede traer todavía."})
+            continue
+        try:
+            estado, id_ = guardar(t["nombre"], t["definicion"], origen_de(t))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("informe de DelPro %s: no se pudo guardar (%s)", oid, type(exc).__name__)
+            salida.append({"oid": oid, "nombre": t["nombre"], "estado": "error", "motivo": "No se pudo guardar este informe."})
+            continue
+        fila = {"oid": oid, "nombre": t["nombre"], "estado": estado}
+        if id_ is not None:
+            fila["id"] = id_
+        salida.append(fila)
+    return salida

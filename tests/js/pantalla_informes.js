@@ -21,7 +21,7 @@ const HOY = Date.UTC(2026, 10, 24, 12, 0, 0);                    // mar 24/11/20
    Lo que no exista se deja pasar como undefined (así una prueba falla por su comportamiento y no por un nombre). */
 const EXPORTAR = ['PG', 'DP', 'IA', 'CAMPOS', 'ENVIOS', 'LISTA', 'nuevoDoc', 'activar', 'docAct', 'abrirProg', 'guardarProg', 'probarProg', 'cargarRegistroProg',
   'traerDeDelpro', 'abrirDelpro', 'renderHead', 'renderFilters', 'renderImportado', 'renderProg', 'renderEnvio', 'limpiaDef', 'listaDe', 'condLimpia', 'tipoDe',
-  'defVacia', 'foto', 'sucio', 'toast', 'ejecutar', 'abrirInforme', 'guardar', 'avisoAlGuardar', 'renderList', 'abrirComoNuevo', 'origenParaGuardar', 'refrescarLista'];
+  'defVacia', 'foto', 'sucio', 'toast', 'ejecutar', 'abrirInforme', 'guardar', 'avisoAlGuardar', 'renderList', 'abrirComoNuevo', 'origenParaGuardar', 'refrescarLista', 'cargarDelpro', 'renderDelpro'];
 
 const CAMPOS_DE_EJEMPLO = {
   categorias: [

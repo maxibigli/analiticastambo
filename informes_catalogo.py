@@ -111,6 +111,9 @@ BLOQUES.update({b.id: b for b in (_bloque_promedio(n) for n in (14, 21, 30))})
 BLOQUES.update({
     "ult_control": Bloque("ult_control", "LEFT JOIN AbstractAnimalEvent ep ON ep.OID = ix.PregCheck AND ep.GCRecord IS NULL", requiere=("indice",)),
     "ult_descarte": Bloque("ult_descarte", "LEFT JOIN AbstractAnimalEvent ed ON ed.OID = ix.CullDecision AND ed.GCRecord IS NULL", requiere=("indice",)),
+    # La leche de UN día: `AnimalDaily` tiene una fila por animal y día (medido: 1.667, 1.680 y 1.665 filas para 1.667, 1.680 y 1.665 animales), así que se une directo.
+    "leche_ayer": Bloque("leche_ayer", "LEFT JOIN AnimalDaily ly ON ly.BasicAnimal = b.OID AND ly.GCRecord IS NULL AND ly.Date = DATEADD(day, -1, @HOY)"),
+    "leche_hoy": Bloque("leche_hoy", "LEFT JOIN AnimalDaily lh ON lh.BasicAnimal = b.OID AND lh.GCRecord IS NULL AND lh.Date = @HOY"),
     # El ÚLTIMO control lechero del animal: se busca por animal (una fila), sin agrupar la tabla entera. Los controles cuelgan de `AnimalHistoricalData` (ver CLAUDE.md, «Trampas del esquema»).
     "ult_scc": Bloque("ult_scc", "OUTER APPLY (SELECT TOP 1 m.SCC AS scc FROM AnimalHistoricalData h JOIN MilkTest m ON m.OID = h.OID "
                                  "WHERE h.BasicAnimal = b.OID AND h.GCRecord IS NULL ORDER BY h.DateAndTime DESC) sc"),
@@ -188,6 +191,11 @@ CATALOGO = {c.id: c for c in (
           verificado=False, nota="días desde la inseminación efectiva hasta «Calcular al», solo de una vaca preñada; la cuenta es nuestra, falta compararla con un informe de DelPro"),
     Campo("LatestSCC", "Último recuento de células somáticas", _ORD, "num", "sc.scc", bloque="ult_scc", unidad="mil/ml", verificado=False,
           nota="el SCC del último control lechero del animal (MilkTest, en miles de células por ml, como lo guarda DelPro); falta compararlo con un informe de DelPro"),
+    # «De ayer» y «de hoy» como los llama DelPro (decisión del usuario, 24/11/2026): ayer es el día anterior a «Calcular al» y hoy, ese día. Quien mira una copia de la base lo sabe.
+    Campo("YieldYesterday", "Producción de leche de ayer", _ORD, "num", "ly.TotalYield", bloque="leche_ayer", unidad="kg", decimales=1, verificado=False,
+          nota="el total del día anterior a «Calcular al» en AnimalDaily (una fila por animal y día); falta compararlo con un informe de DelPro. Relativo a esa fecha: en una copia de la base es «ayer» de los datos"),
+    Campo("YieldToday", "Producción de leche de hoy", _ORD, "num", "lh.TotalYield", bloque="leche_hoy", unidad="kg", decimales=1, verificado=False,
+          nota="el total del día de «Calcular al» en AnimalDaily; el día en curso suele estar a medio cargar (DelPro consolida al cierre); falta compararlo con un informe de DelPro"),
     Campo("CMSFourteenDayAverage", "Promedio producción diaria de leche 14 d.", _ORD, "num", "p14.prom14", bloque="prom14", unidad="kg", decimales=1, verificado=False,
           nota="igual que el de 7 días (días con leche y con el total válido, de los 14 anteriores a «Calcular al»); falta compararlo con un informe de DelPro"),
     Campo("CMSTwentyOneDayAverage", "Promedio producción diaria de leche 21 d.", _ORD, "num", "p21.prom21", bloque="prom21", unidad="kg", decimales=1, verificado=False,

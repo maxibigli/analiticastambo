@@ -17,7 +17,6 @@ SI_NO = ("No", "Sí")
 BOOLEANOS = ("InMilk", "ToBeCulled", "IsPregnant", "IsDryingOff")
 FECHAS = ("BirthDate", "ExitDate", "LastInseminationDate", "LastAbortionDate", "ExpectedCalvingDate", "ExpectedDryOffDate")
 NUMEROS = ("AgeInMonths", "NumberOfInseminations", "DaysSinceLastInsemination", "DaysToCalving", "DaysToDryOff")
-# La leche «de ayer» y «de hoy» NO entran en esta tanda: su nombre es relativo y un informe que se guarda o se manda se lee días después (regla de las fechas concretas).
 
 
 class TestElCatalogo(unittest.TestCase):
@@ -44,9 +43,7 @@ class TestElCatalogo(unittest.TestCase):
         for id_ in ("ToBeCulled", "IsPregnant", "IsDryingOff", "BirthDate", "ExitDate", "LastInseminationDate", "LastAbortionDate", "NumberOfInseminations"):
             self.assertTrue(cat.CATALOGO[id_].verificado, id_)
 
-    def test_la_leche_de_ayer_y_de_hoy_no_estan_todavia(self):
-        for id_ in ("YieldYesterday", "YieldToday"):
-            self.assertNotIn(id_, cat.CATALOGO)
+
 
     def test_cada_campo_nuevo_tiene_una_nota_que_dice_de_donde_sale(self):
         for id_ in BOOLEANOS + FECHAS + NUMEROS:

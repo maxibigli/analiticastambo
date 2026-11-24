@@ -631,11 +631,11 @@ class TestLosMensajesNoEngañan(unittest.TestCase):
     # --- «UN-C2971»
 
     def test_el_prefijo_un_se_acepta_igual_que_la_c(self):
-        cols = [columna(2511, 1, 1, "CurrentLactationNumber"), columna(2691, 1, 2, "YieldYesterday")]
+        cols = [columna(2511, 1, 1, "CurrentLactationNumber"), columna(2691, 1, 2, "MilkingYesterday")]
         res = dl.resolver_por_columnas(cols, cat.CATALOGO)
         self.assertEqual(res("UN-C2511"), ("CurrentLactationNumber", "CurrentLactationNumber"))
-        self.assertEqual(res("UN-C2691"), ("YieldYesterday", None))
-        self.assertEqual(res("C2691"), ("YieldYesterday", None))
+        self.assertEqual(res("UN-C2691"), ("MilkingYesterday", None))
+        self.assertEqual(res("C2691"), ("MilkingYesterday", None))
 
     def test_un_codigo_que_no_es_de_ninguna_columna_queda_como_esta(self):
         res = dl.resolver_por_columnas([columna(2511, 1, 1, "CurrentDIM")], cat.CATALOGO)
@@ -643,12 +643,12 @@ class TestLosMensajesNoEngañan(unittest.TestCase):
         self.assertEqual(res("C9999"), ("C9999", None))
 
     def test_el_filtro_con_un_c_muestra_el_nombre_del_campo_y_no_el_codigo(self):
-        cols = [columna(2691, 1, 1, "YieldYesterday"), columna(2692, 1, 2, "Number")]
+        cols = [columna(2691, 1, 1, "MilkingYesterday"), columna(2692, 1, 2, "Number")]
         r = tr([informe(1, CustomFilter="[UN-C2691] Is Not Null And [UN-C2691] < 18 And [UN-C2692] > 0")], cols)
         detalle = " ".join(" ".join(d.get("detalle", [])) + d["texto"] for d in diferencias(r, "filtro"))
         self.assertNotIn("UN-C", detalle)
-        self.assertIn("YieldYesterday", detalle)
-        self.assertEqual(r["faltan"], ["YieldYesterday"])
+        self.assertIn("MilkingYesterday", detalle)
+        self.assertEqual(r["faltan"], ["MilkingYesterday"])
 
     def test_los_campos_conocidos_de_delpro_se_muestran_en_castellano_en_el_filtro(self):
         cols = [columna(12, 1, 1, "DaysDry"), columna(13, 1, 2, "Number")]

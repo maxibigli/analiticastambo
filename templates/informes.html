@@ -192,7 +192,13 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
 .dpctl .in{flex:1 1 220px}
 .dpsum{font-size:12.5px;color:var(--muted);min-height:18px}
 .dplist{display:grid;gap:6px;max-height:min(50vh,520px);overflow:auto;scrollbar-width:thin;align-content:start}
-.dprow{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:6px 12px;align-items:center;background:var(--sunken);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+.dpsel{display:flex;gap:8px 12px;flex-wrap:wrap;align-items:center}
+.dpsel .dpcuenta{font-size:12.5px;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
+.dpmsj{font-size:12.5px;color:var(--ok-fg,#7FD9B8);min-height:0}
+.dpmsj:empty{display:none}
+.dprow{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto auto;gap:6px 12px;align-items:center;background:var(--sunken);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+.dprow .elegir{width:18px;height:18px;margin:0}
+.dprow .elegir.vacio{visibility:hidden}
 .dprow .nm{min-width:0}
 .dprow .nm b{font-weight:600;overflow-wrap:anywhere}
 .dprow .sub{display:block;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
@@ -220,7 +226,7 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
 .imp ul.det{margin-top:3px;padding-left:16px}
 .imp ul.det li{font-size:12.5px;color:var(--muted)}
 .impmin{display:flex;gap:8px 12px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:#F5CE84;background:var(--surface);border:1px solid #6B5521;border-radius:10px;padding:6px 12px}
-@media (max-width:640px){.dprow{grid-template-columns:minmax(0,1fr) auto}.dprow .cn{grid-column:1}}
+@media (max-width:640px){.dprow{grid-template-columns:auto minmax(0,1fr) auto}.dprow .cn{grid-column:2}}
 /* Fase 4c: programar el envío de un informe */
 #prog{width:min(700px,96vw)}
 #prog fieldset{border:1px solid var(--line);border-radius:10px;padding:8px 12px 10px;margin:0;min-width:0;display:grid;gap:6px}
@@ -400,6 +406,13 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
     </div>
     <div class="msg err" id="dp-err" role="alert" hidden></div>
     <div class="dpsum" id="dp-resumen"></div>
+    <div class="dpsel" id="dp-sel" hidden>
+      <button type="button" class="btn sm ghost" data-act="dpseltodos">Elegir todos los que se pueden traer</button>
+      <button type="button" class="btn sm ghost" data-act="dpselnada">Quitar la elección</button>
+      <span class="dpcuenta" id="dp-sel-cuenta"></span>
+      <button type="button" class="btn sm pri" id="dp-sel-traer" data-act="dptraersel" disabled>Traer los elegidos</button>
+    </div>
+    <div class="dpmsj" id="dp-sel-msj" role="status" aria-live="polite"></div>
     <div class="dplist" id="dp-lista"></div>
     <details id="dp-falta" hidden><summary>Campos de DelPro que todavía no están en LactIA</summary><div class="dpfalta" id="dp-falta-cuerpo"></div></details>
   </div>
@@ -981,7 +994,8 @@ function borrarCalc() {
 /* ---------- traer un informe de DelPro (Fase 4a) ---------- */
 /* Solo LEE las tablas de informes de DelPro (el servidor hace cuatro SELECT fijos). El informe que se trae se abre como uno NUEVO y sin guardar,
    con un aviso de todo lo que no se pudo traer: lo que LactIA no sabe calcular no se inventa. */
-const DP = {estado: 'sin', datos: null, error: '', q: '', solo: true, seq: 0};
+/* `sel`: los números (OID) de los informes de DelPro que se eligieron para traer juntos. `msj`: lo que pasó la última vez que se trajeron. */
+const DP = {estado: 'sin', datos: null, error: '', q: '', solo: true, seq: 0, sel: new Set(), msj: '', trayendo: false};
 const ESTADO_DP = {completo: ['Completo', 'ok'], casi: ['Casi igual', 'ok'], parcial: ['Con diferencias', 'warn'], no_disponible: ['No se puede traer', 'off']};
 /* «Completo» con avisos (un segundo orden que no se trae, un resumen que se ve distinto...) es «Casi igual»: un verde sin matices engañaría. */
 const estadoDe = (estado, n) => estado === 'completo' && n ? 'casi' : estado;
@@ -1007,19 +1021,79 @@ async function cargarDelpro(refrescar) {
   } catch (e) { if (mi !== DP.seq) return; DP.estado = 'error'; DP.error = e.message; }
   renderDelpro();
 }
+const traible = i => i.estado !== 'no_disponible';
+/* Los informes que muestra la lista, con la búsqueda aplicada. */
+function filasDp() {
+  const j = DP.datos, q = DP.q.trim().toLowerCase();
+  return j && j.informes ? j.informes.filter(i => !q || (i.nombre + ' ' + i.carpeta).toLowerCase().indexOf(q) >= 0) : [];
+}
+/* Lo que le falta al catálogo: para TODOS los informes de DelPro, o —si se eligieron algunos— solo para los elegidos (es lo que hay que sumar primero). */
+function faltantesDp() {
+  const j = DP.datos, n = DP.sel.size;
+  if (!n) return {titulo: 'Campos de DelPro que todavía no están en LactIA', lista: j.faltantes, vacio: ''};
+  const nombres = {}, cuenta = {};
+  j.faltantes.forEach(f => { nombres[f.campo] = f.nombre; });
+  j.informes.filter(i => DP.sel.has(i.oid)).forEach(i => (i.faltan || []).forEach(c => { cuenta[c] = (cuenta[c] || 0) + 1; }));
+  const lista = Object.keys(cuenta).map(c => ({campo: c, informes: cuenta[c], nombre: nombres[c] || null})).sort((a, b) => b.informes - a.informes || (a.campo < b.campo ? -1 : 1));
+  return {titulo: 'Campos que faltan para ' + (n === 1 ? 'el informe elegido' : 'los ' + fmtNum(n) + ' elegidos'), lista, vacio: 'A los elegidos no les falta ningún campo.'};
+}
+/* La barra de elegir (cuántos, el botón de traer, lo que pasó) y la lista de campos que faltan: lo único que cambia al tocar un casillero, así la lista de informes no se redibuja y el teclado no pierde el lugar. */
+function renderDpSel() {
+  const j = DP.datos, barra = $('#dp-sel'), falta = $('#dp-falta'), n = DP.sel.size;
+  const hay = DP.estado === 'ok' && j && j.disponible;
+  barra.hidden = !hay;
+  $('#dp-sel-msj').textContent = hay ? DP.msj : '';
+  if (!hay) { falta.hidden = true; return; }
+  $('#dp-sel-cuenta').textContent = n ? plural(n, 'elegido', 'elegidos') : 'Ninguno elegido';
+  const bt = $('#dp-sel-traer');
+  bt.disabled = !n || DP.trayendo;
+  bt.textContent = DP.trayendo ? 'Trayendo…' : (n ? 'Traer ' + (n === 1 ? 'el elegido' : 'los ' + fmtNum(n) + ' elegidos') : 'Traer los elegidos');
+  const fl = faltantesDp();
+  falta.hidden = !(fl.lista.length || n);
+  $('#dp-falta summary').textContent = fl.titulo;
+  $('#dp-falta-cuerpo').innerHTML = fl.lista.length ? fl.lista.slice(0, 30).map(f => '<span>' + (f.nombre ? esc(f.nombre) + ' <small>(' + esc(f.campo) + ')</small>' : esc(f.campo)) + ' <b>' + f.informes + '</b></span>').join('')
+                                                    : '<span>' + esc(fl.vacio) + '</span>';
+  if (n) falta.open = true;                                                        // al elegir, lo que falta es lo que se quiere ver
+}
+function elegirDp(oid, si) { if (si) DP.sel.add(oid); else DP.sel.delete(oid); DP.msj = ''; renderDpSel(); }
+function elegirTodosDp(si) {
+  filasDp().filter(traible).forEach(i => { if (si) DP.sel.add(i.oid); else DP.sel.delete(i.oid); });
+  if (!si) DP.sel.clear();                                                          // «Quitar la elección» saca TODO, también lo que la búsqueda de ahora no muestra
+  DP.msj = ''; renderDelpro();
+}
+/* Trae de una vez los informes elegidos: el servidor los traduce y los GUARDA (no calcula nada contra la base); lo que ya estaba no se pisa. */
+async function traerElegidos() {
+  if (!DP.sel.size || DP.trayendo) return;
+  const oids = [...DP.sel].sort((a, b) => a - b);
+  errorDelpro(''); DP.msj = ''; DP.trayendo = true; renderDpSel();
+  try {
+    const j = await post('/api/informes/delpro/traer', {oids});
+    j.resultado.forEach(r => { if (r.estado === 'traido' || r.estado === 'ya_estaba') DP.sel.delete(r.oid); });          // el que falló queda elegido, para reintentarlo
+    const partes = [];
+    if (j.traidos) partes.push(j.traidos + (j.traidos === 1 ? ' traído' : ' traídos'));
+    if (j.ya_estaban) partes.push(j.ya_estaban + (j.ya_estaban === 1 ? ' ya estaba' : ' ya estaban'));
+    if (j.no_se_pudieron) partes.push(j.no_se_pudieron + (j.no_se_pudieron === 1 ? ' no se pudo' : ' no se pudieron'));
+    const malos = j.resultado.filter(r => r.estado !== 'traido' && r.estado !== 'ya_estaba').slice(0, 3).map(r => '«' + (r.nombre || 'informe ' + r.oid) + '»: ' + (r.motivo || 'no existe')).join(' · ');
+    DP.msj = (partes.length ? 'Resultado: ' + partes.join(', ') + '.' : 'No se trajo nada.') + (j.traidos || j.ya_estaban ? ' Ya están en tu lista de informes.' : '') + (malos ? ' ' + malos : '');
+    await refrescarLista(); render();
+  } catch (e) { errorDelpro(e.message); }
+  DP.trayendo = false; renderDelpro();
+}
 function renderDelpro() {
-  const lista = $('#dp-lista'), res = $('#dp-resumen'), falta = $('#dp-falta');
-  falta.hidden = true;
-  if (DP.estado === 'cargando') { res.textContent = ''; lista.innerHTML = '<div class="empty" role="status">Leyendo los informes de DelPro…</div>'; return; }
-  if (DP.estado === 'error') { res.textContent = ''; lista.innerHTML = '<div class="msg err" role="alert">' + esc(DP.error) + '</div>'; return; }
+  const lista = $('#dp-lista'), res = $('#dp-resumen');
+  if (DP.estado === 'cargando') { res.textContent = ''; lista.innerHTML = '<div class="empty" role="status">Leyendo los informes de DelPro…</div>'; renderDpSel(); return; }
+  if (DP.estado === 'error') { res.textContent = ''; lista.innerHTML = '<div class="msg err" role="alert">' + esc(DP.error) + '</div>'; renderDpSel(); return; }
   const j = DP.datos;
   if (!j || !j.disponible) {
     res.textContent = '';
     lista.innerHTML = j && j.vacio ? '<div class="empty" role="status">' + esc(j.motivo) + '</div>' : '<div class="msg warn" role="alert">' + esc(j ? j.motivo : 'No se pudieron leer los informes de DelPro.') + '</div>';
+    renderDpSel();
     return;
   }
+  const presentes = new Set(j.informes.map(i => i.oid));
+  [...DP.sel].forEach(o => { if (!presentes.has(o)) DP.sel.delete(o); });          // un informe que ya no está en la lista (volver a leer, otro filtro) no puede seguir elegido
   const q = DP.q.trim().toLowerCase();
-  const filas = j.informes.filter(i => !q || (i.nombre + ' ' + i.carpeta).toLowerCase().indexOf(q) >= 0);
+  const filas = filasDp();
   /* El resumen cuenta con la MISMA regla que las filas (`estadoDe`): un informe «completo» que trae algún aviso se ve como «Casi igual», y el resumen decía «se trae completo». */
   const cuantos = est => j.informes.filter(i => estadoDe(i.estado, i.n_diferencias) === est).length;
   const completos = cuantos('completo'), casi = cuantos('casi'), parcial = cuantos('parcial'), no = cuantos('no_disponible');
@@ -1030,17 +1104,15 @@ function renderDelpro() {
   lista.innerHTML = filas.length ? filas.map(i => {
     const est = estadoDe(i.estado, i.n_diferencias), e = ESTADO_DP[est], sub = i.estado === 'no_disponible' && i.motivo ? [i.carpeta, i.motivo] : [i.carpeta, i.nivel];
     const avisos = i.n_diferencias ? ' · ' + plural(i.n_diferencias, 'aviso', 'avisos') : '';
-    return '<div class="dprow"><div class="nm"><b>' + esc(i.nombre) + '</b>' +
+    return '<div class="dprow">' + (traible(i) ? '<input type="checkbox" class="elegir" data-chg="dpsel" data-oid="' + i.oid + '" aria-label="Elegir «' + esc(i.nombre) + '»"' + (DP.sel.has(i.oid) ? ' checked' : '') + '>'
+                                               : '<span class="elegir vacio" aria-hidden="true"></span>') + '<div class="nm"><b>' + esc(i.nombre) + '</b>' +
       (i.filtro_sin_traer ? '<span class="dpfl">filtro sin traer: puede mostrar más animales</span>' : '') +
       '<span class="sub">' + esc(sub.filter(Boolean).join(' · ')) + '</span></div>' +
       '<span class="cn">' + (i.estado === 'no_disponible' ? '' : i.columnas.traidas + ' de ' + plural(i.columnas.total, 'columna', 'columnas') + avisos) + '</span>' +
       '<span class="dpe ' + e[1] + '">' + e[0] + '</span>' +
       '<button class="btn sm' + (est === 'completo' ? ' pri' : '') + '" data-act="dptraer" data-oid="' + i.oid + '" aria-label="Traer «' + esc(i.nombre) + '»"' + (i.estado === 'no_disponible' ? ' disabled' : '') + '>Traer</button></div>';
   }).join('') : '<div class="empty" role="status">' + (q ? 'Ningún informe coincide con la búsqueda.' : 'No hay informes de DelPro para traer.') + '</div>';
-  if (j.faltantes.length) {
-    falta.hidden = false;
-    $('#dp-falta-cuerpo').innerHTML = j.faltantes.slice(0, 30).map(f => '<span>' + (f.nombre ? esc(f.nombre) + ' <small>(' + esc(f.campo) + ')</small>' : esc(f.campo)) + ' <b>' + f.informes + '</b></span>').join('');
-  }
+  renderDpSel();
 }
 /* Una definición que llega del servidor (traída de DelPro o armada con IA) como informe NUEVO y sin guardar. `origen` es el aviso que lo acompaña. */
 function abrirComoNuevo(nombre, definicion, origen, enSegundoPlano) {
@@ -1465,6 +1537,9 @@ document.addEventListener('click', e => {
   else if (a === 'quitarcol') { d.def.columnas.splice(+b.dataset.i, 1); normalizar(d); renderFields(); renderChips(); renderGroup(); marcarCambio(d); }
   else if (a === 'progquitar') { PG.horas.splice(+b.dataset.i, 1); renderProg(); const hs = document.querySelectorAll('#prog-horas input'); (hs[Math.min(+b.dataset.i, hs.length - 1)] || $('#prog-mas')).focus(); }          // el teclado no pierde el lugar
   else if (a === 'dptraer') una('dptraer', () => traerDeDelpro(+b.dataset.oid));
+  else if (a === 'dpseltodos') elegirTodosDp(true);
+  else if (a === 'dpselnada') elegirTodosDp(false);
+  else if (a === 'dptraersel') una('dptraersel', traerElegidos);
   else if (a === 'cerrarimp') {
     if (d && d.importado) d.importado.cerrado = true;
     renderImportado();
@@ -1500,6 +1575,7 @@ document.addEventListener('change', e => {
   const el = e.target.closest('[data-chg]');
   if (!el) return;
   const d = docAct(), a = el.dataset.chg, i = +el.dataset.i;
+  if (a === 'dpsel') { elegirDp(+el.dataset.oid, el.checked); return; }                                              // los casilleros del cuadro «Traer de DelPro»
   if (a === 'gm' || a === 'gr' || a === 'gs') { cambioGrafico(d, {[GCAMPO[a]]: el.value}); return; }        // los controles del gráfico no tocan la tabla
   if (a === 'gd' || a === 'gh') {
     if (!el.value) return;

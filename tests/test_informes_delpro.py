@@ -332,10 +332,10 @@ class TestResolverPorColumnas(unittest.TestCase):
     """El CustomFilter (el filtro de la grilla) llama a cada columna `C` + su OID: ese número es el de la columna."""
 
     def test_un_campo_por_oid_de_columna(self):
-        cols = [columna(2511, 1, 1, "CurrentLactationNumber"), columna(2691, 1, 2, "YieldYesterday")]
+        cols = [columna(2511, 1, 1, "CurrentLactationNumber"), columna(2691, 1, 2, "MilkingYesterday")]
         res = dl.resolver_por_columnas(cols, cat.CATALOGO)
         self.assertEqual(res("C2511"), ("CurrentLactationNumber", "CurrentLactationNumber"))
-        self.assertEqual(res("C2691"), ("YieldYesterday", None))
+        self.assertEqual(res("C2691"), ("MilkingYesterday", None))
         self.assertEqual(res("C9999"), ("C9999", None))
         self.assertEqual(res("UN-C2971"), ("UN-C2971", None))
 
@@ -348,12 +348,12 @@ class TestResolverPorColumnas(unittest.TestCase):
         self.assertEqual(pend, [])
 
     def test_una_columna_que_no_existe_en_el_catalogo_se_muestra_con_su_nombre_de_delpro(self):
-        cols = [columna(2691, 1, 1, "YieldYesterday")]
+        cols = [columna(2691, 1, 1, "MilkingYesterday")]
         res = dl.resolver_por_columnas(cols, cat.CATALOGO)
         cs, pend = dl.condiciones_de("[C2691] < 18.0f And [C2691] Is Not Null", res, cat.CATALOGO, 10)
         self.assertEqual(cs, [])
-        self.assertEqual(pend[0]["campos"], ["YieldYesterday"])
-        self.assertIn("YieldYesterday < 18", pend[0]["texto"])
+        self.assertEqual(pend[0]["campos"], ["MilkingYesterday"])
+        self.assertIn("MilkingYesterday < 18", pend[0]["texto"])
 
 
 # ------------------------------------------------------------------------------------------ un informe
@@ -560,7 +560,7 @@ class TestTraducirInforme(unittest.TestCase):
         self.assertEqual(set(r["faltan"]), {"IsExited", "DaysDry"})
 
     def test_un_filtro_de_la_grilla_con_una_columna_que_no_esta_se_avisa(self):
-        cols = [columna(2691, 1, 1, "YieldYesterday"), columna(2692, 1, 2, "Number")]
+        cols = [columna(2691, 1, 1, "MilkingYesterday"), columna(2692, 1, 2, "Number")]
         r = self.tr([informe(1, CustomFilter="[C2691] < 18.0f And [C2691] Is Not Null")], cols)
         self.assertEqual(r["estado"], "parcial")
         self.assertEqual(r["definicion"]["columnas"], [{"campo": "Number"}])

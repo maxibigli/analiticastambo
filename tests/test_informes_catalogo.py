@@ -59,7 +59,7 @@ class TestCatalogo(unittest.TestCase):
         # Medido en la copia local (30/07/2026): `AnimalLatestHistoryIndex` tiene UNA fila por animal (0 repetidos en 10.530), `HistoryAnimalLactationInfo` una por (animal, lactancia)
         # (0 repetidos en 23.949), los eventos se unen por su OID y `ajustes` es un agregado sin grupo: una sola fila.
         for b in cat.BLOQUES.values():
-            ok = "GROUP BY" in b.join.upper() or b.id in ("repro", "lactprev", "parto", "indice", "ult_insem", "ult_aborto", "insem_efectiva", "insem_lact", "ajustes", "ult_control", "ult_descarte", "ult_scc")
+            ok = "GROUP BY" in b.join.upper() or b.id in ("repro", "lactprev", "parto", "indice", "ult_insem", "ult_aborto", "insem_efectiva", "insem_lact", "ajustes", "ult_control", "ult_descarte", "ult_scc", "leche_ayer", "leche_hoy")
             self.assertTrue(ok, b.id)
 
     def test_lo_que_no_se_comparo_contra_delpro_queda_marcado(self):
@@ -68,7 +68,7 @@ class TestCatalogo(unittest.TestCase):
                                # tanda 1: lo que sale de una cuenta nuestra y no de un dato que DelPro guarda
                                "InMilk", "AgeInMonths", "DaysSinceLastInsemination", "ExpectedCalvingDate", "DaysToCalving", "ExpectedDryOffDate", "DaysToDryOff",
                                # tanda 2
-                               "LastCullDecisionDate", "DaysPregnant", "LatestSCC", "CMSFourteenDayAverage", "CMSTwentyOneDayAverage", "CMSThirtyDayAverage"})
+                               "LastCullDecisionDate", "DaysPregnant", "LatestSCC", "CMSFourteenDayAverage", "CMSTwentyOneDayAverage", "CMSThirtyDayAverage", "YieldYesterday", "YieldToday"})
         for c in cat.CATALOGO.values():
             if not c.verificado:
                 self.assertTrue(c.nota, f"{c.id} sin verificar y sin nota que diga por qué")

@@ -372,6 +372,106 @@ caso('foco: cerrar el aviso del informe traído deja el foco en «Ver el aviso»
 });
 
 /* ---------------------------------------------------------------------------------------------------------------------------------------- */
+/* Elegir varios informes de DelPro y traerlos juntos                                                                                       */
+/* ---------------------------------------------------------------------------------------------------------------------------------------- */
+const infoDp = (oid, nombre, extra) => Object.assign({oid, nombre, carpeta: 'Mis informes', nivel: 'Animal', del_tambo: true, estado: 'parcial', motivo: '', columnas: {traidas: 1, total: 2},
+  descripcion: '', filtro_sin_traer: false, n_diferencias: 1, faltan: []}, extra || {});
+const DELPRO = {disponible: true, cuenta: {completo: 1, parcial: 2, no_disponible: 1},
+  informes: [infoDp(10, 'Animales por rodeo', {estado: 'completo', n_diferencias: 0, columnas: {traidas: 3, total: 3}}),
+             infoDp(11, 'Con un filtro', {faltan: ['DaysDry', 'IsExited'], filtro_sin_traer: true, n_diferencias: 2}),
+             infoDp(12, 'Otro filtro', {faltan: ['IsExited', 'Sex']}),
+             infoDp(13, 'De otro nivel', {estado: 'no_disponible', motivo: 'Es un informe de ordeño por sesión.', columnas: {traidas: 0, total: 0}, n_diferencias: 0})],
+  faltantes: [{campo: 'IsExited', informes: 2, nombre: 'Ya salió del tambo'}, {campo: 'DaysDry', informes: 1, nombre: 'Días en seca'}, {campo: 'Sex', informes: 1, nombre: 'Sexo'}]};
+async function abrirDp(P) { P.api.cuando('GET', /^\/api\/informes\/delpro$/, () => DELPRO); await P.t.abrirDelpro(); await P.flush(); }
+const casilleros = P => P.$$('#dp-lista [data-chg="dpsel"]');
+const elegidos = P => [...P.t.DP.sel].sort((a, b) => a - b);
+
+caso('elegir: cada informe que se puede traer tiene su casillero y el que no, no', async () => {
+  const P = await cargar(); await abrirDp(P);
+  assert.strictEqual(casilleros(P).length, 3);
+  assert.ok(!P.$('#dp-lista [data-chg="dpsel"][data-oid="13"]'), 'el que no se puede traer no se elige');
+  assert.ok(P.$('#dp-lista [data-chg="dpsel"][data-oid="10"]'));
+});
+
+caso('elegir: tocar un casillero lo suma y volver a tocarlo lo saca, y el contador lo dice', async () => {
+  const P = await cargar(); await abrirDp(P);
+  assert.ok(P.$('#dp-sel-traer').disabled, 'sin elegir nada no se puede traer');
+  P.cambiar('#dp-lista [data-chg="dpsel"][data-oid="11"]', true);
+  assert.deepStrictEqual(elegidos(P), [11]);
+  assert.ok(/1 elegido/.test(P.texto('#dp-sel-cuenta')), P.texto('#dp-sel-cuenta'));
+  assert.ok(!P.$('#dp-sel-traer').disabled);
+  P.cambiar('#dp-lista [data-chg="dpsel"][data-oid="11"]', false);
+  assert.deepStrictEqual(elegidos(P), []);
+  assert.ok(P.$('#dp-sel-traer').disabled);
+});
+
+caso('elegir: «Elegir todos los que se pueden traer» marca esos y respeta el buscador; «Quitar» los saca', async () => {
+  const P = await cargar(); await abrirDp(P);
+  P.click('[data-act="dpseltodos"]');
+  assert.deepStrictEqual(elegidos(P), [10, 11, 12]);                                          // el 13 no se puede traer
+  assert.ok(/3 elegidos/.test(P.texto('#dp-sel-cuenta')), P.texto('#dp-sel-cuenta'));
+  P.click('[data-act="dpselnada"]');
+  assert.deepStrictEqual(elegidos(P), []);
+  P.cambiar('#dp-q', 'filtro');
+  P.$('#dp-q').dispatchEvent(new (require('./mini_dom.js').Evento)('input', P.$('#dp-q')));
+  P.click('[data-act="dpseltodos"]');
+  assert.deepStrictEqual(elegidos(P), [11, 12], 'solo los que muestra la búsqueda');
+});
+
+caso('elegir: lo que falta se calcula para los elegidos (y sin elegir, para todos)', async () => {
+  const P = await cargar(); await abrirDp(P);
+  assert.ok(/Ya salió del tambo/.test(P.texto('#dp-falta-cuerpo')) && /Sexo/.test(P.texto('#dp-falta-cuerpo')));            // sin elegir: el ranking de todos
+  P.cambiar('#dp-lista [data-chg="dpsel"][data-oid="11"]', true);
+  const t = P.texto('#dp-falta-cuerpo');
+  assert.ok(/Días en seca/.test(t) && /Ya salió del tambo/.test(t), t);
+  assert.ok(!/Sexo/.test(t), 'el 11 no usa «Sexo»: ' + t);
+  assert.ok(/elegidos?/.test(P.texto('#dp-falta summary')), P.texto('#dp-falta summary'));
+  P.cambiar('#dp-lista [data-chg="dpsel"][data-oid="12"]', true);
+  const dos = P.$$('#dp-falta-cuerpo span').filter(s => /Ya salió del tambo/.test(s.textContent))[0];
+  assert.ok(/2/.test(dos.textContent), 'lo piden los dos elegidos: ' + dos.textContent);
+});
+
+caso('elegir: si a los elegidos no les falta nada lo dice', async () => {
+  const P = await cargar(); await abrirDp(P);
+  P.cambiar('#dp-lista [data-chg="dpsel"][data-oid="10"]', true);
+  assert.ok(/no les falta ningún campo/i.test(P.texto('#dp-falta-cuerpo')), P.texto('#dp-falta-cuerpo'));
+});
+
+caso('traer los elegidos: manda los números, cuenta lo que pasó, refresca la lista y saca de la elección lo resuelto', async () => {
+  const P = await cargar(); await abrirDp(P);
+  P.api.cuando('POST', /^\/api\/informes\/delpro\/traer$/, () => ({resultado: [{oid: 10, nombre: 'Animales por rodeo', estado: 'traido', id: 5}, {oid: 11, nombre: 'Con un filtro', estado: 'ya_estaba'},
+    {oid: 12, nombre: 'Otro filtro', estado: 'error', motivo: 'No se pudo guardar este informe.'}], traidos: 1, ya_estaban: 1, no_se_pudieron: 1}));
+  const antes = P.api.de('GET', /^\/api\/informes$/).length;
+  P.click('[data-act="dpseltodos"]');
+  P.click('#dp-sel-traer'); await P.flush();
+  assert.deepStrictEqual(plano(P.api.de('POST', /\/delpro\/traer$/)[0].cuerpo), {oids: [10, 11, 12]});
+  const m = P.texto('#dp-sel-msj');
+  assert.ok(/1 traído/.test(m) && /1 ya estaba/.test(m) && /1 no se pudo/.test(m), m);
+  assert.ok(P.api.de('GET', /^\/api\/informes$/).length > antes, 'la lista de informes se vuelve a leer');
+  assert.deepStrictEqual(elegidos(P), [12], 'queda elegido el que falló, para reintentarlo');
+});
+
+caso('traer los elegidos: un doble clic manda un solo pedido', async () => {
+  const P = await cargar(); await abrirDp(P);
+  const d = P.diferido();
+  P.api.cuando('POST', /^\/api\/informes\/delpro\/traer$/, () => d.promesa);
+  P.click('[data-act="dpseltodos"]');
+  P.click('#dp-sel-traer'); P.click('#dp-sel-traer'); await P.flush();
+  assert.strictEqual(P.api.de('POST', /\/delpro\/traer$/).length, 1);
+  d.resolver({resultado: [], traidos: 0, ya_estaban: 0, no_se_pudieron: 0}); await P.flush();
+});
+
+caso('traer los elegidos: si falla el servidor lo dice dentro del cuadro y no pierde la elección', async () => {
+  const P = await cargar(); await abrirDp(P);
+  P.api.cuando('POST', /^\/api\/informes\/delpro\/traer$/, () => P.error(502, {error: 'No se pudieron traer los informes de DelPro ahora.'}));
+  P.click('[data-act="dpseltodos"]');
+  P.click('#dp-sel-traer'); await P.flush();
+  assert.ok(/No se pudieron traer/.test(P.texto('#dp-err')), P.texto('#dp-err'));
+  assert.deepStrictEqual(elegidos(P), [10, 11, 12]);
+  assert.ok(!P.$('#dp-sel-traer').disabled, 'se puede volver a intentar');
+});
+
+/* ---------------------------------------------------------------------------------------------------------------------------------------- */
 /* Un campo de lista cerrada («sí/no», el estado de la reproducción): se elige de una lista en vez de escribirlo (tanda 1)                   */
 /* ---------------------------------------------------------------------------------------------------------------------------------------- */
 const opcionesDe = (P, sel) => P.$$(sel + ' option').map(o => o.textContent);

@@ -97,6 +97,34 @@ class TestSeCompilan(unittest.TestCase):
                                   {"campo": "EffectiveInseminationDate", "resumen": "max"}], "detalle": False}, herd=1, hoy="2026-07-30")
 
 
+class TestLaLecheDeAyerYDeHoy(unittest.TestCase):
+    """Decisión del usuario (24/11/2026): se llaman «de ayer» y «de hoy» como en DelPro; «ayer» es el día anterior a «Calcular al» y «hoy» ese día. Quien mira una copia de la base
+    (que se restaura de un backup) sabe que son relativos a la fecha de los datos. Excepción a la regla de las fechas concretas, pedida por el dueño."""
+
+    def test_estan_con_el_nombre_de_delpro_y_en_kilos(self):
+        for id_, etiqueta in (("YieldYesterday", "Producción de leche de ayer"), ("YieldToday", "Producción de leche de hoy")):
+            c = cat.CATALOGO[id_]
+            self.assertEqual((c.etiqueta, c.tipo, c.unidad, c.decimales, c.verificado), (etiqueta, "num", "kg", 1, False), id_)
+            self.assertGreater(len(c.nota), 15)
+
+    def test_ayer_es_el_dia_anterior_y_hoy_es_el_dia_de_calcular_al(self):
+        ayer, hoy = compilar(["YieldYesterday"]), compilar(["YieldToday"])
+        self.assertIn("DATEADD(day, -1, ", ayer)
+        self.assertIn("2026-07-30", ayer)
+        self.assertNotIn("DATEADD(day, -1, ", hoy)
+        self.assertIn("2026-07-30", hoy)
+
+    def test_se_compilan_y_pasan_la_validacion(self):
+        for id_ in ("YieldYesterday", "YieldToday"):
+            db.validate_sql(im.compilar({"columnas": [{"campo": "Number"}, {"campo": id_}], "condiciones": [{"campo": id_, "op": ">", "valor": 10}]}, herd=1, hoy="2026-07-30")["sql"])
+        im.compilar({"columnas": [{"campo": "YieldYesterday", "resumen": "avg"}, {"campo": "YieldToday", "resumen": "sum"}], "detalle": False}, herd=1, hoy="2026-07-30")
+
+    def test_cada_uno_une_una_sola_fila_por_animal_y_dia(self):
+        sql = compilar(["YieldYesterday", "YieldToday"])
+        self.assertEqual(sql.count("LEFT JOIN AnimalDaily"), 2)
+        self.assertNotIn("GROUP BY", sql.upper())
+
+
 class TestElImportador(unittest.TestCase):
     def test_las_propiedades_de_la_reproduccion_son_alias(self):
         res = dl.resolver_por_nombre(cat.CATALOGO)

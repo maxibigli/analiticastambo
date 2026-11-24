@@ -366,6 +366,9 @@ todos los eventos de parto de la base: en un SQL Express con poca memoria quedab
 Los otros dos campos candidatos recorren decenas de páginas de eventos por animal (el último «corte» de la puerta de separación, 80 por animal; el último diagnóstico, 340) y quedaron para una tanda 3 que necesita un índice, un tope de fecha o una copia diaria.
 **Regla de diseño:** nunca agrupar una tabla de eventos entera; el «último» de algo se busca por animal (puntero del índice de DelPro o `OUTER APPLY TOP 1`).
 
+**Leche «de ayer» y «de hoy» (35 campos).** Decisión del usuario: se llaman así, como en DelPro (relativas a «Calcular al»); es una excepción pedida por el dueño a la regla de las fechas concretas. **Elegir y traer varios informes de DelPro:** el cliente es quien usa esos informes, así que el cuadro «Traer de DelPro…» permite elegir los suyos
+y traerlos juntos (se guardan con su nota de origen, sin ejecutar nada) y recalcula qué campos faltan SOLO para los elegidos: así se priorizan los campos que el cliente de verdad necesita (tanda 3).
+
 **Tanda 2 (33 campos en total):** `EffectiveInseminationDate`, `LastPregnancyCheckDate`, `LastCullDecisionDate` (punteros del índice de DelPro), `DaysPregnant`, `LatestSCC` (último control lechero, en miles/ml) y los promedios de 14, 21 y 30 días. Los promedios y los días son cuentas nuestras (⚠ hasta compararlos con un informe de DelPro).
 
 ## Pendientes de la Fase 4: lo que decide el tambo o falta probar
