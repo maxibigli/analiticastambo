@@ -26,6 +26,7 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import Outline, PageSetupProperties
 
 _PELIGROSO = ("=", "+", "-", "@", "\t", "\r")
+_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")          # Excel no admite estos caracteres (el tabulador y el salto de línea sí): `openpyxl` levanta si se los escribe
 ANCHO_MAX = 42
 SIN_DATO = "(sin dato)"
 SIN_GRUPO = "Sin grupo identificado"
@@ -42,6 +43,7 @@ _BORDE_TOTAL = Border(top=Side(style="medium", color=_AZUL))
 
 
 def _texto(ws, fila: int, col: int, valor: str):
+    valor = _CONTROL.sub("", valor)                       # un texto pegado desde Word puede traer un tabulador vertical: no tiene que tumbar la exportación (ni el envío programado)
     c = ws.cell(row=fila, column=col, value=valor)
     if valor and valor[0] in _PELIGROSO:
         c.data_type = "s"          # texto aunque empiece con «=»

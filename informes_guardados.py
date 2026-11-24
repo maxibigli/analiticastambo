@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sqlite3
+import time
 
 import informes_motor
 import informes_serie
@@ -33,13 +34,27 @@ def _iso(dt: datetime.datetime) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def activar_wal(con) -> None:
+    """Deja el archivo en modo WAL (varios lectores mientras alguien escribe). Pasar a WAL necesita el archivo libre y, a diferencia del resto de las sentencias, NO espera:
+    sobre un archivo nuevo, dos pedidos a la vez (la pantalla pide la lista de informes y la de envíos juntas) daban «database is locked». Se reintenta unos instantes, y
+    como el modo queda guardado en el archivo, si otro pedido ya lo dejó en WAL no hace falta repetirlo. Si no se logra sigue andando en el modo de siempre."""
+    for _ in range(60):
+        try:
+            if str(con.execute("PRAGMA journal_mode").fetchone()[0]).lower() == "wal":
+                return
+            con.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError:
+            time.sleep(0.05)
+
+
 @contextlib.contextmanager
 def _con():
     """Una conexión que SIEMPRE se cierra al salir (en Windows un SQLite abierto traba el archivo) y confirma los cambios."""
-    con = sqlite3.connect(RUTA_DB)
+    con = sqlite3.connect(RUTA_DB, timeout=15)
     try:
         con.row_factory = sqlite3.Row
-        con.execute("PRAGMA journal_mode=WAL")
+        activar_wal(con)
         _crear_tabla(con)
         with con:
             yield con
@@ -74,7 +89,9 @@ def _nombre(nombre) -> tuple:
     return limpio, limpio.casefold()
 
 
-def _definicion(defn) -> dict:
+def validar_definicion(defn) -> dict:
+    """La definición LIMPIA (solo las claves conocidas) si el compilador la acepta; `InformeGuardadoError` si no. Es el mismo control con que
+    se guarda un informe: lo usan también el importador de DelPro y el armado con lenguaje natural, que no guardan nada."""
     if not isinstance(defn, dict):
         raise InformeGuardadoError("La definición del informe no es válida.")
     limpia = {k: defn[k] for k in CLAVES_DEFINICION if k in defn}
@@ -87,6 +104,10 @@ def _definicion(defn) -> dict:
     except (informes_motor.InformeError, informes_serie.SerieError) as e:
         raise InformeGuardadoError(str(e)) from e
     return limpia
+
+
+_definicion = validar_definicion
+normalizar_nombre = _nombre            # (nombre limpio, nombre para comparar): el que se guarda y el que no se puede repetir
 
 
 def _fila(r: sqlite3.Row) -> dict:

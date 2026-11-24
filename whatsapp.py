@@ -13,12 +13,18 @@ import time
 
 import requests
 
+import envio_red
+
 TWILIO_MSG_URL = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
 TWILIO_MSG_ESTADO_URL = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages/{msg_sid}.json"
 
 
 class WhatsappError(Exception):
-    pass
+    """Un error de WhatsApp (Twilio). `no_salio`: se SABE que el mensaje no salió; `reintentable`: además se puede volver a intentar sin riesgo de duplicarlo (ver `envio_red`)."""
+
+    def __init__(self, mensaje="", no_salio=False, reintentable=False):
+        super().__init__(mensaje)
+        self.__dict__.update(envio_red.marcas(no_salio, reintentable))
 
 
 def configurado() -> bool:
@@ -39,27 +45,39 @@ def enviar(mensaje: str, destino: str | None = None) -> None:
     destino = destino or os.environ.get("WHATSAPP_TELEFONO")
     if not (sid and token and origen and destino):
         raise WhatsappError("Faltan TWILIO_ACCOUNT_SID / TWILIO_AUTH_TOKEN / TWILIO_WHATSAPP_FROM / "
-                             "WHATSAPP_TELEFONO (ver INSTALL.md).")
+                             "WHATSAPP_TELEFONO (ver INSTALL.md).", no_salio=True)
     destino_wa = destino if destino.startswith("whatsapp:") else f"whatsapp:{destino}"
-    r = requests.post(TWILIO_MSG_URL.format(sid=sid), auth=(sid, token),
-                       data={"From": origen, "To": destino_wa, "Body": mensaje}, timeout=15)
+    try:
+        r = requests.post(TWILIO_MSG_URL.format(sid=sid), auth=(sid, token),
+                           data={"From": origen, "To": destino_wa, "Body": mensaje}, timeout=15)
+    except Exception as exc:  # noqa: BLE001 -- el texto de una excepción de `requests` lleva la URL (con el SID de la cuenta)
+        sin_llegar = envio_red.no_llego(exc)
+        raise WhatsappError(f"No se pudo conectar con Twilio ({type(exc).__name__}).", no_salio=sin_llegar, reintentable=sin_llegar) from None
     if r.status_code not in (200, 201):
-        raise WhatsappError(f"Twilio respondió {r.status_code}: {r.text[:300]}")
+        raise WhatsappError(f"Twilio respondió {r.status_code}: {r.text[:300]}", no_salio=400 <= r.status_code < 500, reintentable=r.status_code == 429)
 
     # Que Twilio haya aceptado el pedido (200/201) solo significa "encolado":
     # no confirma que WhatsApp lo haya entregado. Se consulta el estado real
-    # un instante después para poder avisar el motivo si falló.
-    msg_sid = r.json().get("sid")
+    # un instante después para poder avisar el motivo si falló. Desde que Twilio
+    # aceptó el mensaje, un fallo de ESTA consulta no es un fallo del envío: el
+    # mensaje ya está en camino, y avisar un error haría que quien llama lo reintente (y se duplique).
+    try:
+        msg_sid = r.json().get("sid")
+    except Exception:  # noqa: BLE001
+        return
     if not msg_sid:
         return
     time.sleep(2.5)
-    r2 = requests.get(TWILIO_MSG_ESTADO_URL.format(sid=sid, msg_sid=msg_sid), auth=(sid, token), timeout=15)
-    if r2.status_code != 200:
-        return  # no se pudo confirmar el estado; no es razón para reportar error
-    info = r2.json()
-    estado = info.get("status")
+    try:
+        r2 = requests.get(TWILIO_MSG_ESTADO_URL.format(sid=sid, msg_sid=msg_sid), auth=(sid, token), timeout=15)
+        if r2.status_code != 200:
+            return  # no se pudo confirmar el estado; no es razón para reportar error
+        info = r2.json()
+    except Exception:  # noqa: BLE001
+        return
+    estado = info.get("status") if isinstance(info, dict) else None
     if estado in ("failed", "undelivered"):
         raise WhatsappError(
             f"Twilio encoló el mensaje pero no se entregó (estado: {estado}). "
-            f"Código {info.get('error_code')}: {info.get('error_message')}"
+            f"Código {info.get('error_code')}: {info.get('error_message')}", no_salio=True
         )

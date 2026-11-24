@@ -55,6 +55,18 @@ class TestCatalogo(unittest.TestCase):
             if not c.verificado:
                 self.assertTrue(c.nota, f"{c.id} sin verificar y sin nota que diga por qué")
 
+    def test_los_valores_de_un_texto_cerrado_son_los_que_el_campo_devuelve(self):
+        """`valores` es lo que la IA ve y lo único que acepta: tiene que ser EXACTAMENTE lo que escribe la expresión del campo, ni más ni menos."""
+        con_valores = [c for c in cat.CATALOGO.values() if c.valores]
+        self.assertIn("CurrentReproductionStatus", [c.id for c in con_valores])
+        for c in con_valores:
+            self.assertEqual(c.tipo, "txt", c.id)
+            self.assertEqual(set(re.findall(r"THEN '([^']+)'|ELSE '([^']+)'", c.expr)), {(v, "") if c.expr.count(f"THEN '{v}'") else ("", v) for v in c.valores}, c.id)
+
+    def test_el_orden_numerico_del_numero_del_animal(self):
+        self.assertEqual(cat.CATALOGO["Number"].orden_expr, "b.Number")
+        self.assertEqual([c.id for c in cat.CATALOGO.values() if c.orden_expr], ["Number"])
+
     def test_los_ids_siguen_el_nombre_de_delpro(self):
         # No es un capricho: sirve para importar después los informes que el tambo ya tiene en DelPro.
         for esperado in ("Number", "AnimalGroupName", "CurrentLactationNumber", "CurrentDIM", "SevenDayAverage",

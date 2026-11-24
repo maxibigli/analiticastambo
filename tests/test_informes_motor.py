@@ -199,6 +199,96 @@ class TestValores(unittest.TestCase):
         self.assertIn("AND ord.p24 < 33\n  AND ord.dim <= 60", sql)
 
 
+class TestEsUnoDe(unittest.TestCase):
+    """El operador «en» (es uno de): la condición más común de los informes de DelPro («rodeo 1, 2 o 3») y de lo que se pide en palabras.
+    Los valores se validan UNO por UNO con las mismas reglas que los de «=» y «es»: nada de lo que viene en la lista llega crudo a la consulta."""
+
+    def sql(self, **kw):
+        return comp(**kw)["sql"]
+
+    def test_numeros(self):
+        sql = self.sql(condiciones=[{"campo": "Lact", "op": "en", "valor": [1, 2]}])
+        self.assertIn("rep.lact IN (1, 2)", sql)
+
+    def test_numeros_como_texto_con_coma_decimal(self):
+        self.assertIn("rep.n IN (1.5, 2)", self.sql(condiciones=[{"campo": "RepN", "op": "en", "valor": ["1,5", "2"]}]))
+
+    def test_texto_con_comillas_se_duplican(self):
+        sql = self.sql(condiciones=[{"campo": "GroupName", "op": "en", "valor": ["Rodeo 1", "O'Brien"]}])
+        self.assertIn("ag.Name IN (N'Rodeo 1', N'O''Brien')", sql)
+
+    def test_un_solo_valor_tambien_vale(self):
+        self.assertIn("rep.lact IN (3)", self.sql(condiciones=[{"campo": "Lact", "op": "en", "valor": [3]}]))
+
+    def test_los_repetidos_se_sacan_y_el_orden_se_conserva(self):
+        self.assertIn("rep.lact IN (2, 1)", self.sql(condiciones=[{"campo": "Lact", "op": "en", "valor": [2, 1, 2, "1"]}]))
+
+    def test_el_sql_pasa_la_validacion_de_solo_lectura_de_la_app(self):
+        db.validate_sql(self.sql(condiciones=[{"campo": "GroupName", "op": "en", "valor": ["Rodeo 1", "Rodeo 2"]}]))
+
+    def test_se_combina_con_otras_condiciones(self):
+        sql = self.sql(columnas=[{"campo": "P24"}], condiciones=[{"campo": "Lact", "op": "en", "valor": [1, 2]}, {"campo": "P24", "op": "<", "valor": 30}])
+        self.assertIn("AND rep.lact IN (1, 2)\n  AND ord.p24 < 30", sql)
+
+    def test_la_poblacion_del_grafico_tambien_lo_lleva(self):
+        sql = im.poblacion_sql({"columnas": [{"campo": "Number"}], "condiciones": [{"campo": "Lact", "op": "en", "valor": [1, 2]}]}, CAT, BLOQUES, herd=1)
+        self.assertIn("rep.lact IN (1, 2)", sql)
+
+    def malo(self, **cond):
+        with self.assertRaises(im.InformeError):
+            comp(condiciones=[dict({"campo": "Lact", "op": "en"}, **cond)])
+
+    def test_la_lista_tiene_que_ser_una_lista_con_algo(self):
+        for v in (5, "1, 2", None, {"a": 1}, [], ()):
+            self.malo(valor=v)
+
+    def test_demasiados_valores(self):
+        self.malo(valor=list(range(im.LISTA_MAX + 1)))
+        comp(condiciones=[{"campo": "Lact", "op": "en", "valor": list(range(im.LISTA_MAX))}])             # justo el tope: sirve
+
+    def test_cada_valor_se_valida_como_un_valor_suelto(self):
+        self.malo(valor=[1, "dos"])
+        self.malo(valor=[1, True])
+        self.malo(valor=[1, float("nan")])
+        self.malo(valor=[1, [2]])
+        with self.assertRaises(im.InformeError):
+            comp(condiciones=[{"campo": "GroupName", "op": "en", "valor": ["Rodeo 1", "x'; DROP TABLE BasicAnimal--"]}])
+        with self.assertRaises(im.InformeError):
+            comp(condiciones=[{"campo": "GroupName", "op": "en", "valor": ["Rodeo 1", 7]}])                # un número en un campo de texto
+        with self.assertRaises(im.InformeError):
+            comp(condiciones=[{"campo": "GroupName", "op": "en", "valor": ["a" * 61]}])
+
+    def test_una_fecha_no_admite_el_operador(self):
+        with self.assertRaises(im.InformeError):
+            comp(condiciones=[{"campo": "Parto", "op": "en", "valor": ["2025-09-16"]}])
+
+    def test_los_otros_operadores_siguen_pidiendo_un_valor_suelto(self):
+        with self.assertRaises(im.InformeError):
+            comp(condiciones=[{"campo": "Lact", "op": "=", "valor": [1, 2]}])
+        with self.assertRaises(im.InformeError):
+            comp(condiciones=[{"campo": "GroupName", "op": "es", "valor": ["Rodeo 1"]}])
+
+    def test_describir(self):
+        d = {"columnas": [{"campo": "Number"}], "condiciones": [{"campo": "Lact", "op": "en", "valor": [1, 2]},
+                                                                {"campo": "GroupName", "op": "en", "valor": ["Rodeo 1", "Rodeo 2"]}]}
+        self.assertEqual(im.describir_condiciones(d, CAT), ["Nº Lactación es uno de 1, 2", "Nombre del grupo es uno de «Rodeo 1», «Rodeo 2»"])
+
+    def test_describir_no_se_rompe_con_una_lista_mal_formada(self):
+        d = {"columnas": [{"campo": "Number"}], "condiciones": [{"campo": "Lact", "op": "en", "valor": "1, 2"}]}
+        self.assertIsInstance(im.describir_condiciones(d, CAT), list)
+
+
+class TestLimiteDeCondiciones(unittest.TestCase):
+    def test_hasta_el_tope_sirve_y_uno_mas_no(self):
+        una = {"campo": "P24", "op": "<", "valor": 1}
+        comp(condiciones=[una] * im.CONDICIONES_MAX)
+        with self.assertRaises(im.InformeError):
+            comp(condiciones=[una] * (im.CONDICIONES_MAX + 1))
+
+    def test_alcanza_para_traducir_un_filtro_de_delpro(self):
+        self.assertGreaterEqual(im.CONDICIONES_MAX, 10)
+
+
 class TestOrden(unittest.TestCase):
     def test_nulos_al_final_en_los_dos_sentidos(self):
         for d, palabra in ((1, "ASC"), (-1, "DESC")):
@@ -577,6 +667,15 @@ class TestDescribir(unittest.TestCase):
                          ["Producción 24 h < 30", "Nombre del grupo contiene «Rodeo»", "Fecha del último parto ≥ 16/09/2025",
                           "Incluye animales descartados"])
 
+    def test_las_fechas_pueden_llevar_el_dia_de_la_semana(self):
+        d = {"columnas": [{"campo": "Number"}], "condiciones": [{"campo": "Parto", "op": ">=", "valor": "2026-08-27"}]}
+        self.assertEqual(im.describir_condiciones(d, CAT), ["Fecha del último parto ≥ 27/08/2026"])               # lo de siempre no cambia
+        self.assertEqual(im.describir_condiciones(d, CAT, con_dia=True), ["Fecha del último parto ≥ jue 27/08/2026"])
+
+    def test_con_dia_una_fecha_mal_formada_no_rompe(self):
+        d = {"columnas": [{"campo": "Number"}], "condiciones": [{"campo": "Parto", "op": ">=", "valor": "2026-13-45"}]}
+        self.assertIsInstance(im.describir_condiciones(d, CAT, con_dia=True), list)
+
     def test_sin_condiciones(self):
         self.assertEqual(im.describir_condiciones({"columnas": [{"campo": "Number"}]}, CAT), [])
 
@@ -622,6 +721,61 @@ class TestEjecutar(unittest.TestCase):
         with self.assertRaises(im.InformeError):
             im.ejecutar({"columnas": [{"campo": "No"}]}, "ponderosa", CAT, BLOQUES, run=falso, herd=1)
         self.assertEqual(llamado, [])
+
+
+class TestOrdenNumericoDelNumero(unittest.TestCase):
+    """Con el catálogo REAL: el Número del animal se muestra como texto pero se ordena como número («1, 2, 10», no «1, 10, 2»), que es el orden de DelPro.
+    45 de los 58 informes de animales del tambo salen ordenados por ese campo (con orden explícito o por ser la primera columna)."""
+
+    def sql(self, **kw):
+        d = {"columnas": [{"campo": "Number"}]}
+        d.update(kw)
+        return im.compilar(d, herd=1)["sql"]
+
+    def test_el_orden_por_defecto_es_numerico(self):
+        sql = self.sql()
+        self.assertIn("ORDER BY CASE WHEN b.Number IS NULL THEN 1 ELSE 0 END, b.Number ASC", sql)
+        self.assertIn("CAST(b.Number AS nvarchar(20)) AS c0", sql)                       # lo que se muestra sigue siendo el texto
+
+    def test_el_orden_explicito_tambien(self):
+        sql = self.sql(orden={"campo": "Number", "dir": -1})
+        self.assertIn("b.Number DESC", sql)
+        self.assertNotIn("CAST(b.Number AS nvarchar(20)) DESC", sql)
+
+    def test_un_campo_sin_expresion_de_orden_se_ordena_con_la_suya(self):
+        self.assertIn("ag.Name ASC", self.sql(columnas=[{"campo": "AnimalGroupName"}]))
+
+    def test_dentro_de_un_grupo_el_orden_del_numero_sigue_siendo_numerico(self):
+        sql = self.sql(columnas=[{"campo": "Number"}, {"campo": "AnimalGroupName"}], agrupar_por=["AnimalGroupName"])
+        self.assertIn("ag.Name, CASE WHEN b.Number IS NULL THEN 1 ELSE 0 END, b.Number ASC", sql)
+        db.validate_sql(sql)
+
+
+class TestDescartadosSonUnaUnion(unittest.TestCase):
+    """«Incluir descartados» AGREGA a los que ya salieron: nunca saca a los de hoy. `filtro_historico` solo ve a quien alguna vez ordeñó (tuvo un
+    registro diario), así que una novilla de hoy sin ordeños quedaría afuera si el historial reemplazara al filtro de hoy."""
+
+    def test_con_la_opcion_son_los_de_hoy_o_los_historicos(self):
+        sql = comp(incluir_descartados=True)["sql"]
+        self.assertIn("b.[Group]", sql)                                                 # los animales de hoy
+        self.assertIn("AnimalDaily d_tb", sql)                                          # y los que ya salieron
+        self.assertIn(" OR EXISTS (SELECT 1 FROM AnimalDaily d_tb", sql)
+        db.validate_sql(sql)
+
+    def test_sin_la_opcion_son_solo_los_de_hoy(self):
+        sql = comp()["sql"]
+        self.assertIn("b.[Group]", sql)
+        self.assertNotIn("AnimalDaily d_tb", sql)
+
+    def test_la_union_va_entre_parentesis_y_no_se_come_las_otras_condiciones(self):
+        sql = comp(incluir_descartados=True, condiciones=[{"campo": "Dim", "op": ">=", "valor": 0}])["sql"]
+        donde = sql.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
+        self.assertIn("AND (EXISTS (SELECT 1 FROM AnimalGroup g_tb", donde)
+        self.assertTrue(donde.rstrip().endswith("))"), donde)                           # el último paréntesis cierra la unión
+
+    def test_el_grafico_sigue_a_la_misma_poblacion(self):
+        pob = im.poblacion_sql({"columnas": [{"campo": "Number"}], "incluir_descartados": True}, CAT, BLOQUES, herd=1)
+        self.assertIn(" OR EXISTS (SELECT 1 FROM AnimalDaily d_tb", pob)
 
 
 if __name__ == "__main__":

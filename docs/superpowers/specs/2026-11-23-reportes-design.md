@@ -216,6 +216,113 @@ el fin de año, días rotos que no arrastran un promedio, huecos que cortan la l
 * Si el servidor tarda (SQL Express sin memoria), la pantalla dice «Calculando…» sin límite de tiempo.
 * Barras diarias con varias series quedan muy densas: están pensadas para semana o mes.
 
+## Fase 4: estado al 24/11/2026
+
+Tres funciones, hechas de noche y **sin commitear** (esperan el «commiteá» del usuario): **traer los informes que el tambo ya armó en DelPro (4a)**, **armar un informe describiéndolo con una frase (4b)** y
+**programar el envío de un informe (4c)**. Las tres respetan la regla de siempre: lo que entra es una definición JSON que pasa por `compilar`; ningún valor llega como SQL. Ninguna llamó a la API de Anthropic,
+mandó un mensaje ni escribió en una base: las pruebas usan un cliente de IA y canales de mentira.
+
+### Un operador nuevo: «es uno de»
+
+La condición más común de los informes de DelPro («rodeo 1, 2 o 3») y de lo que se pide en palabras no se podía expresar. El motor suma el operador `en` (números y textos), con una lista de hasta 20 valores:
+**cada valor se valida como el de un «=» o un «es»**, se sacan los repetidos y nada llega crudo a la consulta. `CONDICIONES_MAX` subió de 5 a 10 (un «entre» de DelPro son dos condiciones). En la pantalla se escribe separado por
+comas y viaja como lista. `describir_condiciones(defn, con_dia=True)` escribe las fechas con el día de la semana.
+
+### 4a. Traer los informes de DelPro
+
+DelPro guarda su propio diseñador de informes dentro de DDM, así que se **lee** (cuatro SELECT fijos, guardados 10 minutos en memoria, nunca se escribe): `DDMReport` (con `XPObjectType.TypeName`, porque el `ObjectType` 16/19 es un OID que
+cambia de una base a otra), `DDMReportColumn` → `DDMReportItemInstance` → `DDMReportItem` (el `Name` del campo es el id del catálogo de LactIA), `Filter` y `DDMReportClass`. Comprobado contra la base real: el `CustomFilter` del informe
+llama a cada columna `C` + el OID de la columna (`[C2511]`), y los códigos de resumen son los `SummaryItemType` de DevExpress (0 suma, 1 mínimo, 2 máximo, 3 conteo, 4 promedio, 5/6 ninguno; el conteo cae en `Number` y el promedio en los días
+en ordeño y las producciones). Los filtros están escritos en el lenguaje de criterios de DevExpress, que no es SQL: `informes_delpro.py` trae **un lector propio** (sin `eval`) y traduce solo una conjunción («y») de comparaciones simples,
+«es uno de», «entre» y rangos de fechas sobre campos del catálogo. **Lo que no se puede traer no se adivina**: cada término queda dicho, con el motivo, y el informe pasa a **«parcial»**. Un filtro que no se trae cambia QUÉ animales
+aparecen (el informe puede mostrar más), así que se avisa con otra gravedad («contenido») que una columna que falta («columnas») o un orden que se ve distinto («presentación»). Cada condición traducida se vuelve a validar con `compilar`: un valor
+con `;`, `--` o `/*` se descarta y se avisa.
+
+* **Solo informes de animales** (`BasicAnimal` y `AnimalExtended`); los de ordeño por sesión, grupo, tratamientos, etc. figuran como «no se puede traer» con su motivo.
+* **Estados:** `completo` (sin diferencias de contenido ni de columnas), `parcial`, `no_disponible`. La lista los ordena (completos primero, los del tambo antes que los de fábrica) y marca «filtro sin traer».
+* **Pantalla:** «Traer de DelPro…» en la lista abre un cuadro con búsqueda, el estado de cada informe y los campos de DelPro que más faltan; «Traer» abre el informe como **uno nuevo, sin guardar**, con un aviso arriba (qué cambia qué animales
+  aparecen, qué falta, qué se ve distinto). API (admin): `GET /api/informes/delpro` y `GET /api/informes/delpro/<oid>`.
+* **Cobertura real, medida sobre la copia local** (58 informes de animales del tambo; el catálogo tiene 10 campos): solo 4 se traen completos por sus columnas. Los campos que más faltan: `InMilk` (19 informes),
+  `YieldYesterdayForAllMilkingInSession` (16), `ToBeCulled` (15), `NumberOfInseminations` (11), `DaysToCalving` (9), `DiagnosisFromDiagnosisTreatmentEvent` (9), `CMSTakeOffFlowYesterday` (9), `ExpectedCalvingDate` (8), `IsPregnant` (8),
+  `IsDryingOff` (8). **Ampliar el catálogo (cada campo con su verificación contra DelPro) es lo que más hace crecer el valor del importador.**
+
+**Revisión independiente de las tres funciones (la noche del 24/11/2026).** Cuatro miradas por función (traductor, seguridad, semántica de lo que se importa, uso de la pantalla, y regresión contra la versión commiteada) y UN
+verificador adversarial por hallazgo, que intentó refutarlo con una reproducción propia. De los hallazgos de la 4a se confirmaron casi todos (los de pantalla, 15 de 15) y se **refutaron 5**; los de la 4b (9 de 9) y la 4c (todos menos 1) se
+confirmaron. Todo lo confirmado se arregló con una prueba que primero falló (`tests/test_informes_delpro_revision.py`, `test_informes_lenguaje_revision.py`, `test_informes_envios_revision.py` y ampliaciones). Lo más importante:
+* **Un filtro de DelPro raro tumbaba toda la lista** (un `1e999`, un entero de 400 cifras, 1.000 sumas o dígitos no ASCII lanzaban una excepción sin atrapar: HTTP 500 para todos los informes). Ahora nada de lo que viene de DelPro levanta:
+  el lector devuelve «no se pudo leer», `listar` aísla cada informe y los endpoints contestan 502 sin detalles. El motor rechaza números enormes, `inf` y `nan`.
+* **70 de los 133 filtros de servidor reales se escriben sin corchetes** (`ReproductionInfo.LactationNumber > 0 AND ...`): el lector los entiende, y un término ilegible ya no descarta a los demás.
+* **El filtro de la grilla de DelPro se evalúa EN MEMORIA, donde un animal sin dato pasa un «menor que»**; SQL lo deja afuera, así que traerlo tal cual mostraría menos animales. Solo se trae si el mismo campo pide «con dato»
+  (DelPro mismo escribe `< 18 And Is Not Null`). *Un verificador lo marcó como no demostrable con datos reales; se dejó la opción prudente (avisar antes que traer algo distinto).*
+* **«Todos los rebaños» (`Herd = 0`) es el caso habitual (26 de los 58 informes del tambo)** y mostrar solo los animales de este tambo es lo que se quiere: es un aviso informativo y no vuelve «parcial» al informe. Un informe de otro
+  rebaño de la base no se trae. Los informes ocultos no se listan; las reglas de color (8 de 66) se avisan.
+* **Dos defectos del motor de las Fases 0 a 3 que salieron de acá:** el orden por «Número del animal» era alfabético («10» antes que «2»: 45 de los 58 informes salen ordenados por ese campo) y «incluir descartados» **reemplazaba** el
+  filtro de los animales de hoy por el del historial en vez de sumarse (mostraba MENOS animales al marcarlo). Ahora el Número se ordena como número (`Campo.orden_expr`) y los descartados son una unión.
+* **4b:** el límite de filas que arma la IA («las 10 vacas que más producen») se perdía en la pantalla (Actualizar, Guardar, Exportar y el envío programado lo ignoraban): ahora viaja y hay un control «Listar hasta … filas». Las fechas
+  que arma la IA son fijas (un informe «últimos 30 días» programado repite el mismo período): se avisa en el aviso del informe y en el cuadro de programar. El aviso «este número no figura en lo que escribiste» saltaba en las
+  traducciones correctas (el `> 0` de «en ordeño», «primera lactancia», «doscientos», «30.5»): ahora lee ordinales, números en palabras y punto o coma decimal, y además avisa lo que la IA se olvidó (un número de la frase que no llegó
+  al informe). Un campo de texto cerrado (el estado de la reproducción) le muestra sus valores a la IA y se le rechaza otro. Sin reintentos automáticos del SDK (un pedido colgado esperaba 3 × 45 s).
+* **4c: un fallo después de que el canal aceptó el mensaje se reintentaba y lo duplicaba** (3 mensajes por un horario; reproducido con los módulos reales de WhatsApp, Telegram y correo). Ahora cada error de canal dice si se SABE que no salió
+  (no pudo ni conectar) y solo eso se reintenta; lo incierto queda «sin confirmar» y no se reenvía solo. Además: WhatsApp ya no recibe un texto que promete un Excel adjunto; el pie de Telegram (1.024 letras) conserva el total y los
+  avisos y recorta la lista de grupos; pausar mientras la pasada trabaja ahora frena el envío; cada decisión mira el reloj de ese momento; pausar y guardar no se pisan; un Excel con caracteres de control no tumba la exportación.
+
+### 4b. Describí el informe
+
+`informes_lenguaje.py` + `POST /api/informes/describir` + un cuadro en la lista. El administrador escribe «vacas del rodeo 3 con más de 200 días en ordeño, ordenadas por producción» y Claude (el mismo del agente) devuelve la **definición**
+con un esquema JSON cerrado (los ids del catálogo como enumeración). **La IA no decide nada de seguridad:** la definición pasa por `informes_guardados.validar_definicion` (o sea `compilar`); un campo inventado, un valor con SQL o una clave de más
+se rechazan y se le devuelve el motivo UNA vez. El prompt y el esquema se generan desde el catálogo y **no llevan SQL, notas internas ni datos del tambo**.
+
+* **Una llamada (más una repetición si la definición no pasó la validación)**, con tiempo límite y un **tope de 20 pedidos por hora**. Sin clave de la API (503), con la IA caída o lenta (502, sin detalles) o con una respuesta rara, el diseñador manual sigue andando igual.
+* **Lo que se muestra lo arma el servidor** desde la definición ya validada («Se lee así»), no el texto del modelo; lo que escribe el modelo (supuestos, lo que no pudo) va acotado y limpio, y se sacan las líneas con «ayer» o «ese día».
+  Se **avisa** (no se rechaza) cuando hay campos sin verificar, un número que no figura en lo escrito, un informe sin condiciones (trae todos los animales del rebaño) o un límite contra totales.
+* El informe se abre **sin guardar y sin ejecutarse solo**: el usuario revisa lo que se entendió y recién ahí toca «Actualizar».
+* **No probado con el modelo real** (no se llamó a la API): los tests usan un cliente de mentira. La primera prueba real hay que hacerla en SERVER-DELPRO, con la clave cargada, con frases de verdad.
+
+### 4c. Programar el envío
+
+`informes_envios.py`. Un informe **guardado** se programa para mandarse por correo, Telegram o WhatsApp en los días y horas que se elijan (hasta 5 horarios por día, 10 programaciones activas por tambo), con un resumen en texto y, por
+correo y Telegram, el **Excel adjunto** (WhatsApp con Twilio lleva solo el resumen: 1.600 letras de tope, sin archivos). Se manda **la versión guardada**, calculada en el momento del envío con la fecha de ese día (igual que la pantalla con
+«Calcular al» vacío). Los destinatarios son los de siempre (uno fijo por canal, por variable de entorno): no se agrega ningún destinatario ni dato personal.
+
+* **Nunca se manda dos veces lo mismo.** Cada (programación, horario, canal) se **reclama** en `informes.db` (`UNIQUE`) antes de mandar: un reinicio, dos pasadas seguidas o dos procesos no duplican. Lo que quedó a medias (el proceso murió) pasa a
+  «sin confirmar» a los 30 minutos y **no se reenvía solo**. Un canal que falla no cancela a los otros. **Solo se reintenta lo que se SABE que no salió** (no se pudo conectar: `envio_red.py`; hasta 3 veces con 10 minutos de espera, siempre dentro de
+  la hora de gracia) y un error de base; un fallo después de que el canal aceptó el mensaje (un tiempo de lectura, una conexión cortada) queda «sin confirmar» y NO se reenvía; un rechazo del canal (credenciales) y un informe que ya no compila, no se reintentan.
+* **Nada sale tarde ni retroactivo:** lo que venció hace más de una hora (el servidor estuvo apagado) no se manda, y nada sale por un horario anterior al momento en que se guardó la programación.
+* **Ningún error guarda ni muestra el texto de una excepción** (puede traer el token de Telegram o un teléfono): se guarda una frase fija por canal.
+* **No hay «borrar»:** se pausa. «Ver cómo queda» arma el resumen sin mandar nada; «Enviar ahora» manda de verdad, pide un segundo toque y **no anota nada** (no cuenta, anda con la programación pausada).
+* El hilo (`envios-informes`) lo arranca `servidor.py` **después del candado de instancia única**, nunca al importar `app`; cada minuto lee `informes.db` y recién cuando un horario vence calcula el informe contra la base del tambo.
+* `correo.enviar_con_adjunto` y `telegram_bot.enviar_documento` son nuevos (el pie de un archivo en Telegram se corta en 1.024 letras: lo importante va antes que la lista de filas).
+
+**Pruebas nuevas:** `tests/test_informes_delpro.py`, `test_informes_delpro_api.py`, `test_informes_lenguaje.py`, `test_informes_lenguaje_api.py`, `test_informes_envios.py`, `test_informes_envios_api.py`, `test_envio_adjuntos.py`, más ampliaciones del motor, los guardados
+y la página.
+
+**Límites conocidos:**
+* Cobertura baja del catálogo (10 campos): la mayoría de los informes de DelPro se traen «parcial» y la IA va a contestar «no se puede» seguido.
+* Lo importado de DelPro hereda los ⚠ de los campos sin verificar (estado de la reproducción, pico de la última lactancia): la Fase 0 sigue sin aceptarse.
+* El informe programado usa la fecha del día del envío; DelPro consolida con atraso y los últimos días pueden faltar: el mensaje dice cuándo se calculó, no hasta qué día llegan los datos.
+* Las fechas de las condiciones son fijas (el motor no tiene «hoy menos 30 días»): un informe «parieron en los últimos 30 días» guardado y programado mira siempre el mismo período. Se avisa, pero no se resuelve (ver abajo).
+* El filtro de DelPro con un «o», una función (`Milkings[...].Exists()`) o un valor especial no se trae: el informe queda «parcial» y muestra más animales que en DelPro.
+* **No se pudo probar contra la base real en esta sesión**: el servicio de SQL Server de la PC de desarrollo (`MSSQL$DELPRO`) estaba detenido (había estado sin memoria durante horas). Las cuatro consultas fijas del importador (que cambiaron
+  en dos columnas: `IsHidden` y `ConColores`) solo se probaron con la validación de solo lectura de la app y contra el volcado que se había hecho antes de que la base dejara de contestar.
+
+## Pendientes de la Fase 4: lo que decide el tambo o falta probar
+
+1. **Probar en SERVER-DELPRO (en este orden):** (a) `git pull` y `actualizar.bat` **como Administrador**; verificar con el `Get-CimInstance` de `CLAUDE.md` que hay UN solo `servidor.py` y es nuevo (el hilo `envios-informes` arranca ahí, nunca al importar
+   `app`). (b) 📑 Informes › «Traer de DelPro…»: ver que la lista salga (si dice «No se pudieron leer…», avisar: serían las cuatro consultas contra el SQL Server real). (c) «Describí el informe» **con la clave de la IA cargada** y frases de verdad:
+   es lo único que no se probó con el modelo real (los tests usan un cliente de mentira) y es donde puede haber diferencias de interpretación. (d) «Programar envío» con «Ver cómo queda» y recién después «Enviar ahora» a un solo canal.
+2. **¿«Hoy» o el último día completo en los envíos programados?** El informe se calcula con la fecha del día del envío. Si DelPro consolida con atraso, los números del último día pueden estar incompletos a las 08:00 (hoy el mensaje dice a qué hora se calculó,
+   no hasta qué día llegan los datos). Opción: calcular contra el último día completo (como hace Rendimiento Sala).
+3. **¿WhatsApp para los informes programados?** Twilio manda solo texto (sin Excel) y, fuera de la ventana de 24 horas, solo plantillas: con el sandbox esto puede fallar seguido. Correo y Telegram llevan el Excel.
+4. **Ampliar el catálogo de campos.** Es lo que más hace crecer el valor del importador y de la IA. Los más pedidos por los informes reales: `InMilk`, `IsDryingOff`, `ToBeCulled`, `PossiblyInWrongGroup`, `Sex`, `IsExited`, `NumberOfInseminations`, `IsPregnant`
+   (cada uno con su verificación contra DelPro, como los diez que hay).
+5. **Fechas relativas en el motor** («hoy menos N días»): sin eso un informe de «últimos 30 días» no sirve para programar. Hoy el aviso solo lo dice.
+6. **Aceptar la Fase 0**: falta comparar contra una exportación de DelPro del MISMO momento (los campos con ⚠ siguen sin compararse).
+7. **Validar el certificado del correo.** `correo._mandar` hace `starttls()` sin contexto: en Python 3.14 eso NO verifica el certificado del servidor (la clave SMTP y los Excel viajan sin autenticar al servidor). Es de antes de la Fase 4 y afecta a todas las alertas
+   por correo; se dejó sin tocar porque, si el servidor tiene inspección de TLS, pasar a `ssl.create_default_context()` cortaría el correo de las alertas. Decisión del tambo.
+8. **Versiones de Python y del SDK de Anthropic.** Las pruebas de la Fase 4 pasan con Python 3.14 + `anthropic` 1.0.0 y con Python 3.12.10 + `anthropic` 0.117.0 (el Python y el mínimo de `requirements.txt` que usa `iniciar.bat`);
+   `output_config` (salida estructurada) y `anthropic.Timeout` existen en las dos. Igual conviene un `python --version` y un `pip show anthropic` en SERVER-DELPRO antes del primer uso.
+9. **`_maqueta_tmp/`** (tres maquetas HTML de la Fase 0) sigue sin seguimiento en el repositorio: no se commitea, y un `git add -A` la sumaría. Mover a `porlasdudas/` o ignorarla, a elección.
+
 ## Riesgos
 
 * Muchos campos tienen definiciones sutiles (¿qué cuenta como «lactancia actual» para una vaca seca?, ¿los DEL de una vaca que

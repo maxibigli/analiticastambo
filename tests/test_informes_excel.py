@@ -44,6 +44,17 @@ class TestXlsx(unittest.TestCase):
         self.assertEqual(c.value, "=1+1")
         self.assertEqual(c.data_type, "s")
 
+    def test_un_caracter_de_control_no_tumba_la_exportacion(self):
+        """Un texto pegado desde Word puede traer un tabulador vertical (U+000B): `openpyxl` levanta IllegalCharacterError si se lo escribe, y el envío programado lo
+        recalculaba 3 veces sin mandar nada."""
+        filas = [["30" + chr(1) + "1", 1, 2, None], ["a" + chr(11) + "b\tc\nd", 1, 2, None], [chr(0) + chr(31), 1, 2, None]]
+        ws = libro({"columnas": COLS, "filas": filas, "truncado": False})["Informe"]
+        self.assertEqual(ws["A2"].value, "301")
+        self.assertEqual(ws["A3"].value, "ab\tc\nd")                      # el tabulador y el salto de línea sí se conservan
+        self.assertIsNone(ws["A4"].value)                                 # lo que queda vacío es una celda vacía
+        wb = libro({"columnas": [dict(COLS[0], etiqueta="Rótulo" + chr(11) + " raro")] + COLS[1:], "filas": [], "truncado": False}, condiciones=["Condición" + chr(1) + " rara"])
+        self.assertEqual(wb["Informe"]["A1"].value, "Rótulo raro")
+
     def test_los_vacios_quedan_vacios(self):
         ws = libro()["Informe"]
         self.assertIsNone(ws["B3"].value)

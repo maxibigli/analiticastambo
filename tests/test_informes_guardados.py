@@ -118,6 +118,30 @@ class TestCrear(Base):
         ig.crear("san_jose", "Uno", DEF, "m")
 
 
+class TestValidadoresPublicos(unittest.TestCase):
+    """Lo que usan el importador de DelPro y el armado con lenguaje natural: validar SIN guardar. Es el mismo control que al guardar."""
+
+    def test_validar_definicion_devuelve_la_definicion_limpia(self):
+        r = ig.validar_definicion(dict(DEF, basura="x", sql="DROP TABLE x"))
+        self.assertEqual(set(r), {"columnas", "condiciones", "orden"})
+
+    def test_validar_definicion_rechaza_con_el_error_de_los_informes_guardados(self):
+        for malo in (None, "x", {}, {"columnas": [{"campo": "NoExiste"}]}):
+            with self.assertRaises(ig.InformeGuardadoError):
+                ig.validar_definicion(malo)
+
+    def test_guardar_usa_el_mismo_validador(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(ig, "RUTA_DB", os.path.join(d, "informes.db")):
+            with self.assertRaises(ig.InformeGuardadoError):
+                ig.crear(T, "Malo", {"columnas": [{"campo": "NoExiste"}]}, "maxi")
+
+    def test_normalizar_nombre(self):
+        self.assertEqual(ig.normalizar_nombre("  Vacas   a secar "), ("Vacas a secar", "vacas a secar"))
+        for malo in (None, "", "   ", "a\nb", "x" * 61, 5):
+            with self.assertRaises(ig.InformeGuardadoError):
+                ig.normalizar_nombre(malo)
+
+
 class TestListarYAislamiento(Base):
     def test_lista_con_lo_justo_para_la_lista(self):
         ig.crear(T, "B", DEF, "m")
@@ -171,6 +195,42 @@ class TestActualizar(Base):
     def test_inexistente(self):
         with self.assertRaises(ig.InformeGuardadoError):
             ig.actualizar(T, 999, nombre="X")
+
+
+class TestPrimerUsoConPedidosALaVez(unittest.TestCase):
+    """La pantalla pide la lista de informes y la de envíos programados al mismo tiempo. Sobre un archivo NUEVO, pasar a modo WAL (`PRAGMA journal_mode=WAL`) no espera como el
+    resto de las sentencias: uno de los dos pedidos daba «database is locked» (se vio al abrir la vista previa, y 19 de 30 corridas con 8 hilos)."""
+
+    def test_varios_pedidos_a_la_vez_sobre_un_archivo_nuevo_no_se_traban(self):
+        import threading
+        import informes_envios as ie
+        errores = []
+        for vuelta in range(12):
+            with tempfile.TemporaryDirectory() as d, mock.patch.object(ig, "RUTA_DB", os.path.join(d, "informes.db")):
+                barrera = threading.Barrier(8)
+
+                def trabajo(k):
+                    barrera.wait()
+                    try:
+                        (ie.listar if k % 2 else ig.listar)(T)
+                    except Exception as e:  # noqa: BLE001
+                        errores.append(f"{type(e).__name__}: {e}")
+                hilos = [threading.Thread(target=trabajo, args=(k,)) for k in range(8)]
+                for h in hilos:
+                    h.start()
+                for h in hilos:
+                    h.join()
+        self.assertEqual(errores, [])
+
+    def test_el_archivo_queda_en_modo_wal(self):
+        with tempfile.TemporaryDirectory() as d, mock.patch.object(ig, "RUTA_DB", os.path.join(d, "informes.db")):
+            ig.listar(T)
+            import sqlite3
+            con = sqlite3.connect(ig.RUTA_DB)
+            try:
+                self.assertEqual(con.execute("PRAGMA journal_mode").fetchone()[0].lower(), "wal")
+            finally:
+                con.close()
 
 
 if __name__ == "__main__":

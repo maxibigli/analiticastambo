@@ -27,6 +27,8 @@ class Campo:
     nota: str = ""            # cómo se verificó, o qué falta
     agrupable: bool = False   # se puede agrupar por este campo: pocas categorías (rodeo, lactancia, estado), no un valor continuo
     bloques: tuple = ()       # bloques ADEMÁS de `bloque` (un campo calculado usa los de todos los campos de su fórmula)
+    orden_expr: str = ""      # cómo se ORDENA, si no es la misma expresión con la que se muestra (el Número sale como texto y se ordena como número)
+    valores: tuple = ()       # un campo de texto CERRADO (el estado de la reproducción): los únicos valores posibles. La IA los ve y se le rechaza otro
 
 
 @dataclass(frozen=True)
@@ -69,8 +71,8 @@ _ORD = "Ordeño"
 _REP = "Reproducción"
 
 CATALOGO = {c.id: c for c in (
-    Campo("Number", "Número del animal", _GEN, "txt", "CAST(b.Number AS nvarchar(20))",
-          nota="definición de DelPro: Number"),
+    Campo("Number", "Número del animal", _GEN, "txt", "CAST(b.Number AS nvarchar(20))", orden_expr="b.Number",
+          nota="definición de DelPro: Number; se ordena como número (1, 2, 10), no como texto (1, 10, 2)"),
     Campo("AnimalGroupName", "Nombre del grupo", _GEN, "txt", "ag.Name", bloque="grupo", agrupable=True,
           nota="definición de DelPro: Group.GroupName (el rodeo de HOY)"),
     Campo("AnimalGroupNumber", "Número del grupo", _GEN, "num", "ag.Number", bloque="grupo", agrupable=True),
@@ -83,7 +85,7 @@ CATALOGO = {c.id: c for c in (
     Campo("CurrentReproductionStatus", "Estado de la reproducción", _REP, "txt",
           "CASE WHEN r.IsDryingOff = 1 THEN 'Seca' WHEN r.IsPregnant = 1 THEN 'Preñada' "
           "WHEN r.IsInseminated = 1 THEN 'Inseminada' WHEN r.Animal IS NULL THEN NULL ELSE 'Abierta' END",
-          bloque="repro", verificado=False, agrupable=True,
+          bloque="repro", verificado=False, agrupable=True, valores=("Abierta", "Inseminada", "Preñada", "Seca"),
           nota="por los bits de AnimalReproductionInfo; los códigos de BreedingState 1, 3 y 5 no tienen nombre en la base"),
     Campo("SevenDayAverage", "Promedio producción diaria de leche 7 d.", _ORD, "num", "p7.prom7", bloque="prom7",
           unidad="kg", decimales=1,

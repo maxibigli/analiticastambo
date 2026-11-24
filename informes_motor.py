@@ -33,23 +33,27 @@ import informes_formula
 LIMITE_DEFECTO = 2000
 LIMITE_MAX = 5000            # el mismo tope que `db.MAX_ROWS`
 COLUMNAS_MAX = 40
-CONDICIONES_MAX = 5
+CONDICIONES_MAX = 10         # alcanza para traer el filtro de un informe de DelPro (cada «entre» son dos condiciones)
+LISTA_MAX = 20               # valores de una condición «es uno de»
 CALCULADOS_MAX = 10
 AGRUPAR_MAX = 2
 GRUPOS_MAX = 2000            # filas que se leen de la consulta de resumen
 TEXTO_MAX = 60
 ETIQUETA_MAX = 40
+CIFRAS_MAX = 40              # cifras de un número escrito como texto: más no es un valor de un campo del tambo, es un error (o un intento de desbordar el cálculo)
 
 _ID = re.compile(r"^[A-Za-z][A-Za-z0-9_]{0,60}$")
 _ID_CALCULADO = re.compile(r"^calc_[A-Za-z0-9_]{1,24}$")
 _UNIDAD = re.compile(r"^[A-Za-z0-9%/·. ºª-]{0,12}$")
-_NUMERO = re.compile(r"^-?\d+(\.\d+)?$")
-_FECHA = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_NUMERO = re.compile(rf"^-?[0-9]{{1,{CIFRAS_MAX}}}(\.[0-9]{{1,{CIFRAS_MAX}}})?\Z")      # solo cifras ASCII: un «٢٠٢٦» no es un número de la consulta
+_FECHA = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 OPERADORES = {
-    "num": ("=", "<>", "<", "<=", ">", ">="),
+    "num": ("=", "<>", "<", "<=", ">", ">=", "en"),
     "fecha": ("=", "<", "<=", ">", ">="),
-    "txt": ("es", "contiene"),
+    "txt": ("es", "contiene", "en"),
 }
+# «en» (es uno de) lleva una LISTA de valores: cada uno se valida como si fuera el valor de un «=» o un «es».
+OPERADOR_LISTA = "en"
 # Resúmenes que admite una columna según su tipo (los de DelPro: suma, promedio, mínimo, máximo, conteo).
 RESUMENES = {"num": ("sum", "avg", "min", "max", "count"), "fecha": ("min", "max", "count"), "txt": ("count",)}
 NOMBRE_RESUMEN = {"sum": "Suma", "avg": "Promedio", "min": "Mínimo", "max": "Máximo", "count": "Conteo"}
@@ -78,21 +82,44 @@ def _bloques_de(f) -> list:
     return ([f.bloque] if f.bloque else []) + list(f.bloques)
 
 
+def _literal_lista(campo, valor) -> str:
+    """`(1, 2, 3)` o `(N'a', N'b')`: la lista de una condición «es uno de». Se pide una lista de 1 a `LISTA_MAX` valores, y cada uno
+    pasa por `_literal` (el mismo control que un valor suelto); los repetidos se sacan y el orden se conserva."""
+    if OPERADOR_LISTA not in OPERADORES.get(campo.tipo, ()):
+        raise InformeError(f"El operador «{OPERADOR_LISTA}» no se puede usar con «{campo.etiqueta}».")
+    if not isinstance(valor, (list, tuple)) or not valor:
+        raise InformeError(f"«{campo.etiqueta}»: «es uno de» necesita una lista con al menos un valor.")
+    if len(valor) > LISTA_MAX:
+        raise InformeError(f"«{campo.etiqueta}»: «es uno de» admite hasta {LISTA_MAX} valores.")
+    op_suelto = "=" if campo.tipo == "num" else "es"
+    lits = []
+    for v in valor:
+        lit = _literal(campo, op_suelto, v)
+        if lit not in lits:
+            lits.append(lit)
+    return "(" + ", ".join(lits) + ")"
+
+
 def _literal(campo, op, valor):
     t = campo.tipo
     if op not in OPERADORES.get(t, ()):
         raise InformeError(f"El operador «{op}» no se puede usar con «{campo.etiqueta}».")
+    if op == OPERADOR_LISTA:
+        raise InformeError(f"«{campo.etiqueta}»: «es uno de» necesita una lista de valores.")
     if t == "num":
         if isinstance(valor, bool):
             raise InformeError(f"El valor de «{campo.etiqueta}» tiene que ser un número.")
         if isinstance(valor, (int, float)):
-            if not math.isfinite(valor):
-                raise InformeError(f"El valor de «{campo.etiqueta}» no es un número válido.")
-            x = float(valor)
+            try:
+                x = float(valor)                                                    # un entero de más de 308 cifras no cabe: OverflowError
+            except OverflowError:
+                raise InformeError(f"El valor de «{campo.etiqueta}» es un número demasiado grande.") from None
         elif isinstance(valor, str) and _NUMERO.match(valor.strip().replace(",", ".")):
             x = float(valor.strip().replace(",", "."))
         else:
-            raise InformeError(f"El valor de «{campo.etiqueta}» tiene que ser un número.")
+            raise InformeError(f"El valor de «{campo.etiqueta}» tiene que ser un número (hasta {CIFRAS_MAX} cifras).")
+        if not math.isfinite(x):                                                    # inf y nan no son números de una consulta
+            raise InformeError(f"El valor de «{campo.etiqueta}» no es un número válido.")
         return format(x, ".10g")
     if t == "fecha":
         if not isinstance(valor, str) or not _FECHA.match(valor):
@@ -202,6 +229,10 @@ def _donde(defn, campos, H, herd) -> tuple:
             raise InformeError("Cada condición tiene que indicar campo, operador y valor.")
         f = _campo(campos, cd.get("campo"))
         op = cd.get("op")
+        if op == OPERADOR_LISTA:
+            where.append(f"{H(f.expr)} IN {_literal_lista(f, cd.get('valor'))}")
+            bloques_cond += _bloques_de(f)
+            continue
         lit = _literal(f, op, cd.get("valor"))
         bloques_cond += _bloques_de(f)
         if f.tipo == "txt":
@@ -213,7 +244,12 @@ def _donde(defn, campos, H, herd) -> tuple:
     if not isinstance(incluir, bool):
         raise InformeError("«incluir_descartados» tiene que ser verdadero o falso.")
     h = None if herd is _AUTO else herd
-    where.append(rebano.filtro_historico("b", h) if incluir else rebano.filtro("b", h))
+    if incluir:
+        # Los de hoy MÁS los que ya salieron: `filtro_historico` solo ve a quien alguna vez tuvo un registro diario (una vaca que ordeñó), así que
+        # sin sumarle `filtro` se perderían los animales actuales que nunca ordeñaron (recría, crianza) y marcar la opción mostraría MENOS animales.
+        where.append(f"({rebano.filtro('b', h)} OR {rebano.filtro_historico('b', h)})")
+    else:
+        where.append(rebano.filtro("b", h))
     return where, bloques_cond
 
 
@@ -298,14 +334,14 @@ def compilar(defn, campos=None, bloques=None, herd=_AUTO, hoy=None) -> dict:
 
     orden = defn.get("orden")
     if orden is None:
-        o_expr, o_dir = H(campos[usados[0]].expr), "ASC"
+        o_expr, o_dir = H(campos[usados[0]].orden_expr or campos[usados[0]].expr), "ASC"
     else:
         if not isinstance(orden, dict) or orden.get("dir") not in (1, -1) or isinstance(orden.get("dir"), bool):
             raise InformeError("El orden no es válido.")
         f = _campo(campos, orden.get("campo"))
         if f.id not in usados:
             raise InformeError("Solo se puede ordenar por una columna del informe.")
-        o_expr, o_dir = H(f.expr), "ASC" if orden["dir"] == 1 else "DESC"
+        o_expr, o_dir = H(f.orden_expr or f.expr), "ASC" if orden["dir"] == 1 else "DESC"
 
     limite = defn.get("limite", LIMITE_DEFECTO)
     if isinstance(limite, bool) or not isinstance(limite, int) or not 1 <= limite <= LIMITE_MAX:
@@ -342,9 +378,23 @@ def compilar(defn, campos=None, bloques=None, herd=_AUTO, hoy=None) -> dict:
 _SIMBOLO = {">=": "≥", "<=": "≤"}
 
 
-def describir_condiciones(defn, campos=None) -> list:
+DIAS_SEMANA = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")
+
+
+def _fecha_texto(iso: str, con_dia: bool) -> str:
+    """'2026-08-27' -> '27/08/2026', o 'jue 27/08/2026' con `con_dia` (las fechas de los textos nuevos de la app llevan el día de la semana)."""
+    s = f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}"
+    if not con_dia:
+        return s
+    try:
+        return f"{DIAS_SEMANA[datetime.date.fromisoformat(iso).weekday()]} {s}"
+    except ValueError:
+        return s
+
+
+def describir_condiciones(defn, campos=None, con_dia=False) -> list:
     """Las condiciones de un informe en palabras («Producción 24 h < 30»), para el Excel y la pantalla. Lo que no entiende lo
-    omite: es solo texto de ayuda, no valida (para eso está `compilar`)."""
+    omite: es solo texto de ayuda, no valida (para eso está `compilar`). `con_dia`: las fechas con el día de la semana."""
     campos = cat.CATALOGO if campos is None else campos
     if not isinstance(defn, dict):
         return []
@@ -358,8 +408,12 @@ def describir_condiciones(defn, campos=None) -> list:
             continue
         et, tipo = etiquetas[cd["campo"]]
         op, v = cd.get("op"), cd.get("valor")
+        if op == OPERADOR_LISTA:
+            if isinstance(v, (list, tuple)) and v:
+                out.append(f"{et} es uno de " + ", ".join(f"«{x}»" if tipo == "txt" else str(x) for x in v))
+            continue
         if tipo == "fecha" and isinstance(v, str) and _FECHA.match(v):
-            v = f"{v[8:10]}/{v[5:7]}/{v[:4]}"
+            v = _fecha_texto(v, con_dia)
         v = f"«{v}»" if tipo == "txt" else v
         out.append(f"{et} {_SIMBOLO.get(op, op)} {v}")
     if defn.get("incluir_descartados") is True:

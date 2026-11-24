@@ -21,7 +21,7 @@
 [hidden]{display:none!important}
 html{background:var(--bg)}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.45;-webkit-text-size-adjust:100%}
-button,input,select{font:inherit;color:inherit}
+button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer}
 :focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px}
 h1,h2,h3{font-family:var(--display);margin:0;font-weight:600}
@@ -92,9 +92,11 @@ h1,h2,h3{font-family:var(--display);margin:0;font-weight:600}
 .unsaved i{width:7px;height:7px;border-radius:50%;background:var(--warn)}
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
 .filters .lbl{font-size:12px;color:var(--muted)}
-.cond{display:inline-flex;gap:4px;align-items:center;background:var(--sunken);border:1px solid var(--line-2);border-radius:8px;padding:2px}
+.cond{display:inline-flex;flex-wrap:wrap;max-width:100%;gap:4px;align-items:center;background:var(--sunken);border:1px solid var(--line-2);border-radius:8px;padding:2px}
 .cond .in{height:28px;border:0;background:transparent}
+.cond select.in{max-width:min(260px,100%)}
 .cond .in.v{width:96px}
+.cond .in.v.wide{flex:1 1 180px;width:min(340px,100%);min-width:0}
 .cond button{border:0;background:none;color:var(--subtle);width:24px;height:24px;border-radius:6px}
 .cond button:hover{background:var(--bad-soft);color:var(--bad)}
 .opt{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
@@ -163,7 +165,7 @@ td.sub{color:var(--muted);font-style:italic}
 .tools{display:inline-flex;gap:6px;margin-left:auto}
 dialog{background:var(--surface);color:var(--fg);border:1px solid var(--line-2);border-radius:14px;padding:0;width:min(620px,94vw);max-height:92vh}
 dialog::backdrop{background:rgba(5,10,15,.72)}
-.dlg{display:grid;gap:12px;padding:18px}
+.dlg{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:18px}
 .dlg h2{font-size:16px}
 .dlg label{display:grid;gap:5px;font-size:12px;color:var(--muted)}
 .dlg .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -174,6 +176,68 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
 .dlg .okline.bad{color:var(--bad)}
 .dlg .acts{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 @media (max-width:560px){.dlg .row2{grid-template-columns:1fr}}
+
+/* Fase 4a: traer un informe de DelPro (el cuadro con la lista) y el aviso que acompaña al informe traído */
+#delpro{width:min(920px,96vw)}
+#delpro .opt,#prog .opt{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+.dphead{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.dphead h2{min-width:0;overflow-wrap:anywhere}
+.dpctl{display:flex;gap:10px 14px;flex-wrap:wrap;align-items:center}
+.dpctl .in{flex:1 1 220px}
+.dpsum{font-size:12.5px;color:var(--muted);min-height:18px}
+.dplist{display:grid;gap:6px;max-height:min(50vh,520px);overflow:auto;scrollbar-width:thin;align-content:start}
+.dprow{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:6px 12px;align-items:center;background:var(--sunken);border:1px solid var(--line);border-radius:10px;padding:9px 12px}
+.dprow .nm{min-width:0}
+.dprow .nm b{font-weight:600;overflow-wrap:anywhere}
+.dprow .sub{display:block;font-size:12px;color:var(--muted);overflow-wrap:anywhere}
+.dprow .cn{font-size:12.5px;color:var(--muted);white-space:nowrap;font-variant-numeric:tabular-nums}
+.dpe{display:inline-flex;align-items:center;height:22px;padding:0 9px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap}
+.dpe.ok{background:#0C3226;color:#7FD9B8}
+.dpe.warn{background:var(--warn-soft);color:#F5CE84}
+.dpe.off{background:#232B33;color:var(--muted)}
+.dpfl{display:inline-flex;align-items:center;margin-left:6px;min-height:18px;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;line-height:1.25;background:var(--bad-soft);color:#F5A9A9;vertical-align:middle}
+#dp-falta summary{cursor:pointer;color:var(--muted);font-size:13px}
+.dpfalta{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.dpfalta span{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:7px;background:var(--sunken);border:1px solid var(--line-2);font-size:12px}
+.dpfalta span b{color:var(--accent-hi);font-variant-numeric:tabular-nums}
+.imp{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;gap:8px}
+.imp.warn{border-color:#6B5521}
+.imp .imph{display:flex;gap:6px 12px;flex-wrap:wrap;align-items:center}
+.imp .imph .x{margin-left:auto;border:0;background:none;width:26px;height:26px;border-radius:6px;color:var(--subtle);line-height:1}
+.imp .imph .x:hover{background:var(--raised);color:var(--fg)}
+.imp:focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px}
+.imp h4{margin:2px 0 0;font:600 11px/1.2 var(--display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.imp h4.contenido{color:#F5CE84}
+.imp ul{margin:2px 0 0;padding-left:18px;display:grid;gap:3px}
+.imp li{font-size:13px;overflow-wrap:anywhere}
+.imp li.contenido{color:#F5CE84}
+.imp ul.det{margin-top:3px;padding-left:16px}
+.imp ul.det li{font-size:12.5px;color:var(--muted)}
+.impmin{display:flex;gap:8px 12px;flex-wrap:wrap;align-items:center;font-size:12.5px;color:#F5CE84;background:var(--surface);border:1px solid #6B5521;border-radius:10px;padding:6px 12px}
+@media (max-width:640px){.dprow{grid-template-columns:minmax(0,1fr) auto}.dprow .cn{grid-column:1}}
+/* Fase 4c: programar el envío de un informe */
+#prog{width:min(700px,96vw)}
+#prog fieldset{border:1px solid var(--line);border-radius:10px;padding:8px 12px 10px;margin:0;min-width:0;display:grid;gap:6px}
+#prog legend{font:600 11px/1 var(--display);letter-spacing:.08em;text-transform:uppercase;color:var(--muted);padding:0 6px}
+.pgdias,.pghoras{display:flex;gap:6px 12px;flex-wrap:wrap;align-items:center}
+.pghora{display:inline-flex;gap:4px;align-items:center;background:var(--sunken);border:1px solid var(--line-2);border-radius:8px;padding:2px}
+.pghora .in{height:28px;border:0;background:transparent}
+.pghora button{border:0;background:none;color:var(--subtle);width:24px;height:24px;border-radius:6px}
+.pghora button:hover{background:var(--bad-soft);color:var(--bad)}
+.pgcan{display:flex;gap:4px 12px;flex-wrap:wrap;align-items:center}
+.pgcan .off{color:var(--muted);font-size:12px}
+.pgprev{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;background:var(--sunken);border:1px solid var(--line);border-radius:8px;padding:8px 10px;max-height:220px;overflow:auto;margin:0}
+.pgreg{display:grid;gap:3px;font-size:12.5px;margin-top:6px}
+.pgreg .bad{color:#F5A9A9}
+.env{display:inline-flex;align-items:center;margin-left:6px;height:18px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600;background:var(--accent-soft);color:var(--accent-hi);vertical-align:middle}
+.env.pausa{background:#232B33;color:var(--muted)}
+/* Fase 4b: armar un informe con una frase */
+.ask{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;gap:8px;margin-bottom:10px}
+.askrow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
+.askrow textarea.in{flex:1 1 360px;height:auto;min-height:58px;padding:8px 10px;resize:vertical;line-height:1.4}
+.ask .eyebrow{color:var(--muted)}
+.askst{font-size:12.5px;color:var(--muted);min-height:18px;overflow-wrap:anywhere}
+.askst.bad{color:#F5A9A9}
 
 /* Fase 3: la pestaña del gráfico (los colores de las series: los mismos 6 del mockup, más 2) */
 :root{--s1:#2E96E0;--s2:#4FC3E8;--s3:#F2A900;--s4:#2FBF8F;--s5:#F07B8A;--s6:#B79CF2;--s7:#E58A5B;--s8:#8AA1B1}
@@ -236,8 +300,17 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
   <section id="pg-list">
     <div class="lhead">
       <input class="in" id="lq" type="search" placeholder="Buscar informe…" aria-label="Buscar informe" autocomplete="off">
+      <button class="btn" id="btn-delpro" title="Traer un informe que ya tenés armado en DelPro">Traer de DelPro…</button>
       <button class="btn pri" id="btn-nuevo">+ Informe nuevo</button>
     </div>
+    <section class="ask" id="ask" aria-label="Armar un informe describiéndolo">
+      <label class="eyebrow" for="ask-t">Describí el informe que querés</label>
+      <div class="askrow">
+        <textarea class="in" id="ask-t" rows="3" maxlength="500" placeholder="Ej.: vacas del rodeo 3 con más de 200 días en ordeño, ordenadas por producción, con el promedio de producción" autocomplete="off"></textarea>
+        <button class="btn pri" id="ask-ir" type="button">Armar informe</button>
+      </div>
+      <div class="askst" id="ask-st" role="status" aria-live="polite"></div>
+    </section>
     <div class="tablewrap" id="ltable"></div>
     <div class="note" style="margin-top:8px">Cada informe guarda sus columnas, condiciones y orden. Los resultados se calculan siempre con los datos de ahora.</div>
   </section>
@@ -252,12 +325,14 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
             <span class="unsaved" id="unsaved" hidden><i></i>Sin guardar</span>
             <button class="btn" id="btn-dock">Árbol de campos</button>
             <button class="btn" id="btn-xls">Exportar a Excel</button>
+            <button class="btn" id="btn-prog" title="Mandar este informe automáticamente, por correo, Telegram o WhatsApp, en los días y horarios que elijas">Programar envío</button>
             <button class="btn" id="btn-copia">Guardar como…</button>
             <button class="btn" id="btn-guardar">Guardar</button>
             <button class="btn" id="btn-graficar" title="Graficar la producción diaria de los animales de este informe en un rango de fechas">Graficar</button>
             <button class="btn pri" id="btn-run">Actualizar</button>
           </div>
         </section>
+        <div id="importado"></div>
         <section class="filters" id="filters" aria-label="Condiciones"></section>
         <section class="groupbar" id="groupbar" aria-label="Agrupación del informe"></section>
         <div id="aviso"></div>
@@ -285,7 +360,7 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
       <div class="g"><label class="eyebrow" for="gr">Resumen</label>
         <select class="in" id="gr" data-chg="gr"><option value="avg">Promedio</option><option value="sum">Suma</option><option value="max">Máximo</option><option value="min">Mínimo</option></select></div>
       <div class="g"><label class="eyebrow" for="gs">Una serie por</label>
-        <select class="in" id="gs" data-chg="gs"><option value="rodeo">Rodeo de ese día</option><option value="lactancia">Lactancia</option><option value="ninguna">Todo junto</option></select></div>
+        <select class="in" id="gs" data-chg="gs"><option value="rodeo">Rodeo de cada fecha</option><option value="lactancia">Lactancia</option><option value="ninguna">Todo junto</option></select></div>
       <div class="g"><span class="eyebrow">Intervalo</span>
         <div class="seg" id="gint" role="group" aria-label="Intervalo"><button data-act="gseg" data-k="intervalo" data-v="dia">Día</button><button data-act="gseg" data-k="intervalo" data-v="semana">Semana</button><button data-act="gseg" data-k="intervalo" data-v="mes">Mes</button></div></div>
       <div class="g"><span class="eyebrow">Forma</span>
@@ -308,6 +383,47 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
     <div class="note" id="gnota"></div>
   </section>
 </div>
+<dialog id="delpro" aria-labelledby="dp-t">
+  <div class="dlg">
+    <div class="dphead"><h2 id="dp-t">Informes de DelPro</h2><button type="button" class="btn sm ghost" id="dp-cerrar">Cerrar</button></div>
+    <p class="muted" style="margin:0;font-size:13px">Traé a LactIA un informe que ya armaste en DelPro. Se abre como un informe nuevo, sin guardar, para que lo revises. Lo que LactIA todavía no sabe calcular no se inventa: queda dicho en un aviso.</p>
+    <div class="dpctl">
+      <input class="in" id="dp-q" type="search" placeholder="Buscar informe…" aria-label="Buscar informe de DelPro" autocomplete="off">
+      <label class="opt"><input type="checkbox" id="dp-tambo" checked> Solo los de mi tambo (no los de fábrica)</label>
+      <button type="button" class="btn sm ghost" id="dp-refrescar" title="Volver a leer los informes de DelPro">Volver a leer</button>
+    </div>
+    <div class="msg err" id="dp-err" role="alert" hidden></div>
+    <div class="dpsum" id="dp-resumen"></div>
+    <div class="dplist" id="dp-lista"></div>
+    <details id="dp-falta" hidden><summary>Campos de DelPro que todavía no están en LactIA</summary><div class="dpfalta" id="dp-falta-cuerpo"></div></details>
+  </div>
+</dialog>
+
+<dialog id="prog" aria-labelledby="prog-t">
+  <div class="dlg">
+    <div class="dphead"><h2 id="prog-t">Programar envío</h2><button type="button" class="btn sm ghost" id="prog-cerrar">Cerrar</button></div>
+    <p class="muted" id="prog-nota" style="margin:0;font-size:13px"></p>
+    <fieldset><legend>Días</legend><div class="pgdias" id="prog-dias"></div></fieldset>
+    <fieldset><legend>Horarios (hasta 5 por día)</legend><div class="pghoras" id="prog-horas"></div><div><button type="button" class="btn sm ghost" id="prog-mas">+ Horario</button></div></fieldset>
+    <fieldset><legend>Por dónde</legend><div id="prog-canales"></div><div class="muted" style="font-size:12px">Los canales se activan y se configuran en ⚙ Configuración › Tablero de Diagnóstico › Alertas. Manda siempre a los mismos destinatarios de las alertas.</div></fieldset>
+    <fieldset><legend>Qué se manda</legend>
+      <label class="opt"><input type="radio" name="prog-fmt" value="excel"> Resumen y el Excel adjunto (por WhatsApp va solo el resumen)</label>
+      <label class="opt"><input type="radio" name="prog-fmt" value="texto"> Solo el resumen en texto</label>
+    </fieldset>
+    <div class="dpsum" id="prog-estado" aria-live="polite"></div>
+    <div class="okline" id="prog-latido"></div>
+    <div class="acts">
+      <button type="button" class="btn pri" id="prog-guardar">Guardar programación</button>
+      <button type="button" class="btn" id="prog-pausa">Pausar envío</button>
+      <button type="button" class="btn ghost" id="prog-ver">Ver cómo queda</button>
+      <button type="button" class="btn ghost" id="prog-enviar">Enviar ahora</button>
+    </div>
+    <div class="okline" id="prog-msj" role="status" aria-live="polite"></div>
+    <pre class="pgprev" id="prog-prev" hidden></pre>
+    <details id="prog-reg"><summary>Últimos envíos</summary><div class="pgreg" id="prog-reg-cuerpo"></div></details>
+  </div>
+</dialog>
+
 <dialog id="calc" aria-labelledby="calc-t">
   <div class="dlg">
     <h2 id="calc-t">Nuevo campo calculado</h2>
@@ -352,21 +468,25 @@ function fmtFecha(iso, conDia) {
   return conDia ? DOW[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12)).getUTCDay()] + ' ' + s : s;
 }
 const url = (ruta) => ruta + (ruta.indexOf('?') < 0 ? '?' : '&') + 'tambo=' + encodeURIComponent(TAMBO);
+/* Sin cuerpo con el motivo (una página de error del túnel, un fallo sin atrapar): nunca «Error 502» a secas, que no le dice nada a quien usa la pantalla. */
+const errorHttp = estado => estado >= 500 ? 'LactIA no pudo contestar ahora. Probá de nuevo en un rato.' : 'No se pudo completar el pedido (error ' + estado + ').';
 async function api(ruta, opciones) {
-  const r = await fetch(url(ruta), opciones);
+  let r;
+  try { r = await fetch(url(ruta), opciones); }
+  catch (e) { throw new Error('No se pudo conectar con LactIA. Revisá la conexión y probá de nuevo.'); }       // nunca el texto en inglés del navegador
   let j = null;
   try { j = await r.json(); } catch (e) { /* no era JSON */ }
-  if (!r.ok) throw new Error((j && j.error) || ('Error ' + r.status));
+  if (!r.ok) throw new Error((j && j.error) || errorHttp(r.status));
   return j;
 }
 const post = (ruta, cuerpo, metodo) => api(ruta, {method: metodo || 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(cuerpo)});
 
-let CAMPOS = {}, CATS = [], LISTA = [], docs = [], activeId = 'list', docSeq = 1, fq = '', listQ = '', armed = {};
+let CAMPOS = {}, CATS = [], LISTA = [], ENVIOS = {}, docs = [], activeId = 'list', docSeq = 1, fq = '', listQ = '', armed = {};
 const openCats = {};
 const OPS = {
-  num: [['>=', '≥'], ['<=', '≤'], ['>', '>'], ['<', '<'], ['=', '='], ['<>', '≠']],
+  num: [['>=', '≥'], ['<=', '≤'], ['>', '>'], ['<', '<'], ['=', '='], ['<>', '≠'], ['en', 'es uno de']],
   fecha: [['>=', '≥'], ['<=', '≤'], ['>', '>'], ['<', '<'], ['=', '=']],
-  txt: [['contiene', 'contiene'], ['es', 'es']],
+  txt: [['contiene', 'contiene'], ['es', 'es'], ['en', 'es uno de']],
 };
 const TIPO_LETRA = {num: '#', txt: 'A', fecha: 'F'};
 /* Los resúmenes que admite cada tipo de campo (los mismos que valida el servidor). */
@@ -386,13 +506,27 @@ const llave = ks => JSON.stringify(ks.map(nk));
 
 /* ---------- documentos abiertos ---------- */
 function defVacia() { return {columnas: [{campo: 'Number'}], calculados: [], agrupar_por: [], detalle: true, condiciones: [], orden: null, incluir_descartados: false}; }
+/* «Es uno de» lleva una lista: en la pantalla se escribe separada por comas y al servidor viaja como lista. En un campo NUMÉRICO la coma también es la coma
+   decimal («38,5»), así que ahí se separa con «;» o con una coma seguida de un espacio («38,5, 40»): el mismo texto no puede valer 38,5 con «=» y dos números con «es uno de». */
+function listaDe(v, tipo) {
+  if (Array.isArray(v)) return v.slice();
+  const t = String(v == null ? '' : v);
+  return (tipo === 'num' ? t.split(/\s*;\s*|,\s+/) : t.split(',')).map(s => s.trim()).filter(s => s !== '');
+}
+const tipoDe = id => (CAMPOS[id] || {}).tipo;
+function condLimpia(c) {
+  if (!c.campo) return null;
+  if (c.op === 'en') { const l = listaDe(c.valor, tipoDe(c.campo)); return l.length ? {campo: c.campo, op: 'en', valor: l} : null; }
+  return c.valor === '' || c.valor == null ? null : {campo: c.campo, op: c.op, valor: c.valor};
+}
 function limpiaDef(d) {
   const out = {columnas: d.columnas.map(c => c.resumen ? {campo: c.campo, resumen: c.resumen} : {campo: c.campo}), incluir_descartados: !!d.incluir_descartados};
-  out.condiciones = d.condiciones.filter(c => c.campo && c.valor !== '' && c.valor != null).map(c => ({campo: c.campo, op: c.op, valor: c.valor}));
+  out.condiciones = d.condiciones.map(condLimpia).filter(Boolean);
   if (d.orden && d.columnas.some(c => c.campo === d.orden.campo)) out.orden = {campo: d.orden.campo, dir: d.orden.dir};
   if (d.calculados && d.calculados.length) out.calculados = d.calculados.map(c => ({id: c.id, etiqueta: c.etiqueta, formula: c.formula, decimales: c.decimales, unidad: c.unidad || ''}));
   if (d.agrupar_por && d.agrupar_por.length) out.agrupar_por = d.agrupar_por.slice();
   if (d.detalle === false) out.detalle = false;
+  if (Number.isInteger(d.limite) && d.limite > 0) out.limite = d.limite;        // «las 10 vacas que más producen»: el límite viaja con el informe (Actualizar, Guardar, Excel y envío programado)
   return out;
 }
 /* Deja la definición coherente después de cada cambio: sin resúmenes que el tipo del campo no admita, sin grupos que no se puedan
@@ -461,7 +595,7 @@ function render() {
   $('#pg-graf').hidden = !graf;
   if (lista) renderList();
   else if (graf) renderGrafico();
-  else { renderHead(); renderFields(); renderFilters(); renderGroup(); renderChips(); renderResultado(); }
+  else { renderHead(); renderImportado(); renderFields(); renderFilters(); renderGroup(); renderChips(); renderResultado(); }
 }
 function renderTabs() {
   let h = '<span class="dt solo' + (activeId === 'list' ? ' on' : '') + '"><button class="go" data-act="tab" data-id="list"><span class="t">Informes</span></button></span>';
@@ -482,7 +616,9 @@ function renderList() {
   $('#ltable').innerHTML = filas.length
     ? '<table><thead><tr><th style="width:44px"></th><th>Nombre del informe</th><th class="num">Columnas</th><th>Última modificación</th><th></th></tr></thead><tbody>' +
       filas.map(i => '<tr class="cursor" data-act="abrir" data-id="' + i.id + '"><td><button class="star" data-act="fav" data-id="' + i.id + '" aria-pressed="' + i.favorito + '" aria-label="Favorito">' + (i.favorito ? '★' : '☆') + '</button></td>' +
-        '<td class="rp">' + esc(i.nombre) + (abiertos[i.id] ? ' <span class="muted" style="font-weight:400">· abierto</span>' : '') + '</td><td class="num">' + i.n_columnas + '</td><td>' + fmtFecha(i.modificado, true) + '</td>' +
+        '<td class="rp">' + esc(i.nombre) + (abiertos[i.id] ? ' <span class="muted" style="font-weight:400">· abierto</span>' : '') +
+        (ENVIOS[i.id] ? '<span class="env' + (ENVIOS[i.id].activo ? '' : ' pausa') + '" title="' + esc(ENVIOS[i.id].activo ? 'Próximo envío: ' + (ENVIOS[i.id].proximo_texto || '') : 'El envío programado está en pausa') + '">' +
+          (ENVIOS[i.id].activo ? 'envío programado' : 'envío en pausa') + '</span>' : '') + '</td><td class="num">' + i.n_columnas + '</td><td>' + fmtFecha(i.modificado, true) + '</td>' +
         '<td><button class="btn sm" data-act="abrir" data-id="' + i.id + '">Abrir</button></td></tr>').join('') + '</tbody></table>'
     : '<div class="empty">' + (LISTA.length ? 'Ningún informe coincide con la búsqueda.' : 'Todavía no hay informes guardados. Armá el primero con «+ Informe nuevo».') + '</div>';
 }
@@ -493,6 +629,8 @@ function renderHead() {
   $('#btn-run').disabled = d.estado === 'cargando';
   $('#btn-run').textContent = d.estado === 'cargando' ? 'Calculando…' : 'Actualizar';
   $('#btn-xls').disabled = d.estado === 'cargando';
+  $('#btn-prog').disabled = !d.sid;
+  $('#btn-prog').title = d.sid ? 'Mandar este informe automáticamente, por correo, Telegram o WhatsApp, en los días y horarios que elijas' : 'Guardá el informe para poder programar su envío';
 }
 function filaCampo(f, usados) {
   const u = usados[f.id];
@@ -524,13 +662,18 @@ function renderFilters() {
   const campos = camposDe(d);
   let h = d.def.condiciones.map((c, i) => {
     const f = campoDe(d, c.campo) || campos[0], ops = OPS[f.tipo];
+    const lista = c.op === 'en';
+    const num = f.tipo === 'num';
     const entrada = f.tipo === 'fecha' ? '<input class="in v" type="date" data-chg="cv" data-i="' + i + '" value="' + esc(c.valor || '') + '" aria-label="Valor">'
-                                       : '<input class="in v" data-chg="cv" data-i="' + i + '" value="' + esc(c.valor == null ? '' : c.valor) + '" aria-label="Valor" autocomplete="off">';
+                                       : '<input class="in v' + (lista ? ' wide' : '') + '" data-chg="cv" data-i="' + i + '" value="' + esc(lista ? listaDe(c.valor, f.tipo).join(num ? '; ' : ', ') : (c.valor == null ? '' : c.valor)) + '" aria-label="' +
+                                         (lista ? (num ? 'Valores, separados por punto y coma' : 'Valores, separados por coma') : 'Valor') + '"' +
+                                         (lista ? ' placeholder="' + (num ? '1; 2; 3' : 'Rodeo 1, Rodeo 2') + '"' : '') + ' autocomplete="off">';
     return '<span class="cond"><select class="in" data-chg="ck" data-i="' + i + '" aria-label="Campo">' + campos.map(x => opt(x.id, x.etiqueta, x.id === c.campo)).join('') + '</select>' +
       '<select class="in" data-chg="co" data-i="' + i + '" aria-label="Operador">' + ops.map(o => opt(o[0], o[1], c.op === o[0])).join('') + '</select>' + entrada +
       '<button data-act="quitarcond" data-i="' + i + '" aria-label="Quitar condición">×</button></span>';
   }).join('');
   h += '<button class="btn sm ghost" data-act="agregarcond">+ Condición</button>' +
+       '<label class="opt">Listar hasta <input class="in" type="number" min="1" max="5000" step="1" id="lim" data-chg="lim" value="' + esc(d.def.limite || '') + '" placeholder="2000" style="width:84px;height:30px" title="Vacío = hasta 2000 filas. El máximo es 5000." aria-label="Cantidad máxima de filas de la lista"> filas</label>' +
        '<label class="opt" style="margin-left:auto"><input type="checkbox" id="desc" data-chg="desc"' + (d.def.incluir_descartados ? ' checked' : '') + '> Incluir animales descartados</label>' +
        '<label class="opt">Calcular al <input class="in" type="date" id="hoy" data-chg="hoy" value="' + esc(d.hoy) + '" style="height:30px" title="Vacío = hoy"></label>';
   $('#filters').innerHTML = h;
@@ -645,7 +788,7 @@ function renderResultado() {
   if (d.estado === 'cargando') s = '<span>Calculando…</span>';
   else if (r) {
     const tot = r.totales, conLista = r.detalle !== false, n = tot ? tot.n : r.filas.length;
-    s = '<span><b>' + fmtNum(n) + '</b>animales' + (conLista && r.truncado ? (tot ? ' · se listan los primeros ' + fmtNum(r.filas.length) : ' (hay más)') : '') + '</span><span>' + fmtNum(r.segundos, 1) + ' s</span>' +
+    s = '<span><b>' + fmtNum(n) + '</b>animales' + (conLista && r.truncado ? (tot ? ' · se listan los primeros ' + fmtNum(r.filas.length) : (d.def.limite ? '' : ' (hay más)')) : '') + '</span><span>' + fmtNum(r.segundos, 1) + ' s</span>' +
       (d.stale ? '<span class="stale">Cambiaste el informe: tocá «Actualizar» para ver los datos nuevos.</span>' : '') +
       (conLista && (r.agrupar || []).length ? '<span class="tools"><button class="btn sm ghost" data-act="plegartodo">Plegar todo</button><button class="btn sm ghost" data-act="desplegartodo">Desplegar todo</button></span>' : '');
   }
@@ -653,13 +796,18 @@ function renderResultado() {
   $('#strip').innerHTML = s;
   const w = $('#twrap');
   if (!r) { w.innerHTML = d.estado === 'cargando' ? '<div class="empty">Calculando…</div>' : ''; return; }
-  const extra = r.truncado && r.detalle !== false ? '<div class="msg warn" style="margin-bottom:8px">La lista se cortó en ' + fmtNum(r.filas.length) + ' filas: hay más animales. Agregá una condición para acotarla.' + (r.totales ? ' Los totales y resúmenes cuentan a todos los animales.' : '') + '</div>' : '';
+  const cuentan = r.totales ? ' Los totales y resúmenes cuentan a todos los animales.' : '';
+  const extra = r.truncado && r.detalle !== false
+    ? (d.def.limite && r.filas.length <= d.def.limite ? '<div class="note" style="margin-bottom:8px">Se muestran las primeras ' + fmtNum(r.filas.length) + ' filas, como pide el informe.' + cuentan + '</div>'     // el corte lo eligió el informe: no es una falla
+      : '<div class="msg warn" style="margin-bottom:8px">La lista se cortó en ' + fmtNum(r.filas.length) + ' filas: hay más animales. Agregá una condición para acotarla.' + cuentan + '</div>') : '';
   const y = w.scrollTop;
   w.innerHTML = extra + (r.detalle === false ? tablaResumen(d, r) : tablaDetalle(d, r));
   w.scrollTop = y;
 }
+const ocupado = {};                                       // acciones en curso: un segundo clic mientras tanto no hace nada (si no, abre dos pestañas o guarda dos veces)
+async function una(clave, accion) { if (ocupado[clave]) return; ocupado[clave] = 1; try { await accion(); } finally { delete ocupado[clave]; } }
 let tt;
-function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(tt); tt = setTimeout(() => { t.hidden = true; }, 3200); }
+function toast(m, ms) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(tt); tt = setTimeout(() => { t.hidden = true; }, ms || 3200); }
 
 /* ---------- acciones ---------- */
 function cuerpoEjecutar(d) { const c = limpiaDef(d.def); if (d.hoy) c.hoy = d.hoy; return c; }
@@ -667,14 +815,17 @@ async function ejecutar(d) {
   if (d.estado === 'cargando') return;
   d.estado = 'cargando'; d.error = '';
   if (activeId === d.id) { renderHead(); renderResultado(); }
+  const cuerpo = cuerpoEjecutar(d), enviado = JSON.stringify(cuerpo);                // lo que se está calculando: si el informe cambia mientras tanto, el resultado ya no es el de la pantalla
   try {
-    d.res = await post('/api/informes/ejecutar', cuerpoEjecutar(d));
-    d.stale = false;
+    d.res = await post('/api/informes/ejecutar', cuerpo);
+    d.stale = JSON.stringify(cuerpoEjecutar(d)) !== enviado;
   } catch (e) { d.error = e.message; }
   d.estado = 'ok';
   if (activeId === d.id) { renderHead(); renderResultado(); }
 }
 async function refrescarLista() { try { LISTA = (await api('/api/informes')).informes; } catch (e) { toast(e.message); } }
+/* Lo que hay que decirle a quien guarda un informe traído (de DelPro o armado con IA) al que le falta algo que cambia QUÉ animales aparecen: lo guardado no es lo que el otro sistema tenía. */
+function avisoAlGuardar(d) { const im = d.importado; return im && im.alGuardar && (im.grupos || []).some(g => g.clase === 'contenido') ? im.alGuardar : ''; }
 async function guardar(d, comoNuevo) {
   const nombre = (d.nombre || '').trim();
   try {
@@ -686,7 +837,8 @@ async function guardar(d, comoNuevo) {
     d.nombre = j.nombre; d.error = '';
     d.base = foto(d);
     await refrescarLista();
-    toast('Guardado: «' + j.nombre + '»');
+    const aviso = avisoAlGuardar(d);
+    toast('Guardado: «' + j.nombre + '»' + (aviso ? '. ' + aviso : ''), aviso ? 8000 : 3200);
   } catch (e) { d.error = e.message; }
   render();
 }
@@ -694,7 +846,7 @@ async function exportar(d) {
   try {
     const cuerpo = Object.assign(cuerpoEjecutar(d), {nombre: d.nombre});
     const r = await fetch(url('/api/informes/exportar'), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(cuerpo)});
-    if (!r.ok) { let j = null; try { j = await r.json(); } catch (e) { /* */ } throw new Error((j && j.error) || ('Error ' + r.status)); }
+    if (!r.ok) { let j = null; try { j = await r.json(); } catch (e) { /* */ } throw new Error((j && j.error) || errorHttp(r.status)); }
     const blob = await r.blob();
     const m = (r.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)"?/);
     const a = document.createElement('a');
@@ -790,6 +942,284 @@ function borrarCalc() {
   normalizar(d); renderFields(); renderFilters(); renderGroup(); renderChips(); marcarCambio(d);
 }
 
+/* ---------- traer un informe de DelPro (Fase 4a) ---------- */
+/* Solo LEE las tablas de informes de DelPro (el servidor hace cuatro SELECT fijos). El informe que se trae se abre como uno NUEVO y sin guardar,
+   con un aviso de todo lo que no se pudo traer: lo que LactIA no sabe calcular no se inventa. */
+const DP = {estado: 'sin', datos: null, error: '', q: '', solo: true, seq: 0};
+const ESTADO_DP = {completo: ['Completo', 'ok'], casi: ['Casi igual', 'ok'], parcial: ['Con diferencias', 'warn'], no_disponible: ['No se puede traer', 'off']};
+/* «Completo» con avisos (un segundo orden que no se trae, un resumen que se ve distinto...) es «Casi igual»: un verde sin matices engañaría. */
+const estadoDe = (estado, n) => estado === 'completo' && n ? 'casi' : estado;
+const TITULO_DIF = {contenido: 'Cambia qué animales aparecen', columnas: 'Falta algo del diseño', presentacion: 'Se ve distinto', info: 'Para tener en cuenta'};
+const plural = (n, uno, varios) => fmtNum(n) + ' ' + (n === 1 ? uno : varios);
+/* El error de «Traer» va DENTRO del cuadro: un toast queda por debajo del fondo del cuadro modal y no se lee. */
+function errorDelpro(m) { const e = $('#dp-err'); e.textContent = m || ''; e.hidden = !m; }
+function abrirDelpro() {
+  errorDelpro('');
+  $('#delpro').showModal();
+  if (DP.estado === 'sin' || DP.estado === 'error') cargarDelpro(false); else renderDelpro();
+  $('#dp-q').focus();
+}
+async function cargarDelpro(refrescar) {
+  const mi = ++DP.seq;
+  DP.estado = 'cargando'; DP.error = '';
+  errorDelpro('');
+  renderDelpro();
+  try {
+    const j = await api('/api/informes/delpro?solo_tambo=' + (DP.solo ? '1' : '0') + (refrescar ? '&refrescar=1' : ''));
+    if (mi !== DP.seq) return;
+    DP.datos = j; DP.estado = 'ok';
+  } catch (e) { if (mi !== DP.seq) return; DP.estado = 'error'; DP.error = e.message; }
+  renderDelpro();
+}
+function renderDelpro() {
+  const lista = $('#dp-lista'), res = $('#dp-resumen'), falta = $('#dp-falta');
+  falta.hidden = true;
+  if (DP.estado === 'cargando') { res.textContent = ''; lista.innerHTML = '<div class="empty" role="status">Leyendo los informes de DelPro…</div>'; return; }
+  if (DP.estado === 'error') { res.textContent = ''; lista.innerHTML = '<div class="msg err" role="alert">' + esc(DP.error) + '</div>'; return; }
+  const j = DP.datos;
+  if (!j || !j.disponible) {
+    res.textContent = '';
+    lista.innerHTML = j && j.vacio ? '<div class="empty" role="status">' + esc(j.motivo) + '</div>' : '<div class="msg warn" role="alert">' + esc(j ? j.motivo : 'No se pudieron leer los informes de DelPro.') + '</div>';
+    return;
+  }
+  const q = DP.q.trim().toLowerCase(), c = j.cuenta;
+  const filas = j.informes.filter(i => !q || (i.nombre + ' ' + i.carpeta).toLowerCase().indexOf(q) >= 0);
+  /* Sin aria-live: se reescribe en cada tecla del buscador y un lector de pantalla lo leería entero cada vez. */
+  res.textContent = plural(j.informes.length, 'informe', 'informes') + (DP.solo ? ' de tu tambo' : '') + ' en DelPro: ' +
+    (c.completo === 1 ? '1 se trae completo' : fmtNum(c.completo) + ' se traen completos') + ', ' + fmtNum(c.parcial) + ' con diferencias, ' +
+    (c.no_disponible === 1 ? '1 no se puede traer todavía.' : fmtNum(c.no_disponible) + ' no se pueden traer todavía.') + (q ? ' Se muestran ' + filas.length + '.' : '');
+  lista.innerHTML = filas.length ? filas.map(i => {
+    const est = estadoDe(i.estado, i.n_diferencias), e = ESTADO_DP[est], sub = i.estado === 'no_disponible' && i.motivo ? [i.carpeta, i.motivo] : [i.carpeta, i.nivel];
+    const avisos = i.n_diferencias ? ' · ' + plural(i.n_diferencias, 'aviso', 'avisos') : '';
+    return '<div class="dprow"><div class="nm"><b>' + esc(i.nombre) + '</b>' +
+      (i.filtro_sin_traer ? '<span class="dpfl">filtro sin traer: puede mostrar más animales</span>' : '') +
+      '<span class="sub">' + esc(sub.filter(Boolean).join(' · ')) + '</span></div>' +
+      '<span class="cn">' + (i.estado === 'no_disponible' ? '' : i.columnas.traidas + ' de ' + plural(i.columnas.total, 'columna', 'columnas') + avisos) + '</span>' +
+      '<span class="dpe ' + e[1] + '">' + e[0] + '</span>' +
+      '<button class="btn sm' + (est === 'completo' ? ' pri' : '') + '" data-act="dptraer" data-oid="' + i.oid + '" aria-label="Traer «' + esc(i.nombre) + '»"' + (i.estado === 'no_disponible' ? ' disabled' : '') + '>Traer</button></div>';
+  }).join('') : '<div class="empty" role="status">' + (q ? 'Ningún informe coincide con la búsqueda.' : 'No hay informes de DelPro para traer.') + '</div>';
+  if (j.faltantes.length) {
+    falta.hidden = false;
+    $('#dp-falta-cuerpo').innerHTML = j.faltantes.slice(0, 30).map(f => '<span>' + (f.nombre ? esc(f.nombre) + ' <small>(' + esc(f.campo) + ')</small>' : esc(f.campo)) + ' <b>' + f.informes + '</b></span>').join('');
+  }
+}
+/* Una definición que llega del servidor (traída de DelPro o armada con IA) como informe NUEVO y sin guardar. `origen` es el aviso que lo acompaña. */
+function abrirComoNuevo(nombre, definicion, origen, enSegundoPlano) {
+  const def = Object.assign(defVacia(), definicion);
+  def.condiciones = (def.condiciones || []).map(c => Object.assign({}, c));
+  def.columnas = (def.columnas || []).map(c => Object.assign({}, c));
+  def.calculados = (def.calculados || []).map(c => Object.assign({}, c));
+  def.agrupar_por = (def.agrupar_por || []).slice();
+  const d = nuevoDoc({nombre: String(nombre || 'Informe nuevo').slice(0, 60), def, importado: Object.assign({cerrado: false}, origen)});
+  normalizar(d);
+  if (enSegundoPlano) { renderTabs(); return d; }                    // la pestaña queda abierta, pero no se le cambia la pantalla a quien está haciendo otra cosa
+  activar(d.id);
+  return d;
+}
+/* Un teclado o un lector de pantalla tiene que quedar en el aviso: el botón «Traer» desapareció con el cuadro. */
+function enfocarAviso() { const av = document.querySelector('#importado .imp'); if (av) av.focus(); }
+async function traerDeDelpro(oid) {
+  errorDelpro('');
+  try {
+    const j = await api('/api/informes/delpro/' + oid);
+    if (!j.definicion) { errorDelpro(j.motivo || 'Este informe no se puede traer.'); return; }
+    const e = ESTADO_DP[estadoDe(j.estado, j.diferencias.length)] || ESTADO_DP.parcial;
+    const grupos = ['contenido', 'columnas', 'presentacion', 'info'].map(g => ({clase: g, titulo: TITULO_DIF[g],
+      items: j.diferencias.filter(x => x.gravedad === g).map(x => ({texto: x.texto, detalle: x.detalle || []}))})).filter(x => x.items.length);
+    $('#delpro').close();
+    const d = abrirComoNuevo(j.nombre, j.definicion, {titulo: 'Traído de DelPro', sub: '«' + j.nombre + '»' + (j.carpeta ? ' · ' + j.carpeta : ''), chip: e, descripcion: j.descripcion, grupos,
+      alGuardar: 'Ojo: no trae todas las condiciones que tenía en DelPro, así que puede mostrar más animales.',
+      vacio: 'Se trajo completo: no hay diferencias que avisar. Revisalo y guardalo con el nombre que quieras.'});
+    enfocarAviso();
+    ejecutar(d);
+  } catch (e) { errorDelpro(e.message); }
+}
+/* El aviso de un informe que no armó el usuario a mano: lo que cambia QUÉ animales aparecen va primero, y recién después lo que solo cambia cómo se ve.
+   Cada línea puede traer su detalle (el motivo de cada condición que no se trajo). Si el aviso decía que cambian los animales, al cerrarlo queda una línea. */
+function renderImportado() {
+  const d = docAct(), box = $('#importado'), im = d && d.importado;
+  if (!im) { box.innerHTML = ''; return; }
+  if (im.cerrado) {
+    box.innerHTML = (im.grupos || []).some(g => g.clase === 'contenido')
+      ? '<div class="impmin"><span>' + esc(im.titulo) + ': ' + esc(im.cerradoTexto || 'hay diferencias en los animales que aparecen.') + '</span><button class="btn sm ghost" data-act="abririmp">Ver el aviso</button></div>' : '';
+    return;
+  }
+  const chip = im.chip || ESTADO_DP.parcial;
+  const li = (clase, t) => {
+    const x = typeof t === 'string' ? {texto: t, detalle: []} : t;
+    return '<li class="' + esc(clase) + '">' + esc(x.texto) + ((x.detalle || []).length ? '<ul class="det">' + x.detalle.map(s => '<li>' + esc(s) + '</li>').join('') + '</ul>' : '') + '</li>';
+  };
+  box.innerHTML = '<div class="imp' + (chip[1] === 'ok' ? '' : ' warn') + '" tabindex="-1" role="region" aria-label="Aviso: ' + esc(im.titulo) + '"><div class="imph"><b>' + esc(im.titulo) + '</b><span class="muted">' + esc(im.sub || '') + '</span>' +
+    '<span class="dpe ' + chip[1] + '">' + esc(chip[0]) + '</span><button class="x" data-act="cerrarimp" aria-label="Cerrar este aviso">×</button></div>' +
+    (im.descripcion ? '<div class="muted" style="font-size:12.5px">' + esc(im.descripcion) + '</div>' : '') +
+    ((im.grupos || []).length ? im.grupos.map(x => '<h4 class="' + esc(x.clase) + '">' + esc(x.titulo) + '</h4><ul>' + x.items.map(t => li(x.clase, t)).join('') + '</ul>').join('')
+                              : '<div style="font-size:13px">' + esc(im.vacio || '') + '</div>') + '</div>';
+}
+
+
+/* ---------- armar un informe con una frase (Fase 4b) ---------- */
+/* La IA solo devuelve una definición, que el servidor valida igual que cualquiera: acá se abre como informe NUEVO y NO se ejecuta sola, para que el usuario
+   revise primero lo que se entendió. Sin clave de la API el cuadro avisa y el diseñador manual sigue andando. */
+const IA = {configurada: false, armando: false, sinCatalogo: false};
+/* El modelo ve los ids del catálogo y a veces los cita («usé SevenDayAverage > 0»): quien lee es el dueño del tambo, que conoce «Promedio producción diaria de leche 7 d.». */
+const sinIds = t => String(t).replace(/[A-Z][A-Za-z0-9]{3,}/g, id => CAMPOS[id] ? '«' + CAMPOS[id].etiqueta + '»' : id);
+function renderAsk() {
+  const bt = $('#ask-ir'), st = $('#ask-st');
+  bt.disabled = IA.armando || !IA.configurada;
+  bt.textContent = IA.armando ? 'Armando…' : 'Armar informe';
+  $('#ask-t').disabled = !IA.configurada;
+  if (!IA.configurada && !st.textContent) st.textContent = IA.sinCatalogo ? 'No se pudo cargar la pantalla del todo. Recargá la página (F5) y probá de nuevo.'
+    : 'La IA no está configurada en este servidor: podés armar el informe a mano con «+ Informe nuevo». Si ya cargaste la clave de la IA, reiniciá LactIA para que la tome.';
+}
+function estadoAsk(texto, malo) { const st = $('#ask-st'); st.textContent = texto; st.className = 'askst' + (malo ? ' bad' : ''); }
+async function armarConFrase() {
+  const frase = $('#ask-t').value.trim();
+  if (IA.armando) return;
+  if (!frase) { estadoAsk('Escribí qué informe querés.', true); return; }
+  IA.armando = true; renderAsk();
+  estadoAsk('Armando el informe… puede tardar unos segundos.', false);
+  try {
+    const j = await post('/api/informes/describir', {frase});
+    if (!j.ok) { const falta = (j.no_pude || []).map(t => sinIds(t).replace(/[. ]+$/, '')); estadoAsk(j.motivo + (falta.length ? ' Lo que falta: ' + falta.join('; ') + '.' : ''), true); }
+    else {
+      const grupos = [{clase: 'info', titulo: 'Se lee así', items: j.se_lee}, {clase: 'contenido', titulo: 'Lo que no pude armar', items: j.no_pude.map(sinIds)},
+                      {clase: 'presentacion', titulo: 'Lo que supuse', items: j.supuestos.map(sinIds)}, {clase: 'columnas', titulo: 'Para tener en cuenta', items: j.advertencias.map(sinIds)}].filter(x => x.items.length);
+      const revisar = j.no_pude.length || j.advertencias.length;
+      const aqui = activeId === 'list' && !document.querySelector('dialog[open]');          // si el dueño ya se fue a otra cosa mientras la IA pensaba, no se le cambia la pantalla de golpe
+      abrirComoNuevo(j.nombre, j.definicion, {titulo: 'Armado con IA', sub: '«' + j.frase + '»', chip: revisar ? ['Revisalo', 'warn'] : ['Listo para revisar', 'ok'], grupos,
+        alGuardar: 'Ojo: hay cosas de lo que pediste que no se pudieron armar.',
+        cerradoTexto: 'hay cosas de lo que pediste que no se pudieron armar.',
+        vacio: 'Revisá si se entendió lo que pediste y tocá «Actualizar» para ver los animales.'}, !aqui);
+      if (aqui) enfocarAviso();                                                           // la lista (y su botón) quedó oculta: el foco pasa al aviso, que es lo que hay que revisar
+      estadoAsk('Armé «' + j.nombre + '». ' + (aqui ? 'Revisalo y tocá «Actualizar».' : 'Quedó en una pestaña nueva, sin guardar.'), false);
+      if (!aqui) toast('Terminé de armar «' + j.nombre + '»: está en una pestaña nueva.');
+    }
+  } catch (e) { estadoAsk(e.message, true); }
+  IA.armando = false; renderAsk();
+}
+
+/* ---------- programar el envío de un informe (Fase 4c) ---------- */
+/* Se manda la versión GUARDADA del informe (por eso solo se programa un informe guardado), por los canales de las alertas y a sus mismos destinatarios.
+   Un hilo del servidor lo manda a los horarios elegidos; acá solo se arma la programación, se mira cómo queda y se manda una prueba (a pedido, con doble toque). */
+const PG = {sid: null, nombre: '', sucio: false, datos: null, dias: [], horas: [], canales: [], formato: 'excel', seq: 0, armado: 0};
+const NOMBRE_DIA = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
+const nombreCanal = id => { const c = ((PG.datos && PG.datos.canales) || []).filter(x => x.id === id)[0]; return c ? c.nombre : id; };       // «telegram» -> «Telegram»
+const TEXTO_ESTADO_ENVIO = {enviado: 'salió', fallido: 'falló', omitido: 'no salió', en_curso: 'saliendo', sin_confirmar: 'sin confirmar'};
+function pgMsj(texto, malo) { const e = $('#prog-msj'); e.className = 'okline' + (malo ? ' bad' : ''); e.textContent = texto || ''; }
+async function abrirProg() {
+  const d = docAct();
+  if (!d || !d.sid) { toast('Guardá el informe para poder programar su envío.'); return; }
+  PG.sid = d.sid; PG.nombre = d.nombre; PG.sucio = sucio(d); PG.datos = null; PG.armado = 0; PG.fallo = false;
+  PG.dias = []; PG.horas = []; PG.canales = []; PG.formato = 'excel';                       // nada del cuadro anterior
+  PG.fechasFijas = limpiaDef(d.def).condiciones.some(c => tipoDe(c.campo) === 'fecha');    // una condición con fechas mira siempre el mismo período
+  pgMsj('', false);
+  $('#prog-prev').hidden = true;
+  $('#prog').showModal();
+  renderProg();
+  await cargarProg();
+}
+async function cargarProg() {
+  const mi = ++PG.seq;
+  try {
+    const j = await api('/api/informes/' + PG.sid + '/envio');
+    if (mi !== PG.seq) return;
+    PG.datos = j;
+    const e = j.envio;
+    PG.dias = e ? e.dias.slice() : [0, 1, 2, 3, 4, 5, 6];
+    PG.horas = e ? e.horas.slice() : ['08:00'];
+    PG.canales = e ? e.canales.slice() : j.canales.filter(c => c.disponible).map(c => c.id);
+    PG.formato = e ? e.formato : 'excel';
+  } catch (er) { if (mi !== PG.seq) return; PG.fallo = true; pgMsj(er.message, true); }
+  renderProg();
+  cargarRegistroProg();
+}
+function renderProg() {
+  const j = PG.datos, e = j && j.envio;
+  $('#prog-t').textContent = 'Programar envío · ' + (PG.nombre || '');
+  $('#prog-nota').textContent = 'Se manda la versión guardada del informe, calculada en el momento del envío.' + (PG.sucio ? ' Tenés cambios sin guardar: esos no se incluyen.' : '') +
+    (PG.fechasFijas ? ' Ojo: las fechas de las condiciones no se corren solas, así que cada envío mira siempre el mismo período (no «los últimos 30 días» de cada vez).' : '');
+  $('#prog-dias').innerHTML = NOMBRE_DIA.map((n, i) => '<label class="opt"><input type="checkbox" data-pgdia="' + i + '"' + (PG.dias.indexOf(i) >= 0 ? ' checked' : '') + '> ' + n + '</label>').join('');
+  $('#prog-horas').innerHTML = PG.horas.map((h, i) => '<span class="pghora"><input class="in" type="time" data-pghora="' + i + '" value="' + esc(h) + '" aria-label="Horario ' + (i + 1) + '">' +
+    '<button type="button" data-act="progquitar" data-i="' + i + '" aria-label="Quitar el horario ' + (i + 1) + '">×</button></span>').join('');
+  $('#prog-mas').disabled = PG.horas.length >= 5;
+  $('#prog-canales').innerHTML = j ? j.canales.map(c => '<div class="pgcan"><label class="opt"><input type="checkbox" data-pgcanal="' + esc(c.id) + '"' + (PG.canales.indexOf(c.id) >= 0 ? ' checked' : '') + (c.disponible || PG.canales.indexOf(c.id) >= 0 ? '' : ' disabled') + '> ' + esc(c.nombre) + '</label>' +
+    (c.disponible ? '' : '<span class="off">— ' + (c.configurado ? 'está apagado en ⚙ Configuración' : 'sin configurar') + '</span>') + '</div>').join('') : '';
+  document.querySelectorAll('input[name="prog-fmt"]').forEach(r => { r.checked = r.value === PG.formato; });
+  $('#prog-estado').textContent = !j ? (PG.fallo ? 'No se pudo leer la programación. Cerrá este cuadro y volvé a abrirlo.' : 'Leyendo la programación…') : !e ? 'Todavía no está programado.' : e.activo ? 'Próximo envío: ' + (e.proximo_texto || '—') : 'En pausa: no se manda nada hasta que lo reanudes.';
+  $('#prog-pausa').disabled = !e;
+  $('#prog-pausa').textContent = e && !e.activo ? 'Reanudar envío' : 'Pausar envío';
+  $('#prog-guardar').textContent = e ? 'Guardar cambios' : 'Guardar programación';
+  $('#prog-guardar').disabled = !j;
+  renderLatido();
+  renderEnvio();
+}
+/* Solo los dos botones de probar: armar el envío o terminar de mandar no reconstruye el formulario (que perdería el foco y lo que se esté escribiendo). */
+function renderEnvio() {
+  const enviar = $('#prog-enviar'), mandando = PG.ocupado === PG.sid, quieto = mandando || !PG.datos;
+  enviar.textContent = mandando ? 'Mandando…' : (PG.armado ? 'Tocá otra vez para mandarlo de verdad' : 'Enviar ahora');
+  enviar.className = 'btn ' + (PG.armado && !mandando ? 'pri' : 'ghost');
+  enviar.disabled = quieto;
+  $('#prog-ver').disabled = quieto;
+}
+function cuerpoProg(activo) {
+  return {dias: PG.dias.slice().sort((a, b) => a - b), horas: PG.horas.filter(h => h), canales: PG.canales.slice(), formato: PG.formato, activo};
+}
+async function guardarProg(activo, mensaje, cuerpo) {
+  try {
+    const j = await post('/api/informes/' + PG.sid + '/envio', cuerpo || cuerpoProg(activo), 'PUT');
+    if (!cuerpo && j.envio) { PG.dias = j.envio.dias.slice(); PG.horas = j.envio.horas.slice(); PG.canales = j.envio.canales.slice(); PG.formato = j.envio.formato; }      // el formulario muestra lo que el servidor guardó de verdad (sin repetidos y en orden)
+    PG.datos = j;
+    pgMsj(mensaje + (j.envio && j.envio.activo && j.envio.proximo_texto ? ' Próximo envío: ' + j.envio.proximo_texto + '.' : ''), false);
+    refrescarEnvios().then(() => { if (activeId === 'list') renderList(); });
+  } catch (e) { pgMsj(e.message, true); }
+  renderProg();
+}
+async function probarProg(enviar) {
+  const sid = PG.sid;
+  if (PG.ocupado === sid) return;                                     // una vista o un envío a la vez por informe (el servidor también lo exige)
+  if (enviar && !PG.canales.length) { pgMsj('Elegí por dónde mandarlo (WhatsApp, Telegram o correo) y probá de nuevo.', true); return; }
+  PG.ocupado = sid; renderEnvio();
+  pgMsj(enviar ? 'Mandando…' : 'Armando el resumen…', false);
+  try {
+    const j = await post('/api/informes/' + sid + '/envio/probar', {enviar, canales: PG.canales.slice()});
+    if (sid !== PG.sid) return;                                       // el cuadro ya es de otro informe: esta respuesta no es para esta pantalla
+    $('#prog-prev').textContent = j.texto;
+    $('#prog-prev').hidden = false;
+    const por = Object.keys(j.enviado || {});
+    const fmtGuardado = PG.datos && PG.datos.envio ? PG.datos.envio.formato : 'excel';
+    if (!enviar) pgMsj('Así saldría: ' + fmtNum(j.animales) + (j.animales === 1 ? ' animal' : ' animales') + (j.bytes ? ' y el Excel (' + fmtNum(Math.round(j.bytes / 1024)) + ' KB)' : '') + '. No se mandó nada.' +
+      (PG.formato !== fmtGuardado ? ' Esta vista usa lo que está guardado (' + (fmtGuardado === 'excel' ? 'con el Excel' : 'solo el resumen') + '): tocá «Guardar» para que cambie.' : ''), false);
+    else {
+      const bien = por.filter(c => j.enviado[c] === 'ok'), mal = por.filter(c => j.enviado[c] !== 'ok');
+      pgMsj((bien.length ? 'Salió por: ' + bien.map(nombreCanal).join(', ') + '. ' : '') + mal.map(c => j.enviado[c].replace(/^error: /, '')).join(' '), mal.length > 0);
+    }
+  } catch (e) { if (sid === PG.sid) pgMsj(e.message, true); }
+  finally { if (PG.ocupado === sid) PG.ocupado = null; renderEnvio(); }
+  if (sid === PG.sid) cargarRegistroProg();
+}
+/* El hilo que manda los envíos deja la hora de su última revisión: si hace rato que no mira (el hilo trabado, o un servidor que no arrancó bien), la pantalla lo dice en vez de
+   seguir anunciando un «Próximo envío» que no va a salir. */
+function renderLatido() {
+  const e = $('#prog-latido'), j = PG.datos;
+  const hace = j ? j.ultima_pasada_hace_s : null;
+  let texto = '', malo = false;
+  if (j && hace == null) texto = 'El envío automático todavía no hizo ninguna revisión. Si el servidor recién arrancó, esperá un par de minutos.';
+  else if (j && hace > 300) { texto = 'Ojo: el envío automático no revisa desde ' + j.ultima_pasada_texto + ' (hace ' + Math.floor(hace / 60) + ' min). Si no se recupera solo, avisale a quien administra el servidor.'; malo = true; }
+  else if (j) texto = 'Última revisión del envío automático: ' + j.ultima_pasada_texto + '.';
+  e.className = 'okline' + (malo ? ' bad' : '');
+  e.textContent = texto;
+}
+async function cargarRegistroProg() {
+  const caja = $('#prog-reg-cuerpo');
+  try {
+    const j = await api('/api/informes/' + PG.sid + '/envio/registro');
+    if (PG.datos) { PG.datos.ultima_pasada_texto = j.ultima_pasada_texto; PG.datos.ultima_pasada_hace_s = j.ultima_pasada_hace_s; renderLatido(); }
+    caja.innerHTML = j.registro.length ? j.registro.map(r0 => Object.assign({}, r0, {canal: nombreCanal(r0.canal)})).map(r => '<div' + (r.estado === 'fallido' || r.estado === 'sin_confirmar' ? ' class="bad"' : '') + '>' + esc(r.slot_texto) + ' · ' + esc(r.canal) + ' · ' + esc(TEXTO_ESTADO_ENVIO[r.estado] || r.estado) +
+      (r.detalle ? ' — ' + esc(r.detalle) : '') + '</div>').join('') : '<div class="muted">Todavía no salió ningún envío programado.</div>';
+  } catch (e) { caja.textContent = ''; }
+}
+async function refrescarEnvios() { try { ENVIOS = (await api('/api/informes/envios')).envios || {}; } catch (e) { ENVIOS = {}; } }
+
 /* ---------- gráfico (Fase 3) ---------- */
 /* El servidor entrega, por día y por serie, las vacas y los kg; la medida, el resumen, el intervalo y la forma se resuelven acá (módulo
    `informes_grafico.js`, con sus pruebas) y NO vuelven a la base. Solo la serie (rodeo, lactancia, todo), el período, los animales del informe
@@ -797,7 +1227,7 @@ function borrarCalc() {
 const GRAF = window.InformesGrafico;
 const GRAFICO_DEFECTO = {medida: 'kg_vaca', resumen: 'avg', serie: 'rodeo', intervalo: 'dia', forma: 'linea', periodo: '90', desde: null, hasta: null, solo_informe: true};
 const GCAMPO = {gm: 'medida', gr: 'resumen', gs: 'serie'};
-const SIMBOLO = {'>=': '≥', '<=': '≤', '<>': '≠'};
+const SIMBOLO = {'>=': '≥', '<=': '≤', '<>': '≠', 'en': 'es uno de'};
 const cfgGraf = d => Object.assign({}, GRAFICO_DEFECTO, d.grafico || {});
 let CH = {}, rt = 0;
 function sumarDias(iso, n) {
@@ -842,7 +1272,7 @@ function chipsPoblacion(d, g) {
   const n = fresco && d.serie.poblacion.animales != null ? ' (' + fmtNum(d.serie.poblacion.animales) + ' animales)' : '';
   return '<span class="f">Solo los animales que hoy cumplen las condiciones' + n + '</span>' + conds.map(c => {
     const f = campoDe(d, c.campo);
-    return '<span class="f">' + esc((f ? f.etiqueta : c.campo) + ' ' + (SIMBOLO[c.op] || c.op) + ' ' + c.valor) + '</span>';
+    return '<span class="f">' + esc((f ? f.etiqueta : c.campo) + ' ' + (SIMBOLO[c.op] || c.op) + ' ' + (Array.isArray(c.valor) ? c.valor.join(', ') : c.valor)) + '</span>';
   }).join('');
 }
 function renderGrafico() {
@@ -884,7 +1314,7 @@ function dibujarGrafico(d, g) {
   $('#gtitulo').textContent = GRAF.NOMBRES[g.medida] + ' · ' + GRAF.RESUMEN_NOMBRE[g.resumen] + ' por ' + GRAF.INTERVALO_NOMBRE[g.intervalo];
   $('#gsub').textContent = fmtFecha(d.serie.desde, true) + ' al ' + fmtFecha(d.serie.hasta, true) + ' · ' + M.unidad +
     (mal.length ? ' · no se grafican los días a medio cargar: ' + mal.slice(0, 4).map(f => fmtFecha(f, true)).join(', ') + (mal.length > 4 ? '…' : '') : '');
-  $('#gnota').textContent = 'Las vacas y los kg por vaca cuentan solo lecturas válidas; el total incluye también las no válidas, como DelPro. El rodeo es el de ese día. ' +
+  $('#gnota').textContent = 'Las vacas y los kg por vaca cuentan solo lecturas válidas; el total incluye también las no válidas, como DelPro. El rodeo es el que tenía cada vaca en esa fecha. ' +
     (d.serie.poblacion.restringida ? 'Solo cuentan los animales que HOY cumplen las condiciones del informe: los que ya salieron del rebaño no figuran.'
                                    : 'Sin condiciones, son todas las vacas del tambo, incluidas las que ya salieron.');
   $('#lg').innerHTML = M.series.map(s => {
@@ -940,7 +1370,7 @@ document.addEventListener('click', e => {
   const a = b.dataset.act, d = docAct();
   if (a === 'tab') activar(b.dataset.id);
   else if (a === 'cerrar') cerrar(b.dataset.id);
-  else if (a === 'abrir') abrirInforme(+b.dataset.id);
+  else if (a === 'abrir') una('abrir' + b.dataset.id, () => abrirInforme(+b.dataset.id));
   else if (a === 'fav') {
     e.stopPropagation();
     const id = +b.dataset.id, i = LISTA.find(x => x.id === id);
@@ -949,6 +1379,10 @@ document.addEventListener('click', e => {
   else if (a === 'cat') { const c = b.dataset.c; openCats[c] = openCats[c] === false; renderFields(); }
   else if (a === 'campo') alternarCampo(b.dataset.id);
   else if (a === 'quitarcol') { d.def.columnas.splice(+b.dataset.i, 1); normalizar(d); renderFields(); renderChips(); renderGroup(); marcarCambio(d); }
+  else if (a === 'progquitar') { PG.horas.splice(+b.dataset.i, 1); renderProg(); const hs = document.querySelectorAll('#prog-horas input'); (hs[Math.min(+b.dataset.i, hs.length - 1)] || $('#prog-mas')).focus(); }          // el teclado no pierde el lugar
+  else if (a === 'dptraer') una('dptraer', () => traerDeDelpro(+b.dataset.oid));
+  else if (a === 'cerrarimp') { if (d && d.importado) d.importado.cerrado = true; renderImportado(); }
+  else if (a === 'abririmp') { if (d && d.importado) d.importado.cerrado = false; renderImportado(); enfocarAviso(); }
   else if (a === 'nuevocalc') abrirCalc(null);
   else if (a === 'editcalc') abrirCalc(b.dataset.id);
   else if (a === 'plegar') { const k = b.dataset.k; if (d.plegados[k]) delete d.plegados[k]; else d.plegados[k] = true; renderResultado(); }
@@ -978,7 +1412,17 @@ document.addEventListener('change', e => {
   }
   if (a === 'gsolo') { cambioGrafico(d, {solo_informe: el.checked}); return; }
   if (a === 'ck') { const c = d.def.condiciones[i]; c.campo = el.value; c.op = OPS[campoDe(d, c.campo).tipo][0][0]; c.valor = ''; renderFilters(); }
-  else if (a === 'co') d.def.condiciones[i].op = el.value;
+  else if (a === 'co') {
+    const c = d.def.condiciones[i], antes = c.op;
+    c.op = el.value;
+    if ((antes === 'en') !== (c.op === 'en')) {                       // solo al entrar o salir de «es uno de» cambia el campo del valor: el resto de los cambios no redibuja
+      if (antes === 'en') { const l = listaDe(c.valor, tipoDe(c.campo)); c.valor = l.length ? l[0] : ''; }          // el primero de la lista, aunque sea el número 0
+      renderFilters();
+      const s = document.querySelector('#filters [data-chg="co"][data-i="' + i + '"]');                            // el teclado no pierde el lugar
+      if (s) s.focus();
+    }
+  }
+  else if (a === 'lim') { const n = parseInt(el.value, 10); if (Number.isFinite(n) && n >= 1) d.def.limite = Math.min(n, 5000); else delete d.def.limite; el.value = d.def.limite || ''; }        // vacío = el de siempre (hasta 2000); el tope del servidor es 5000
   else if (a === 'cv') d.def.condiciones[i].valor = el.value;
   else if (a === 'desc') d.def.incluir_descartados = el.checked;
   else if (a === 'hoy') d.hoy = el.value;
@@ -992,10 +1436,48 @@ $('#rname').addEventListener('input', e => { const d = docAct(); d.nombre = e.ta
 $('#fq').addEventListener('input', e => { fq = e.target.value; renderFields(); });
 $('#lq').addEventListener('input', e => { listQ = e.target.value; renderList(); });
 $('#btn-nuevo').addEventListener('click', () => { const d = nuevoDoc(); activar(d.id); });
+$('#btn-prog').addEventListener('click', abrirProg);
+$('#prog-cerrar').addEventListener('click', () => $('#prog').close());
+$('#prog-mas').addEventListener('click', () => { if (PG.horas.length < 5) { PG.horas.push('12:00'); renderProg(); const hs = document.querySelectorAll('#prog-horas input'); hs[hs.length - 1].focus(); } });
+$('#prog-guardar').addEventListener('click', () => {                    // guardar no cambia si está en pausa o no: eso es de «Pausar» y «Reanudar»
+  const e = PG.datos && PG.datos.envio, enPausa = !!e && !e.activo;
+  guardarProg(!enPausa, enPausa ? 'Guardado. Sigue en pausa: no se manda nada hasta que lo reanudes.' : 'Guardado.');
+});
+$('#prog-pausa').addEventListener('click', () => {
+  const e = PG.datos && PG.datos.envio;                                  // pausar y reanudar usan lo que ya está guardado: no dependen de lo que esté a medio editar en el formulario
+  if (e) guardarProg(!e.activo, e.activo ? 'Envío en pausa.' : 'Envío reanudado.', {dias: e.dias, horas: e.horas, canales: e.canales, formato: e.formato, activo: !e.activo});
+});
+$('#prog-ver').addEventListener('click', () => probarProg(false));
+$('#prog-enviar').addEventListener('click', () => {
+  if (!PG.armado) {                                     // el primer toque solo arma el botón (como el cierre de una pestaña con cambios): el mensaje sale de verdad en el segundo
+    if (!PG.canales.length) { pgMsj('Elegí por dónde mandarlo (WhatsApp, Telegram o correo) y probá de nuevo.', true); return; }
+    PG.armado = Date.now(); renderEnvio();
+    pgMsj('Tocá «Enviar ahora» otra vez para mandarlo de verdad. Si no, se cancela solo en 8 segundos.', false);
+    clearTimeout(PG.armadoTimer);
+    PG.armadoTimer = setTimeout(() => { if (PG.armado) { PG.armado = 0; renderEnvio(); pgMsj('No se mandó nada: no se confirmó el envío.', false); } }, 8000);
+    return;
+  }
+  if (Date.now() - PG.armado < 700) return;             // un doble clic no es confirmar: hace falta ver el cambio del botón
+  clearTimeout(PG.armadoTimer); PG.armado = 0; renderEnvio(); probarProg(true);
+});
+$('#prog').addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.pgdia != null) { const i = +t.dataset.pgdia, k = PG.dias.indexOf(i); if (t.checked && k < 0) PG.dias.push(i); else if (!t.checked && k >= 0) PG.dias.splice(k, 1); }
+  else if (t.dataset.pghora != null) PG.horas[+t.dataset.pghora] = t.value;
+  else if (t.dataset.pgcanal != null) { const k = PG.canales.indexOf(t.dataset.pgcanal); if (t.checked && k < 0) PG.canales.push(t.dataset.pgcanal); else if (!t.checked && k >= 0) PG.canales.splice(k, 1); }
+  else if (t.name === 'prog-fmt') PG.formato = t.value;
+});
+$('#ask-ir').addEventListener('click', armarConFrase);
+$('#ask-t').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); armarConFrase(); } });
+$('#btn-delpro').addEventListener('click', abrirDelpro);
+$('#dp-cerrar').addEventListener('click', () => $('#delpro').close());
+$('#dp-q').addEventListener('input', e => { DP.q = e.target.value; renderDelpro(); });
+$('#dp-tambo').addEventListener('change', e => { DP.solo = e.target.checked; cargarDelpro(false); });
+$('#dp-refrescar').addEventListener('click', () => cargarDelpro(true));
 $('#btn-run').addEventListener('click', () => ejecutar(docAct()));
 $('#btn-xls').addEventListener('click', () => exportar(docAct()));
-$('#btn-guardar').addEventListener('click', () => guardar(docAct(), false));
-$('#btn-copia').addEventListener('click', () => guardar(docAct(), true));
+$('#btn-guardar').addEventListener('click', () => una('guardar', () => guardar(docAct(), false)));
+$('#btn-copia').addEventListener('click', () => una('guardar', () => guardar(docAct(), true)));
 $('#btn-dock').addEventListener('click', () => { $('#work').classList.toggle('nodock'); $('#shell').classList.toggle('showf'); });
 $('#c-formula').addEventListener('input', () => validarFormula());
 $('#c-nombre').addEventListener('input', botonCalc);
@@ -1029,11 +1511,14 @@ document.addEventListener('drop', e => { const c = e.target.closest && e.target.
 document.addEventListener('dragend', () => { dragI = null; document.querySelectorAll('.chip.over').forEach(x => x.classList.remove('over')); });
 
 (async function iniciar() {
-  try {
-    const [campos] = await Promise.all([api('/api/informes/campos'), refrescarLista()]);
+  let campos = null;                                                    // el catálogo, o null si no se pudo leer: la lista y los envíos se esperan igual (si no, la lista salía vacía)
+  await Promise.all([api('/api/informes/campos').then(j => { campos = j; }).catch(e => { IA.sinCatalogo = true; toast('No se pudo cargar el catálogo de campos: ' + e.message); }), refrescarLista(), refrescarEnvios()]);
+  if (campos) {
     CATS = campos.categorias;
     CATS.forEach(c => c.campos.forEach(f => { f.categoria = c.nombre; CAMPOS[f.id] = f; }));
-  } catch (e) { toast('No se pudo cargar el catálogo de campos: ' + e.message); }
+    IA.configurada = !!campos.ia;
+  }
+  renderAsk();
   render();
 })();
 })();

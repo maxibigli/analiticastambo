@@ -66,7 +66,7 @@ if __name__ == "__main__":
 
     from waitress import serve
 
-    from app import app, iniciar_avisos_iot, iniciar_copia_alertas, iniciar_vigilante
+    from app import app, iniciar_avisos_iot, iniciar_copia_alertas, iniciar_envios_informes, iniciar_vigilante
 
     # El vigilante se arranca ACA y no al importar `app`: solo esta instancia, la que tomó el candado, puede tener uno.
     iniciar_vigilante()
@@ -74,6 +74,8 @@ if __name__ == "__main__":
     iniciar_copia_alertas()
     # Idem el aviso de sensores IoT que se quedan sin datos (ver iot_avisos.py).
     iniciar_avisos_iot()
+    # Idem el envío programado de informes (ver informes_envios.py): lee informes.db cada minuto y recién cuando un horario vence calcula el informe.
+    iniciar_envios_informes()
 
     print(f"Analitica DelPro escuchando en http://{HOST}:{PORT}  (Ctrl+C para salir)")
     # threads=8 alcanza para varios usuarios a la vez; el acceso a SQL Server ya

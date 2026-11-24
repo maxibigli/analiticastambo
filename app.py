@@ -95,9 +95,12 @@ import tablero
 import tambos
 import ups_registro
 import informes_catalogo
+import informes_delpro
+import informes_envios
 import informes_excel
 import informes_formula
 import informes_guardados
+import informes_lenguaje
 import informes_motor
 import informes_serie
 import telegram_bot
@@ -6684,7 +6687,7 @@ def api_informes_campos():
             "id": c.id, "etiqueta": c.etiqueta, "tipo": c.tipo, "unidad": c.unidad, "decimales": c.decimales,
             "verificado": c.verificado, "agrupable": c.agrupable,
             "aviso": "" if c.verificado else "Todavía no se comparó con un informe de DelPro: los valores pueden diferir."})
-    return jsonify({"categorias": [{"nombre": n, "campos": cs} for n, cs in cats.items()]})
+    return jsonify({"categorias": [{"nombre": n, "campos": cs} for n, cs in cats.items()], "ia": agente.api_disponible()})
 
 
 @app.post("/api/informes/ejecutar")
@@ -6752,6 +6755,155 @@ def _cuerpo_json_o_400():
         return None
     cuerpo = request.get_json(silent=True)
     return cuerpo if isinstance(cuerpo, dict) else None
+
+
+_NOMBRE_CANAL_ENVIO = {"whatsapp": "WhatsApp", "telegram": "Telegram", "correo": "Correo"}
+
+
+def _estado_del_envio(tambo: str, informe_id: int) -> dict:
+    """La programación de un informe, qué canales hay y cuáles se pueden usar ahora (tildados en ⚙ Configuración y con sus credenciales cargadas)."""
+    tildados, disponibles = config_alertas.estado(), set(_ids_de_canales_disponibles())
+    canales = [{"id": cid, "nombre": _NOMBRE_CANAL_ENVIO[cid], "configurado": mod.configurado(), "activo": tildados[cid], "disponible": cid in disponibles}
+               for cid, mod in _CANALES_MOD.items()]
+    return {"envio": informes_envios.obtener(tambo, informe_id), "canales": canales, **_latido_del_envio()}
+
+
+def _latido_del_envio() -> dict:
+    """Cuándo revisó por última vez el hilo del envío programado y hace cuántos segundos: la pantalla avisa si hace rato que no mira (el hilo trabado o un servidor viejo)."""
+    ultima = informes_envios.ultima_pasada()
+    return {"ultima_pasada_texto": informes_envios.texto_fecha(ultima) if ultima else None,
+            "ultima_pasada_hace_s": max(0, int((datetime.datetime.now() - ultima).total_seconds())) if ultima else None}
+
+
+@app.get("/api/informes/envios")
+@auth.requiere_rol("admin")
+def api_informes_envios_resumen():
+    """Qué informes tienen envío programado (para marcarlos en la lista): {id del informe: {activo, proximo_texto, canales}}."""
+    r = informes_envios.listar(_tambo_del_request())
+    return jsonify({"envios": {i: {"activo": e["activo"], "proximo_texto": e["proximo_texto"], "canales": e["canales"]} for i, e in r.items()}})
+
+
+@app.get("/api/informes/<int:informe_id>/envio")
+@auth.requiere_rol("admin")
+def api_informe_envio_ver(informe_id):
+    tambo = _tambo_del_request()
+    if informes_guardados.obtener(tambo, informe_id) is None:
+        return jsonify({"error": "Ese informe no existe."}), 404
+    return jsonify(_estado_del_envio(tambo, informe_id))
+
+
+@app.put("/api/informes/<int:informe_id>/envio")
+@auth.requiere_rol("admin")
+def api_informe_envio_guardar(informe_id):
+    """Programa (o cambia, o pausa con `activo: false`) el envío de un informe guardado. No hay forma de borrar una programación."""
+    cuerpo = _cuerpo_json_o_400()
+    if cuerpo is None:
+        return jsonify({"error": "La programación tiene que enviarse como JSON."}), 400
+    tambo = _tambo_del_request()
+    if informes_guardados.obtener(tambo, informe_id) is None:
+        return jsonify({"error": "Ese informe no existe."}), 404
+    if "activo" in cuerpo and not isinstance(cuerpo["activo"], bool):
+        return jsonify({"error": "«activo» tiene que ser verdadero o falso."}), 400            # un «pausar» que falla hacia seguir mandando es lo riesgoso
+    actual = informes_envios.obtener(tambo, informe_id)
+    activo = cuerpo["activo"] if "activo" in cuerpo else (actual["activo"] if actual else True)      # guardar sin decir nada no reactiva una programación pausada
+    try:
+        informes_envios.guardar(tambo, informe_id, cuerpo.get("dias"), cuerpo.get("horas"), cuerpo.get("canales"), cuerpo.get("formato"), activo, auth.usuario_actual())
+    except informes_envios.EnvioError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(_estado_del_envio(tambo, informe_id))
+
+
+@app.get("/api/informes/<int:informe_id>/envio/registro")
+@auth.requiere_rol("admin")
+def api_informe_envio_registro(informe_id):
+    tambo = _tambo_del_request()
+    if informes_guardados.obtener(tambo, informe_id) is None:
+        return jsonify({"error": "Ese informe no existe."}), 404
+    return jsonify({"registro": informes_envios.registro(tambo, informe_id), **_latido_del_envio()})
+
+
+@app.post("/api/informes/<int:informe_id>/envio/probar")
+@auth.requiere_rol("admin")
+def api_informe_envio_probar(informe_id):
+    """«Enviar ahora»: arma el informe como se mandaría y, SOLO si se pide (`enviar: true`), lo manda de verdad por los canales elegidos. No anota nada en
+    el registro y anda con la programación pausada. Nunca devuelve el Excel ni detalles de los canales."""
+    cuerpo = _cuerpo_json_o_400()
+    if cuerpo is None:
+        return jsonify({"error": "El pedido tiene que enviarse como JSON."}), 400
+    tambo = _tambo_del_request()
+    if informes_guardados.obtener(tambo, informe_id) is None:
+        return jsonify({"error": "Ese informe no existe."}), 404
+    try:
+        r = informes_envios.probar(tambo, informe_id, _enviar_informe_a_canal, cuerpo.get("canales"), cuerpo.get("enviar") is True, _ids_de_canales_disponibles)
+    except informes_envios.EnvioError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except informes_motor.InformeError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:  # noqa: BLE001  -- el detalle (servidor, usuario) no se le muestra a nadie
+        return jsonify({"error": "No se pudo calcular el informe para la prueba."}), 502
+    return jsonify(r)
+
+
+@app.post("/api/informes/describir")
+@auth.requiere_rol("admin")
+def api_informes_describir():
+    """Arma un informe a partir de una frase (`informes_lenguaje`). Devuelve la DEFINICIÓN, ya validada por el compilador, más lo que se entendió,
+    los supuestos y las advertencias: NO la ejecuta ni la guarda (la pantalla la abre sin guardar y el usuario toca «Actualizar»). Una sola llamada
+    a la IA (más una repetición si la definición no pasó la validación). Los errores nunca llevan detalles de la API ni del servidor."""
+    cuerpo = _cuerpo_json_o_400()
+    if cuerpo is None:
+        return jsonify({"error": "El pedido tiene que enviarse como JSON."}), 400
+    try:
+        r = informes_lenguaje.armar(cuerpo.get("frase"), hoy=cuerpo.get("hoy"))
+    except informes_lenguaje.SinIA as exc:
+        return jsonify({"error": str(exc)}), 503
+    except informes_lenguaje.TopeDePedidos as exc:
+        return jsonify({"error": str(exc)}), 429
+    except informes_lenguaje.IAFallo as exc:
+        return jsonify({"error": str(exc)}), 502
+    except informes_lenguaje.InformeIAError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:  # noqa: BLE001  -- nada del texto de la excepción llega a la pantalla
+        return jsonify({"error": "No se pudo armar el informe ahora. Probá de nuevo en un rato o armalo a mano."}), 502
+    return jsonify(r)
+
+
+@app.get("/api/informes/delpro")
+@auth.requiere_rol("admin")
+def api_informes_delpro_listar():
+    """Los informes que el tambo armó en DelPro, cada uno con lo que se puede traer a LactIA (`informes_delpro`), y los campos que más faltan.
+    Solo LEE las tablas de informes de DDM (cuatro SELECT fijos, guardados 10 minutos); no escribe nada. `?solo_tambo=1` deja afuera los
+    predefinidos de DeLaval; `?refrescar=1` vuelve a leer la base."""
+    tambo = _tambo_del_request()
+    try:
+        datos = informes_delpro.cargar(tambo, refrescar=request.args.get("refrescar") == "1")
+    except informes_delpro.DelProNoDisponible as exc:
+        return jsonify({"disponible": False, "motivo": str(exc), "vacio": bool(getattr(exc, "vacio", False)), "informes": [],
+                        "cuenta": {"completo": 0, "parcial": 0, "no_disponible": 0}, "faltantes": []})
+    try:
+        r = informes_delpro.listar(datos, solo_tambo=request.args.get("solo_tambo") == "1", rebanos=rebano.por_defecto(tambo))
+    except Exception:  # noqa: BLE001  -- nada del texto de la excepción llega a la pantalla
+        return jsonify({"error": "No se pudieron leer los informes de DelPro ahora. Probá de nuevo en un rato."}), 502
+    r["disponible"] = True
+    return jsonify(r)
+
+
+@app.get("/api/informes/delpro/<int:oid>")
+@auth.requiere_rol("admin")
+def api_informes_delpro_traer(oid):
+    """UN informe de DelPro traducido a la definición de LactIA, con todo lo que no se pudo traer (columnas, filtros, orden...). No guarda nada:
+    la pantalla lo abre como un informe nuevo sin guardar, para que el usuario lo revise."""
+    tambo = _tambo_del_request()
+    try:
+        datos = informes_delpro.cargar(tambo)
+    except informes_delpro.DelProNoDisponible as exc:
+        return jsonify({"error": str(exc)}), 502
+    try:
+        return jsonify(informes_delpro.traducir_informe(datos, oid, rebanos=rebano.por_defecto(tambo)))
+    except informes_delpro.InformeNoEncontrado:
+        return jsonify({"error": "Ese informe de DelPro no existe."}), 404
+    except Exception:  # noqa: BLE001  -- un informe raro de DelPro no puede dar un 500 con detalles
+        return jsonify({"error": "No se pudo leer ese informe de DelPro."}), 502
 
 
 @app.get("/api/informes")
@@ -6936,6 +7088,30 @@ def _canales_disponibles():
     """Módulos de canal configurados y tildados ahora mismo."""
     return [mod for nombre, mod in _CANALES_MOD.items()
             if config_alertas.activo(nombre) and mod.configurado()]
+
+
+def _ids_de_canales_disponibles() -> list:
+    """Los ids de los canales tildados Y configurados ahora (lo mismo que `_canales_disponibles`, pero por nombre)."""
+    return [nombre for nombre, mod in _CANALES_MOD.items() if config_alertas.activo(nombre) and mod.configurado()]
+
+
+def _enviar_informe_a_canal(canal: str, armado: dict) -> None:
+    """Manda un informe programado por UN canal (la pasada de `informes_envios` llama a esto una vez por canal y anota el resultado de cada uno). Con el
+    Excel adjunto por correo y Telegram; por WhatsApp (Twilio) solo el resumen en texto. Levanta si el canal no está disponible o falla: ahí no se
+    traga nada, y quien llama guarda solo una frase fija (nunca el texto de la excepción)."""
+    mod = _CANALES_MOD.get(canal)
+    if mod is None or not (config_alertas.activo(canal) and mod.configurado()):
+        raise RuntimeError("canal no disponible")
+    datos = armado.get("datos")
+    sin_adjunto = armado.get("texto_sin_adjunto", armado["texto"])             # el que no promete un archivo que el canal no recibe
+    if datos and canal == "correo":
+        correo.enviar_con_adjunto(armado["asunto"], armado["texto"], armado["nombre_archivo"], datos)
+    elif datos and canal == "telegram":
+        telegram_bot.enviar_documento(armado["nombre_archivo"], datos, armado.get("texto_telegram", armado["texto"]))      # el pie de un archivo: 1.024 letras como máximo
+    elif canal == "correo":
+        mod.enviar(sin_adjunto, asunto=armado.get("asunto"))                    # el asunto del informe, no el de una alerta
+    else:
+        mod.enviar(sin_adjunto)
 
 
 def _enviar_a_canales_activos(mensaje: str):
@@ -7276,6 +7452,12 @@ def iniciar_avisos_iot():
     vuelve). Ver `iot_avisos.py`. Igual que el vigilante, NO se arranca al importar `app`: lo llama `servidor.py` después de
     tomar el candado de instancia única, o cada proceso que importa `app` mandaría el mismo aviso."""
     return iot_avisos.iniciar_hilo(lambda texto: _enviar_a_canales_activos(texto))
+
+
+def iniciar_envios_informes():
+    """Arranca el hilo que manda los informes programados (ver `informes_envios.py`). Igual que el vigilante, NO se arranca al importar `app`: lo llama
+    `servidor.py` después de tomar el candado de instancia única (si no, `precalentar.py` o las pruebas tendrían cada uno el suyo)."""
+    return informes_envios.iniciar_hilo(_enviar_informe_a_canal, _ids_de_canales_disponibles)
 
 
 @app.get("/api/alertas/canales")
