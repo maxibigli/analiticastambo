@@ -92,6 +92,8 @@ import tablero
 import tambos
 import ups_registro
 import telegram_bot
+import informes_catalogo
+import informes_motor
 import whatsapp
 import whatsapp_ia
 from consultas import CONSULTAS
@@ -6497,6 +6499,44 @@ def api_agente_preguntar():
 _WEBHOOK_WHATSAPP_URL = os.environ.get("LACTIA_URL_PUBLICA", "https://www.analiticastambo.com").rstrip("/") \
     + "/webhook/whatsapp"
 _WEBHOOK_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webhook_whatsapp.log")
+# ---------------------------------------------------------------- informes personalizables (Fase 0)
+
+@app.get("/api/informes/campos")
+@auth.requiere_rol("admin")
+def api_informes_campos():
+    """El árbol de campos para armar un informe, por categoría. Nunca lleva el SQL de cada campo."""
+    cats: dict = {}
+    for c in informes_catalogo.CATALOGO.values():
+        cats.setdefault(c.categoria, []).append({
+            "id": c.id, "etiqueta": c.etiqueta, "tipo": c.tipo, "unidad": c.unidad, "decimales": c.decimales,
+            "verificado": c.verificado,
+            "aviso": "" if c.verificado else "Todavía no se comparó con un informe de DelPro: los valores pueden diferir."})
+    return jsonify({"categorias": [{"nombre": n, "campos": cs} for n, cs in cats.items()]})
+
+
+@app.post("/api/informes/ejecutar")
+@auth.requiere_rol("admin")
+def api_informes_ejecutar():
+    """Corre un informe armado con los campos del catálogo. La definición se valida contra una lista cerrada: no entra SQL
+    del usuario (ver `informes_motor`). `hoy` (AAAA-MM-DD, opcional) fija el «hoy» de los datos, para comparar con un informe
+    de DelPro de otro día."""
+    if not request.is_json:
+        return jsonify({"error": "El informe tiene que enviarse como JSON."}), 400
+    cuerpo = request.get_json(silent=True)
+    if not isinstance(cuerpo, dict):
+        return jsonify({"error": "La definición del informe no es válida."}), 400
+    hoy = cuerpo.get("hoy")
+    defn = {k: v for k, v in cuerpo.items() if k != "hoy"}
+    try:
+        r = informes_motor.ejecutar(defn, _tambo_del_request(), hoy=hoy)
+    except informes_motor.InformeError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:  # noqa: BLE001  -- el detalle (servidor, usuario) no se le muestra a nadie
+        return jsonify({"error": "No se pudo leer la base de datos para este informe."}), 502
+    r.pop("sql", None)
+    return jsonify(r)
+
+
 
 
 def _log_webhook(mensaje: str):
