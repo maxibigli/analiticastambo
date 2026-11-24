@@ -35,9 +35,9 @@ class TestElCatalogo(unittest.TestCase):
             self.assertEqual(cat.CATALOGO[id_].tipo, "num", id_)
 
     def test_los_punteros_del_indice_de_delpro_son_verificados_y_las_cuentas_nuestras_no(self):
-        for id_ in ("EffectiveInseminationDate", "LastPregnancyCheckDate"):
-            self.assertTrue(cat.CATALOGO[id_].verificado, id_)
-        for id_ in ("LastCullDecisionDate", "DaysPregnant", "LatestSCC") + tuple(PROMEDIOS):
+        self.assertTrue(cat.CATALOGO["EffectiveInseminationDate"].verificado)
+        # `LastPregnancyCheckDate` era el puntero a secas; con la regla del aborto de la fórmula de DelPro (tanda 3b) ya no es una columna que DelPro guarda: queda para comparar con un informe.
+        for id_ in ("LastPregnancyCheckDate", "LastCullDecisionDate", "DaysPregnant", "LatestSCC") + tuple(PROMEDIOS):
             self.assertFalse(cat.CATALOGO[id_].verificado, id_)
 
     def test_cada_uno_dice_de_donde_sale(self):

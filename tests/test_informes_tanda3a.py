@@ -38,12 +38,12 @@ class TestElCatalogo(unittest.TestCase):
         for id_ in ("LatestSCCTestDate", "LatestFatDate", "LatestMilkTestYieldDate", "PrevCalvingDate"):
             self.assertEqual(c[id_].tipo, "fecha", id_)
         for id_ in ("LatestFat", "LatestProtein"):
-            self.assertEqual((c[id_].tipo, c[id_].unidad, c[id_].decimales), ("num", "%", 2), id_)
+            self.assertEqual((c[id_].tipo, c[id_].unidad, c[id_].decimales), ("num", "%", 1), id_)           # DelPro los muestra con un decimal ({0:#0.0})
         self.assertEqual((c["LatestMilkTestYield"].unidad, c["LatestMilkTestYield"].decimales), ("kg", 1))
         for id_ in ("AgeInDays", "DaysSinceLastGroupChange", "PreviousGroupNumber"):
             self.assertEqual(c[id_].tipo, "num", id_)
         for id_ in BCS:
-            self.assertEqual((c[id_].tipo, c[id_].decimales), ("num", 2), id_)
+            self.assertEqual((c[id_].tipo, c[id_].decimales), ("num", 1), id_)
 
     def test_el_sexo_es_una_lista_cerrada(self):
         s = cat.CATALOGO["Sex"]

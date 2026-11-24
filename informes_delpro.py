@@ -43,7 +43,7 @@ MUESTRA_MAX = 8                                  # cuántos nombres se listan en
 MAX_OPERACIONES = 200                            # cuentas (+ - * /) seguidas que acepta el lector: más es un filtro roto, no una cuenta
 CLASES_DE_ANIMAL = {"BasicAnimal": "Animal", "AnimalExtended": "Animal extendido"}
 # Cómo se llaman en castellano los campos de DelPro que más faltan: se muestran como «En ordeño (InMilk)», para que se reconozcan. Solo los que no tienen duda.
-NOMBRE_EN_DELPRO = {"InMilk": "En ordeño", "ToBeCulled": "Para descarte", "IsPregnant": "Preñada", "IsDryingOff": "En secado", "IsExited": "Ya salió del tambo", "AgeAtFirstCalving": "Edad al primer parto",
+NOMBRE_EN_DELPRO = {"InMilk": "En ordeño", "ToBeCulled": "Para descarte", "IsPregnant": "Preñada", "IsDryingOff": "En secado", "IsExited": "Ya salió del tambo", "GroupNumber": "Número del rodeo",
                     "Sex": "Sexo", "NumberOfInseminations": "Cantidad de inseminaciones", "DaysToCalving": "Días para el parto",
                     "ExpectedCalvingDate": "Fecha esperada de parto", "DaysToDryOff": "Días para el secado", "ExpectedDryOffDate": "Fecha esperada de secado",
                     "DaysSinceLastInsemination": "Días desde la última inseminación", "LastInseminationDate": "Fecha de la última inseminación",
@@ -55,7 +55,7 @@ ALIAS_DE_RUTAS = {"ReproductionInfo.LactationNumber": "CurrentLactationNumber"}
 # reproducción o cuentas sobre ella. `ReproductionInfo.LastCalvingDate`, en cambio, NO es la «Fecha del último parto» de acá (ver `_campo_de`).
 ALIAS_DE_RUTAS.update({"ReproductionInfo." + n: n for n in ("IsPregnant", "IsDryingOff", "DaysToCalving", "DaysToDryOff", "NumberOfInseminations", "DaysSinceLastInsemination",
                                                               "ExpectedCalvingDate", "ExpectedDryOffDate", "LastInseminationDate", "LastAbortionDate",
-                                                              "DaysPregnant", "EffectiveInseminationDate", "LastPregnancyCheckDate")})
+                                                              "DaysPregnant", "EffectiveInseminationDate", "LastPregnancyCheckDate", "IsBred")})
 NOMBRES_DE_NIVEL = {"SessionMilkYield": "Ordeño por sesión", "AnimalGroup": "Rodeos", "DiagnosisTreatmentEvent": "Diagnósticos y tratamientos",
                     "BcsDailyData": "Condición corporal diaria", "RationCalculationLog": "Cálculo de ración",
                     "AnimalFeedDailyConsumption": "Consumo diario de alimento", "AnimalFeedConsumed": "Alimento consumido",
@@ -566,6 +566,10 @@ def _de_la_lista(campo, texto, parcial=False):
     if not campo.valores:
         return texto
     buscado = _sin_tildes(texto)
+    if not parcial:                                                                  # el código o el nombre en inglés que DelPro escribe en sus filtros («Sex = '2'», «'Uncertain'»)
+        for k, v in campo.equivale:
+            if _sin_tildes(k) == buscado:
+                return v
     if parcial:
         if buscado and any(buscado in _sin_tildes(v) for v in campo.valores):
             return texto
@@ -598,6 +602,8 @@ def _valor_de(campo, lit, parcial=False):
         return lit["v"]
     if campo.tipo == "txt" and k == "str":
         return _de_la_lista(campo, lit["v"], parcial)
+    if campo.tipo == "txt" and k == "num" and campo.equivale and not parcial:        # `Sex = 2` sin comillas: el mismo código
+        return _de_la_lista(campo, str(int(lit["v"])) if float(lit["v"]) == int(lit["v"]) else str(lit["v"]))
     if campo.tipo == "fecha" and k == "fecha":
         if lit["v"] is None:
             raise _NoTraducible("La fecha tiene una hora: acá se compara solo por día." if _HORA_EN_FECHA.search(lit.get("raw") or "")

@@ -30,6 +30,8 @@ class Campo:
     orden_expr: str = ""      # cómo se ORDENA, si no es la misma expresión con la que se muestra (el Número sale como texto y se ordena como número)
     valores: tuple = ()       # un campo de texto CERRADO (el estado de la reproducción): los únicos valores posibles. La IA los ve y se le rechaza otro
     tabla: str = ""           # una tabla de DelPro que no tienen todos los tambos (la cámara de condición corporal): el campo solo se ofrece donde existe
+    equivale: tuple = ()      # de un campo de texto CERRADO: ((lo que escribe DelPro en un filtro, valor de la lista de acá), ...). DelPro compara con el código («Sex = '2'») o con el nombre
+                              # en inglés de una enumeración («LatestPregCheckResult In ('Uncertain', 'Negative')»); el importador lo traduce con esta tabla
 
 
 @dataclass(frozen=True)
@@ -94,9 +96,13 @@ def _si_no(condicion: str) -> str:
 # El parto esperado: la inseminación efectiva más los días de gestación del tambo, solo de una vaca preñada y con una inseminación posterior a su último parto (una anterior es un dato
 # viejo que quedó colgado). Es lo mismo que hacen «Partos y secados» y la proyección (`partos_secados.py`, `proyeccion.py`).
 _PRENEZ_VIGENTE = "r.IsPregnant = 1 AND ee.DateAndTime IS NOT NULL AND (r.LastLactationChangeDate IS NULL OR ee.DateAndTime > r.LastLactationChangeDate)"
-_PARTO_ESPERADO = f"CASE WHEN {_PRENEZ_VIGENTE} THEN DATEADD(day, ISNULL(rs.gest, 280), ee.DateAndTime) END"
-_SECADO_ESPERADO = f"DATEADD(day, -ISNULL(rs.secado, 50), {_PARTO_ESPERADO})"
+# La fórmula de DelPro (`DDMReportItem.Expression`): el parto esperado es de un animal que NO salió (`IsNull(Animal.ExitDate)`), está preñado y tiene inseminación efectiva; el secado esperado,
+# solo de una vaca que ya parió (`Animal.Type != 'Heifer'`: en la base todo animal con lactancia es del tipo vaca y ninguno sin lactancia) y que todavía no se secó
+# (`IsNull(LastDryOffDate)`: el índice de DelPro guarda el último secado y lo reinicia con cada parto; 0 de las 1.873 vacas en ordeño lo tienen).
+_PARTO_ESPERADO = f"CASE WHEN b.ExitDate IS NULL AND {_PRENEZ_VIGENTE} THEN DATEADD(day, ISNULL(rs.gest, 280), ee.DateAndTime) END"
+_SECADO_ESPERADO = f"CASE WHEN r.LactationNumber >= 1 AND ix.DryOff IS NULL THEN DATEADD(day, -ISNULL(rs.secado, 50), {_PARTO_ESPERADO}) END"
 _ADEMAS_PARTO = ("insem_efectiva", "ajustes")                 # además del bloque `repro`, que es el principal de estos campos
+_ADEMAS_SECADO = _ADEMAS_PARTO + ("indice",)
 
 
 def _bloque_promedio(n: int) -> Bloque:
@@ -135,6 +141,57 @@ BLOQUES.update({
                                            "MAX(CASE WHEN x.IsValueForLastCalving = 1 THEN x.BcsValue END) AS parto, MAX(CASE WHEN x.IsValueForLastBcs190DaysPregnant = 1 THEN x.BcsValue END) AS p190 "
                                            "FROM BcsDailyData x WHERE x.IsValueForLastBcsDryOff = 1 OR x.IsValueForLastCalving = 1 OR x.IsValueForLastBcs190DaysPregnant = 1 GROUP BY x.Animal) bm ON bm.animal = b.OID"),
 })
+
+_SAL = "Salud"
+_TRA = "Tránsito de animales"
+
+
+def _bloque_salud(id_: str, alias: str, clase: str) -> Bloque:
+    """El ÚLTIMO evento de salud de cada animal de una clase (`clase`: la condición sobre `t.TreatmentType` de DelPro: 0 o sin tratamiento = diagnóstico, 1 = vacunación, 2 = IA a tiempo fijo).
+    Los 100.000 eventos de la base se leen UNA vez: un solo agregado por animal con el máximo de «segundos desde el 2000 × 2^31 + número de evento» (un número que ordena igual que la fecha), y después se traen
+    los datos de ESE evento por clave. Medido sobre la base del 20/11/2026: 3.400 páginas y 0,3 s para un informe de 2.000 vacas, contra los ~630.000 de leer el último de cada una.
+    Sin funciones de ventana (ordenar 100.000 filas pide mucha memoria), sin agregados de texto (un `MAX` de cadena pide mucho más que uno de número o fecha) y con búsqueda por clave en `AbstractAnimalEvent` (`LOOP JOIN`): en un SQL con poca memoria de trabajo (el de la
+    PC de desarrollo tiene 7 MB) una unión por hash grande espera la concesión de memoria minutos. Los nombres del diagnóstico, la categoría y la ubicación son códigos de `TextLookupItem`.
+    Con empate de fecha gana el evento de mayor número (DelPro toma el máximo del nombre entre los empatados: una diferencia posible, rara)."""
+    return Bloque(id_, "LEFT JOIN (SELECT m.animal, a2.DateAndTime AS fecha, tn.ItemValue AS diagnostico, tl.ItemValue AS ubicacion, tc.ItemValue AS categoria, t2.Name AS tratamiento, "
+                       "d2.TreatmentEndDate AS fin, d2.DescriptionReport AS descripcion FROM ("
+                       "SELECT a.BasicAnimal AS animal, MAX(DATEDIFF(second, '2000-01-01', a.DateAndTime) * CAST(2147483648 AS bigint) + a.OID) AS clave "
+                       "FROM DiagnosisTreatmentEvent d INNER LOOP JOIN AbstractAnimalEvent a ON a.OID = d.OID AND a.GCRecord IS NULL LEFT JOIN Treatment t ON t.OID = d.Treatment "
+                       f"WHERE {clase} GROUP BY a.BasicAnimal) m "
+                       "INNER LOOP JOIN AbstractAnimalEvent a2 ON a2.OID = m.clave % 2147483648 INNER LOOP JOIN DiagnosisTreatmentEvent d2 ON d2.OID = a2.OID "
+                       "LEFT JOIN Treatment t2 ON t2.OID = d2.Treatment LEFT JOIN Diagnosis dx ON dx.OID = d2.Diagnosis LEFT JOIN TextLookupItem tn ON tn.OID = dx.DiagnosisName "
+                       f"LEFT JOIN TextLookupItem tc ON tc.OID = dx.Category LEFT JOIN TextLookupItem tl ON tl.OID = d2.DiagnosisLocation) {alias} ON {alias}.animal = b.OID")
+
+
+# Tanda 3b: lo «pesado» que se mide barato leyendo cada tabla de eventos UNA vez (ver `tests/test_informes_tanda3b.py`). Las definiciones salen de `DDMReportItem.Expression`, la fórmula
+# que DelPro guarda para cada campo.
+BLOQUES.update({
+    "lact_1": Bloque("lact_1", "LEFT JOIN HistoryAnimalLactationInfo h1 ON h1.Animal = b.OID AND h1.LactationNumber = 1"),
+    # El resultado del último diagnóstico de gestación (`EventPregCheck.Result`: 0 negativo, 1 positivo, 2 dudoso) y si el último aborto lo generó un diagnóstico negativo.
+    "pregcheck_result": Bloque("pregcheck_result", "LEFT JOIN EventPregCheck pc ON pc.OID = ep.OID LEFT JOIN EventAbortion ab ON ab.OID = ea.OID", requiere=("ult_control", "ult_aborto")),
+    # La puerta de separación: 43.000 eventos (en la base del 20/11/2026 solo hay 8 días). Lo último confirmado es el máximo del corte de los eventos en que el animal se separó; la última
+    # identificación (`CutIdTime`), la del evento más nuevo: se toma el MÁXIMO, porque la identificación de un evento posterior nunca es anterior a la de uno previo. Solo agregados de fecha:
+    # uno de texto (un `MAX` de cadena compuesta) pedía tanta memoria que en un SQL con poco espacio de trabajo la consulta esperaba minutos.
+    "separacion": Bloque("separacion", "LEFT JOIN (SELECT a.BasicAnimal AS animal, MAX(CASE WHEN s.IsAnimalSorted = 1 THEN s.CutDateTime END) AS confirmado, MAX(s.CutIdTime) AS cut_id "
+                                       "FROM CMSSortResultEvent s INNER LOOP JOIN AbstractAnimalEvent a ON a.OID = s.OID AND a.GCRecord IS NULL GROUP BY a.BasicAnimal) sg ON sg.animal = b.OID"),
+    "diag_ult": _bloque_salud("diag_ult", "dgn", "(t.TreatmentType = 0 OR d.Treatment IS NULL)"),
+    "diag_vacuna": _bloque_salud("diag_vacuna", "dvc", "t.TreatmentType = 1"),
+    "diag_sincro": _bloque_salud("diag_sincro", "dsc", "t.TreatmentType = 2"),
+    "diag_todo": Bloque("diag_todo", "LEFT JOIN (SELECT a.BasicAnimal AS animal, MAX(a.DateAndTime) AS fecha FROM DiagnosisTreatmentEvent d INNER LOOP JOIN AbstractAnimalEvent a ON a.OID = d.OID AND a.GCRecord IS NULL "
+                                     "GROUP BY a.BasicAnimal) dto ON dto.animal = b.OID"),
+    # Cuántos ordeños tuvo ayer: las sesiones de leche (`SessionMilkYield`) con leche del registro diario de AYER del animal (el día lo define DelPro con su propio `AnimalDaily`, no un corte de horas nuestro).
+    "ordenos_ayer": Bloque("ordenos_ayer", "LEFT JOIN (SELECT s.AnimalDaily AS dia, COUNT(*) AS n FROM SessionMilkYield s JOIN AnimalDaily d ON d.OID = s.AnimalDaily AND d.GCRecord IS NULL "
+                                           "AND d.Date = DATEADD(day, -1, @HOY) WHERE s.TotalYield > 0 GROUP BY s.AnimalDaily) oa ON oa.dia = ly.OID", requiere=("leche_ayer",)),
+})
+
+# El resultado de un diagnóstico de gestación: `Result` 0 = negativo (ninguna de las 824 vacas con ese resultado en su último diagnóstico está preñada), 1 = positivo (2.396 de 3.624 preñadas hoy), 2 = dudoso
+# (3 eventos en toda la base; DelPro lo llama `Uncertain` en sus filtros). La regla es la de DelPro: si el último aborto lo generó un diagnóstico negativo, el resultado es negativo.
+_PREGCHECK = ("CASE (CASE WHEN ix.Abortion IS NULL OR (ea.DateAndTime IS NOT NULL AND ea.DateAndTime < ep.DateAndTime) THEN pc.Result "
+              "WHEN ix.PregCheck IS NOT NULL AND ix.Abortion IS NOT NULL AND ab.IsGeneratedByNegativePregnancyCheck = 1 THEN 0 END) "
+              "WHEN 0 THEN 'Negativo' WHEN 1 THEN 'Positivo' WHEN 2 THEN 'Dudoso' END")
+# El número del transponder: `BasicAnimal.TransponderID` es un texto con ceros a la izquierda («032010031422386») y DelPro lo pasa a número con una función suya (`dbo.StringToNumeric`) que el usuario de
+# solo lectura no puede ejecutar: `TRY_CAST` da lo mismo. Se muestra como texto para que no lo parta con separadores de miles.
+_TRANSPONDER_NUMERO = "CAST(TRY_CAST(b.TransponderID AS bigint) AS nvarchar(20))"
 
 CATALOGO = {c.id: c for c in (
     Campo("Number", "Número del animal", _GEN, "txt", "CAST(b.Number AS nvarchar(20))", orden_expr="b.Number",
@@ -176,8 +233,8 @@ CATALOGO = {c.id: c for c in (
     Campo("BirthDate", "Fecha de nacimiento", _GEN, "fecha", "b.BirthDate", nota="la columna BasicAnimal.BirthDate"),
     Campo("ExitDate", "Fecha de salida", _GEN, "fecha", "b.ExitDate",
           nota="la columna BasicAnimal.ExitDate; un animal que ya salió solo aparece con «Incluir animales descartados»"),
-    Campo("AgeInMonths", "Edad en meses", _GEN, "num", "DATEDIFF(month, b.BirthDate, @HOY) - CASE WHEN DAY(b.BirthDate) > DAY(@HOY) THEN 1 ELSE 0 END", verificado=False,
-          nota="meses cumplidos entre el nacimiento y «Calcular al»; la cuenta es nuestra, falta compararla con un informe de DelPro"),
+    Campo("AgeInMonths", "Edad en meses", _GEN, "num", "DATEDIFF(day, b.BirthDate, ISNULL(b.ExitDate, @HOY)) / 30.5", unidad="meses", decimales=1, verificado=False,
+          nota="la fórmula de DelPro: la edad en días dividida 30,5 (un decimal); deja de contar cuando el animal salió; falta compararla con un informe de DelPro"),
     Campo("LastInseminationDate", "Fecha de la última inseminación", _REP, "fecha", "ei.DateAndTime", bloque="ult_insem",
           nota="el último evento del índice de DelPro (LatestHistoryIndex.Insemination); DelPro lo reinicia con cada parto, así que una vaca que no se inseminó desde su último parto queda sin fecha "
                "(165 de 165 en la copia local)"),
@@ -189,19 +246,20 @@ CATALOGO = {c.id: c for c in (
           nota="las inseminaciones de la lactancia en curso, del resumen de lactancia de DelPro (InsemCount): coincide con contar los eventos en 433 de 433 vacas; donde DelPro no lo cargó "
                "(167 vacas) no tiene ninguna"),
     Campo("ExpectedCalvingDate", "Fecha esperada de parto", _REP, "fecha", _PARTO_ESPERADO, bloque="repro", bloques=_ADEMAS_PARTO, verificado=False,
-          nota="la inseminación efectiva más los días de gestación que el tambo tiene en DelPro, solo de una vaca preñada; falta compararla con un informe de DelPro"),
+          nota="la inseminación efectiva más los días de gestación que el tambo tiene en DelPro, solo de una vaca preñada y que no salió del tambo (la fórmula de DelPro); falta compararla con un informe de DelPro"),
     Campo("DaysToCalving", "Días para el parto", _REP, "num", f"DATEDIFF(day, @HOY, {_PARTO_ESPERADO})", bloque="repro", bloques=_ADEMAS_PARTO, verificado=False,
           nota="días entre «Calcular al» y la fecha esperada de parto (negativo = ya pasó); falta compararlo con un informe de DelPro"),
-    Campo("ExpectedDryOffDate", "Fecha esperada de secado", _REP, "fecha", _SECADO_ESPERADO, bloque="repro", bloques=_ADEMAS_PARTO, verificado=False,
-          nota="la fecha esperada de parto menos los días de secado que el tambo tiene en DelPro; falta compararla con un informe de DelPro"),
-    Campo("DaysToDryOff", "Días para el secado", _REP, "num", f"DATEDIFF(day, @HOY, {_SECADO_ESPERADO})", bloque="repro", bloques=_ADEMAS_PARTO, verificado=False,
+    Campo("ExpectedDryOffDate", "Fecha esperada de secado", _REP, "fecha", _SECADO_ESPERADO, bloque="repro", bloques=_ADEMAS_SECADO, verificado=False,
+          nota="la fecha esperada de parto menos los días de secado que el tambo tiene en DelPro, como la fórmula de DelPro: solo de una vaca que ya parió y que todavía no se secó; falta compararla con un informe de DelPro"),
+    Campo("DaysToDryOff", "Días para el secado", _REP, "num", f"DATEDIFF(day, @HOY, {_SECADO_ESPERADO})", bloque="repro", bloques=_ADEMAS_SECADO, verificado=False,
           nota="días entre «Calcular al» y la fecha esperada de secado (negativo = ya pasó); falta compararlo con un informe de DelPro"),
 
     # ---- Tanda 2 (24/11/2026): punteros del índice de DelPro, el último recuento de células y los promedios de 14, 21 y 30 días.
     Campo("EffectiveInseminationDate", "Fecha de la inseminación efectiva", _REP, "fecha", "ee.DateAndTime", bloque="insem_efectiva",
           nota="el evento al que apunta el índice de DelPro (LatestHistoryIndex.EffectiveInsemination): la inseminación con la que quedó preñada; es la que usan «Partos y secados» y la proyección"),
-    Campo("LastPregnancyCheckDate", "Fecha del último diagnóstico de gestación", _REP, "fecha", "ep.DateAndTime", bloque="ult_control",
-          nota="el evento al que apunta el índice de DelPro (LatestHistoryIndex.PregCheck)"),
+    Campo("LastPregnancyCheckDate", "Fecha del último diagnóstico de gestación", _REP, "fecha", "CASE WHEN ea.DateAndTime IS NULL OR ep.DateAndTime > ea.DateAndTime THEN ep.DateAndTime END",
+          bloque="ult_control", bloques=("ult_aborto",), verificado=False,
+          nota="el evento al que apunta el índice de DelPro (LatestHistoryIndex.PregCheck), y vacío si hay un aborto posterior: la fórmula de DelPro; falta compararla con un informe de DelPro"),
     Campo("LastCullDecisionDate", "Fecha de la última decisión de descarte", _GEN, "fecha", "ed.DateAndTime", bloque="ult_descarte", verificado=False,
           nota="la fecha del evento al que apunta el índice de DelPro (LatestHistoryIndex.CullDecision); falta confirmar si DelPro muestra esa fecha o la del descarte previsto"),
     Campo("DaysPregnant", "Días de preñez", _REP, "num", f"CASE WHEN {_PRENEZ_VIGENTE} THEN DATEDIFF(day, ee.DateAndTime, @HOY) END", bloque="repro", bloques=("insem_efectiva",),
@@ -223,19 +281,20 @@ CATALOGO = {c.id: c for c in (
     # ---- Tanda 3a (24/11/2026): lo barato que queda (ver `tests/test_informes_tanda3a.py`). Todos sin comparar contra un informe de DelPro.
     Campo("LatestSCCTestDate", "Fecha del último recuento de células somáticas", _ORD, "fecha", "sc.fecha", bloque="ult_scc", verificado=False,
           nota="la fecha del último control lechero que trae el recuento; falta compararla con un informe de DelPro"),
-    Campo("LatestFat", "Última grasa", _ORD, "num", "gr.valor", bloque="ult_grasa", unidad="%", decimales=2, verificado=False,
+    Campo("LatestFat", "Última grasa", _ORD, "num", "gr.valor", bloque="ult_grasa", unidad="%", decimales=1, verificado=False,
           nota="la grasa (%) del último control lechero que la trae; falta compararla con un informe de DelPro"),
     Campo("LatestFatDate", "Fecha de la última grasa", _ORD, "fecha", "gr.fecha", bloque="ult_grasa", verificado=False,
           nota="la fecha del último control lechero que trae la grasa; falta compararla con un informe de DelPro"),
-    Campo("LatestProtein", "Última proteína", _ORD, "num", "pr.valor", bloque="ult_proteina", unidad="%", decimales=2, verificado=False,
+    Campo("LatestProtein", "Última proteína", _ORD, "num", "pr.valor", bloque="ult_proteina", unidad="%", decimales=1, verificado=False,
           nota="la proteína (%) del último control lechero que la trae; falta compararla con un informe de DelPro"),
     Campo("LatestMilkTestYield", "Último rendimiento del control lechero", _ORD, "num", "rd.valor", bloque="ult_rend", unidad="kg", decimales=1, verificado=False,
           nota="los kg del último control lechero que trae el rendimiento; falta compararlo con un informe de DelPro"),
     Campo("LatestMilkTestYieldDate", "Fecha del último rendimiento del control", _ORD, "fecha", "rd.fecha", bloque="ult_rend", verificado=False,
           nota="la fecha del último control lechero que trae el rendimiento; falta compararla con un informe de DelPro"),
-    Campo("AgeInDays", "Edad en días", _GEN, "num", "DATEDIFF(day, b.BirthDate, @HOY)", verificado=False,
-          nota="días entre el nacimiento y «Calcular al»; la cuenta es nuestra, falta compararla con un informe de DelPro"),
-    Campo("Sex", "Sexo", _GEN, "txt", "CASE b.Sex WHEN 2 THEN 'Hembra' WHEN 1 THEN 'Macho' END", agrupable=True, valores=("Hembra", "Macho"), verificado=False,
+    Campo("AgeInDays", "Edad en días", _GEN, "num", "DATEDIFF(day, b.BirthDate, ISNULL(b.ExitDate, @HOY))", verificado=False,
+          nota="días entre el nacimiento y «Calcular al», o hasta la salida si el animal salió (DelPro lo corta en la salida de un animal descartado o muerto; acá, de cualquier salida: no se sabe qué "
+               "código de ExitType es cada una); falta compararla con un informe de DelPro"),
+    Campo("Sex", "Sexo", _GEN, "txt", "CASE b.Sex WHEN 2 THEN 'Hembra' WHEN 1 THEN 'Macho' END", agrupable=True, valores=("Hembra", "Macho"), equivale=(("1", "Macho"), ("2", "Hembra")), verificado=False,
           nota="BasicAnimal.Sex: 2 = hembra (9.934 animales, los 5.911 con lactancia son todos 2) y 1 = macho (492, ninguno con lactancia); es la lectura de los datos, falta confirmarla con un informe de DelPro"),
     Campo("DaysSinceLastGroupChange", "Días desde el último cambio de rodeo", _GEN, "num", "DATEDIFF(day, eg.DateAndTime, @HOY)", bloque="cambio_grupo", verificado=False,
           nota="días entre el último cambio de rodeo (el índice de DelPro) y «Calcular al»; la cuenta es nuestra, falta compararla con un informe de DelPro"),
@@ -243,12 +302,79 @@ CATALOGO = {c.id: c for c in (
           nota="el número del rodeo del que venía en su último cambio (EventGroupChange.OldGroup); falta compararlo con un informe de DelPro"),
     Campo("PrevCalvingDate", "Fecha del parto anterior", _REP, "fecha", "hp.StartDate", bloque="lact_ant", verificado=False,
           nota="el inicio de la lactancia anterior en el resumen de DelPro: coincide con el penúltimo parto cargado en 382 de 388 vacas; falta compararla con un informe de DelPro"),
-    Campo("LastBcsValue", "Última condición corporal (cámara)", "Condición corporal", "num", "bu.valor", bloque="bcs_ultimo", decimales=2, tabla="BcsDailyData", verificado=False,
+    Campo("LastBcsValue", "Última condición corporal (cámara)", "Condición corporal", "num", "bu.valor", bloque="bcs_ultimo", decimales=1, tabla="BcsDailyData", verificado=False,
           nota="el último valor de la cámara (BcsDailyData); solo en los tambos con cámara; falta compararlo con un informe de DelPro"),
-    Campo("LastBcsDryOffValue", "Condición corporal al secado", "Condición corporal", "num", "bm.secado", bloque="bcs_marcados", decimales=2, tabla="BcsDailyData", verificado=False,
+    Campo("LastBcsDryOffValue", "Condición corporal al secado", "Condición corporal", "num", "bm.secado", bloque="bcs_marcados", decimales=1, tabla="BcsDailyData", verificado=False,
           nota="el valor de la cámara que DelPro marca para el secado (IsValueForLastBcsDryOff); falta compararlo con un informe de DelPro"),
-    Campo("LastBcsCalvingValue", "Condición corporal al parto", "Condición corporal", "num", "bm.parto", bloque="bcs_marcados", decimales=2, tabla="BcsDailyData", verificado=False,
+    Campo("LastBcsCalvingValue", "Condición corporal al parto", "Condición corporal", "num", "bm.parto", bloque="bcs_marcados", decimales=1, tabla="BcsDailyData", verificado=False,
           nota="el valor de la cámara que DelPro marca para el último parto (IsValueForLastCalving); falta compararlo con un informe de DelPro"),
-    Campo("LastBcsValue190DaysPregnant", "Condición corporal a los 190 días de preñez", "Condición corporal", "num", "bm.p190", bloque="bcs_marcados", decimales=2, tabla="BcsDailyData",
+    Campo("LastBcsValue190DaysPregnant", "Condición corporal a los 190 días de preñez", "Condición corporal", "num", "bm.p190", bloque="bcs_marcados", decimales=1, tabla="BcsDailyData",
           verificado=False, nota="el valor de la cámara que DelPro marca a los 190 días de preñez (IsValueForLastBcs190DaysPregnant); falta compararlo con un informe de DelPro"),
+
+    # ---- Tanda 3b (24/11/2026): los «pesados» (se leen con una sola pasada por tabla de eventos) y los que DelPro define con una fórmula que ahora se conoce. Todos ⚠.
+    Campo("IsBred", "Inseminada y no preñada", _REP, "txt", _si_no("r.IsInseminated = 1 AND r.IsPregnant = 0"), bloque="repro", agrupable=True, valores=SI_NO, verificado=False,
+          nota="la fórmula de DelPro: IsInseminated = True AND IsPregnant = False, sobre las columnas de AnimalReproductionInfo; falta compararla con un informe de DelPro"),
+    Campo("AgeAtFirstCalving", "Edad al primer parto", _REP, "num", "DATEDIFF(month, b.BirthDate, h1.StartDate) - CASE WHEN DAY(b.BirthDate) > DAY(h1.StartDate) THEN 1 ELSE 0 END",
+          bloque="lact_1", unidad="meses", verificado=False,
+          nota="meses entre el nacimiento y el inicio de la primera lactancia (el resumen de lactancia de DelPro); coincide el mismo día con el primer parto o aborto cargado en 498 de 498 vacas "
+               "(25 meses de media). DelPro lo muestra en años y meses; falta compararlo con un informe de DelPro"),
+    Campo("LatestPregCheckResult", "Resultado del último diagnóstico de gestación", _REP, "txt", _PREGCHECK, bloque="pregcheck_result", agrupable=True, valores=("Negativo", "Positivo", "Dudoso"),
+          equivale=(("Negative", "Negativo"), ("Positive", "Positivo"), ("Uncertain", "Dudoso")), verificado=False,
+          nota="la fórmula de DelPro sobre el último diagnóstico de gestación y el último aborto del índice. Resultado 0 = negativo (ninguna de las 824 vacas está preñada), 1 = positivo (2.396 de "
+               "3.624 están preñadas hoy), 2 = dudoso (3 en toda la base; DelPro lo llama Uncertain). Los nombres 1 y 2 se deducen: falta compararlo con un informe de DelPro"),
+    Campo("TransponderID", "Transponder", _GEN, "txt", "b.TransponderID", nota="la columna BasicAnimal.TransponderID (texto, con ceros a la izquierda)", verificado=False),
+    Campo("TransponderIDNumeric", "Número del transponder", _GEN, "txt", _TRANSPONDER_NUMERO, verificado=False,
+          nota="BasicAnimal.TransponderID pasado a número (sin los ceros de la izquierda), como la función de DelPro; se muestra como texto para que no lleve separadores de miles"),
+    Campo("CMSTransponderID", "Número del transponder (CMS)", _GEN, "txt", _TRANSPONDER_NUMERO, verificado=False,
+          nota="lo mismo que el número del transponder: la fórmula de DelPro lo pasa a entero largo; se muestra como texto para que no lleve separadores de miles"),
+    Campo("HDXTransponderID", "Transponder HDX", _GEN, "txt", "CASE WHEN b.TransponderType = 1 THEN b.TransponderID END", verificado=False,
+          nota="el transponder de los animales con TransponderType = 1 (HDX), como la fórmula de DelPro; falta compararlo con un informe de DelPro"),
+
+    Campo("LastCutDateTimeSortingConfirmed", "Última separación confirmada", _TRA, "fecha", "sg.confirmado", bloque="separacion", verificado=False,
+          nota="la fecha y hora del corte más reciente en que la puerta de separación sí separó al animal (CMSSortResultEvent.IsAnimalSorted); en la base del 20/11/2026 el registro solo cubre 8 días"),
+    Campo("CMSDaysSinceLastSort", "Días desde la última separación", _TRA, "num", "CASE WHEN sg.confirmado < DATEADD(day, 1, @HOY) THEN DATEDIFF(day, sg.confirmado, @HOY) END", bloque="separacion",
+          unidad="días", verificado=False, nota="días entre la última separación confirmada y «Calcular al»; la cuenta es de DelPro, falta compararla con un informe suyo"),
+    Campo("LastCutIdTime", "Última identificación en la puerta de separación", _TRA, "fecha", "sg.cut_id", bloque="separacion", verificado=False,
+          nota="la hora de identificación (CutIdTime) del evento más nuevo de la puerta de separación del animal; falta compararla con un informe de DelPro"),
+
+    # Salud: el último diagnóstico (un tratamiento de tipo 0 o un evento sin tratamiento), la última vacunación (tipo 1) y el último protocolo de IA a tiempo fijo (tipo 2). La base del 20/11/2026 solo
+    # tiene eventos de tipo 0 y sin tratamiento: los campos de vacunación y de IA a tiempo fijo no se pudieron probar con datos (otros tambos sí los usan).
+    Campo("DateOfLatestDiagnosisTreatmentEvent", "Fecha del último diagnóstico", _SAL, "fecha", "dgn.fecha", bloque="diag_ult", verificado=False,
+          nota="el último evento de diagnóstico y tratamiento del animal (tratamiento de tipo 0 o sin tratamiento, como DelPro); falta compararlo con un informe de DelPro"),
+    Campo("DaysSinceLatestTreatmentFromTreatmentEvent", "Días desde el último diagnóstico", _SAL, "num", "DATEDIFF(day, dgn.fecha, @HOY)", bloque="diag_ult", unidad="días", verificado=False,
+          nota="días entre el último diagnóstico y «Calcular al»; falta compararlo con un informe de DelPro"),
+    Campo("DiagnosisFromDiagnosisTreatmentEvent", "Último diagnóstico", _SAL, "txt", "dgn.diagnostico", bloque="diag_ult", verificado=False,
+          nota="el nombre del diagnóstico del último evento (la lista de textos de DelPro: Neumonia, Mastitis…); falta compararlo con un informe de DelPro"),
+    Campo("DiagnosisLocationFromDiagnosisTreatmentEvent", "Ubicación del último diagnóstico", _SAL, "txt", "dgn.ubicacion", bloque="diag_ult", verificado=False,
+          nota="la ubicación del último diagnóstico (la lista de textos de DelPro; «(-)» es sin ubicación); falta compararla con un informe de DelPro"),
+    Campo("LatestDiagnosisCategory", "Categoría del último diagnóstico", _SAL, "txt", "dgn.categoria", bloque="diag_ult", agrupable=True, verificado=False,
+          nota="la categoría del diagnóstico del último evento (Probl.Respiratorios, Prob.Ubre…); falta compararla con un informe de DelPro"),
+    Campo("TreatmentFromDiagnosisTreatmentEvent", "Último tratamiento", _SAL, "txt", "dgn.tratamiento", bloque="diag_ult", verificado=False,
+          nota="el tratamiento del último diagnóstico; vacío si el evento no tiene tratamiento; falta compararlo con un informe de DelPro"),
+    Campo("TreatmentStartDate", "Inicio del último tratamiento", _SAL, "fecha", "dgn.fecha", bloque="diag_ult", verificado=False,
+          nota="el inicio del tratamiento del último diagnóstico: la fecha del evento; falta compararla con un informe de DelPro"),
+    Campo("TreatmentEndDate", "Fin del último tratamiento", _SAL, "fecha", "dgn.fin", bloque="diag_ult", verificado=False,
+          nota="DiagnosisTreatmentEvent.TreatmentEndDate del último diagnóstico; falta compararla con un informe de DelPro"),
+    Campo("TreatmentDrugsAndDosage", "Medicamentos y dosis del último tratamiento", _SAL, "txt", "dgn.descripcion", bloque="diag_ult", verificado=False,
+          nota="DiagnosisTreatmentEvent.DescriptionReport del último diagnóstico; falta compararlo con un informe de DelPro"),
+    Campo("TreatmentDaysRemaining", "Días que le quedan al tratamiento", _SAL, "num", "CASE WHEN dgn.fin > @HOY THEN DATEDIFF(hour, @HOY, dgn.fin) / 24.0 END", bloque="diag_ult", unidad="días",
+          decimales=1, verificado=False,
+          nota="días entre «Calcular al» y el fin del último tratamiento, si todavía no terminó; DelPro lo cuenta hasta el momento exacto, acá desde el día de «Calcular al»"),
+    Campo("DateOfLatestVaccinationDiagnosisTreatmentEvent", "Fecha de la última vacunación", _SAL, "fecha", "dvc.fecha", bloque="diag_vacuna", verificado=False,
+          nota="el último evento con un tratamiento de tipo 1 (vacunación); sin datos en la base del 20/11/2026: sin probar con datos"),
+    Campo("TreatmentFromVaccinationDiagnosisTreatmentEvent", "Última vacuna", _SAL, "txt", "dvc.tratamiento", bloque="diag_vacuna", verificado=False,
+          nota="el nombre del tratamiento de la última vacunación; sin datos en la base del 20/11/2026: sin probar con datos"),
+    Campo("DaysSinceLatestVaccinationDiagnosisTreatmentEvent", "Días desde la última vacunación", _SAL, "num", "DATEDIFF(day, dvc.fecha, @HOY)", bloque="diag_vacuna", unidad="días", verificado=False,
+          nota="días entre la última vacunación y «Calcular al»; sin datos en la base del 20/11/2026: sin probar con datos"),
+    Campo("DateOfTimedAITreatmentEvent", "Fecha del último protocolo de IA a tiempo fijo", _SAL, "fecha", "dsc.fecha", bloque="diag_sincro", verificado=False,
+          nota="el último evento con un tratamiento de tipo 2 (IA a tiempo fijo); sin datos en la base del 20/11/2026: sin probar con datos"),
+    Campo("TreatmentFromTimedAIDiagnosisTreatmentEvent", "Último protocolo de IA a tiempo fijo", _SAL, "txt", "dsc.tratamiento", bloque="diag_sincro", verificado=False,
+          nota="el nombre del tratamiento del último protocolo de IA a tiempo fijo; sin datos en la base del 20/11/2026: sin probar con datos"),
+    Campo("DaysSinceLatestTreatmentFromTimedAITreatmentEvent", "Días desde el último protocolo de IA a tiempo fijo", _SAL, "num", "DATEDIFF(day, dsc.fecha, @HOY)", bloque="diag_sincro", unidad="días",
+          verificado=False, nota="días entre el último protocolo de IA a tiempo fijo y «Calcular al»; sin datos en la base del 20/11/2026: sin probar con datos"),
+    Campo("LatestDiagnosisTreatmentEventDate", "Fecha del último evento de salud", _SAL, "fecha", "dto.fecha", bloque="diag_todo", verificado=False,
+          nota="la fecha del último evento de diagnóstico y tratamiento de cualquier tipo (diagnóstico, vacunación o IA a tiempo fijo); falta compararla con un informe de DelPro"),
+
+    Campo("MilkingYesterday", "Ordeños de ayer", _ORD, "num", "ISNULL(oa.n, 0)", bloque="ordenos_ayer", verificado=False,
+          nota="las sesiones de leche con producción del registro diario de ayer (el día anterior a «Calcular al», como «Producción de leche de ayer»); sin ordeños es 0, como el Count() de DelPro"),
 )}
