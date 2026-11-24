@@ -29,6 +29,7 @@ class Campo:
     bloques: tuple = ()       # bloques ADEMÁS de `bloque` (un campo calculado usa los de todos los campos de su fórmula)
     orden_expr: str = ""      # cómo se ORDENA, si no es la misma expresión con la que se muestra (el Número sale como texto y se ordena como número)
     valores: tuple = ()       # un campo de texto CERRADO (el estado de la reproducción): los únicos valores posibles. La IA los ve y se le rechaza otro
+    tabla: str = ""           # una tabla de DelPro que no tienen todos los tambos (la cámara de condición corporal): el campo solo se ofrece donde existe
 
 
 @dataclass(frozen=True)
@@ -114,9 +115,25 @@ BLOQUES.update({
     # La leche de UN día: `AnimalDaily` tiene una fila por animal y día (medido: 1.667, 1.680 y 1.665 filas para 1.667, 1.680 y 1.665 animales), así que se une directo.
     "leche_ayer": Bloque("leche_ayer", "LEFT JOIN AnimalDaily ly ON ly.BasicAnimal = b.OID AND ly.GCRecord IS NULL AND ly.Date = DATEADD(day, -1, @HOY)"),
     "leche_hoy": Bloque("leche_hoy", "LEFT JOIN AnimalDaily lh ON lh.BasicAnimal = b.OID AND lh.GCRecord IS NULL AND lh.Date = @HOY"),
-    # El ÚLTIMO control lechero del animal: se busca por animal (una fila), sin agrupar la tabla entera. Los controles cuelgan de `AnimalHistoricalData` (ver CLAUDE.md, «Trampas del esquema»).
-    "ult_scc": Bloque("ult_scc", "OUTER APPLY (SELECT TOP 1 m.SCC AS scc FROM AnimalHistoricalData h JOIN MilkTest m ON m.OID = h.OID "
-                                 "WHERE h.BasicAnimal = b.OID AND h.GCRecord IS NULL ORDER BY h.DateAndTime DESC) sc"),
+    # El ÚLTIMO control lechero que trae cada parámetro (recuento, grasa, proteína, rendimiento), con SU fecha: un control puede traer solo el rendimiento (medido en la copia local: el
+    # último control de 26 de 600 vacas no tiene recuento ni grasa) y DelPro guarda una fecha por parámetro. Se busca por animal (una fila), sin agrupar la tabla entera. Los controles
+    # cuelgan de `AnimalHistoricalData` (ver CLAUDE.md, «Trampas del esquema»).
+    **{f"ult_{nombre}": Bloque(f"ult_{nombre}", f"OUTER APPLY (SELECT TOP 1 m.{col} AS valor, h.DateAndTime AS fecha FROM AnimalHistoricalData h JOIN MilkTest m ON m.OID = h.OID "
+                                                f"WHERE h.BasicAnimal = b.OID AND h.GCRecord IS NULL AND m.{col} IS NOT NULL ORDER BY h.DateAndTime DESC) {alias}")
+       for nombre, col, alias in (("scc", "SCC", "sc"), ("grasa", "Fat", "gr"), ("proteina", "Protein", "pr"), ("rend", "Yield", "rd"))},
+    # El último cambio de rodeo (puntero del índice de DelPro) y el rodeo del que venía.
+    "cambio_grupo": Bloque("cambio_grupo", "LEFT JOIN AbstractAnimalEvent eg ON eg.OID = ix.GroupChange AND eg.GCRecord IS NULL LEFT JOIN EventGroupChange egc ON egc.OID = eg.OID "
+                                           "LEFT JOIN AbstractGroup gp ON gp.OID = egc.OldGroup AND gp.GCRecord IS NULL", requiere=("indice",)),
+    # El resumen de la lactancia ANTERIOR (su inicio es el parto anterior): una fila por (animal, lactancia).
+    "lact_ant": Bloque("lact_ant", "LEFT JOIN HistoryAnimalLactationInfo hp ON hp.Animal = b.OID AND hp.LactationNumber = r.LactationNumber - 1", requiere=("repro",)),
+    # La cámara de condición corporal (`BcsDailyData`, solo los tambos que la tienen): el último valor (un `TOP 1` por la fecha: busca en el índice y para; 12.475 lecturas y 0,5 s por 1.913 vacas) y los
+    # tres que DelPro MARCA (secado, parto y 190 días de preñez). La marca es única por animal (393 de 393, 62 de 62 y 27 de 27 en la base del 20/11/2026, ningún animal con dos), así que `MAX` es la fila
+    # marcada. **Se leen con una tabla derivada, no con un `OUTER APPLY` por animal**: la tabla se recorre UNA vez (2.264 lecturas, 0,3 s) y solo se agrupan las ~480 filas marcadas de 335.000. El `OUTER APPLY`
+    # (con `TOP 1` por marca o con agregados) hacía que SQL Server armara un índice temporal de toda la tabla (991.000 lecturas) y, con poca memoria, lo derramara a disco: 23 a 66 s por 1.913 vacas.
+    "bcs_ultimo": Bloque("bcs_ultimo", "OUTER APPLY (SELECT TOP 1 x.BcsValue AS valor FROM BcsDailyData x WHERE x.Animal = b.OID ORDER BY x.DateAndTime DESC) bu"),
+    "bcs_marcados": Bloque("bcs_marcados", "LEFT JOIN (SELECT x.Animal AS animal, MAX(CASE WHEN x.IsValueForLastBcsDryOff = 1 THEN x.BcsValue END) AS secado, "
+                                           "MAX(CASE WHEN x.IsValueForLastCalving = 1 THEN x.BcsValue END) AS parto, MAX(CASE WHEN x.IsValueForLastBcs190DaysPregnant = 1 THEN x.BcsValue END) AS p190 "
+                                           "FROM BcsDailyData x WHERE x.IsValueForLastBcsDryOff = 1 OR x.IsValueForLastCalving = 1 OR x.IsValueForLastBcs190DaysPregnant = 1 GROUP BY x.Animal) bm ON bm.animal = b.OID"),
 })
 
 CATALOGO = {c.id: c for c in (
@@ -189,8 +206,8 @@ CATALOGO = {c.id: c for c in (
           nota="la fecha del evento al que apunta el índice de DelPro (LatestHistoryIndex.CullDecision); falta confirmar si DelPro muestra esa fecha o la del descarte previsto"),
     Campo("DaysPregnant", "Días de preñez", _REP, "num", f"CASE WHEN {_PRENEZ_VIGENTE} THEN DATEDIFF(day, ee.DateAndTime, @HOY) END", bloque="repro", bloques=("insem_efectiva",),
           verificado=False, nota="días desde la inseminación efectiva hasta «Calcular al», solo de una vaca preñada; la cuenta es nuestra, falta compararla con un informe de DelPro"),
-    Campo("LatestSCC", "Último recuento de células somáticas", _ORD, "num", "sc.scc", bloque="ult_scc", unidad="mil/ml", verificado=False,
-          nota="el SCC del último control lechero del animal (MilkTest, en miles de células por ml, como lo guarda DelPro); falta compararlo con un informe de DelPro"),
+    Campo("LatestSCC", "Último recuento de células somáticas", _ORD, "num", "sc.valor", bloque="ult_scc", unidad="mil/ml", verificado=False,
+          nota="el SCC del último control lechero que trae recuento (MilkTest, en miles de células por ml, como lo guarda DelPro); falta compararlo con un informe de DelPro"),
     # «De ayer» y «de hoy» como los llama DelPro (decisión del usuario, 24/11/2026): ayer es el día anterior a «Calcular al» y hoy, ese día. Quien mira una copia de la base lo sabe.
     Campo("YieldYesterday", "Producción de leche de ayer", _ORD, "num", "ly.TotalYield", bloque="leche_ayer", unidad="kg", decimales=1, verificado=False,
           nota="el total del día anterior a «Calcular al» en AnimalDaily (una fila por animal y día); falta compararlo con un informe de DelPro. Relativo a esa fecha: en una copia de la base es «ayer» de los datos"),
@@ -202,4 +219,36 @@ CATALOGO = {c.id: c for c in (
           nota="igual que el de 7 días, con 21 días; falta compararlo con un informe de DelPro"),
     Campo("CMSThirtyDayAverage", "Promedio producción diaria de leche 30 d.", _ORD, "num", "p30.prom30", bloque="prom30", unidad="kg", decimales=1, verificado=False,
           nota="igual que el de 7 días, con 30 días; falta compararlo con un informe de DelPro"),
+
+    # ---- Tanda 3a (24/11/2026): lo barato que queda (ver `tests/test_informes_tanda3a.py`). Todos sin comparar contra un informe de DelPro.
+    Campo("LatestSCCTestDate", "Fecha del último recuento de células somáticas", _ORD, "fecha", "sc.fecha", bloque="ult_scc", verificado=False,
+          nota="la fecha del último control lechero que trae el recuento; falta compararla con un informe de DelPro"),
+    Campo("LatestFat", "Última grasa", _ORD, "num", "gr.valor", bloque="ult_grasa", unidad="%", decimales=2, verificado=False,
+          nota="la grasa (%) del último control lechero que la trae; falta compararla con un informe de DelPro"),
+    Campo("LatestFatDate", "Fecha de la última grasa", _ORD, "fecha", "gr.fecha", bloque="ult_grasa", verificado=False,
+          nota="la fecha del último control lechero que trae la grasa; falta compararla con un informe de DelPro"),
+    Campo("LatestProtein", "Última proteína", _ORD, "num", "pr.valor", bloque="ult_proteina", unidad="%", decimales=2, verificado=False,
+          nota="la proteína (%) del último control lechero que la trae; falta compararla con un informe de DelPro"),
+    Campo("LatestMilkTestYield", "Último rendimiento del control lechero", _ORD, "num", "rd.valor", bloque="ult_rend", unidad="kg", decimales=1, verificado=False,
+          nota="los kg del último control lechero que trae el rendimiento; falta compararlo con un informe de DelPro"),
+    Campo("LatestMilkTestYieldDate", "Fecha del último rendimiento del control", _ORD, "fecha", "rd.fecha", bloque="ult_rend", verificado=False,
+          nota="la fecha del último control lechero que trae el rendimiento; falta compararla con un informe de DelPro"),
+    Campo("AgeInDays", "Edad en días", _GEN, "num", "DATEDIFF(day, b.BirthDate, @HOY)", verificado=False,
+          nota="días entre el nacimiento y «Calcular al»; la cuenta es nuestra, falta compararla con un informe de DelPro"),
+    Campo("Sex", "Sexo", _GEN, "txt", "CASE b.Sex WHEN 2 THEN 'Hembra' WHEN 1 THEN 'Macho' END", agrupable=True, valores=("Hembra", "Macho"), verificado=False,
+          nota="BasicAnimal.Sex: 2 = hembra (9.934 animales, los 5.911 con lactancia son todos 2) y 1 = macho (492, ninguno con lactancia); es la lectura de los datos, falta confirmarla con un informe de DelPro"),
+    Campo("DaysSinceLastGroupChange", "Días desde el último cambio de rodeo", _GEN, "num", "DATEDIFF(day, eg.DateAndTime, @HOY)", bloque="cambio_grupo", verificado=False,
+          nota="días entre el último cambio de rodeo (el índice de DelPro) y «Calcular al»; la cuenta es nuestra, falta compararla con un informe de DelPro"),
+    Campo("PreviousGroupNumber", "Número del rodeo anterior", _GEN, "num", "gp.Number", bloque="cambio_grupo", verificado=False,
+          nota="el número del rodeo del que venía en su último cambio (EventGroupChange.OldGroup); falta compararlo con un informe de DelPro"),
+    Campo("PrevCalvingDate", "Fecha del parto anterior", _REP, "fecha", "hp.StartDate", bloque="lact_ant", verificado=False,
+          nota="el inicio de la lactancia anterior en el resumen de DelPro: coincide con el penúltimo parto cargado en 382 de 388 vacas; falta compararla con un informe de DelPro"),
+    Campo("LastBcsValue", "Última condición corporal (cámara)", "Condición corporal", "num", "bu.valor", bloque="bcs_ultimo", decimales=2, tabla="BcsDailyData", verificado=False,
+          nota="el último valor de la cámara (BcsDailyData); solo en los tambos con cámara; falta compararlo con un informe de DelPro"),
+    Campo("LastBcsDryOffValue", "Condición corporal al secado", "Condición corporal", "num", "bm.secado", bloque="bcs_marcados", decimales=2, tabla="BcsDailyData", verificado=False,
+          nota="el valor de la cámara que DelPro marca para el secado (IsValueForLastBcsDryOff); falta compararlo con un informe de DelPro"),
+    Campo("LastBcsCalvingValue", "Condición corporal al parto", "Condición corporal", "num", "bm.parto", bloque="bcs_marcados", decimales=2, tabla="BcsDailyData", verificado=False,
+          nota="el valor de la cámara que DelPro marca para el último parto (IsValueForLastCalving); falta compararlo con un informe de DelPro"),
+    Campo("LastBcsValue190DaysPregnant", "Condición corporal a los 190 días de preñez", "Condición corporal", "num", "bm.p190", bloque="bcs_marcados", decimales=2, tabla="BcsDailyData",
+          verificado=False, nota="el valor de la cámara que DelPro marca a los 190 días de preñez (IsValueForLastBcs190DaysPregnant); falta compararlo con un informe de DelPro"),
 )}

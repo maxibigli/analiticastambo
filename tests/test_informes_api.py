@@ -47,6 +47,14 @@ class BaseGuardados(Base):
 
 
 class TestCampos(Base):
+    def setUp(self):
+        super().setUp()
+        # El árbol depende del tambo (la cámara de condición corporal solo está en algunos): sin fijarlo, el pedido toca el tambo de verdad y arranca los calentamientos de fondo, que
+        # consultan mientras OTROS tests tienen la base simulada y les cuentan consultas de más (intermitente).
+        for p in (mock.patch.object(app, "_tambo_del_request", lambda: "ponderosa"), mock.patch.object(app, "_tiene_bcs_de", lambda tambo: True)):
+            p.start()
+            self.addCleanup(p.stop)
+
     def test_exige_ser_administrador(self):
         self.assertEqual(self.anon.get("/api/informes/campos").status_code, 401)
         self.assertEqual(self.operario.get("/api/informes/campos").status_code, 403)

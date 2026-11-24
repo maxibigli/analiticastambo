@@ -344,7 +344,7 @@ class TestLoQueSeLeeEsFiel(unittest.TestCase):
 
 class TestLosTextosQueLeeElDueno(unittest.TestCase):
     def test_ortografia_y_plurales(self):
-        r = tr([informe(1, ServerFilter=7)], columnas_de(1, ["Number", "DaysDry", "Sex"]),
+        r = tr([informe(1, ServerFilter=7)], columnas_de(1, ["Number", "DaysDry", "AgeAtFirstCalving"]),
                [filtro(7, "Uno", "[<AnimalExtended>DaysDry] = True"), ])
         textos = " ".join(d["texto"] for d in r["diferencias"])
         self.assertIn("No se trajeron 2 columnas", textos)
@@ -355,10 +355,10 @@ class TestLosTextosQueLeeElDueno(unittest.TestCase):
         self.assertIn("No se trajo 1 columna ", " ".join(d["texto"] for d in r1["diferencias"]))
 
     def test_los_campos_internos_de_delpro_se_explican_en_castellano(self):
-        r = tr([informe(1)], columnas_de(1, ["Number", "DaysDry", "Sex"]))
+        r = tr([informe(1)], columnas_de(1, ["Number", "DaysDry", "AgeAtFirstCalving"]))
         texto = " ".join(d["texto"] for d in r["diferencias"])
         self.assertIn("Días en seca (DaysDry)", texto)
-        self.assertIn("Sexo (Sex)", texto)
+        self.assertIn("Edad al primer parto (AgeAtFirstCalving)", texto)
 
     def test_un_nivel_de_grupo_se_llama_rodeos(self):
         d = datos([informe(1, nivel="AnimalGroup")], columnas_de(1, ["Number"]))

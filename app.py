@@ -4,6 +4,7 @@ hacer preguntas en lenguaje natural y generar gráficas y reportes."""
 import json
 import math
 import queue
+import re
 import shutil
 import statistics
 import subprocess
@@ -326,7 +327,7 @@ def _tiene_bcs_de(tambo: str) -> bool:
         data = db.run_query("SELECT OBJECT_ID('BcsDailyData') AS oid", tambo=tambo)
         existe = data["rows"][0][0] is not None
     except Exception:  # noqa: BLE001
-        existe = False  # ante la duda, se arma la consulta sin BCS: degrada, no rompe
+        return False  # ante la duda, se arma la consulta sin BCS: degrada, no rompe. NO se guarda: un corte de la base no tiene que esconder la cámara hasta reiniciar
     with _tiene_bcs_lock:
         _tiene_bcs[tambo] = existe
     return existe
@@ -6714,12 +6715,34 @@ def informes_pagina():
     return render_template("informes.html", tambo=_tambo_del_request(), embebido=request.args.get("embebido") == "1")
 
 
+def _campos_sin_su_tabla(tambo: str, entre=None) -> set:
+    """Los campos del catálogo que piden una tabla de DelPro que este tambo no tiene (hoy solo `BcsDailyData`, la cámara de condición corporal). `entre`: solo se miran esos ids, y la
+    base se consulta únicamente si alguno pide una tabla (saber si hay cámara es una consulta)."""
+    candidatos = [c for c in informes_catalogo.CATALOGO.values() if c.tabla and (entre is None or c.id in entre)]
+    faltan = {"BcsDailyData"} if any(c.tabla == "BcsDailyData" for c in candidatos) and not _tiene_bcs_de(tambo) else set()
+    return {c.id for c in candidatos if c.tabla in faltan}
+
+
+def _campos_ausentes_que_usa(defn, tambo: str) -> list:
+    """Las etiquetas de los campos de `defn` (columnas, condiciones, agrupación, orden o fórmulas) que piden una tabla que el tambo no tiene. Se busca el id del campo como palabra
+    en toda la definición: así también aparece dentro de la fórmula de un campo calculado (`[LastBcsValue] * 2`). Un informe que no usa ningún campo de esos no consulta la base."""
+    texto = json.dumps(defn, ensure_ascii=False)
+    usados = {c.id for c in informes_catalogo.CATALOGO.values() if c.tabla and re.search("(?<![A-Za-z0-9_])" + re.escape(c.id) + "(?![A-Za-z0-9_])", texto)}
+    if not usados:
+        return []
+    return [informes_catalogo.CATALOGO[i].etiqueta for i in sorted(_campos_sin_su_tabla(tambo, usados))]
+
+
 @app.get("/api/informes/campos")
 @auth.requiere_rol("admin")
 def api_informes_campos():
-    """El árbol de campos para armar un informe, por categoría. Nunca lleva el SQL de cada campo."""
+    """El árbol de campos para armar un informe, por categoría. Nunca lleva el SQL de cada campo. Los que dependen de una tabla que el tambo no tiene (la cámara de condición
+    corporal) no se ofrecen: armar un informe con ellos terminaría en un error de la base."""
     cats: dict = {}
+    sin_tabla = _campos_sin_su_tabla(_tambo_del_request())
     for c in informes_catalogo.CATALOGO.values():
+        if c.id in sin_tabla:
+            continue
         campo = {"id": c.id, "etiqueta": c.etiqueta, "tipo": c.tipo, "unidad": c.unidad, "decimales": c.decimales,
                  "verificado": c.verificado, "agrupable": c.agrupable,
                  "aviso": "" if c.verificado else "Todavía no se comparó con un informe de DelPro: los valores pueden diferir."}
@@ -6742,8 +6765,12 @@ def api_informes_ejecutar():
         return jsonify({"error": "La definición del informe no es válida."}), 400
     hoy = cuerpo.get("hoy")
     defn = {k: v for k, v in cuerpo.items() if k != "hoy"}
+    tambo = _tambo_del_request()
+    ausentes = _campos_ausentes_que_usa(defn, tambo)
+    if ausentes:                                       # sin la tabla la base contestaría con un error de objeto inexistente: se dice qué pasa en vez de un 502 genérico
+        return jsonify({"error": f"Este tambo no tiene la cámara de condición corporal, y el informe usa: {', '.join(ausentes)}. Sacalos del informe para poder correrlo."}), 400
     try:
-        r = informes_motor.ejecutar(defn, _tambo_del_request(), hoy=hoy)
+        r = informes_motor.ejecutar(defn, tambo, hoy=hoy)
     except informes_motor.InformeError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception:  # noqa: BLE001  -- el detalle (servidor, usuario) no se le muestra a nadie

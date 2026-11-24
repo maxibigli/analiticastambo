@@ -377,23 +377,23 @@ class TestTraducirInforme(unittest.TestCase):
         self.assertEqual([c["campo"] for c in r["definicion"]["columnas"]], ["Number", "AnimalGroupName", "CurrentDIM"])
 
     def test_las_columnas_que_no_existen_se_listan_y_el_informe_queda_parcial(self):
-        r = self.tr([informe(1)], columnas_de(1, ["Number", "DaysDry", "CurrentDIM", "Sex"]))
+        r = self.tr([informe(1)], columnas_de(1, ["Number", "DaysDry", "CurrentDIM", "AgeAtFirstCalving"]))
         self.assertEqual(r["estado"], "parcial")
         self.assertEqual([c["campo"] for c in r["definicion"]["columnas"]], ["Number", "CurrentDIM"])
         self.assertEqual(r["columnas"], {"traidas": 2, "total": 4})
-        self.assertEqual(r["faltan"], ["DaysDry", "Sex"])
+        self.assertEqual(r["faltan"], ["DaysDry", "AgeAtFirstCalving"])
         d = [x for x in r["diferencias"] if x["tipo"] == "columna"]
         self.assertEqual(len(d), 1)
         self.assertEqual(d[0]["gravedad"], "columnas")
         self.assertIn("DaysDry", d[0]["texto"])
-        self.assertIn("Sex", d[0]["texto"])
+        self.assertIn("AgeAtFirstCalving", d[0]["texto"])
 
     def test_sin_ninguna_columna_utilizable_no_se_puede_traer(self):
-        r = self.tr([informe(1)], columnas_de(1, ["DaysDry", "Sex"]))
+        r = self.tr([informe(1)], columnas_de(1, ["DaysDry", "AgeAtFirstCalving"]))
         self.assertEqual(r["estado"], "no_disponible")
         self.assertIsNone(r["definicion"])
         self.assertIn("DaysDry", r["motivo"])
-        self.assertEqual(r["faltan"], ["DaysDry", "Sex"])
+        self.assertEqual(r["faltan"], ["DaysDry", "AgeAtFirstCalving"])
 
     def test_un_informe_sin_columnas_no_se_puede_traer(self):
         r = self.tr([informe(1)], [])
@@ -670,8 +670,8 @@ class TestListar(unittest.TestCase):
                     informe(10, "Completo", carpeta=2), informe(11, "Con faltantes", carpeta=2), informe(12, "De otro nivel", nivel="SessionMilkYield"),
                     informe(13, "Sin columnas buenas", carpeta=1), informe(14, "Predefinido", predefinido=True),
                     informe(15, "Un informe fijo de DelPro", tipo="DeLaval.DDM.CommonApp.Module.BasicFeatures.Milking.Report.SCCAllCowsReport")]
-        cols = (columnas_de(10, ["Number", "CurrentDIM"], 100) + columnas_de(11, ["Number", "DaysDry", "Sex"], 200) +
-                columnas_de(12, ["Number", "ZCampoDeOtroNivel"], 300) + columnas_de(13, ["DaysDry", "Sex"], 400) + columnas_de(14, ["Number", "DaysDry"], 500))
+        cols = (columnas_de(10, ["Number", "CurrentDIM"], 100) + columnas_de(11, ["Number", "DaysDry", "AgeAtFirstCalving"], 200) +
+                columnas_de(12, ["Number", "ZCampoDeOtroNivel"], 300) + columnas_de(13, ["DaysDry", "AgeAtFirstCalving"], 400) + columnas_de(14, ["Number", "DaysDry"], 500))
         return datos(informes, cols)
 
     def test_lista_informes_con_su_estado_y_deja_afuera_carpetas_y_fijos(self):
@@ -701,7 +701,7 @@ class TestListar(unittest.TestCase):
         r = dl.listar(self.armar())
         top = {f["campo"]: f["informes"] for f in r["faltantes"]}
         self.assertEqual(top["DaysDry"], 3)
-        self.assertEqual(top["Sex"], 2)
+        self.assertEqual(top["AgeAtFirstCalving"], 2)
         self.assertEqual(r["faltantes"][0]["campo"], "DaysDry")
 
     def test_el_ranking_de_faltantes_solo_cuenta_informes_de_animales(self):

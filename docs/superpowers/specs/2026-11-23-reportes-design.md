@@ -374,6 +374,11 @@ y traerlos juntos (se guardan con su nota de origen, sin ejecutar nada) y recalc
 
 **Tanda 2 (33 campos en total):** `EffectiveInseminationDate`, `LastPregnancyCheckDate`, `LastCullDecisionDate` (punteros del índice de DelPro), `DaysPregnant`, `LatestSCC` (último control lechero, en miles/ml) y los promedios de 14, 21 y 30 días. Los promedios y los días son cuentas nuestras (⚠ hasta compararlos con un informe de DelPro).
 
+**Tanda 3a (50 campos en total, 24/11/2026).** Pedido del usuario: traer todos los campos que se pueden definir de una vez, porque la consulta solo se hace al pedir el listado (un campo que el informe no usa no se une). Entran 15 campos baratos, todos ⚠: el último valor de **cada parámetro del
+control lechero** con su propia fecha (recuento, grasa, proteína, rendimiento: «el último control que lo trae», porque un control puede traer solo el rendimiento), edad en días, **sexo** (texto cerrado Hembra/Macho), **cambio de rodeo** (días desde el último y rodeo anterior, del índice de DelPro), **fecha del parto anterior**
+(inicio de la lactancia anterior) y **condición corporal de la cámara** (último valor, al secado, al parto y a los 190 días de preñez). La cámara solo existe en algunos tambos: esos campos llevan `Campo.tabla = "BcsDailyData"`, no se ofrecen donde la tabla no está y un informe que ya los usa recibe un error claro en vez de un fallo de la base.
+Un informe admite hasta 40 columnas y el catálogo tiene 50 campos. **Tanda 3b, pendiente:** los campos pesados (último corte de la puerta de separación, diagnósticos y tratamientos, leche por sesión) necesitan una copia diaria en `informes.db`, y los de significado desconocido necesitan una exportación de DelPro con esos campos.
+
 ## Pendientes de la Fase 4: lo que decide el tambo o falta probar
 
 1. **Probar en SERVER-DELPRO (en este orden):** (a) `git pull` y `actualizar.bat` **como Administrador**; verificar con el `Get-CimInstance` de `CLAUDE.md` que hay UN solo `servidor.py` y es nuevo (el hilo `envios-informes` arranca ahí, nunca al importar

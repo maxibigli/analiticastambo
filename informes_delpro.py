@@ -43,7 +43,7 @@ MUESTRA_MAX = 8                                  # cuántos nombres se listan en
 MAX_OPERACIONES = 200                            # cuentas (+ - * /) seguidas que acepta el lector: más es un filtro roto, no una cuenta
 CLASES_DE_ANIMAL = {"BasicAnimal": "Animal", "AnimalExtended": "Animal extendido"}
 # Cómo se llaman en castellano los campos de DelPro que más faltan: se muestran como «En ordeño (InMilk)», para que se reconozcan. Solo los que no tienen duda.
-NOMBRE_EN_DELPRO = {"InMilk": "En ordeño", "ToBeCulled": "Para descarte", "IsPregnant": "Preñada", "IsDryingOff": "En secado", "IsExited": "Ya salió del tambo",
+NOMBRE_EN_DELPRO = {"InMilk": "En ordeño", "ToBeCulled": "Para descarte", "IsPregnant": "Preñada", "IsDryingOff": "En secado", "IsExited": "Ya salió del tambo", "AgeAtFirstCalving": "Edad al primer parto",
                     "Sex": "Sexo", "NumberOfInseminations": "Cantidad de inseminaciones", "DaysToCalving": "Días para el parto",
                     "ExpectedCalvingDate": "Fecha esperada de parto", "DaysToDryOff": "Días para el secado", "ExpectedDryOffDate": "Fecha esperada de secado",
                     "DaysSinceLastInsemination": "Días desde la última inseminación", "LastInseminationDate": "Fecha de la última inseminación",

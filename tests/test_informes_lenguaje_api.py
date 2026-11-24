@@ -141,6 +141,13 @@ class TestDescribir(Base):
 
 
 class TestCamposAvisaSiHayIA(Base):
+    def setUp(self):
+        super().setUp()
+        # El árbol de campos depende del tambo: se fija para no tocar el de verdad (arrancaría los calentamientos de fondo, que consultan la base).
+        for p in (mock.patch.object(app, "_tambo_del_request", lambda: "ponderosa"), mock.patch.object(app, "_tiene_bcs_de", lambda tambo: True)):
+            p.start()
+            self.addCleanup(p.stop)
+
     def test_con_clave(self):
         self.assertIs(self.admin.get("/api/informes/campos").get_json()["ia"], True)
 
