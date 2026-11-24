@@ -6968,7 +6968,7 @@ def api_informes_delpro_traer_varios():
         try:
             return "traido", informes_guardados.crear(tambo, nombre, definicion, usuario, origen=origen)["id"]
         except informes_guardados.InformeGuardadoError as exc:
-            if str(exc).startswith("Ya hay un informe llamado"):                        # el mismo nombre: ya se había traído, no se pisa
+            if str(exc).startswith("Ya hay un informe"):                                # el mismo nombre (también si lo tiene uno archivado): ya se había traído, no se pisa
                 return "ya_estaba", None
             raise
     try:
@@ -6983,7 +6983,8 @@ def api_informes_delpro_traer_varios():
 @app.get("/api/informes")
 @auth.requiere_rol("admin")
 def api_informes_listar():
-    return jsonify({"informes": informes_guardados.listar(_tambo_del_request())})
+    """La lista de informes. `?archivados=1` devuelve, en cambio, solo los archivados."""
+    return jsonify({"informes": informes_guardados.listar(_tambo_del_request(), archivados=request.args.get("archivados") == "1")})
 
 
 @app.get("/api/informes/<int(min=1, max=9223372036854775807):informe_id>")
@@ -7024,6 +7025,54 @@ def api_informes_actualizar(informe_id):
     except informes_guardados.InformeGuardadoError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(r)
+
+
+@app.post("/api/informes/<int(min=1, max=9223372036854775807):informe_id>/archivar")
+@auth.requiere_rol("admin")
+def api_informes_archivar(informe_id):
+    """Archiva un informe: sale de la lista y se puede restaurar. **Su envío programado, si tenía, queda en pausa** (un archivado no manda nada)."""
+    tambo = _tambo_del_request()
+    try:
+        r = informes_guardados.archivar(tambo, informe_id)
+    except informes_guardados.InformeGuardadoError as exc:
+        return jsonify({"error": str(exc)}), 404
+    pausado = False
+    try:
+        envio = informes_envios.obtener(tambo, informe_id)
+        if envio and envio["activo"]:
+            informes_envios.pausar(tambo, informe_id)
+            pausado = True
+    except informes_envios.EnvioError:
+        pass
+    return jsonify({"informe": r, "envio_pausado": pausado})
+
+
+@app.post("/api/informes/<int(min=1, max=9223372036854775807):informe_id>/restaurar")
+@auth.requiere_rol("admin")
+def api_informes_restaurar(informe_id):
+    """Devuelve un archivado a la lista. Su envío programado sigue en pausa: reactivarlo lo decide quien lo programó."""
+    try:
+        return jsonify({"informe": informes_guardados.restaurar(_tambo_del_request(), informe_id)})
+    except informes_guardados.InformeGuardadoError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+
+@app.delete("/api/informes/<int(min=1, max=9223372036854775807):informe_id>")
+@auth.requiere_rol("admin")
+def api_informes_eliminar(informe_id):
+    """Elimina PARA SIEMPRE un informe ya archivado, con su envío programado y el registro de lo mandado. Uno que no está archivado contesta 409: hay que archivarlo primero."""
+    tambo = _tambo_del_request()
+    actual = informes_guardados.obtener(tambo, informe_id)
+    if actual is None:
+        return jsonify({"error": "Ese informe no existe."}), 404
+    if not actual["archivado"]:
+        return jsonify({"error": "Archivalo primero: solo se elimina un informe archivado."}), 409
+    try:
+        informes_envios.borrar_de_informe(tambo, informe_id)
+        informes_guardados.eliminar(tambo, informe_id)
+    except informes_guardados.InformeGuardadoError as exc:
+        return jsonify({"error": str(exc)}), 409
+    return jsonify({"ok": True})
 
 
 @app.post("/api/informes/exportar")

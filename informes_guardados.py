@@ -81,14 +81,16 @@ def _crear_tabla(con) -> None:
         modificado TEXT NOT NULL,
         usuario TEXT,
         origen TEXT,
+        archivado TEXT,
         UNIQUE (tambo, nombre_norm))""")
-    # La base de cada instalación ya existe sin la columna: se agrega sola, sin perder nada. Dos pedidos a la vez pueden intentarlo juntos: el segundo no es un error.
-    if "origen" not in [c[1] for c in con.execute("PRAGMA table_info(informes)").fetchall()]:
-        try:
-            con.execute("ALTER TABLE informes ADD COLUMN origen TEXT")
-        except sqlite3.OperationalError:
-            if "origen" not in [c[1] for c in con.execute("PRAGMA table_info(informes)").fetchall()]:
-                raise
+    # La base de cada instalación ya existe sin las columnas nuevas: se agregan solas, sin perder nada. Dos pedidos a la vez pueden intentarlo juntos: el segundo no es un error.
+    for columna in ("origen", "archivado"):
+        if columna not in [c[1] for c in con.execute("PRAGMA table_info(informes)").fetchall()]:
+            try:
+                con.execute(f"ALTER TABLE informes ADD COLUMN {columna} TEXT")
+            except sqlite3.OperationalError:
+                if columna not in [c[1] for c in con.execute("PRAGMA table_info(informes)").fetchall()]:
+                    raise
 
 
 def _nombre(nombre) -> tuple:
@@ -161,15 +163,17 @@ def _guardar_origen(origen):
 
 def _fila(r: sqlite3.Row) -> dict:
     return {"id": r["id"], "nombre": r["nombre"], "favorito": bool(r["favorito"]), "creado": r["creado"],
-            "modificado": r["modificado"], "usuario": r["usuario"], "definicion": json.loads(r["definicion"]), "origen": _leer_origen(r["origen"])}
+            "modificado": r["modificado"], "usuario": r["usuario"], "definicion": json.loads(r["definicion"]), "origen": _leer_origen(r["origen"]),
+            "archivado": r["archivado"]}
 
 
-def listar(tambo: str) -> list:
-    """Lo justo para la lista: sin la definición. Favoritos primero, después por nombre. `con_aviso`: se trajo de DelPro con diferencias que cambian qué animales aparecen."""
+def listar(tambo: str, archivados: bool = False) -> list:
+    """Lo justo para la lista: sin la definición. Favoritos primero, después por nombre. `con_aviso`: se trajo de DelPro con diferencias que cambian qué animales aparecen.
+    Por defecto solo los activos; `archivados=True` devuelve solo los archivados (con la fecha en que se archivaron)."""
     with _con() as con:
-        filas = con.execute("SELECT id, nombre, favorito, modificado, definicion, origen FROM informes WHERE tambo = ? "
-                            "ORDER BY favorito DESC, nombre_norm", (tambo,)).fetchall()
-    return [{"id": r["id"], "nombre": r["nombre"], "favorito": bool(r["favorito"]), "modificado": r["modificado"],
+        filas = con.execute("SELECT id, nombre, favorito, modificado, definicion, origen, archivado FROM informes WHERE tambo = ? AND archivado IS " + ("NOT NULL" if archivados else "NULL") +
+                            " ORDER BY favorito DESC, nombre_norm", (tambo,)).fetchall()
+    return [{"id": r["id"], "nombre": r["nombre"], "favorito": bool(r["favorito"]), "modificado": r["modificado"], "archivado": r["archivado"],
              "n_columnas": len(json.loads(r["definicion"]).get("columnas", [])), "con_aviso": _leer_origen(r["origen"]) is not None} for r in filas]
 
 
@@ -201,6 +205,8 @@ def crear(tambo: str, nombre, definicion, usuario, favorito: bool = False, orige
                               (tambo, nombre, norm, json.dumps(defn, ensure_ascii=False), int(bool(favorito)), ahora, ahora, usuario, _guardar_origen(origen)))
             nuevo = cur.lastrowid
     except sqlite3.IntegrityError:
+        if _esta_archivado(tambo, norm):                                  # el nombre lo tiene un informe archivado: no se ve en la lista, así que hay que decirlo
+            raise InformeGuardadoError(f"Ya hay un informe archivado llamado «{nombre}». Restauralo o elegí otro nombre.") from None
         raise InformeGuardadoError(f"Ya hay un informe llamado «{nombre}». Elegí otro nombre.") from None
     return obtener(tambo, nuevo)
 
@@ -210,6 +216,8 @@ def actualizar(tambo: str, id_: int, nombre=None, definicion=None, favorito=None
     actual = obtener(tambo, id_)
     if actual is None:
         raise InformeGuardadoError("Ese informe no existe.")
+    if actual["archivado"]:
+        raise InformeGuardadoError("Ese informe está archivado: restauralo para cambiarlo.")
     n, norm = (actual["nombre"], actual["nombre"].casefold()) if nombre is None else _nombre(nombre)
     defn = actual["definicion"] if definicion is None else _definicion(definicion)
     fav = actual["favorito"] if favorito is None else bool(favorito)
@@ -222,3 +230,40 @@ def actualizar(tambo: str, id_: int, nombre=None, definicion=None, favorito=None
     except sqlite3.IntegrityError:
         raise InformeGuardadoError(f"Ya hay un informe llamado «{n}». Elegí otro nombre.") from None
     return obtener(tambo, id_)
+
+
+def _esta_archivado(tambo: str, nombre_norm: str) -> bool:
+    with _con() as con:
+        r = con.execute("SELECT archivado FROM informes WHERE tambo = ? AND nombre_norm = ?", (tambo, nombre_norm)).fetchone()
+    return bool(r and r["archivado"])
+
+
+def archivar(tambo: str, id_: int) -> dict:
+    """Saca el informe de la lista sin borrar nada (se puede restaurar). Archivarlo dos veces no cambia la fecha en que se archivó. Quien lo llama pausa su envío programado."""
+    actual = obtener(tambo, id_)
+    if actual is None:
+        raise InformeGuardadoError("Ese informe no existe.")
+    if not actual["archivado"]:
+        with _con() as con:
+            con.execute("UPDATE informes SET archivado = ? WHERE id = ? AND tambo = ?", (_iso(_ahora()), id_, tambo))
+    return obtener(tambo, id_)
+
+
+def restaurar(tambo: str, id_: int) -> dict:
+    """Lo devuelve a la lista. Su envío programado, si tenía, sigue en pausa: reactivarlo lo decide quien lo programó."""
+    if obtener(tambo, id_) is None:
+        raise InformeGuardadoError("Ese informe no existe.")
+    with _con() as con:
+        con.execute("UPDATE informes SET archivado = NULL WHERE id = ? AND tambo = ?", (id_, tambo))
+    return obtener(tambo, id_)
+
+
+def eliminar(tambo: str, id_: int) -> None:
+    """Borra el informe PARA SIEMPRE. Solo uno ya archivado (dos pasos a propósito). Quien lo llama borra antes su envío programado y su registro. El número no se reutiliza (AUTOINCREMENT)."""
+    actual = obtener(tambo, id_)
+    if actual is None:
+        raise InformeGuardadoError("Ese informe no existe.")
+    if not actual["archivado"]:
+        raise InformeGuardadoError("Archivalo primero: solo se elimina un informe archivado.")
+    with _con() as con:
+        con.execute("DELETE FROM informes WHERE id = ? AND tambo = ? AND archivado IS NOT NULL", (id_, tambo))

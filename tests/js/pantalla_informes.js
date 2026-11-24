@@ -21,7 +21,7 @@ const HOY = Date.UTC(2026, 10, 24, 12, 0, 0);                    // mar 24/11/20
    Lo que no exista se deja pasar como undefined (así una prueba falla por su comportamiento y no por un nombre). */
 const EXPORTAR = ['PG', 'DP', 'IA', 'CAMPOS', 'ENVIOS', 'LISTA', 'nuevoDoc', 'activar', 'docAct', 'abrirProg', 'guardarProg', 'probarProg', 'cargarRegistroProg',
   'traerDeDelpro', 'abrirDelpro', 'renderHead', 'renderFilters', 'renderImportado', 'renderProg', 'renderEnvio', 'limpiaDef', 'listaDe', 'condLimpia', 'tipoDe',
-  'defVacia', 'foto', 'sucio', 'toast', 'ejecutar', 'abrirInforme', 'guardar', 'avisoAlGuardar', 'renderList', 'abrirComoNuevo', 'origenParaGuardar', 'refrescarLista', 'cargarDelpro', 'renderDelpro'];
+  'defVacia', 'foto', 'sucio', 'toast', 'ejecutar', 'abrirInforme', 'guardar', 'avisoAlGuardar', 'renderList', 'abrirComoNuevo', 'origenParaGuardar', 'refrescarLista', 'refrescarEnvios', 'cargarDelpro', 'renderDelpro', 'cerrar'];
 
 const CAMPOS_DE_EJEMPLO = {
   categorias: [
@@ -59,7 +59,7 @@ function manejadoresBase() {
   });
   return [
     ['GET', /^\/api\/informes\/campos$/, () => CAMPOS_DE_EJEMPLO],
-    ['GET', /^\/api\/informes$/, () => ({informes: [
+    ['GET', /^\/api\/informes$/, (c) => c.consulta.indexOf('archivados=1') >= 0 ? {informes: []} : ({informes: [
       {id: 1, nombre: 'Informe de ejemplo uno', favorito: false, n_columnas: 2, modificado: '2026-11-20T10:00:00'},
       {id: 2, nombre: 'Informe de ejemplo dos', favorito: false, n_columnas: 2, modificado: '2026-11-21T10:00:00'}]})],
     ['GET', /^\/api\/informes\/envios$/, () => ({envios: {}})],

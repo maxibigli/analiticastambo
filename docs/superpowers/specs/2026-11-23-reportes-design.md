@@ -369,6 +369,9 @@ Los otros dos campos candidatos recorren decenas de páginas de eventos por anim
 **Leche «de ayer» y «de hoy» (35 campos).** Decisión del usuario: se llaman así, como en DelPro (relativas a «Calcular al»); es una excepción pedida por el dueño a la regla de las fechas concretas. **Elegir y traer varios informes de DelPro:** el cliente es quien usa esos informes, así que el cuadro «Traer de DelPro…» permite elegir los suyos
 y traerlos juntos (se guardan con su nota de origen, sin ejecutar nada) y recalcula qué campos faltan SOLO para los elegidos: así se priorizan los campos que el cliente de verdad necesita (tanda 3).
 
+**Archivar, restaurar y eliminar (24/11/2026).** Al traer varios informes de DelPro de una vez la lista puede llenarse de informes que no se usan, y LactIA no tenía «eliminar» (regla de no borrar). Ahora: **«Archivar»** saca el informe de la lista, se puede restaurar y **pausa su envío programado**; un archivado no se edita, no se programa y no manda nada.
+**«Eliminar para siempre»** solo existe para los archivados y pide dos toques sobre el mismo informe (la confirmación vence sola); borra el informe, su programación y el registro de lo mandado. El nombre de un archivado sigue ocupado. Pendiente si hace falta: archivar varios a la vez.
+
 **Tanda 2 (33 campos en total):** `EffectiveInseminationDate`, `LastPregnancyCheckDate`, `LastCullDecisionDate` (punteros del índice de DelPro), `DaysPregnant`, `LatestSCC` (último control lechero, en miles/ml) y los promedios de 14, 21 y 30 días. Los promedios y los días son cuentas nuestras (⚠ hasta compararlos con un informe de DelPro).
 
 ## Pendientes de la Fase 4: lo que decide el tambo o falta probar

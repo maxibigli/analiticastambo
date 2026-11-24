@@ -192,6 +192,8 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
 .dpctl .in{flex:1 1 220px}
 .dpsum{font-size:12.5px;color:var(--muted);min-height:18px}
 .dplist{display:grid;gap:6px;max-height:min(50vh,520px);overflow:auto;scrollbar-width:thin;align-content:start}
+.btn.peligro{border-color:#7A2E2E;color:#F5A9A9}
+.btn.peligro.pide{background:var(--bad-soft);border-color:#C25555;color:#FFD0D0}
 .dpsel{display:flex;gap:8px 12px;flex-wrap:wrap;align-items:center}
 .dpsel .dpcuenta{font-size:12.5px;color:var(--muted);margin-left:auto;font-variant-numeric:tabular-nums}
 .dpmsj{font-size:12.5px;color:var(--ok-fg,#7FD9B8);min-height:0}
@@ -314,6 +316,7 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
     <div class="lhead">
       <input class="in" id="lq" type="search" placeholder="Buscar informe…" aria-label="Buscar informe" autocomplete="off">
       <button class="btn" id="btn-delpro" title="Traer un informe que ya tenés armado en DelPro">Traer de DelPro…</button>
+      <button class="btn ghost" id="btn-verarch" data-act="verarch" hidden></button>
       <button class="btn pri" id="btn-nuevo">+ Informe nuevo</button>
     </div>
     <section class="ask" id="ask" aria-label="Armar un informe describiéndolo">
@@ -501,6 +504,8 @@ async function api(ruta, opciones) {
 const post = (ruta, cuerpo, metodo) => api(ruta, {method: metodo || 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(cuerpo)});
 
 let CAMPOS = {}, CATS = [], LISTA = [], ENVIOS = {}, docs = [], activeId = 'list', docSeq = 1, fq = '', listQ = '', armed = {};
+/* Los informes archivados: `ver` = la lista muestra los archivados (en vez de los activos); `confirmar` = el archivado que se tocó una vez en «Eliminar para siempre» y espera el segundo toque. */
+const ARCH = {ver: false, lista: [], confirmar: null};
 const openCats = {};
 const OPS = {
   num: [['>=', '≥'], ['<=', '≤'], ['>', '>'], ['<', '<'], ['=', '='], ['<>', '≠'], ['en', 'es uno de']],
@@ -639,6 +644,10 @@ function renderTabs() {
 function renderList() {
   const q = listQ.trim().toLowerCase(), abiertos = {};
   docs.forEach(d => { if (d.sid) abiertos[d.sid] = 1; });
+  const bv = $('#btn-verarch');
+  bv.hidden = !ARCH.ver && !ARCH.lista.length;
+  bv.textContent = ARCH.ver ? '← Volver a los informes' : 'Ver archivados (' + ARCH.lista.length + ')';
+  if (ARCH.ver) { renderArchivados(q); return; }
   const filas = LISTA.filter(i => !q || i.nombre.toLowerCase().indexOf(q) >= 0);
   $('#ltable').innerHTML = filas.length
     ? '<table><thead><tr><th style="width:44px"></th><th>Nombre del informe</th><th class="num">Columnas</th><th>Última modificación</th><th></th></tr></thead><tbody>' +
@@ -647,8 +656,20 @@ function renderList() {
         (i.con_aviso ? '<span class="env avdp" title="Se trajo de DelPro con diferencias que cambian qué animales aparecen: abrilo para ver el aviso.">⚠ traído de DelPro</span>' : '') +
         (ENVIOS[i.id] ? '<span class="env' + (ENVIOS[i.id].activo ? '' : ' pausa') + '" title="' + esc(ENVIOS[i.id].activo ? 'Próximo envío: ' + (ENVIOS[i.id].proximo_texto || '') : 'El envío programado está en pausa') + '">' +
           (ENVIOS[i.id].activo ? 'envío programado' : 'envío en pausa') + '</span>' : '') + '</td><td class="num">' + i.n_columnas + '</td><td>' + fmtFecha(i.modificado, true) + '</td>' +
-        '<td><button class="btn sm" data-act="abrir" data-id="' + i.id + '">Abrir</button></td></tr>').join('') + '</tbody></table>'
+        '<td><button class="btn sm" data-act="abrir" data-id="' + i.id + '">Abrir</button> <button class="btn sm ghost" data-act="archivar" data-id="' + i.id + '" aria-label="Archivar «' + esc(i.nombre) + '»" ' +
+        'title="Saca el informe de la lista (se puede restaurar) y pausa su envío programado">Archivar</button></td></tr>').join('') + '</tbody></table>'
     : '<div class="empty">' + (LISTA.length ? 'Ningún informe coincide con la búsqueda.' : 'Todavía no hay informes guardados. Armá el primero con «+ Informe nuevo».') + '</div>';
+}
+/* La lista de los archivados: se restauran, o se eliminan PARA SIEMPRE (con un segundo toque, a propósito: no se puede deshacer). */
+function renderArchivados(q) {
+  const filas = ARCH.lista.filter(i => !q || i.nombre.toLowerCase().indexOf(q) >= 0);
+  $('#ltable').innerHTML = filas.length
+    ? '<table><thead><tr><th>Informes archivados</th><th>Archivado el</th><th></th></tr></thead><tbody>' + filas.map(i => '<tr><td class="rp">' + esc(i.nombre) +
+        (ENVIOS[i.id] ? '<span class="env pausa" title="Su envío programado está en pausa">envío en pausa</span>' : '') + '</td><td>' + fmtFecha(i.archivado, true) + '</td>' +
+        '<td><button class="btn sm" data-act="restaurar" data-id="' + i.id + '" aria-label="Restaurar «' + esc(i.nombre) + '»">Restaurar</button> ' +
+        '<button class="btn sm peligro' + (ARCH.confirmar === i.id ? ' pide' : '') + '" data-act="eliminar" data-id="' + i.id + '" aria-label="Eliminar para siempre «' + esc(i.nombre) + '»">' +
+        (ARCH.confirmar === i.id ? '¿Seguro? Tocá otra vez' : 'Eliminar para siempre') + '</button></td></tr>').join('') + '</tbody></table>'
+    : '<div class="empty">' + (ARCH.lista.length ? 'Ningún archivado coincide con la búsqueda.' : 'No hay informes archivados.') + '</div>';
 }
 function renderHead() {
   const d = docAct(), n = $('#rname');
@@ -858,7 +879,13 @@ async function ejecutar(d) {
   d.estado = 'ok';
   if (activeId === d.id) { renderHead(); renderResultado(); }
 }
-async function refrescarLista() { try { LISTA = (await api('/api/informes')).informes; } catch (e) { toast(e.message); } }
+async function refrescarLista() {
+  try {
+    const [a, b] = await Promise.all([api('/api/informes'), api('/api/informes?archivados=1')]);
+    LISTA = a.informes; ARCH.lista = b.informes;
+    if (!ARCH.lista.length) ARCH.ver = false;                                          // sin archivados no hay nada que ver
+  } catch (e) { toast(e.message); }
+}
 /* Lo que hay que decirle a quien guarda un informe traído (de DelPro o armado con IA) al que le falta algo que cambia QUÉ animales aparecen: lo guardado no es lo que el otro sistema tenía. */
 function avisoAlGuardar(d) { const im = d.importado; return im && im.alGuardar && (im.grupos || []).some(g => g.clase === 'contenido') ? im.alGuardar : ''; }
 const AL_GUARDAR_DELPRO = 'Ojo: no trae todo lo que tenía en DelPro, así que puede mostrar animales de más o de menos.';
@@ -890,6 +917,44 @@ async function guardar(d, comoNuevo) {
     toast('Guardado: «' + j.nombre + '»' + (aviso ? '. ' + aviso : ''), aviso ? 8000 : 3200);
   } catch (e) { d.error = e.message; }
   render();
+}
+/* ---------- archivar, restaurar y eliminar ---------- */
+const nombreDe = (lista, id) => { const i = lista.filter(x => x.id === id)[0]; return i ? i.nombre : 'el informe'; };
+async function recargarListas() { await Promise.all([refrescarLista(), refrescarEnvios()]); render(); }
+/* Archivar saca el informe de la lista (se puede restaurar) y PAUSA su envío programado. Uno abierto con cambios sin guardar no se archiva: se perderían. */
+async function archivarInforme(id) {
+  const nombre = nombreDe(LISTA, id), abierto = docs.filter(d => d.sid === id)[0];
+  if (abierto && sucio(abierto)) { toast('«' + nombre + '» está abierto con cambios sin guardar: guardalo o cerralo antes de archivarlo.', 6000); return; }
+  try {
+    const j = await post('/api/informes/' + id + '/archivar', {});
+    if (abierto) cerrar(abierto.id);
+    await recargarListas();
+    toast('Archivado: «' + nombre + '». Lo encontrás en «Ver archivados».' + (j.envio_pausado ? ' Su envío programado quedó en pausa.' : ''), 5000);
+  } catch (e) { toast(e.message); }
+}
+async function restaurarInforme(id) {
+  const nombre = nombreDe(ARCH.lista, id), conEnvio = !!ENVIOS[id];
+  try {
+    await post('/api/informes/' + id + '/restaurar', {});
+    await recargarListas();
+    toast('Restaurado: «' + nombre + '».' + (conEnvio ? ' Su envío programado sigue en pausa: reactivalo en «Programar envío».' : ''), 5000);
+  } catch (e) { toast(e.message); }
+}
+/* Eliminar PARA SIEMPRE: el primer toque pide confirmar (y vence solo), el segundo sobre el MISMO informe lo elimina, con su envío programado y el registro de lo mandado. */
+async function eliminarInforme(id) {
+  const nombre = nombreDe(ARCH.lista, id);
+  if (ARCH.confirmar !== id) {
+    ARCH.confirmar = id; renderList();
+    setTimeout(() => { if (ARCH.confirmar === id) { ARCH.confirmar = null; renderList(); } }, 6000);
+    toast('Tocá otra vez «Eliminar para siempre» para borrar «' + nombre + '» con su envío programado: no se puede deshacer.', 6000);
+    return;
+  }
+  ARCH.confirmar = null;
+  try {
+    await post('/api/informes/' + id, {}, 'DELETE');
+    await recargarListas();
+    toast('Eliminado: «' + nombre + '».', 4000);
+  } catch (e) { renderList(); toast(e.message); }
 }
 async function exportar(d) {
   try {
@@ -1527,6 +1592,10 @@ document.addEventListener('click', e => {
   if (a === 'tab') activar(b.dataset.id);
   else if (a === 'cerrar') cerrar(b.dataset.id);
   else if (a === 'abrir') una('abrir' + b.dataset.id, () => abrirInforme(+b.dataset.id));
+  else if (a === 'archivar') una('archivar' + b.dataset.id, () => archivarInforme(+b.dataset.id));
+  else if (a === 'restaurar') una('restaurar' + b.dataset.id, () => restaurarInforme(+b.dataset.id));
+  else if (a === 'eliminar') una('eliminar' + b.dataset.id, () => eliminarInforme(+b.dataset.id));
+  else if (a === 'verarch') { ARCH.ver = !ARCH.ver; ARCH.confirmar = null; renderList(); }
   else if (a === 'fav') {
     e.stopPropagation();
     const id = +b.dataset.id, i = LISTA.find(x => x.id === id);

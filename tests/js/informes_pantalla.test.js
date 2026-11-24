@@ -666,6 +666,176 @@ caso('origen: «Programar envío» avisa que el mensaje va a decir que viene de 
 });
 
 /* ---------------------------------------------------------------------------------------------------------------------------------------- */
+/* Archivar, restaurar y eliminar informes                                                                                                  */
+/* ---------------------------------------------------------------------------------------------------------------------------------------- */
+const filaInf = (id, nombre, extra) => Object.assign({id, nombre, favorito: false, n_columnas: 2, modificado: '2026-11-20T10:00:00', con_aviso: false}, extra || {});
+/* Un servidor de mentira con dos listas (activos y archivados) que se mueven con archivar, restaurar y eliminar. */
+async function conArchivos(P, activos, archivados, envios) {
+  const E = {activos: activos.slice(), arch: archivados.slice(), pausados: [], envios: envios || {}};
+  P.api.cuando('GET', /^\/api\/informes$/, c => ({informes: c.consulta.indexOf('archivados=1') >= 0 ? E.arch : E.activos}));
+  P.api.cuando('GET', /^\/api\/informes\/envios$/, () => ({envios: E.envios}));
+  P.api.cuando('POST', /^\/api\/informes\/\d+\/archivar$/, c => {
+    const id = +c.ruta.split('/')[3], i = E.activos.find(x => x.id === id);
+    E.activos = E.activos.filter(x => x.id !== id); E.arch.push(Object.assign({}, i, {archivado: '2026-11-24T12:00:00Z'}));
+    const tenia = !!(E.envios[id] && E.envios[id].activo);
+    if (tenia) { E.envios[id].activo = false; E.pausados.push(id); }
+    return {informe: i, envio_pausado: tenia};
+  });
+  P.api.cuando('POST', /^\/api\/informes\/\d+\/restaurar$/, c => {
+    const id = +c.ruta.split('/')[3], i = E.arch.find(x => x.id === id);
+    E.arch = E.arch.filter(x => x.id !== id); E.activos.push(Object.assign({}, i, {archivado: null}));
+    return {informe: i};
+  });
+  P.api.cuando('DELETE', /^\/api\/informes\/\d+$/, c => { const id = +c.ruta.split('/')[3]; E.arch = E.arch.filter(x => x.id !== id); return {ok: true}; });
+  await P.t.refrescarLista(); await P.t.refrescarEnvios(); P.t.renderList();
+  return E;
+}
+const botones = (P, accion) => P.$$('#ltable [data-act="' + accion + '"]').filter(b => b.tag === 'button');
+
+caso('archivar: cada informe de la lista tiene su botón «Archivar»; al tocarlo sale de la lista y lo avisa', async () => {
+  const P = await cargar();
+  await conArchivos(P, [filaInf(1, 'Uno'), filaInf(2, 'Dos')], []);
+  assert.strictEqual(botones(P, 'archivar').length, 2);
+  P.click('#ltable [data-act="archivar"][data-id="1"]'); await P.flush();
+  assert.ok(P.api.de('POST', /\/informes\/1\/archivar$/).length === 1);
+  assert.ok(!/Uno/.test(P.texto('#ltable')), 'ya no está en la lista');
+  assert.ok(/Dos/.test(P.texto('#ltable')));
+  assert.ok(/Archivado: «Uno»/.test(P.texto('#toast')), P.texto('#toast'));
+});
+
+caso('archivar: tocar «Archivar» no abre el informe', async () => {
+  const P = await cargar();
+  await conArchivos(P, [filaInf(1, 'Uno')], []);
+  P.click('#ltable [data-act="archivar"][data-id="1"]'); await P.flush();
+  assert.strictEqual(P.api.de('GET', /^\/api\/informes\/1$/).length, 0);
+});
+
+caso('archivar: si tenía el envío programado, el aviso dice que quedó en pausa', async () => {
+  const P = await cargar();
+  const E = await conArchivos(P, [filaInf(1, 'Uno'), filaInf(2, 'Dos')], [], {1: {activo: true, proximo_texto: 'lun 30/11/2026 08:00'}});
+  P.click('#ltable [data-act="archivar"][data-id="1"]'); await P.flush();
+  assert.ok(/envío programado quedó en pausa/.test(P.texto('#toast')), P.texto('#toast'));
+  assert.deepStrictEqual(E.pausados, [1]);
+  P.click('#ltable [data-act="archivar"][data-id="2"]'); await P.flush();
+  assert.ok(!/en pausa/.test(P.texto('#toast')), 'el que no tenía envío no lo dice: ' + P.texto('#toast'));
+});
+
+caso('archivar: un informe abierto con cambios sin guardar no se archiva y se explica', async () => {
+  const P = await cargar();
+  await conArchivos(P, [filaInf(1, 'Uno')], []);
+  const d = P.t.nuevoDoc({sid: 1, nombre: 'Uno', def: P.t.defVacia(), guardado: true});
+  d.def.condiciones.push({campo: 'CurrentDIM', op: '>=', valor: '100'});               // un cambio sin guardar
+  assert.ok(P.t.sucio(d));
+  P.t.activar('list');
+  P.click('#ltable [data-act="archivar"][data-id="1"]'); await P.flush();
+  assert.strictEqual(P.api.de('POST', /\/archivar$/).length, 0, 'no se mandó nada');
+  assert.ok(/cambios sin guardar/.test(P.texto('#toast')), P.texto('#toast'));
+  assert.ok(P.t.docs.some(x => x.sid === 1), 'la pestaña sigue abierta');
+});
+
+caso('archivar: un informe abierto y sin cambios se cierra al archivarlo', async () => {
+  const P = await cargar();
+  await conArchivos(P, [filaInf(1, 'Uno')], []);
+  P.t.nuevoDoc({sid: 1, nombre: 'Uno', def: P.t.defVacia(), guardado: true});
+  P.t.activar('list');
+  P.click('#ltable [data-act="archivar"][data-id="1"]'); await P.flush();
+  assert.ok(!P.t.docs.some(x => x.sid === 1), 'la pestaña se cerró');
+  assert.strictEqual(P.t.activeId, 'list');
+});
+
+caso('archivar: si falla el servidor lo dice y el informe queda en la lista', async () => {
+  const P = await cargar();
+  await conArchivos(P, [filaInf(1, 'Uno')], []);
+  P.api.cuando('POST', /\/archivar$/, () => P.error(404, {error: 'Ese informe no existe.'}));
+  P.click('#ltable [data-act="archivar"][data-id="1"]'); await P.flush();
+  assert.ok(/Ese informe no existe/.test(P.texto('#toast')), P.texto('#toast'));
+  assert.ok(/Uno/.test(P.texto('#ltable')));
+});
+
+caso('archivados: «Ver archivados (N)» muestra solo los archivados, con Restaurar y Eliminar; «Volver» regresa', async () => {
+  const P = await cargar();
+  await conArchivos(P, [filaInf(1, 'Uno')], [filaInf(7, 'Viejo', {archivado: '2026-11-20T09:00:00Z'}), filaInf(8, 'Otro viejo', {archivado: '2026-11-21T09:00:00Z'})]);
+  assert.ok(/Ver archivados \(2\)/.test(P.texto('#btn-verarch')), P.texto('#btn-verarch'));
+  P.click('#btn-verarch');
+  assert.ok(/Viejo/.test(P.texto('#ltable')) && /Otro viejo/.test(P.texto('#ltable')));
+  assert.ok(!/\bUno\b/.test(P.texto('#ltable')), 'los activos no se mezclan');
+  assert.strictEqual(botones(P, 'restaurar').length, 2);
+  assert.strictEqual(botones(P, 'eliminar').length, 2);
+  assert.strictEqual(botones(P, 'archivar').length, 0);
+  assert.ok(/Volver a los informes/.test(P.texto('#btn-verarch')));
+  P.click('#btn-verarch');
+  assert.ok(/Uno/.test(P.texto('#ltable')) && !/Viejo/.test(P.texto('#ltable')));
+});
+
+caso('archivados: sin archivados el botón no se ofrece, y el buscador también filtra los archivados', async () => {
+  const P = await cargar();
+  await conArchivos(P, [filaInf(1, 'Uno')], []);
+  assert.ok(P.$('#btn-verarch').hidden, 'sin archivados no hay nada que ver');
+  const Q = await cargar();
+  await conArchivos(Q, [], [filaInf(7, 'Viejo uno', {archivado: '2026-11-20T09:00:00Z'}), filaInf(8, 'Otro', {archivado: '2026-11-21T09:00:00Z'})]);
+  Q.click('#btn-verarch');
+  Q.cambiar('#lq', 'viejo'); Q.$('#lq').dispatchEvent(new (require('./mini_dom.js').Evento)('input', Q.$('#lq')));
+  assert.ok(/Viejo uno/.test(Q.texto('#ltable')) && !/Otro/.test(Q.texto('#ltable')));
+});
+
+caso('restaurar: vuelve a la lista y, si tenía envío, avisa que sigue en pausa', async () => {
+  const P = await cargar();
+  await conArchivos(P, [filaInf(1, 'Uno')], [filaInf(7, 'Viejo', {archivado: '2026-11-20T09:00:00Z'})], {7: {activo: false}});
+  P.click('#btn-verarch');
+  P.click('#ltable [data-act="restaurar"][data-id="7"]'); await P.flush();
+  assert.strictEqual(P.api.de('POST', /\/informes\/7\/restaurar$/).length, 1);
+  assert.ok(/Restaurado: «Viejo»/.test(P.texto('#toast')) && /sigue en pausa/.test(P.texto('#toast')), P.texto('#toast'));
+  assert.ok(P.$('#btn-verarch').hidden, 'ya no quedan archivados: se vuelve a la lista de informes');
+  assert.ok(/Viejo/.test(P.texto('#ltable')) && /Uno/.test(P.texto('#ltable')), P.texto('#ltable'));
+});
+
+caso('restaurar: uno sin envío no habla de pausa', async () => {
+  const P = await cargar();
+  await conArchivos(P, [], [filaInf(7, 'Viejo', {archivado: '2026-11-20T09:00:00Z'})]);
+  P.click('#btn-verarch');
+  P.click('#ltable [data-act="restaurar"][data-id="7"]'); await P.flush();
+  assert.ok(/Restaurado: «Viejo»/.test(P.texto('#toast')) && !/pausa/.test(P.texto('#toast')), P.texto('#toast'));
+});
+
+caso('eliminar: el primer toque pide confirmar y no manda nada; el segundo elimina', async () => {
+  const P = await cargar();
+  await conArchivos(P, [], [filaInf(7, 'Viejo', {archivado: '2026-11-20T09:00:00Z'}), filaInf(8, 'Otro', {archivado: '2026-11-20T09:00:00Z'})]);
+  P.click('#btn-verarch');
+  P.click('#ltable [data-act="eliminar"][data-id="7"]'); await P.flush();
+  assert.strictEqual(P.api.de('DELETE', /\/informes\/7$/).length, 0, 'todavía no se mandó');
+  assert.ok(/otra vez/i.test(P.texto('#ltable [data-act="eliminar"][data-id="7"]')), P.texto('#ltable [data-act="eliminar"][data-id="7"]'));
+  assert.ok(!/otra vez/i.test(P.texto('#ltable [data-act="eliminar"][data-id="8"]')), 'solo el tocado pide confirmar');
+  P.click('#ltable [data-act="eliminar"][data-id="7"]'); await P.flush();
+  assert.strictEqual(P.api.de('DELETE', /\/informes\/7$/).length, 1);
+  assert.ok(!/Viejo/.test(P.texto('#ltable')) && /Otro/.test(P.texto('#ltable')));
+  assert.ok(/Eliminado: «Viejo»/.test(P.texto('#toast')), P.texto('#toast'));
+});
+
+caso('eliminar: tocar otro informe en el medio vuelve a pedir confirmación, y pasado un rato también', async () => {
+  const P = await cargar();
+  await conArchivos(P, [], [filaInf(7, 'Viejo', {archivado: '2026-11-20T09:00:00Z'}), filaInf(8, 'Otro', {archivado: '2026-11-20T09:00:00Z'})]);
+  P.click('#btn-verarch');
+  P.click('#ltable [data-act="eliminar"][data-id="7"]');
+  P.click('#ltable [data-act="eliminar"][data-id="8"]'); await P.flush();
+  assert.strictEqual(P.api.de('DELETE', /\/informes\/\d+$/).length, 0, 'el segundo toque fue sobre OTRO informe: pide confirmar de nuevo');
+  P.avanzar(8000);
+  assert.ok(!/otra vez/i.test(P.texto('#ltable')), 'la confirmación vence sola');
+  P.click('#ltable [data-act="eliminar"][data-id="8"]'); await P.flush();
+  assert.strictEqual(P.api.de('DELETE', /\/informes\/\d+$/).length, 0, 'vencida: otra vez pide confirmar');
+});
+
+caso('eliminar: si el servidor dice que no, lo muestra y el informe sigue archivado', async () => {
+  const P = await cargar();
+  await conArchivos(P, [], [filaInf(7, 'Viejo', {archivado: '2026-11-20T09:00:00Z'})]);
+  P.api.cuando('DELETE', /\/informes\/7$/, () => P.error(409, {error: 'Archivalo primero: solo se elimina un informe archivado.'}));
+  P.click('#btn-verarch');
+  P.click('#ltable [data-act="eliminar"][data-id="7"]'); await P.flush();
+  P.click('#ltable [data-act="eliminar"][data-id="7"]'); await P.flush();
+  assert.ok(/Archivalo primero/.test(P.texto('#toast')), P.texto('#toast'));
+  assert.ok(/Viejo/.test(P.texto('#ltable')));
+});
+
+/* ---------------------------------------------------------------------------------------------------------------------------------------- */
 (async () => {
   const resultados = [];
   for (const [nombre, fn] of casos) {

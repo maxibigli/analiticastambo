@@ -219,8 +219,11 @@ def guardar(tambo: str, informe_id: int, dias, horas, canales, formato, activo, 
 
     Tocar la programación descarta los reintentos pendientes (la pasada exige que `modificado` no haya cambiado): los fallos que prometían reintentarse lo dicen."""
     datos = validar(dias, horas, canales, formato)
-    if informes_guardados.obtener(tambo, informe_id) is None:
+    informe = informes_guardados.obtener(tambo, informe_id)
+    if informe is None:
         raise EnvioError("Ese informe no existe.")
+    if informe["archivado"]:
+        raise EnvioError("Ese informe está archivado: restauralo para programar su envío.")
     ahora = _ahora(ahora)
     with _con() as con:
         con.execute("BEGIN IMMEDIATE")                                      # dos «Guardar» a la vez: el segundo espera al primero y ve su fila (y el tope de activas se cuenta bien)
@@ -249,6 +252,21 @@ def pausar(tambo: str, informe_id: int, ahora=None) -> dict:
         con.execute("UPDATE envios_programados SET activo = 0, modificado = ? WHERE id = ?", (_iso(ahora), actual["id"]))
         _cerrar_promesas_de(con, informe_id, tambo, "se pausó la programación.")
     return obtener(tambo, informe_id, ahora)
+
+
+def borrar_de_informe(tambo: str, informe_id: int) -> bool:
+    """Borra la programación de un informe Y el registro de lo que se mandó (para cuando el informe se elimina para siempre). Dice si había algo que borrar. El número del informe no se
+    reutiliza, así que el registro de otro informe nunca se confunde con este."""
+    if not informes_guardados.id_valido(informe_id):
+        return False
+    with _con() as con:
+        con.execute("BEGIN IMMEDIATE")
+        fila = con.execute("SELECT id FROM envios_programados WHERE informe_id = ? AND tambo = ?", (informe_id, tambo)).fetchone()
+        if fila is None:
+            return False
+        con.execute("DELETE FROM envios_registro WHERE envio_id = ?", (fila["id"],))
+        con.execute("DELETE FROM envios_programados WHERE id = ?", (fila["id"],))
+    return True
 
 
 # ============================================================================================ cuándo vence
@@ -564,6 +582,8 @@ def armar_de_la_base(tambo: str, informe_id: int, formato: str, ahora=None, ejec
     informe = informes_guardados.obtener(tambo, informe_id)
     if informe is None:
         raise EnvioError("Ese informe no existe.")
+    if informe["archivado"]:                                              # un archivado no manda nada, aunque su programación siguiera activa
+        raise EnvioError("Ese informe está archivado: restauralo para programar su envío.")
     return armar(tambo, informe, formato, ahora, ejecutar)
 
 
@@ -780,6 +800,8 @@ def probar(tambo: str, informe_id: int, enviar, canales, enviar_de_verdad: bool,
     informe = informes_guardados.obtener(tambo, informe_id)
     if informe is None:
         raise EnvioError("Ese informe no existe.")
+    if informe["archivado"]:
+        raise EnvioError("Ese informe está archivado: restauralo para programar su envío.")
     if formato is not None and not (isinstance(formato, str) and formato in FORMATOS):
         raise EnvioError("El formato tiene que ser «excel» o «texto».")
     programacion = obtener(tambo, informe_id)
