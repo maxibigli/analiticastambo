@@ -4501,9 +4501,16 @@
     </div>
 
     <div id="config-iot-origenes" style="border:1px solid var(--card-border,#333);border-radius:10px;padding:14px;margin-top:22px">
-      <div style="font-weight:600;margin-bottom:8px">Otros equipos que mandan datos por HTTP (ESP32, LoRaWAN)</div>
+      <div style="font-weight:600;margin-bottom:8px">Otros equipos: mandan datos por HTTP (ESP32, LoRaWAN) o responden por Modbus TCP</div>
       <p class="explica">
-        Un equipo que <b>manda</b> sus lecturas a LactIA (un ESP32, o un servidor LoRaWAN como ChirpStack) en vez de que
+        <b>Equipo Modbus TCP</b> (otro PLC o gateway): LactIA lo <b>consulta</b> cada pocos segundos, con su propia conexión, sin
+        reiniciar nada. Cargás su IP (y puerto y unit ID si no son 502 y 1) y, por cada canal, la función, la dirección (se puede
+        escribir como la muestra el equipo, 10001, 30001 o 40001, o como la usa el protocolo), el unit ID si es otro, y para un
+        valor analógico el tipo de dato (los decimales de 32 bits se leen «AB CD», como los del M300; si el equipo da 4-20 mA en
+        un registro, el factor y el offset los calculás vos). Un equipo que no responde no frena a los demás. Por ahora son
+        <b>solo de lectura</b>: no se comandan salidas de estos equipos.</p>
+      <p class="explica">
+        <b>Equipo que manda por HTTP:</b> un equipo que <b>manda</b> sus lecturas a LactIA (un ESP32, o un servidor LoRaWAN como ChirpStack) en vez de que
         LactIA las lea por Modbus. Cada equipo tiene su dirección de envío, un token (la contraseña con la que se presenta) y
         los canales que manda: cada uno es una <b>entrada digital</b> (un contacto) o una <b>entrada analógica</b> (un valor,
         que se puede ajustar con <i>factor</i> y <i>offset</i>: valor = lo que llega × factor + offset) que alimenta un
@@ -4521,8 +4528,16 @@
       <div id="config-iot-origenes-nuevo" style="display:none;margin-top:14px;border:1px dashed var(--border);border-radius:8px;padding:10px;gap:10px;flex-wrap:wrap;align-items:flex-end">
         <label class="aviso" style="margin:0">Nombre <input type="text" id="config-iot-origenes-nuevo-nombre" maxlength="40"
             placeholder="ESP32 del corral" style="width:190px;padding:6px"></label>
-        <label class="aviso" style="margin:0">Formato <select id="config-iot-origenes-nuevo-formato" style="padding:6px">
+        <label class="aviso" style="margin:0">Tipo <select id="config-iot-origenes-nuevo-tipo" style="padding:6px">
+            <option value="http">Manda por HTTP (ESP32, LoRaWAN)</option><option value="modbus_tcp">Responde por Modbus TCP</option></select></label>
+        <label class="aviso" style="margin:0" data-nuevo="http">Formato <select id="config-iot-origenes-nuevo-formato" style="padding:6px">
             <option value="generico">ESP32 / genérico</option><option value="chirpstack">ChirpStack (LoRaWAN)</option></select></label>
+        <label class="aviso" style="margin:0;display:none" data-nuevo="modbus_tcp">IP o nombre del equipo <input type="text"
+            id="config-iot-origenes-nuevo-host" maxlength="253" placeholder="192.168.1.60" style="width:150px;padding:6px"></label>
+        <label class="aviso" style="margin:0;display:none" data-nuevo="modbus_tcp">Puerto <input type="text" inputmode="numeric"
+            id="config-iot-origenes-nuevo-port" placeholder="502" style="width:70px;padding:6px"></label>
+        <label class="aviso" style="margin:0;display:none" data-nuevo="modbus_tcp">Unit ID <input type="text" inputmode="numeric"
+            id="config-iot-origenes-nuevo-unit" placeholder="1" style="width:60px;padding:6px"></label>
         <label class="aviso" style="margin:0">Ventana (minutos) <input type="number" min="1" step="1"
             id="config-iot-origenes-nuevo-ventana" placeholder="obligatoria" style="width:110px;padding:6px"></label>
         <button type="button" id="config-iot-origenes-crear">Crear equipo</button>
@@ -17174,9 +17189,15 @@ function orgFecha(iso, largo) {
 }
 
 function orgCopia(o) {
-  return { nombre: o.nombre, formato: o.formato, ventana: String(o.ventana_lectura_min),
-    canales: o.canales.map(c => ({ clave: c.clave, grupo: c.grupo, nombre: c.nombre || '',
-      factor: c.factor === 1 ? '' : String(c.factor), offset: c.offset === 0 ? '' : String(c.offset), sensor: c.sensor || '' })) };
+  const comunes = c => ({ clave: c.clave, grupo: c.grupo, nombre: c.nombre || '',
+    factor: c.factor === 1 ? '' : String(c.factor), offset: c.offset === 0 ? '' : String(c.offset), sensor: c.sensor || '' });
+  if (o.tipo === 'modbus_tcp') {
+    return { tipo: 'modbus_tcp', nombre: o.nombre, host: o.host, port: String(o.port), unit_id: String(o.unit_id),
+      ventana: String(o.ventana_lectura_min),
+      canales: o.canales.map(c => ({ ...comunes(c), funcion: c.funcion, direccion: String(c.direccion),
+        unit_id: c.unit_id == null ? '' : String(c.unit_id), tipo_dato: c.tipo_dato || '', invertido: !!c.invertido })) };
+  }
+  return { tipo: 'http', nombre: o.nombre, formato: o.formato, ventana: String(o.ventana_lectura_min), canales: o.canales.map(comunes) };
 }
 
 function orgCambiado(id) { return JSON.stringify(orgEdit[id]) !== orgOriginal[id]; }
@@ -17227,7 +17248,73 @@ function orgSensoresUsados(idActual, iActual) {
   return usados;
 }
 
+// Un canal de un equipo Modbus: función, dirección, unit ID, tipo de dato, factor, offset, contacto NC y sensor.
+function orgFilaModbus(id, c, i) {
+  const guardado = (orgDatos.origenes.find(o => o.id === id) || { canales: [] }).canales.find(x => x.clave === c.clave);
+  const ultimo = guardado && guardado.ultimo;
+  const dig = c.grupo === 'entrada_digital';
+  const attrs = 'data-org="' + escHtml(id) + '" data-i="' + i + '"';
+  const campo = (k, valor, ancho, extra) => '<input ' + attrs + ' data-campo="' + k + '" value="' + escHtml(valor) + '" style="width:'
+    + ancho + 'px;padding:3px 6px" ' + (extra || '') + '>';
+  const lista = (k, opciones, actual, vacio) => '<select ' + attrs + ' data-campo="' + k + '" style="padding:3px 6px">'
+    + (vacio ? '<option value="">' + escHtml(vacio) + '</option>' : '') + opciones.map(v => '<option value="' + escHtml(v) + '"'
+      + (actual === v ? ' selected' : '') + '>' + escHtml(MAPA_FUNCION_TXT[v] || v) + '</option>').join('') + '</select>';
+  let sensor = '<span class="aviso" style="margin:0">—</span>', analogico = '<td></td><td></td><td></td>';
+  let nc = '<td><input type="checkbox" ' + attrs + ' data-campo="invertido"' + (c.invertido ? ' checked' : '') + '></td>';
+  if (!dig) {
+    const usados = orgSensoresUsados(id, i);
+    sensor = '<select ' + attrs + ' data-campo="sensor" style="padding:3px 6px"><option value="">(ninguno)</option>'
+      + orgDatos.sensores_analogicos.map(s => {
+        const ocupado = usados[s.clave] && c.sensor !== s.clave;
+        return '<option value="' + escHtml(s.clave) + '"' + (c.sensor === s.clave ? ' selected' : '') + (ocupado ? ' disabled' : '') + '>'
+          + escHtml(s.label) + (ocupado ? ' (ya asignado)' : '') + '</option>';
+      }).join('') + '</select>';
+    analogico = '<td>' + lista('tipo_dato', orgDatos.tipos_dato || [], c.tipo_dato, '(elegir)') + '</td><td>'
+      + campo('factor', c.factor, 56, 'inputmode="decimal" placeholder="1"') + '</td><td>'
+      + campo('offset', c.offset, 56, 'inputmode="decimal" placeholder="0"') + '</td>';
+    nc = '<td></td>';
+  }
+  const funciones = dig ? (orgDatos.funciones_entrada || []) : (orgDatos.funciones_analogica || []);
+  const ult = !ultimo ? '—' : (dig ? (ultimo.valor ? 'activo' : 'inactivo') : fmt(ultimo.valor)) + ' · ' + orgFecha(ultimo.fecha_hora);
+  return '<tr><td>' + campo('clave', c.clave, 90, 'maxlength="40"') + '</td><td>' + (ORG_TIPOS[c.grupo] || c.grupo) + '</td><td>'
+    + campo('nombre', c.nombre, 110, 'maxlength="40"') + '</td><td>' + lista('funcion', funciones, c.funcion) + '</td><td>'
+    + campo('direccion', c.direccion, 64, 'inputmode="numeric" placeholder="obligatoria"') + '</td><td>'
+    + campo('unit_id', c.unit_id, 44, 'inputmode="numeric" placeholder="' + escHtml(orgEdit[id].unit_id) + '"') + '</td>' + analogico + nc
+    + '<td>' + sensor + '</td><td class="aviso" style="margin:0">' + escHtml(ult) + '</td><td><button class="secundario" type="button" '
+    + 'data-org-accion="borrar-canal" ' + attrs + ' title="Sacar este canal">✕</button></td></tr>';
+}
+
+function orgBloqueModbus(o) {
+  const e = orgEdit[o.id], id = escHtml(o.id), st = o.estado || {};
+  const entrada = (k, valor, ancho, extra) => '<input data-org="' + id + '" data-campo-origen="' + k + '" value="' + escHtml(valor)
+    + '" style="width:' + ancho + 'px;padding:6px" ' + (extra || '') + '>';
+  const estado = !st.ultima_recepcion ? 'Todavía no leyó nada.' : 'Última lectura: ' + orgFecha(st.ultima_recepcion, true);
+  const error = st.ultimo_error ? '<div class="aviso" style="margin:4px 0;color:var(--lac-danger,#e5534b)">Último error ('
+    + escHtml(orgFecha(st.error_fecha, true)) + '): ' + escHtml(st.ultimo_error) + '</div>' : '';
+  const canales = e.canales.length
+    ? '<div style="overflow:auto"><table class="tabla" style="width:100%"><thead><tr><th>Clave</th><th>Tipo</th><th>Nombre</th><th>Función</th>'
+      + '<th>Dirección</th><th>Unit ID</th><th>Tipo de dato</th><th>Factor</th><th>Offset</th><th>NC</th><th>Sensor</th>'
+      + '<th>Último valor leído</th><th></th></tr></thead><tbody>' + e.canales.map((c, i) => orgFilaModbus(o.id, c, i)).join('')
+      + '</tbody></table></div>'
+    : '<div class="aviso">Sin canales todavía: agregá lo que querés leer del equipo.</div>';
+  return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px"><div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">'
+    + '<span class="aviso" style="margin:0;font-weight:600">Modbus TCP</span>'
+    + '<label class="aviso" style="margin:0">Nombre ' + entrada('nombre', e.nombre, 170, 'maxlength="40"') + '</label>'
+    + '<label class="aviso" style="margin:0">IP o nombre ' + entrada('host', e.host, 140, 'maxlength="253"') + '</label>'
+    + '<label class="aviso" style="margin:0">Puerto ' + entrada('port', e.port, 64, 'inputmode="numeric" placeholder="502"') + '</label>'
+    + '<label class="aviso" style="margin:0" title="El de los canales que no ponen otro">Unit ID ' + entrada('unit_id', e.unit_id, 52, 'inputmode="numeric" placeholder="1"') + '</label>'
+    + '<label class="aviso" style="margin:0" title="Si no hay ninguna lectura de este equipo en este tiempo, sus sensores figuran «Sin datos»">Ventana (minutos) '
+    + entrada('ventana', e.ventana, 80, 'inputmode="numeric"') + '</label></div>'
+    + '<div class="aviso" style="margin:6px 0 2px">' + escHtml(estado) + '</div>' + error + canales
+    + '<div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">'
+    + '<button class="secundario" type="button" data-org-accion="canal-an" data-org="' + id + '">➕ Canal analógico</button>'
+    + '<button class="secundario" type="button" data-org-accion="canal-dig" data-org="' + id + '">➕ Canal digital</button>'
+    + '<button type="button" data-org-accion="guardar" data-org="' + id + '"' + (orgCambiado(o.id) ? '' : ' disabled') + '>Guardar equipo</button>'
+    + '<button class="secundario" type="button" data-org-accion="eliminar" data-org="' + id + '">Eliminar equipo</button></div></div>';
+}
+
 function orgFilaCanal(id, c, i) {
+  if (orgEdit[id].tipo === 'modbus_tcp') return orgFilaModbus(id, c, i);
   const guardado = (orgDatos.origenes.find(o => o.id === id) || { canales: [] }).canales.find(x => x.clave === c.clave);
   const ultimo = guardado && guardado.ultimo;
   const dig = c.grupo === 'entrada_digital';
@@ -17256,6 +17343,7 @@ function orgFilaCanal(id, c, i) {
 
 function pintarOrigenes() {
   ORG_LISTA.innerHTML = orgDatos.origenes.map(o => {
+    if (o.tipo === 'modbus_tcp') return orgBloqueModbus(o);
     const e = orgEdit[o.id], id = escHtml(o.id), st = o.estado || {};
     const fila = 'style="display:flex;gap:10px;flex-wrap:wrap;align-items:center"';
     let estado = !st.ultima_recepcion ? 'Todavía no llegó nada.'
@@ -17345,7 +17433,7 @@ function orgActualizarBoton(id) {
   } else if (t.dataset.campo && t.dataset.i != null) {
     const c = orgEdit[id].canales[Number(t.dataset.i)];
     if (!c) return;
-    c[t.dataset.campo] = t.value;
+    c[t.dataset.campo] = t.type === 'checkbox' ? t.checked : t.value;
     if (evento === 'change' && t.dataset.campo === 'sensor') { pintarOrigenes(); return; }   // los demás desplegables marcan «(ya asignado)»
   } else return;
   orgActualizarBoton(id);
@@ -17360,7 +17448,13 @@ ORG_LISTA.addEventListener('click', async ev => {
   if (accion === 'copiar-url') return orgCopiar(orgUrl(o), b);
   if (accion === 'copiar-curl') return orgCopiar(orgCurl(o), b);
   if (accion === 'canal-an' || accion === 'canal-dig') {
-    orgEdit[id].canales.push({ clave: '', grupo: accion === 'canal-an' ? 'entrada_analogica' : 'entrada_digital', nombre: '', factor: '', offset: '', sensor: '' });
+    const analogico = accion === 'canal-an';
+    const nuevo = { clave: '', grupo: analogico ? 'entrada_analogica' : 'entrada_digital', nombre: '', factor: '', offset: '', sensor: '' };
+    if (orgEdit[id].tipo === 'modbus_tcp') {     // la función es un desplegable (arranca en la primera); la dirección y el tipo de dato, a elegir
+      Object.assign(nuevo, { funcion: (analogico ? orgDatos.funciones_analogica : orgDatos.funciones_entrada)[0], direccion: '',
+        unit_id: '', tipo_dato: '', invertido: false });
+    }
+    orgEdit[id].canales.push(nuevo);
     return pintarOrigenes();
   }
   if (accion === 'borrar-canal') {
@@ -17371,11 +17465,17 @@ ORG_LISTA.addEventListener('click', async ev => {
     if (accion === 'guardar') {
       const e = orgEdit[id];
       estado.textContent = 'Guardando…';
+      const ventana = e.ventana.trim() === '' ? null : Number(e.ventana);
+      const comunes = c => ({ clave: c.clave.trim(), grupo: c.grupo, nombre: c.nombre,
+        factor: c.factor.trim().replace(',', '.'), offset: c.offset.trim().replace(',', '.'), sensor: c.sensor || null });
+      // Los números van como texto: uno mal escrito tiene que rechazarlo el servidor, no convertirse en vacío (= el valor de siempre).
+      const cuerpo = e.tipo === 'modbus_tcp'
+        ? { nombre: e.nombre, host: e.host.trim(), port: e.port.trim(), unit_id: e.unit_id.trim(), ventana_lectura_min: ventana,
+            canales: e.canales.map(c => ({ ...comunes(c), funcion: c.funcion, direccion: c.direccion.trim(), unit_id: c.unit_id.trim(),
+              tipo_dato: c.tipo_dato || null, invertido: !!c.invertido })) }
+        : { nombre: e.nombre, formato: e.formato, ventana_lectura_min: ventana, canales: e.canales.map(comunes) };
       await pedirJSON('/api/iot/origenes/' + encodeURIComponent(id), {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ nombre: e.nombre, formato: e.formato, ventana_lectura_min: e.ventana.trim() === '' ? null : Number(e.ventana),
-          canales: e.canales.map(c => ({ clave: c.clave.trim(), grupo: c.grupo, nombre: c.nombre,
-          factor: c.factor.trim().replace(',', '.'), offset: c.offset.trim().replace(',', '.'), sensor: c.sensor || null })) }),
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo),
       });
       orgOriginal[id] = JSON.stringify(e);      // lo guardado deja de contar como «cambiado» aunque falle la relectura
       await cargarOrigenes();
@@ -17408,8 +17508,19 @@ document.getElementById('config-iot-origenes-token').addEventListener('click', e
 
 function orgCerrarAlta() {
   document.getElementById('config-iot-origenes-nuevo').style.display = 'none';
-  ['nombre', 'ventana'].forEach(k => { document.getElementById('config-iot-origenes-nuevo-' + k).value = ''; });
+  ['nombre', 'ventana', 'host', 'port', 'unit'].forEach(k => { document.getElementById('config-iot-origenes-nuevo-' + k).value = ''; });
+  document.getElementById('config-iot-origenes-nuevo-tipo').value = 'http';
+  orgAltaSegunTipo();
 }
+// El alta pide otros datos según el tipo: formato para HTTP; IP, puerto y unit ID para Modbus.
+function orgAltaSegunTipo() {
+  const tipo = document.getElementById('config-iot-origenes-nuevo-tipo').value;
+  document.querySelectorAll('#config-iot-origenes-nuevo [data-nuevo]').forEach(el => {
+    el.style.display = el.dataset.nuevo === tipo ? '' : 'none';
+  });
+}
+document.getElementById('config-iot-origenes-nuevo-tipo').addEventListener('change', orgAltaSegunTipo);
+orgAltaSegunTipo();      // el navegador puede restaurar el desplegable en «Modbus» al recargar: los campos tienen que coincidir
 document.getElementById('config-iot-origenes-agregar').addEventListener('click', () => {
   document.getElementById('config-iot-origenes-nuevo').style.display = 'flex';
   document.getElementById('config-iot-origenes-nuevo-nombre').focus();
@@ -17421,15 +17532,20 @@ document.getElementById('config-iot-origenes-crear').addEventListener('click', a
   const ventana = document.getElementById('config-iot-origenes-nuevo-ventana').value.trim();
   estado.textContent = 'Creando…';
   try {
+    const tipo = document.getElementById('config-iot-origenes-nuevo-tipo').value;
+    const dato = k => document.getElementById('config-iot-origenes-nuevo-' + k).value.trim();
+    const cuerpo = { tipo, nombre: document.getElementById('config-iot-origenes-nuevo-nombre').value,
+      ventana_lectura_min: ventana === '' ? null : Number(ventana) };
+    if (tipo === 'modbus_tcp') Object.assign(cuerpo, { host: dato('host'), port: dato('port'), unit_id: dato('unit') });
+    else cuerpo.formato = dato('formato');
     const r = await pedirJSON('/api/iot/origenes', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ nombre: document.getElementById('config-iot-origenes-nuevo-nombre').value,
-        formato: document.getElementById('config-iot-origenes-nuevo-formato').value, ventana_lectura_min: ventana === '' ? null : Number(ventana) }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo),
     });
-    orgToken = { nombre: r.origen.nombre, token: r.token };
+    if (r.token) orgToken = { nombre: r.origen.nombre, token: r.token };     // solo los equipos HTTP tienen token
     orgCerrarAlta();
     await cargarOrigenes();
-    estado.textContent = '✔ Equipo creado. Copiá el token de arriba: no se vuelve a mostrar.';
+    estado.textContent = r.token ? '✔ Equipo creado. Copiá el token de arriba: no se vuelve a mostrar.'
+      : '✔ Equipo creado. Agregale los canales que querés leer.';
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
   }

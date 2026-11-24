@@ -2283,7 +2283,9 @@ y no se guarda: sin `iot_origenes.json` TODO se comporta como antes (lo fijan la
   * **No hay máximo de antigüedad para la hora**, salvo una: **anterior a la creación del origen** se reemplaza por la del servidor (un ESP32 sin NTP manda 1970 y
     quedaría «sin datos» con la tarjeta diciendo que recibe bien). Un reloj roto que cae entre la creación y hoy deja lecturas con fecha vieja (el «último valor» no
     se rompe, se ordena por fecha).
-  * **Bloqueo por IP**: la clave es una tupla `("iot", ip, origen)` (el login usa texto: no puede llenarla) y por origen (un ChirpStack atiende varios desde una IP). Las cabeceras
+  * **Bloqueo por IP**: la clave es una tupla `("iot", ip, balde)` (el login usa texto: no puede llenarla); el balde es `crc32(id pedido) % 64`, exista o no el origen. **No** se clavea por «origen
+    existente»: así probar ids distinguiría los que existen (uno inexistente bloquearía distinto), y con ids inventados la tabla crecería sin límite. Un ChirpStack que atiende varios
+    orígenes casi nunca comparte balde (1 de 64). Las cabeceras
     `CF-Connecting-IP`/`X-Forwarded-For` solo se creen si la conexión viene de `127.0.0.1` (el túnel de Cloudflare corre en la PC); un equipo de la LAN se identifica por su
     IP real. **El login (`auth.ip_cliente`) sigue creyéndolas siempre**: un equipo de la LAN puede bloquear a otro de LOGIN poniendo esa cabecera. Es de antes de esta etapa.
   * **ChirpStack: una Application = un origen.** LactIA ignora `deviceInfo`: dos nodos que mandan las mismas claves en la misma Application se pisan (el sensor muestra el último
@@ -2302,6 +2304,43 @@ Un ESP32 dentro de la red del tambo tiene que apuntar a la IP de la PC del servi
 `tests.test_iot_origenes_api`, más las IoT de siempre (`test_iot_sensores`, `test_iot_digitales`, `test_iot_analogicas`, `test_iot_estados`, `test_iot_avisos`,
 `test_iot_alarmas_tablero`, `test_iot_vumetros`, `test_iot_mapa`, `test_iot_lavado_mapa`, `test_iot_canales`) y `test_ups_api`.
 **Reiniciar `iot_lavado.py` no hace falta para RECIBIR datos** (el ingreso lo hace el servidor web) pero sí para que el gateway tome un catálogo de sensores nuevo; no hacerlo en pleno lavado.
+
+## Más de un equipo Modbus: otros PLC o gateways, solo lectura (23/11/2026)
+
+Etapa 2 de 4 de `docs/superpowers/specs/2026-11-23-iot-origenes-design.md` (plan: `docs/superpowers/plans/2026-11-23-iot-origenes-etapa-2.md`). El tambo declara en
+⚙ Configuración › 🔌 Entradas/Salidas (la misma tarjeta de los equipos HTTP) otros equipos Modbus TCP que **LactIA consulta**: IP, puerto (502), unit ID (1) y, por canal, función
+(`discrete_input`, `coil`, `input_register`, `holding_register`), dirección (también en notación Modicon: 10001, 30001, 40001), unit ID propio, tipo de dato (analógicos: `uint16`,
+`int16`, `float32_ab_cd`), factor/offset, contacto NC y sensor. Es un segundo `tipo` (`modbus_tcp`) dentro de `iot_origenes.json`; sin ninguno guardado el gateway hace las mismas
+llamadas de siempre al M300 (lo fija `tests.test_iot_lavado_mapa`). **Solo entradas**: un canal `salida` se rechaza; el lavado automático, la voz y la pantalla ESP32 siguen siendo del principal.
+
+  * **`iot_lavado.ConexionesModbus`**: un cliente por equipo, en `main` DESPUÉS del ciclo del principal. Relee la lista en cada ciclo (equipo nuevo, canal que se saca, host o puerto
+    cambiado: se toman sin reiniciar y el cliente viejo se cierra). Lee todo lo que el equipo declara. Escribe en las mismas tablas que el principal (`digitales_estado`, `eventos_di`,
+    `lecturas_sensor`) con la clave `<id>.<canal>`, así que panel, historial, avisos y la ventana de «Sin datos» por origen no cambian.
+  * **Un equipo caído o lento no frena al principal** (el ciclo de equipos corre en el mismo hilo, antes del `sleep` de 3 s: lavado, voz y pulsos esperan). Topes técnicos:
+    `TIMEOUT_ORIGEN_S` = 2 (con `retries=0`), `PRESUPUESTO_ORIGEN_S` = 4 por equipo y por ciclo (lo que no se llegó a leer espera al siguiente), `REINTENTO_ORIGEN_CAIDO_S` = 30.
+    Un canal que no contestó a tiempo se deja en paz el doble (60 s), así cada reintento del equipo prueba canales distintos y un unit ID muerto detrás de un gateway no se paga
+    en cada ciclo. **Medido** (revisión final): contra un socket que ACEPTA y nunca contesta, 5 canales, el ciclo se bloqueaba 20 s (4 s por canal: `retries=1` × 2 s, y el cliente
+    reconecta solo); con los topes, 4 s una vez cada 30 s y 0 s el resto. Contra una IP sin respuesta, ~2 s cada 30 s. Un canal que contesta error («Illegal Data Address») no es un
+    timeout: se saltea sin tumbar a los demás ni tomarse por 0/apagado. Si NINGÚN canal contesta el equipo queda «caído» y su error dice por qué: «rechaza todas las lecturas: revisá
+    direcciones, funciones y unit ID» (está vivo, lo que no coincide es el mapa) o «no respondió a ninguna lectura» (red). Error y fecha van a `origenes_estado` solo cuando el texto cambia
+    (y se cortan a 300); un host o puerto cambiado borra el error viejo. Un equipo que falta en la lista se cierra a la segunda ausencia seguida (`cargar()` puede devolver [] un instante).
+    Con 32 canales muertos y un equipo «vivo» el costo sigue acotado por el presupuesto (4 s por ciclo, mientras se van poniendo en espera), no por la cantidad de canales.
+  * **Un equipo, un origen**: dos con el mismo host y puerto (o uno con los del principal, `iot_conexion`) se rechazan; para varios unit ID de un gateway se usa el unit ID de cada canal.
+    Dos canales del mismo equipo en el mismo punto (unit ID efectivo + función + dirección) también. Host `[A-Za-z0-9._-]{1,253}` (sin `http://` ni puerto: IPv6 literal no).
+  * `iot_lavado._conectar_db` ahora crea `origenes_estado`/`origenes_ultimo` y tiene `anotar_ultimo` (antes en `iot_ingreso`, que los usa de ahí). Un equipo Modbus nunca recibe ingreso HTTP:
+    su id contesta el mismo 403 que uno inexistente y no tiene token.
+  * **Defecto propio hallado al extender la etapa 3**: el bloqueo por IP del ingreso HTTP se clavea ahora por balde del id (ver arriba), no por origen existente (distinguía existentes de inexistentes).
+  * **Límites**: único orden de bytes del decimal de 32 bits, `AB CD` (el del M300); otros órdenes o enteros de 32 bits necesitan un tipo de dato más. Los canales analógicos no tienen la
+    calibración 4-20 mA del principal: si el equipo da 4-20 mA en un registro, el factor y el offset los calcula el tambo. La ventana es obligatoria (sin defecto) y el equipo se atiende en serie
+    con el principal. Un `pymodbus` imprime en consola «Connection to … failed: timed out / Repeating…» al reintentar un equipo caído: es normal. **No hay botón «Cargar mapa PUSR M300»**: el
+    mapa del principal sigue en su tabla de la etapa 1.
+  * **Menores de la revisión, sin resolver**: borrar un equipo justo mientras `iot_lavado` lo está leyendo puede dejar filas huérfanas en `origenes_estado`/`digitales_estado` (ventana de
+    milisegundos); un nombre y su IP no se reconocen como el mismo equipo (no se resuelven nombres al guardar; sí `localhost`/127.0.0.1, mayúsculas, punto final y ceros de más);
+    `anotar_ultimo` hace un `commit` por equipo cada 3 s (igual que `analogicas_crudo` del principal); un canal que falla siempre con los demás bien solo se ve como «—» en «Último valor»;
+    **si se vuelve al código de la etapa 3 después de guardar equipos Modbus, esos equipos se saltean al leer y el próximo guardado reescribe `iot_origenes.json` SIN ellos** (copiar el archivo antes);
+    el ejemplo en gris del unit ID de cada canal no sigue al unit ID del equipo mientras se edita.
+  * **Verificado contra un servidor Modbus de verdad** (`pymodbus`, valores que cambian, equipo apagado y de vuelta, punto inexistente), y la pantalla en el navegador; **NO contra un equipo físico**.
+  * **Pruebas**: `tests.test_iot_origenes_modbus`, `tests.test_iot_modbus_poller`, `tests.test_iot_origenes_modbus_api` (cada una en su comando) más las de la etapa 3 y las IoT de siempre.
 
 ## Lavado Automático: secuenciador de etapas real (29/08/2026)
 

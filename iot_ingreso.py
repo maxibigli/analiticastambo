@@ -40,25 +40,7 @@ class IngresoError(ValueError):
 
 
 def _conectar() -> sqlite3.Connection:
-    con = iot_lavado._conectar_db(RUTA_DB)
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS origenes_estado (
-            origen TEXT PRIMARY KEY,
-            ultima_recepcion TEXT NOT NULL,
-            recibidas INTEGER NOT NULL DEFAULT 0,
-            ignorados INTEGER NOT NULL DEFAULT 0,
-            ultimo_error TEXT,
-            error_fecha TEXT
-        )
-    """)
-    con.execute("""
-        CREATE TABLE IF NOT EXISTS origenes_ultimo (
-            canal TEXT PRIMARY KEY,
-            fecha_hora TEXT NOT NULL,
-            valor REAL NOT NULL
-        )
-    """)
-    return con
+    return iot_lavado._conectar_db(RUTA_DB)      # las tablas de estado de los orígenes las crea el gateway, que también las escribe
 
 
 def _marca(momento: datetime) -> str:
@@ -131,22 +113,13 @@ def _extraer(origen: dict, cuerpo, evento):
     return lecturas, cuerpo.get("hora")
 
 
-def _anotar_ultimo(con, canal: str, marca: str, valor: float) -> None:
-    # El «último valor» nunca retrocede: una lectura vieja que llega tarde no pisa a una más nueva.
-    con.execute("""
-        INSERT INTO origenes_ultimo (canal, fecha_hora, valor) VALUES (?, ?, ?)
-        ON CONFLICT(canal) DO UPDATE SET fecha_hora = excluded.fecha_hora, valor = excluded.valor
-        WHERE excluded.fecha_hora >= origenes_ultimo.fecha_hora
-    """, (canal, marca, valor))
-
-
 def _analogica(con, origen_id: str, canal: dict, crudo: float, hora: datetime) -> bool:
     valor = crudo * canal["factor"] + canal["offset"]
     if not math.isfinite(valor):
         return False
     valor = round(valor, 6)
     marca = _marca(hora)
-    _anotar_ultimo(con, iot_origenes.canal_global(origen_id, canal["clave"]), marca, valor)
+    iot_lavado.anotar_ultimo(con, iot_origenes.canal_global(origen_id, canal["clave"]), marca, valor)
     if canal["sensor"]:
         margen = timedelta(seconds=INTERVALO_GUARDADO_ANALOGICAS_S)
         cerca = con.execute("SELECT 1 FROM lecturas_sensor WHERE sensor = ? AND fecha_hora > ? AND fecha_hora < ? LIMIT 1",
@@ -167,7 +140,7 @@ def _digital(con, origen_id: str, canal: dict, activo: bool, hora: datetime, inv
     con.execute("INSERT OR REPLACE INTO digitales_estado (canal, fecha_hora, estado) VALUES (?, ?, ?)", (glob, marca, estado))
     if previo is None or previo[1] != estado:
         con.execute("INSERT INTO eventos_di (canal, fecha_hora, estado) VALUES (?, ?, ?)", (glob, marca, estado))
-    _anotar_ultimo(con, glob, marca, 1.0 if activo else 0.0)
+    iot_lavado.anotar_ultimo(con, glob, marca, 1.0 if activo else 0.0)
     return True
 
 
@@ -201,7 +174,7 @@ def recibir(origen_id: str, cuerpo, evento: str = None, ahora: datetime = None) 
     tiene la forma del formato del origen (y deja el error en su estado)."""
     ahora = (ahora or datetime.now()).replace(microsecond=0)
     origen = iot_origenes.obtener(origen_id)
-    if origen is None:
+    if origen is None or origen["tipo"] != "http":      # un equipo Modbus no recibe datos por HTTP: LactIA lo consulta
         raise IngresoError("No existe ese origen.")
     try:
         lecturas, hora_cruda = _extraer(origen, cuerpo, evento)
@@ -266,7 +239,9 @@ def estado(origen_id: str) -> dict:
         con.close()
     if fila is None:
         return {"ultima_recepcion": None, "recibidas": None, "ignorados": None, "ultimo_error": None, "error_fecha": None}
-    return dict(zip(("ultima_recepcion", "recibidas", "ignorados", "ultimo_error", "error_fecha"), fila))
+    datos = dict(zip(("ultima_recepcion", "recibidas", "ignorados", "ultimo_error", "error_fecha"), fila))
+    datos["ultima_recepcion"] = datos["ultima_recepcion"] or None      # '' = un equipo Modbus que todavía no leyó nada
+    return datos
 
 
 def ultimo_de_canal(origen_id: str, clave: str):

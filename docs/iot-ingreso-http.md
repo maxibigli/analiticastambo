@@ -1,5 +1,7 @@
 # Mandar lecturas a LactIA por HTTP (ESP32, LoRaWAN)
 
+> Este documento es de los equipos que **mandan** sus datos. Un PLC o gateway que **responde por Modbus TCP** no usa nada de esto: se carga en la misma tarjeta con el tipo «Responde por Modbus TCP» y LactIA lo consulta (ver `INSTALL.md`).
+
 Para quien programa el equipo (un ESP32, un nodo LoRaWAN detrás de ChirpStack). El equipo **manda** sus lecturas; LactIA las muestra en
 **Monitoreo IoT** como cualquier otro sensor, con su historial, colores y avisos.
 

@@ -16,6 +16,7 @@ from flask import (Flask, Response, jsonify, make_response, redirect,
 import datetime
 import hmac
 import sqlite3
+import zlib
 
 import os
 
@@ -91,9 +92,9 @@ import simulador
 import tablero
 import tambos
 import ups_registro
-import telegram_bot
 import informes_catalogo
 import informes_motor
+import telegram_bot
 import whatsapp
 import whatsapp_ia
 from consultas import CONSULTAS
@@ -3523,14 +3524,15 @@ def api_iot_ingreso(origen_id):
     `chirpstack`, cuyo servidor puede no dejar poner cabeceras propias). El token no se loguea ni se devuelve."""
     from werkzeug.exceptions import RequestEntityTooLarge
     origen = iot_origenes.obtener(origen_id)
-    # Contador propio (una tupla: el login usa texto y no puede llenarlo) por IP Y por origen: un servidor LoRaWAN que atiende
-    # varios orígenes es una sola IP, y un token viejo en uno no debe frenar a los otros. Un origen que no existe comparte
-    # una sola clave por IP: así probar ids inventados no agranda la tabla.
-    clave_intentos = ("iot", _ip_para_el_bloqueo(), origen["id"] if origen else None)
+    # Contador propio (una tupla: el login usa texto y no puede llenarlo) por IP y por «balde» del id: un servidor LoRaWAN que
+    # atiende varios orígenes es una sola IP, y un token viejo en uno no debe frenar a los otros. El balde sale del id PEDIDO,
+    # exista o no (un origen inexistente se comporta igual que uno real: si no, probando ids se vería cuáles existen) y son
+    # solo 64 por IP (probar miles de ids no agranda la tabla sin límite).
+    clave_intentos = ("iot", _ip_para_el_bloqueo(), zlib.crc32(origen_id.encode("utf-8")) % 64)
     if auth.login_bloqueado(clave_intentos):
         return jsonify({"error": "Demasiados intentos con un token incorrecto. Esperá unos minutos."}), 429
     candidato = request.headers.get("X-Token", "").strip()
-    if not candidato and origen is not None and origen["formato"] == "chirpstack":
+    if not candidato and origen is not None and origen.get("formato") == "chirpstack":
         candidato = request.args.get("token", "").strip()
     if not iot_origenes.token_valido(origen_id, candidato):
         auth.registrar_intento_fallido(clave_intentos)
@@ -3570,8 +3572,9 @@ def _origen_para_pantalla(o: dict) -> dict:
     """Un origen con lo que la pantalla muestra: nunca el hash del token. `ultimo` es lo último que llegó a cada canal."""
     canales = [{**c, "ultimo": iot_ingreso.ultimo_de_canal(o["id"], c["clave"])} for c in o["canales"]]
     resto = {k: v for k, v in o.items() if k not in ("token_hash", "canales")}
-    return {**resto, "url_ingreso": f"/api/iot/ingreso/{o['id']}", "canales": canales,
-            "estado": iot_ingreso.estado(o["id"])}
+    # Solo los equipos que MANDAN sus datos por HTTP tienen una dirección de ingreso; uno Modbus lo consulta LactIA.
+    ingreso = {"url_ingreso": f"/api/iot/ingreso/{o['id']}"} if o["tipo"] == "http" else {}
+    return {**resto, **ingreso, "canales": canales, "estado": iot_ingreso.estado(o["id"])}
 
 
 def _cuerpo_objeto():
@@ -3588,17 +3591,27 @@ def api_iot_origenes_listar():
                       "ventana_lectura_min": iot_origenes.VENTANA_PRINCIPAL_MIN},
         "origenes": [_origen_para_pantalla(o) for o in iot_origenes.cargar()],
         "sensores_analogicos": [{"clave": s["clave"], "label": s["label"], "unidad": s["unidad"]}
-                                for s in iot_sensores.analogicos()]})
+                                for s in iot_sensores.analogicos()],
+        "funciones_entrada": list(iot_mapa.FUNCIONES_ENTRADA), "funciones_analogica": list(iot_origenes.FUNCIONES_ANALOGICA),
+        "tipos_dato": list(iot_origenes.TIPOS_DATO), "puerto_defecto": iot_origenes.PUERTO_DEFECTO,
+        "unit_id_defecto": iot_origenes.UNIT_ID_DEFECTO})
 
 
 @app.post("/api/iot/origenes")
 @auth.requiere_rol("admin")
 def api_iot_origenes_crear():
-    """Alta de un origen. Devuelve el token UNA vez: en disco solo queda su hash."""
+    """Alta de un origen. Uno HTTP devuelve el token UNA vez (en disco solo queda su hash); uno Modbus no tiene token."""
     cuerpo = _cuerpo_objeto()
     if cuerpo is None:
         return jsonify({"error": "Formato inválido."}), 400
+    tipo = cuerpo.get("tipo") or "http"
     try:
+        if tipo == "modbus_tcp":
+            origen = iot_origenes.crear_modbus(cuerpo.get("nombre"), cuerpo.get("host"), cuerpo.get("port"),
+                                               cuerpo.get("unit_id"), cuerpo.get("ventana_lectura_min"))
+            return jsonify({"origen": _origen_para_pantalla(origen)})
+        if tipo != "http":
+            raise ValueError(f"El tipo de origen tiene que ser «http» o «modbus_tcp» (llegó {tipo!r}).")
         origen, token = iot_origenes.crear(cuerpo.get("nombre"), cuerpo.get("formato"), cuerpo.get("ventana_lectura_min"))
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
@@ -3611,9 +3624,15 @@ def api_iot_origenes_guardar(origen_id):
     cuerpo = _cuerpo_objeto()
     if cuerpo is None:
         return jsonify({"error": "Formato inválido."}), 400
+    actual = iot_origenes.obtener(origen_id)
     try:
-        iot_origenes.guardar_origen(origen_id, cuerpo.get("nombre"), cuerpo.get("formato"), cuerpo.get("ventana_lectura_min"),
-                                    cuerpo.get("canales"), **_contexto_de_origenes())
+        if actual is not None and actual["tipo"] == "modbus_tcp":
+            iot_origenes.guardar_modbus(origen_id, cuerpo.get("nombre"), cuerpo.get("host"), cuerpo.get("port"),
+                                        cuerpo.get("unit_id"), cuerpo.get("ventana_lectura_min"), cuerpo.get("canales"),
+                                        **_contexto_de_origenes())
+        else:
+            iot_origenes.guardar_origen(origen_id, cuerpo.get("nombre"), cuerpo.get("formato"),
+                                        cuerpo.get("ventana_lectura_min"), cuerpo.get("canales"), **_contexto_de_origenes())
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify({"ok": True})
@@ -6480,25 +6499,6 @@ def api_agente_preguntar():
     return jsonify(resultado)
 
 
-# ---------------------------------------------------------------------------
-# "Preguntale a IA" por WhatsApp: números autorizados (⚙ Configuración,
-# whatsapp_ia.py) le preguntan directo al mismo agente de /api/agente/preguntar
-# -- por eso funciona en tambos de producción, a diferencia del SQL-a-ciegas
-# de /api/preguntar. Sin sesión/login (Twilio llama esta URL directo, nadie
-# inició sesión), así que la seguridad es: (1) se valida que el pedido venga
-# realmente de Twilio (firma X-Twilio-Signature -- si no, cualquiera que se
-# entere de la URL podría fingir ser un número autorizado) y (2) el número de
-# origen tiene que estar en la lista de autorizados, cada uno atado a UN
-# tambo fijo.
-#
-# La firma se valida con la URL PÚBLICA fija, no con request.url: la app
-# corre detrás de Cloudflare Tunnel sin ProxyFix, así que request.url ve la
-# URL interna (http://127.0.0.1:5310/...), no la que Twilio realmente llamó
-# -- si se usara esa, la firma nunca daría válida.
-# ---------------------------------------------------------------------------
-_WEBHOOK_WHATSAPP_URL = os.environ.get("LACTIA_URL_PUBLICA", "https://www.analiticastambo.com").rstrip("/") \
-    + "/webhook/whatsapp"
-_WEBHOOK_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webhook_whatsapp.log")
 # ---------------------------------------------------------------- informes personalizables (Fase 0)
 
 @app.get("/api/informes/campos")
@@ -6537,6 +6537,25 @@ def api_informes_ejecutar():
     return jsonify(r)
 
 
+# ---------------------------------------------------------------------------
+# "Preguntale a IA" por WhatsApp: números autorizados (⚙ Configuración,
+# whatsapp_ia.py) le preguntan directo al mismo agente de /api/agente/preguntar
+# -- por eso funciona en tambos de producción, a diferencia del SQL-a-ciegas
+# de /api/preguntar. Sin sesión/login (Twilio llama esta URL directo, nadie
+# inició sesión), así que la seguridad es: (1) se valida que el pedido venga
+# realmente de Twilio (firma X-Twilio-Signature -- si no, cualquiera que se
+# entere de la URL podría fingir ser un número autorizado) y (2) el número de
+# origen tiene que estar en la lista de autorizados, cada uno atado a UN
+# tambo fijo.
+#
+# La firma se valida con la URL PÚBLICA fija, no con request.url: la app
+# corre detrás de Cloudflare Tunnel sin ProxyFix, así que request.url ve la
+# URL interna (http://127.0.0.1:5310/...), no la que Twilio realmente llamó
+# -- si se usara esa, la firma nunca daría válida.
+# ---------------------------------------------------------------------------
+_WEBHOOK_WHATSAPP_URL = os.environ.get("LACTIA_URL_PUBLICA", "https://www.analiticastambo.com").rstrip("/") \
+    + "/webhook/whatsapp"
+_WEBHOOK_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "webhook_whatsapp.log")
 
 
 def _log_webhook(mensaje: str):

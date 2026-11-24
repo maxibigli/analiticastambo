@@ -19,6 +19,7 @@ Corre como proceso aparte, continuo (no es parte de la app Flask):
     python iot_lavado.py
 """
 import datetime
+import math
 import sqlite3
 import struct
 import subprocess
@@ -30,6 +31,7 @@ import iot_analogicas
 import iot_canales
 import iot_conexion
 import iot_mapa
+import iot_origenes
 import iot_sensores
 import lavado_programa
 import voz_comandos
@@ -42,6 +44,12 @@ INTERVALO_GUARDADO_ANALOGICAS_S = 30
 INTERVALO_LATIDO_DI_S = 30    # cada cuánto se anota que una entrada digital sigue viva aunque no haya cambiado
 INTERVALO_RECONEXION_S = 5
 INTENTOS_APAGADO_ARRANQUE = 3   # ver apagar_actuadores_voz_al_arrancar
+# Equipos Modbus adicionales (ver `ConexionesModbus`). Topes técnicos, no umbrales del tambo: un equipo apagado no puede frenar el
+# ciclo del equipo principal (que se atiende primero), así que la conexión corta rápido y no se reintenta en cada vuelta de 3 s.
+REINTENTO_ORIGEN_CAIDO_S = 30
+TIMEOUT_ORIGEN_S = 2
+PRESUPUESTO_ORIGEN_S = 2 * TIMEOUT_ORIGEN_S    # lo máximo que un equipo le puede quitar a un ciclo
+MAX_ERROR_ORIGEN = 300
 
 # Canal lógico -> (dirección Modbus 0-based, invertido?). "10001"/"10002" en
 # la UI del gateway = direcciones 0/1 acá. El M300 tiene 8 DI en total; solo
@@ -138,8 +146,36 @@ def _conectar_db(ruta: str = RUTA_DB) -> sqlite3.Connection:
             raw REAL NOT NULL
         )
     """)
+    # Lo que se sabe de cada origen (equipo Modbus adicional o equipo HTTP) y lo último que llegó a cada uno de sus canales:
+    # lo escriben este proceso (equipos Modbus) y el ingreso HTTP de la app (`iot_ingreso`), y lo lee la pantalla de orígenes.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS origenes_estado (
+            origen TEXT PRIMARY KEY,
+            ultima_recepcion TEXT NOT NULL,
+            recibidas INTEGER NOT NULL DEFAULT 0,
+            ignorados INTEGER NOT NULL DEFAULT 0,
+            ultimo_error TEXT,
+            error_fecha TEXT
+        )
+    """)
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS origenes_ultimo (
+            canal TEXT PRIMARY KEY,
+            fecha_hora TEXT NOT NULL,
+            valor REAL NOT NULL
+        )
+    """)
     con.commit()
     return con
+
+
+def anotar_ultimo(con: sqlite3.Connection, canal: str, marca: str, valor: float) -> None:
+    """Lo último que llegó a un canal de un origen. Nunca retrocede: una lectura vieja que llega tarde no pisa a una más nueva."""
+    con.execute("""
+        INSERT INTO origenes_ultimo (canal, fecha_hora, valor) VALUES (?, ?, ?)
+        ON CONFLICT(canal) DO UPDATE SET fecha_hora = excluded.fecha_hora, valor = excluded.valor
+        WHERE excluded.fecha_hora >= origenes_ultimo.fecha_hora
+    """, (canal, marca, valor))
 
 
 def _leer_estado(client: ModbusTcpClient, direccion: int, invertido: bool,
@@ -689,6 +725,198 @@ def _anunciar_voz(texto: str):
         pass
 
 
+def leer_analogica(client, funcion: str, direccion: int, unit_id: int, tipo_dato: str):
+    """El número CRUDO de un canal analógico de un equipo Modbus adicional, o None si no hay lectura que valga: error del equipo,
+    respuesta con menos registros de los pedidos, excepción (cierra el cliente, como `_leer_estado`, para forzar la reconexión),
+    NaN o infinito. `uint16` e `int16` son un registro; `float32_ab_cd` son dos, el alto primero."""
+    cantidad = 2 if tipo_dato == "float32_ab_cd" else 1
+    try:
+        if funcion == "holding_register":
+            r = client.read_holding_registers(address=direccion, count=cantidad, device_id=unit_id)
+        else:
+            r = client.read_input_registers(address=direccion, count=cantidad, device_id=unit_id)
+        if r is None or r.isError() or len(r.registers) < cantidad:
+            return None
+        regs = [int(x) for x in r.registers[:cantidad]]
+    except Exception:  # noqa: BLE001
+        client.close()
+        return None
+    try:
+        if tipo_dato == "float32_ab_cd":
+            valor = struct.unpack(">f", struct.pack(">HH", *regs))[0]
+        elif tipo_dato == "int16":
+            valor = struct.unpack(">h", struct.pack(">H", regs[0]))[0]
+        else:
+            valor = struct.unpack(">H", struct.pack(">H", regs[0]))[0]
+    except struct.error:
+        return None
+    return float(valor) if math.isfinite(valor) else None
+
+
+class _EquipoModbus:
+    """Lo que `ConexionesModbus` recuerda de cada equipo entre ciclos."""
+
+    def __init__(self, host, port, client):
+        self.host, self.port, self.client = host, port, client      # `client` es None hasta que la fábrica lo entrega
+        self.anteriores, self.ultimo_latido, self.ultimo_guardado = {}, {}, {}
+        self.proximo_intento = None          # None = leerlo en este ciclo
+        self.canal_hasta = {}                # canal -> hasta cuándo se lo deja en paz (lo último que hizo fue no contestar a tiempo)
+        self.ultimo_error = None             # el texto que ya está escrito en origenes_estado
+        self.ultima_recepcion = None         # la última vez que se escribió `ultima_recepcion`
+        self.ausente = 0                     # ciclos seguidos en que el equipo no figuró en la lista
+
+
+class ConexionesModbus:
+    """Los equipos Modbus que el tambo agregó (`iot_origenes`, tipo `modbus_tcp`), cada uno con SU cliente. El equipo principal no
+    pasa por acá: sigue con el suyo, en `main`, y se atiende primero.
+
+    En cada `ciclo` se relee la lista (un equipo nuevo, un canal que se saca, un host o puerto cambiado se toman sin reiniciar).
+    Se lee todo lo que el equipo declara. **Lo que cuesta un equipo que no contesta está acotado**, porque este ciclo corre en el
+    mismo hilo que el del principal (lavado, voz, pulsos):
+      * cada equipo tiene un tope de tiempo por ciclo (`PRESUPUESTO_ORIGEN_S`): lo que no llegó a leerse espera al ciclo siguiente;
+      * un canal que no contestó a tiempo (el cliente se cae esperando) se deja en paz el DOBLE de `REINTENTO_ORIGEN_CAIDO_S` (así cada reintento del equipo prueba canales distintos): un unit ID que nadie
+        atiende detrás de un gateway no se paga en cada ciclo;
+      * un equipo que no conecta, o en el que NINGÚN canal contesta, queda «caído»: su error y la fecha van a `origenes_estado` y no se
+        reintenta hasta `REINTENTO_ORIGEN_CAIDO_S`. Uno caído no frena a los demás.
+    Un equipo que no figura en la lista se cierra recién a la segunda ausencia seguida: `iot_origenes.cargar()` devuelve [] un instante si
+    Windows tiene el archivo tomado, y olvidar los equipos anotaría un cambio falso por cada canal digital."""
+
+    def __init__(self, fabrica=None):
+        self.fabrica = fabrica or (lambda host, port: ModbusTcpClient(host, port=port, timeout=TIMEOUT_ORIGEN_S, retries=0))
+        self.equipos = {}
+
+    def ciclo(self, con: sqlite3.Connection, origenes: list, ahora: datetime.datetime = None) -> None:
+        """`ahora` solo se pasa en las pruebas: si no, cada equipo toma la hora al empezar (el ciclo de uno lento puede tardar)."""
+        vigentes = {o["id"] for o in origenes if o["canales"]}
+        for id_ in [i for i in self.equipos if i not in vigentes]:
+            self.equipos[id_].ausente += 1
+            if self.equipos[id_].ausente >= 2:
+                self._cerrar(id_)
+        for o in origenes:
+            if o["id"] not in vigentes:
+                continue
+            ahora_equipo = ahora or datetime.datetime.now()
+            try:
+                self._equipo(con, o, ahora_equipo)
+            except Exception as e:  # noqa: BLE001  -- lo que le pase a un equipo no puede frenar a los demás
+                print(f"{ahora_equipo.isoformat(timespec='seconds')}  equipo Modbus {o['id']}: {e}")
+                self._caido(con, o, self.equipos.get(o["id"]), ahora_equipo, f"Error leyendo el equipo: {e}")
+
+    def cerrar_todo(self) -> None:
+        for id_ in list(self.equipos):
+            self._cerrar(id_)
+
+    def _cerrar(self, id_: str) -> None:
+        equipo = self.equipos.pop(id_, None)
+        if equipo is not None and equipo.client is not None:
+            try:
+                equipo.client.close()
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _equipo(self, con, o: dict, ahora: datetime.datetime) -> None:
+        eq = self.equipos.get(o["id"])
+        if eq is not None and (eq.host, eq.port) != (o["host"], o["port"]):
+            self._cerrar(o["id"])
+            eq = None
+            # El error de la dirección vieja ya no vale: si la nueva anda, la tarjeta no puede seguir diciendo «No se pudo conectar a <la vieja>».
+            con.execute("UPDATE origenes_estado SET ultimo_error = NULL, error_fecha = NULL WHERE origen = ?", (o["id"],))
+            con.commit()
+        if eq is None:
+            eq = self.equipos[o["id"]] = _EquipoModbus(o["host"], o["port"], None)
+        eq.ausente = 0
+        if eq.proximo_intento is not None and ahora < eq.proximo_intento:
+            return
+        if eq.client is None:
+            eq.client = self.fabrica(o["host"], o["port"])       # si explota, `ciclo` lo deja caído con su reintento programado
+        if not eq.client.connected:
+            eq.client.connect()
+        if not eq.client.connected:
+            self._caido(con, o, eq, ahora, f"No se pudo conectar a {o['host']}:{o['port']}")
+            return
+        contestaron, intentados, rechazos = self._leer_canales(con, o, eq, ahora)
+        if intentados == 0:
+            return                       # todos los canales están en espera: no hay nada nuevo que decir del equipo
+        if contestaron == 0:
+            eq.client.close()
+            if rechazos == intentados:   # está vivo y contesta: lo que no coincide es lo que se le pide
+                texto = "El equipo contesta pero rechaza todas las lecturas: revisá las direcciones, las funciones y el unit ID"
+            else:
+                texto = "El equipo no respondió a ninguna lectura"
+            self._caido(con, o, eq, ahora, texto)
+            return
+        eq.proximo_intento, eq.ultimo_error = None, None
+        if eq.ultima_recepcion is None or (ahora - eq.ultima_recepcion).total_seconds() >= INTERVALO_LATIDO_DI_S:
+            con.execute("""
+                INSERT INTO origenes_estado (origen, ultima_recepcion) VALUES (?, ?)
+                ON CONFLICT(origen) DO UPDATE SET ultima_recepcion = excluded.ultima_recepcion
+            """, (o["id"], ahora.isoformat(timespec="seconds")))
+            con.commit()
+            eq.ultima_recepcion = ahora
+
+    def _caido(self, con, o: dict, eq, ahora: datetime.datetime, texto: str) -> None:
+        texto = texto[:MAX_ERROR_ORIGEN]
+        if eq is not None:
+            eq.proximo_intento = ahora + datetime.timedelta(seconds=REINTENTO_ORIGEN_CAIDO_S)
+            if eq.ultimo_error == texto:
+                return                       # el mismo error: no se reescribe ni se cambia su fecha
+            eq.ultimo_error = texto
+        con.execute("""
+            INSERT INTO origenes_estado (origen, ultima_recepcion, ultimo_error, error_fecha) VALUES (?, '', ?, ?)
+            ON CONFLICT(origen) DO UPDATE SET ultimo_error = excluded.ultimo_error, error_fecha = excluded.error_fecha
+        """, (o["id"], texto, ahora.isoformat(timespec="seconds")))
+        con.commit()
+
+    def _leer_canales(self, con, o: dict, eq, ahora: datetime.datetime) -> tuple:
+        """Lee los canales del equipo y devuelve (contestaron, intentados, rechazos). Uno que no contesta se saltea (no se toma por
+        apagado ni por 0). Si el cliente quedó caído después de un pedido fue porque el equipo no contestó a tiempo (o cortó): ese canal
+        espera el doble de `REINTENTO_ORIGEN_CAIDO_S`. Un error del equipo con el cliente vivo (una dirección que no tiene) es un `rechazo`."""
+        marca = ahora.isoformat(timespec="seconds")
+        invertidas = entradas_invertidas()
+        inicio = time.monotonic()
+        contestaron = intentados = rechazos = 0
+        for c in o["canales"]:
+            glob = iot_origenes.canal_global(o["id"], c["clave"])
+            if eq.canal_hasta.get(glob) is not None and ahora < eq.canal_hasta[glob]:
+                continue
+            if time.monotonic() - inicio >= PRESUPUESTO_ORIGEN_S:
+                break                    # el resto, al ciclo siguiente: el principal no puede esperar a un equipo lento
+            intentados += 1
+            unit_id = c["unit_id"] or o["unit_id"]
+            nc = False
+            if c["grupo"] == "entrada_digital":
+                nc = c["invertido"] != invertidas.get(glob, False)
+                resultado = _leer_estado(eq.client, c["direccion"], nc, c["funcion"], unit_id)
+            else:
+                resultado = leer_analogica(eq.client, c["funcion"], c["direccion"], unit_id, c["tipo_dato"])
+            if resultado is None:
+                if eq.client.connected:
+                    rechazos += 1
+                else:
+                    eq.canal_hasta[glob] = ahora + datetime.timedelta(seconds=2 * REINTENTO_ORIGEN_CAIDO_S)
+                continue
+            eq.canal_hasta.pop(glob, None)
+            if c["grupo"] == "entrada_digital":
+                contestaron += 1
+                anotar_ultimo(con, glob, marca, 1.0 if resultado != nc else 0.0)   # lo que dio el equipo, antes del contacto NC
+                latir(con, glob, resultado, eq.ultimo_latido, ahora)
+                eq.anteriores[glob] = registrar_si_cambio(con, glob, resultado, eq.anteriores.get(glob))
+                continue
+            valor = resultado * c["factor"] + c["offset"]
+            if not math.isfinite(valor):
+                rechazos += 1
+                continue
+            contestaron += 1
+            valor = round(valor, 6)
+            anotar_ultimo(con, glob, marca, valor)
+            anterior = eq.ultimo_guardado.get(glob)
+            if c["sensor"] and (anterior is None or (ahora - anterior).total_seconds() >= INTERVALO_GUARDADO_ANALOGICAS_S):
+                con.execute("INSERT INTO lecturas_sensor (sensor, fecha_hora, valor) VALUES (?, ?, ?)", (c["sensor"], marca, valor))
+                eq.ultimo_guardado[glob] = ahora
+        con.commit()
+        return contestaron, intentados, rechazos
+
+
 def main():
     con = _conectar_db()
     cfg = iot_conexion.config()
@@ -697,6 +925,7 @@ def main():
     anteriores_voz = {clave: False for clave in actuadores_en_uso()}
     ultimo_guardado_analogicas = {}
     ultimo_latido = {}
+    conexiones = ConexionesModbus()     # los equipos Modbus adicionales (si el tambo agregó alguno)
     print(f"Conectando a {cfg['host']}:{cfg['port']}... (Ctrl+C para salir)")
     try:
         if not client.connected:
@@ -714,10 +943,13 @@ def main():
             ejecutar_comandos_pendientes(con, client)
             reles_lavado = procesar_ciclo_lavado(con, client)
             anteriores_voz = procesar_comandos_voz(con, client, anteriores_voz, reles_lavado)
+            # Después del principal, que no espera a nadie. Cada equipo en su propio try: uno caído no frena a los demás.
+            conexiones.ciclo(con, [o for o in iot_origenes.cargar() if o["tipo"] == "modbus_tcp"])
             time.sleep(INTERVALO_POLL_S)
     except KeyboardInterrupt:
         print("Cortado por el usuario.")
     finally:
+        conexiones.cerrar_todo()
         client.close()
         con.close()
 

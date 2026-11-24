@@ -599,3 +599,14 @@ Cada equipo tiene su token (se muestra una sola vez) y su propia ventana de «Si
 - El ingreso es un endpoint **público** (sin sesión) protegido solo por el token del equipo: un equipo con token incorrecto repetido se bloquea 10 minutos por IP.
   Un ESP32 dentro de la red del tambo tiene que usar la IP de la PC del servidor, no el nombre público.
 - Después de actualizar con `git pull`: reiniciar el servidor web (cambios en `.py`). Sin `iot_origenes.json` todo sigue como antes.
+
+### Otros equipos Modbus TCP (PLC, gateways)
+
+Se cargan en **⚙ Configuración → 🔌 Entradas/Salidas → «Otros equipos»** eligiendo el tipo «Responde por Modbus TCP»: IP, puerto y unit ID del equipo, y por cada canal la función,
+la dirección, el tipo de dato y (si es analógico) el sensor que alimenta. Es solo lectura.
+
+- **Hay que reiniciar `iot_lavado.py` UNA vez** después de actualizar (doble clic en `iniciar_iot.bat`; **no en pleno lavado**): es el proceso que consulta los equipos. De ahí en más, un equipo
+  nuevo, un canal que se agrega o se saca y un cambio de IP o puerto se toman solos, sin reiniciar.
+- La PC tiene que poder llegar al equipo por la red (misma red o ruta, y el puerto abierto en su firewall). Un equipo apagado o sin respuesta no frena al gateway principal: se reintenta cada
+  30 segundos y la tarjeta muestra el último error con su fecha; sus sensores pasan a «Sin datos» cuando se cumple la ventana que cargaste.
+- Un equipo Modbus no usa token: no tiene dirección de ingreso por HTTP.
