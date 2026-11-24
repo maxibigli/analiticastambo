@@ -8,9 +8,22 @@ salió: reintentarlo duplica el mensaje (el tambo ya tuvo un pico de decenas de 
   * `reintentable`: además tiene sentido volver a intentarlo más tarde (no se pudo conectar; el límite de velocidad): reintentar no puede duplicar.
 
 Sin marca (un tiempo de lectura, una conexión cortada a mitad de camino, un 5xx) el resultado es INCIERTO: se avisa y no se reenvía solo.
+
+`CanalNoDisponible` es el caso en que ni siquiera se llamó al canal (se destildó, o perdió sus credenciales, mientras se calculaba el informe): no salió nada y reintentar no sirve.
+Un mensaje que Twilio acepta y después no entrega (`undelivered`) también «no salió»: `WhatsappError.motivo` dice por qué con una palabra de una lista cerrada, nunca con el texto de Twilio.
 """
 import requests
 import urllib3.exceptions
+
+
+class CanalNoDisponible(RuntimeError):
+    """El canal estaba apagado (destildado en ⚙ Configuración) o sin credenciales justo cuando se lo iba a usar (se destildó mientras se calculaba el informe). No se llamó a
+    NINGÚN servidor: se SABE que no salió nada, y no tiene sentido reintentar (el canal sigue sin estar disponible)."""
+    no_salio = True
+    reintentable = False
+
+    def __init__(self, mensaje="canal no disponible"):
+        super().__init__(mensaje)
 
 
 def no_llego(exc) -> bool:

@@ -19,12 +19,19 @@ TWILIO_MSG_URL = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json
 TWILIO_MSG_ESTADO_URL = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages/{msg_sid}.json"
 
 
-class WhatsappError(Exception):
-    """Un error de WhatsApp (Twilio). `no_salio`: se SABE que el mensaje no salió; `reintentable`: además se puede volver a intentar sin riesgo de duplicarlo (ver `envio_red`)."""
+# Los códigos de Twilio que se conocen, y el motivo (de una lista CERRADA, nunca el texto de Twilio) con que se los cuenta. Cualquier otro código es «no_entregado».
+_MOTIVO_DE_CODIGO = {"63016": "ventana_24h",           # texto libre fuera de la ventana de 24 h desde que el destinatario escribió
+                     "63015": "sandbox", "63007": "sandbox"}      # el número de destino no está unido al sandbox / el remitente no existe en esa cuenta
 
-    def __init__(self, mensaje="", no_salio=False, reintentable=False):
+
+class WhatsappError(Exception):
+    """Un error de WhatsApp (Twilio). `no_salio`: se SABE que el mensaje no salió; `reintentable`: además se puede volver a intentar sin riesgo de duplicarlo (ver `envio_red`).
+    `motivo`: por qué no se entregó un mensaje que Twilio aceptó (`ventana_24h`, `sandbox`, `no_entregado`), o None."""
+
+    def __init__(self, mensaje="", no_salio=False, reintentable=False, motivo=None):
         super().__init__(mensaje)
         self.__dict__.update(envio_red.marcas(no_salio, reintentable))
+        self.motivo = motivo
 
 
 def configurado() -> bool:
@@ -79,5 +86,6 @@ def enviar(mensaje: str, destino: str | None = None) -> None:
     if estado in ("failed", "undelivered"):
         raise WhatsappError(
             f"Twilio encoló el mensaje pero no se entregó (estado: {estado}). "
-            f"Código {info.get('error_code')}: {info.get('error_message')}", no_salio=True
+            f"Código {info.get('error_code')}: {info.get('error_message')}", no_salio=True,
+            motivo=_MOTIVO_DE_CODIGO.get(str(info.get("error_code")), "no_entregado")
         )

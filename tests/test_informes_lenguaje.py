@@ -7,7 +7,7 @@ Lo que importa:
   * Una sola llamada (más UNA repetición con el motivo del error): el costo está acotado, y hay un tope de pedidos por hora.
   * Lo que sale es honesto: se dice en palabras lo que se entendió (armado por el servidor, no por el modelo), lo que no se pudo, los supuestos y los
     campos sin verificar. Una IA que falla, tarda o no está configurada nunca rompe nada: el diseñador manual sigue andando.
-  * El modelo no ve SQL ni datos del tambo: solo el catálogo de campos y la frase.
+  * El modelo no ve SQL: ve el catálogo de campos, los valores posibles de un campo cerrado (el estado de la reproducción) y la frase.
 
     C:\\Python314\\python.exe -m unittest tests.test_informes_lenguaje -v
 """

@@ -288,7 +288,11 @@ class TestPasada(Base):
         self.falla["telegram"] = NoSalio("x")
         self.pasada(self.ahora)
         self.pasada(self.ahora + datetime.timedelta(minutes=75))                                   # ya pasó la hora de gracia del horario de las 08:30
-        self.assertEqual([x for x in self.registro() if x["canal"] == "telegram"][0]["intentos"], 1)
+        self.assertEqual(len(self.enviados), 1)                                                    # solo salió el correo: no hubo un segundo intento de Telegram
+        fila = [x for x in self.registro() if x["canal"] == "telegram"][0]
+        self.assertEqual((fila["estado"], fila["intentos"]), ("fallido", ie.MAX_INTENTOS))         # y ya no promete un reintento que no va a ocurrir (revisión final, envíos #3)
+        self.assertNotIn("Se reintenta", fila["detalle"])
+        self.assertIn("Ya no se reintenta: pasó la hora de gracia.", fila["detalle"])
 
     def test_un_informe_que_ya_no_compila_no_se_reintenta_ni_se_manda(self):
         self.resultado = im.InformeError("El campo «X» no existe en el catálogo.")
@@ -330,7 +334,9 @@ class TestPasada(Base):
     def test_no_sale_mas_tarde_de_la_gracia(self):
         self.pasada(self.ahora + datetime.timedelta(minutes=70))
         self.assertEqual(self.enviados, [])
-        self.assertEqual(self.registro(), [])
+        # No sale, pero deja rastro (revisión final, envíos #2): una fila «omitido» por canal, para que la pantalla diga «no salió» en vez de mostrar el próximo de la semana siguiente.
+        self.assertEqual(sorted((x["canal"], x["estado"]) for x in self.registro()), [("correo", "omitido"), ("telegram", "omitido")])
+        self.assertTrue(all(x["detalle"].startswith("No salió: el servidor estaba apagado") for x in self.registro()))
 
     def test_una_programacion_pausada_no_manda(self):
         ie.pausar(T, self.informe["id"], ahora=datetime.datetime(2026, 8, 27, 8, 0))

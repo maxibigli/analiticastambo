@@ -237,6 +237,10 @@ def _donde(defn, campos, H, herd) -> tuple:
         bloques_cond += _bloques_de(f)
         if f.tipo == "txt":
             where.append(f"{H(f.expr)} {'LIKE' if op == 'contiene' else '='} {lit}")
+        elif f.tipo == "fecha":
+            # Se compara el DÍA: un campo de fecha puede traer hora (el último parto es `MAX(DateAndTime)`), y contra `CONVERT(date, ...)` un datetime se mide contra las 00:00 de ese
+            # día: «=» solo calzaba con la medianoche exacta y «<=» dejaba afuera los partos de ese mismo día. Solo se toca la condición, no lo que se muestra ni se ordena.
+            where.append(f"CAST({H(f.expr)} AS date) {op} {lit}")
         else:
             where.append(f"{H(f.expr)} {op} {lit}")
     import rebano
@@ -392,9 +396,10 @@ def _fecha_texto(iso: str, con_dia: bool) -> str:
         return s
 
 
-def describir_condiciones(defn, campos=None, con_dia=False) -> list:
+def describir_condiciones(defn, campos=None, con_dia=False, con_limite=False) -> list:
     """Las condiciones de un informe en palabras («Producción 24 h < 30»), para el Excel y la pantalla. Lo que no entiende lo
-    omite: es solo texto de ayuda, no valida (para eso está `compilar`). `con_dia`: las fechas con el día de la semana."""
+    omite: es solo texto de ayuda, no valida (para eso está `compilar`). `con_dia`: las fechas con el día de la semana. `con_limite`: agrega
+    «Lista limitada a las primeras N filas» si el informe eligió un límite (el Excel y el envío programado lo piden: «Se lee así» de la IA ya dice el suyo)."""
     campos = cat.CATALOGO if campos is None else campos
     if not isinstance(defn, dict):
         return []
@@ -421,6 +426,9 @@ def describir_condiciones(defn, campos=None, con_dia=False) -> list:
     agrupar = [etiquetas[g][0] for g in (defn.get("agrupar_por") or []) if isinstance(g, str) and g in etiquetas]
     if agrupar:
         out.append("Agrupado por " + " y luego por ".join(agrupar))
+    lim = defn.get("limite")
+    if con_limite and isinstance(lim, int) and not isinstance(lim, bool) and lim >= 1:
+        out.append("Lista limitada a la primera fila" if lim == 1 else f"Lista limitada a las primeras {lim} filas")
     return out
 
 
@@ -460,7 +468,7 @@ def ejecutar(defn, tambo, campos=None, bloques=None, run=None, herd=_AUTO, hoy=N
 
     {"columnas", "filas", "claves_filas" (la clave de grupo de cada fila, solo si se agrupa), "truncado", "detalle" (si trae la
     lista de animales: un informe «solo resumen» no la trae), "agrupar", "grupos", "totales" (None si no hay resúmenes ni grupos),
-    "sql", "segundos"}."""
+    "limite_pedido" (True si la definición trae `limite`: el corte lo pidió el informe y no es el tope), "sql", "segundos"}."""
     if herd is _AUTO:
         import rebano
         herd = rebano.por_defecto(tambo)
@@ -495,4 +503,6 @@ def ejecutar(defn, tambo, campos=None, bloques=None, run=None, herd=_AUTO, hoy=N
         grupos, totales = _armar_grupos(correr(c["sql_resumen"], GRUPOS_MAX)["rows"], c)
     return {"columnas": c["columnas"], "filas": filas, "claves_filas": claves, "truncado": truncado, "detalle": c["sql"] is not None,
             "agrupar": c["agrupar"], "grupos": grupos, "totales": totales, "sql": c["sql"] or c["sql_resumen"],
+            # El corte de la lista puede ser el tope (un aviso) o el límite que ELIGIÓ el informe (lo que pidió): el Excel y el mensaje programado dicen cuál.
+            "limite_pedido": defn.get("limite") is not None,
             "segundos": round(time.perf_counter() - t0, 2)}

@@ -178,6 +178,13 @@ class TestSeSabeSiSalio(unittest.TestCase):
         self.chequear(self.telegram(lambda: telegram_bot.enviar("hola"), return_value=mock.Mock(status_code=403, text="x")), True, False)
         self.chequear(self.telegram(lambda: telegram_bot.enviar_documento("a.xlsx", XLSX, "t"), return_value=mock.Mock(status_code=502, text="x")), False, False)
 
+    def test_telegram_el_limite_de_velocidad_no_salio_y_si_se_reintenta(self):
+        """Revisión final (completitud #2): `envio_red` dice que el límite de velocidad se reintenta (como ya hacía WhatsApp con el 429), pero Telegram no lo marcaba."""
+        for estado in (429,):
+            self.chequear(self.telegram(lambda: telegram_bot.enviar_documento("a.xlsx", XLSX, "t"), return_value=mock.Mock(status_code=estado, text="x")), True, True)
+            self.chequear(self.telegram(lambda: telegram_bot.enviar("hola"), return_value=mock.Mock(status_code=estado, text="x")), True, True)
+        self.chequear(self.telegram(lambda: telegram_bot.enviar("hola"), return_value=mock.Mock(status_code=404, text="x")), True, False)       # otro rechazo: no se reintenta
+
     def test_telegram_sin_credenciales_no_salio_y_no_se_reintenta(self):
         with mock.patch.dict(os.environ, {k: "" for k in ENTORNO_TG}):
             with self.assertRaises(telegram_bot.TelegramError) as cm:
@@ -239,6 +246,33 @@ class TestSeSabeSiSalio(unittest.TestCase):
                 self.assertRaises(whatsapp.WhatsappError) as cm:
             self.whatsapp()
         self.chequear(cm.exception, True, False)
+
+    def undelivered(self, codigo, estado="undelivered"):
+        aceptado = mock.Mock(status_code=201)
+        aceptado.json.return_value = {"sid": "SM123"}
+        info = mock.Mock(status_code=200)
+        info.json.return_value = {"status": estado, "error_code": codigo, "error_message": "texto de Twilio con +5493415551234"}
+        with mock.patch.object(whatsapp.requests, "post", return_value=aceptado), mock.patch.object(whatsapp.requests, "get", return_value=info), \
+                self.assertRaises(whatsapp.WhatsappError) as cm:
+            self.whatsapp()
+        return cm.exception
+
+    def test_whatsapp_dice_por_que_no_se_entrego_con_un_motivo_de_una_lista_cerrada(self):
+        """Revisión final (completitud #2): Twilio acepta el mensaje y después dice «undelivered» (lo más probable fuera de la ventana de 24 h). El error lleva un `motivo` fijo
+        (nunca el texto de Twilio) para que el registro diga qué pasó en vez de «revisá su configuración»."""
+        for codigo, motivo in ((63016, "ventana_24h"), ("63016", "ventana_24h"), (63015, "sandbox"), (63007, "sandbox"), (63018, "no_entregado"), (None, "no_entregado")):
+            for estado in ("undelivered", "failed"):
+                e = self.undelivered(codigo, estado)
+                self.chequear(e, True, False)
+                self.assertEqual(e.motivo, motivo, (codigo, estado))
+
+    def test_los_otros_errores_de_whatsapp_no_tienen_motivo(self):
+        with mock.patch.dict(os.environ, {k: "" for k in ENTORNO_WA}), self.assertRaises(whatsapp.WhatsappError) as cm:
+            whatsapp.enviar("hola")
+        self.assertIsNone(cm.exception.motivo)
+        with mock.patch.object(whatsapp.requests, "post", return_value=mock.Mock(status_code=401, text="x")), self.assertRaises(whatsapp.WhatsappError) as cm:
+            self.whatsapp()
+        self.assertIsNone(cm.exception.motivo)
 
     def test_whatsapp_sin_credenciales_no_salio_y_no_se_reintenta(self):
         with mock.patch.dict(os.environ, {k: "" for k in ENTORNO_WA}), self.assertRaises(whatsapp.WhatsappError) as cm:

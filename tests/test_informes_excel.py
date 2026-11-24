@@ -424,5 +424,109 @@ class TestEtiquetasPeligrosas(unittest.TestCase):
         self.assertEqual(c.data_type, "s")
 
 
+class TestCaracteresQueExcelNoAdmite(unittest.TestCase):
+    """Revisión final (envíos #10): U+FFFE, U+FFFF y los sustitutos sueltos (U+D800 a U+DFFF) dejaban un .xlsx que no se puede abrir (o hacían levantar al guardar), y el envío
+    programado lo mandaba igual como «enviado»."""
+
+    MALOS = ("￾", "￿", "\ud800", "\udbff", "\udc00", "\udfff")
+
+    def probar(self, malo):
+        res = {"columnas": [dict(COLS[0], etiqueta="Rótulo" + malo + " raro")] + COLS[1:], "filas": [["30" + malo + "1", 1, 2, None]], "truncado": False}
+        wb = libro(res, condiciones=["Condición" + malo + " rara"])               # `libro` vuelve a LEER el archivo con openpyxl: si el XML no es válido, levanta acá
+        return wb
+
+    def test_cada_caracter_malo_se_saca_y_el_archivo_se_puede_leer(self):
+        for malo in self.MALOS:
+            wb = self.probar(malo)
+            self.assertEqual(wb["Informe"]["A1"].value, "Rótulo raro", repr(malo))
+            self.assertEqual(wb["Informe"]["A2"].value, "301", repr(malo))
+            self.assertIn("Condición rara", _textos(wb, "Condiciones"), repr(malo))
+
+    def test_el_nombre_del_informe_tambien(self):
+        wb = openpyxl.load_workbook(io.BytesIO(ie.a_xlsx({"columnas": COLS, "filas": [], "truncado": False}, "Nombre" + "￿" + " feo")))
+        self.assertIn("Nombre feo", _textos(wb, "Condiciones"))
+
+    def test_lo_que_se_conserva_sigue_igual(self):
+        res = {"columnas": COLS, "filas": [["ñandú ✓ 日本 😀\ttab\nsalto", 1, 2, None]], "truncado": False}
+        self.assertEqual(libro(res)["Informe"]["A2"].value, "ñandú ✓ 日本 😀\ttab\nsalto")
+
+
+class TestFechasConZonaHoraria(unittest.TestCase):
+    """Revisión final (envíos #10): una fecha con zona horaria hacía levantar a openpyxl («Excel does not support timezones»): el armado fallaba y se recalculaba 3 veces."""
+
+    def celda(self, valor):
+        res = {"columnas": COLS, "filas": [["3250", 1.0, 5, valor]], "truncado": False}
+        return libro(res)["Informe"]["D2"]
+
+    def test_un_datetime_con_zona_se_escribe_sin_zona_y_en_la_misma_hora(self):
+        zona = datetime.timezone(datetime.timedelta(hours=-3))
+        c = self.celda(datetime.datetime(2026, 8, 27, 8, 30, tzinfo=zona))
+        self.assertEqual(c.value, datetime.datetime(2026, 8, 27, 8, 30))
+        self.assertEqual(c.number_format, "dd/mm/yyyy")
+
+    def test_un_texto_iso_con_zona(self):
+        for texto in ("2026-08-27T08:30:00+00:00", "2026-08-27T08:30:00-03:00", "2026-08-27T08:30:00Z"):
+            self.assertEqual(self.celda(texto).value, datetime.datetime(2026, 8, 27, 8, 30), texto)
+
+    def test_una_fecha_sin_zona_sigue_igual(self):
+        self.assertEqual(self.celda("2024-06-25T00:00:00").value, datetime.datetime(2024, 6, 25))
+        self.assertEqual(self.celda(datetime.date(2024, 6, 25)).value, datetime.datetime(2024, 6, 25))
+
+    def test_la_clave_de_un_grupo_de_fecha_con_zona_tampoco_rompe(self):
+        self.assertEqual(ie._texto_clave("2026-08-27T08:30:00+00:00", {"tipo": "fecha"}), "27/08/2026")
+
+
+class TestLaHojaDeCondicionesConElDia(unittest.TestCase):
+    """Revisión final (envíos #9 y completitud #4): las fechas de los textos de la app llevan el día de la semana, también el «Generado» del Excel."""
+
+    def test_generado_lleva_el_dia_de_la_semana(self):
+        wb = libro(generado=datetime.datetime(2026, 8, 27, 8, 0))
+        self.assertIn("jue 27/08/2026 08:00", _textos(wb, "Condiciones"))
+
+    def test_cada_dia_de_la_semana_con_su_nombre(self):
+        esperado = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
+        for k, dia in enumerate(esperado):
+            fecha = datetime.datetime(2026, 8, 24 + k, 9, 5)
+            self.assertIn(f"{dia} {fecha:%d/%m/%Y} 09:05", _textos(libro(generado=fecha), "Condiciones"))
+
+
+class TestElCorteLoPidioElInforme(unittest.TestCase):
+    """Revisión final (regresión #2): si la lista se cortó en el límite que ELIGIÓ el informe, no es «el tope»: es lo que se pidió, y no es un aviso."""
+
+    RES = {"columnas": COLS, "filas": FILAS, "truncado": True}
+
+    def aviso_rojo(self, wb):
+        ws = wb["Condiciones"]
+        return [c.value for fila in ws.iter_rows() for c in fila if c.value == "Aviso"]
+
+    def test_el_corte_pedido_dice_cuantas_filas_se_listan_y_no_es_un_aviso(self):
+        wb = libro(dict(self.RES, limite_pedido=True))
+        textos = " ".join(str(t) for t in _textos(wb, "Condiciones"))
+        self.assertIn("Se listan las primeras 2 filas, como pide el informe", textos)
+        self.assertNotIn("se cortó", textos.lower())
+        self.assertNotIn("tope", textos.lower())
+        self.assertEqual(self.aviso_rojo(wb), [])
+
+    def test_con_totales_aclara_que_cuentan_a_todos(self):
+        res = dict(self.RES, limite_pedido=True, agrupar=[], totales={"n": 900, "resumenes": {}})
+        textos = " ".join(str(t) for t in _textos(libro(res), "Condiciones"))
+        self.assertIn("Se listan las primeras 2 filas, como pide el informe", textos)
+        self.assertIn("totales", textos)
+
+    def test_el_corte_por_el_tope_sigue_siendo_un_aviso(self):
+        for res in (self.RES, dict(self.RES, limite_pedido=False)):
+            wb = libro(res)
+            self.assertIn("se cortó", " ".join(str(t) for t in _textos(wb, "Condiciones")).lower())
+            self.assertEqual(self.aviso_rojo(wb), ["Aviso"])
+
+    def test_una_fila_va_en_singular(self):
+        res = dict(self.RES, limite_pedido=True, filas=FILAS[:1])
+        self.assertIn("Se lista la primera fila, como pide el informe"," ".join(str(t) for t in _textos(libro(res), "Condiciones")))
+
+    def test_si_no_se_corto_no_dice_nada_del_limite(self):
+        textos = " ".join(str(t) for t in _textos(libro(dict(self.RES, truncado=False, limite_pedido=True)), "Condiciones"))
+        self.assertNotIn("Se listan", textos)
+
+
 if __name__ == "__main__":
     unittest.main()

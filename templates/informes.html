@@ -34,6 +34,9 @@ h1,h2,h3{font-family:var(--display);margin:0;font-weight:600}
 .btn{height:34px;padding:0 13px;border-radius:8px;border:1px solid var(--line-2);background:var(--raised);font-weight:500;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
 .btn:hover:not(:disabled){border-color:var(--accent);background:#1A2B38}
 .btn:disabled{opacity:.5;cursor:not-allowed}
+/* Atenuado como un botón apagado, pero NO deshabilitado: se puede tocar y explica por qué todavía no sirve (ej.: «Programar» en un informe sin guardar). */
+.btn[aria-disabled="true"]{opacity:.55}
+.btn[aria-disabled="true"]:hover{border-color:var(--line-2);background:var(--raised)}
 .btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:600}
 .btn.pri:hover:not(:disabled){background:var(--accent-hi);border-color:var(--accent-hi)}
 .btn.ghost{background:transparent}
@@ -88,6 +91,9 @@ h1,h2,h3{font-family:var(--display);margin:0;font-weight:600}
 .head .fgrp.grow{flex:1 1 260px}
 .head .acts{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
 .head .name{width:100%;font:600 17px/1 var(--display);height:38px;letter-spacing:-.01em}
+/* «Sin guardar» va junto al nombre (de eso habla) y no entre los botones: ahí, sumado a «Programar», la barra pasaba de una línea a dos y «Actualizar» quedaba solo abajo. El alto fijo
+   evita que el campo del nombre salte cuando el aviso aparece. */
+.lblrow{display:flex;align-items:center;gap:2px 12px;flex-wrap:wrap;min-height:18px}
 .unsaved{color:#F5CE84;font-size:12px;display:inline-flex;align-items:center;gap:6px}
 .unsaved i{width:7px;height:7px;border-radius:50%;background:var(--warn)}
 .filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
@@ -231,6 +237,7 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
 .pgreg .bad{color:#F5A9A9}
 .env{display:inline-flex;align-items:center;margin-left:6px;height:18px;padding:0 7px;border-radius:999px;font-size:11px;font-weight:600;background:var(--accent-soft);color:var(--accent-hi);vertical-align:middle}
 .env.pausa{background:#232B33;color:var(--muted)}
+.env.avdp{background:#3A2F14;color:#F5CE84}
 /* Fase 4b: armar un informe con una frase */
 .ask{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;display:grid;gap:8px;margin-bottom:10px}
 .askrow{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
@@ -320,12 +327,11 @@ dialog::backdrop{background:rgba(5,10,15,.72)}
     <div class="work" id="work">
       <main class="main">
         <section class="head" aria-label="Datos del informe">
-          <div class="fgrp grow"><label class="eyebrow" for="rname">Nombre del informe</label><input class="in name" id="rname" autocomplete="off" maxlength="60"></div>
+          <div class="fgrp grow"><div class="lblrow"><label class="eyebrow" for="rname">Nombre del informe</label><span class="unsaved" id="unsaved" hidden><i></i>Sin guardar</span></div><input class="in name" id="rname" autocomplete="off" maxlength="60"></div>
           <div class="acts">
-            <span class="unsaved" id="unsaved" hidden><i></i>Sin guardar</span>
             <button class="btn" id="btn-dock">Árbol de campos</button>
             <button class="btn" id="btn-xls">Exportar a Excel</button>
-            <button class="btn" id="btn-prog" title="Mandar este informe automáticamente, por correo, Telegram o WhatsApp, en los días y horarios que elijas">Programar envío</button>
+            <button class="btn" id="btn-prog" aria-label="Programar envío" title="Mandar este informe automáticamente, por correo, Telegram o WhatsApp, en los días y horarios que elijas">Programar</button>
             <button class="btn" id="btn-copia">Guardar como…</button>
             <button class="btn" id="btn-guardar">Guardar</button>
             <button class="btn" id="btn-graficar" title="Graficar la producción diaria de los animales de este informe en un rango de fechas">Graficar</button>
@@ -506,22 +512,30 @@ const llave = ks => JSON.stringify(ks.map(nk));
 
 /* ---------- documentos abiertos ---------- */
 function defVacia() { return {columnas: [{campo: 'Number'}], calculados: [], agrupar_por: [], detalle: true, condiciones: [], orden: null, incluir_descartados: false}; }
-/* «Es uno de» lleva una lista: en la pantalla se escribe separada por comas y al servidor viaja como lista. En un campo NUMÉRICO la coma también es la coma
-   decimal («38,5»), así que ahí se separa con «;» o con una coma seguida de un espacio («38,5, 40»): el mismo texto no puede valer 38,5 con «=» y dos números con «es uno de». */
-function listaDe(v, tipo) {
+/* «Es uno de» lleva una lista: en la pantalla se escribe separada por comas y al servidor viaja como lista. En un campo NUMÉRICO con decimales la coma también es la coma
+   decimal («38,5»), así que ahí se separa con «;» o con una coma seguida de un espacio («38,5, 40»): el mismo texto no puede valer 38,5 con «=» y dos números con «es uno de».
+   En un campo ENTERO (Nº Lactación, número de grupo, días en ordeño: `decimales` 0) no hay coma decimal posible y «1,2,3» es lo que cualquiera escribe: ahí la coma también separa. */
+function listaDe(v, tipo, entero) {
   if (Array.isArray(v)) return v.slice();
   const t = String(v == null ? '' : v);
-  return (tipo === 'num' ? t.split(/\s*;\s*|,\s+/) : t.split(',')).map(s => s.trim()).filter(s => s !== '');
+  return (tipo === 'num' ? t.split(entero ? /\s*[;,]\s*/ : /\s*;\s*|,\s+/) : t.split(',')).map(s => s.trim()).filter(s => s !== '');
 }
 const tipoDe = id => (CAMPOS[id] || {}).tipo;
-function condLimpia(c) {
+/* Cómo se separa la lista de un campo. Los calculados (calc_N) no están en el catálogo: son siempre numéricos, y sus decimales son solo de cómo se ven (el valor puede traer
+   fracciones), así que nunca cuentan como enteros. Un campo que no se conoce se trata como texto. */
+function formaDe(id, df) {
+  if (((df && df.calculados) || []).some(x => x.id === id)) return {tipo: 'num', entero: false};
+  const f = CAMPOS[id];
+  return f ? {tipo: f.tipo, entero: f.tipo === 'num' && f.decimales === 0} : {tipo: undefined, entero: false};
+}
+function condLimpia(c, df) {
   if (!c.campo) return null;
-  if (c.op === 'en') { const l = listaDe(c.valor, tipoDe(c.campo)); return l.length ? {campo: c.campo, op: 'en', valor: l} : null; }
+  if (c.op === 'en') { const f = formaDe(c.campo, df), l = listaDe(c.valor, f.tipo, f.entero); return l.length ? {campo: c.campo, op: 'en', valor: l} : null; }
   return c.valor === '' || c.valor == null ? null : {campo: c.campo, op: c.op, valor: c.valor};
 }
 function limpiaDef(d) {
   const out = {columnas: d.columnas.map(c => c.resumen ? {campo: c.campo, resumen: c.resumen} : {campo: c.campo}), incluir_descartados: !!d.incluir_descartados};
-  out.condiciones = d.condiciones.map(condLimpia).filter(Boolean);
+  out.condiciones = d.condiciones.map(c => condLimpia(c, d)).filter(Boolean);       // `d` lleva los calculados: sin ellos «3; 4» sobre un calculado viajaba como UN valor
   if (d.orden && d.columnas.some(c => c.campo === d.orden.campo)) out.orden = {campo: d.orden.campo, dir: d.orden.dir};
   if (d.calculados && d.calculados.length) out.calculados = d.calculados.map(c => ({id: c.id, etiqueta: c.etiqueta, formula: c.formula, decimales: c.decimales, unidad: c.unidad || ''}));
   if (d.agrupar_por && d.agrupar_por.length) out.agrupar_por = d.agrupar_por.slice();
@@ -567,7 +581,7 @@ async function abrirInforme(id) {
     def.agrupar_por = (def.agrupar_por || []).slice();
     const grafico = def.grafico ? Object.assign({}, def.grafico) : null;      // el gráfico no es parte de la tabla: viaja aparte
     delete def.grafico;
-    const d = nuevoDoc({sid: j.id, nombre: j.nombre, def, grafico, guardado: true});
+    const d = nuevoDoc({sid: j.id, nombre: j.nombre, def, grafico, guardado: true, importado: j.origen && (j.origen.avisos || []).length ? importadoGuardado(j.origen) : null});
     activar(d.id);
     ejecutar(d);
   } catch (e) { toast(e.message); }
@@ -617,6 +631,7 @@ function renderList() {
     ? '<table><thead><tr><th style="width:44px"></th><th>Nombre del informe</th><th class="num">Columnas</th><th>Última modificación</th><th></th></tr></thead><tbody>' +
       filas.map(i => '<tr class="cursor" data-act="abrir" data-id="' + i.id + '"><td><button class="star" data-act="fav" data-id="' + i.id + '" aria-pressed="' + i.favorito + '" aria-label="Favorito">' + (i.favorito ? '★' : '☆') + '</button></td>' +
         '<td class="rp">' + esc(i.nombre) + (abiertos[i.id] ? ' <span class="muted" style="font-weight:400">· abierto</span>' : '') +
+        (i.con_aviso ? '<span class="env avdp" title="Se trajo de DelPro con diferencias que cambian qué animales aparecen: abrilo para ver el aviso.">⚠ traído de DelPro</span>' : '') +
         (ENVIOS[i.id] ? '<span class="env' + (ENVIOS[i.id].activo ? '' : ' pausa') + '" title="' + esc(ENVIOS[i.id].activo ? 'Próximo envío: ' + (ENVIOS[i.id].proximo_texto || '') : 'El envío programado está en pausa') + '">' +
           (ENVIOS[i.id].activo ? 'envío programado' : 'envío en pausa') + '</span>' : '') + '</td><td class="num">' + i.n_columnas + '</td><td>' + fmtFecha(i.modificado, true) + '</td>' +
         '<td><button class="btn sm" data-act="abrir" data-id="' + i.id + '">Abrir</button></td></tr>').join('') + '</tbody></table>'
@@ -629,7 +644,9 @@ function renderHead() {
   $('#btn-run').disabled = d.estado === 'cargando';
   $('#btn-run').textContent = d.estado === 'cargando' ? 'Calculando…' : 'Actualizar';
   $('#btn-xls').disabled = d.estado === 'cargando';
-  $('#btn-prog').disabled = !d.sid;
+  /* Sin guardar no se puede programar (se manda la versión guardada), pero el botón NO se apaga con `disabled`: un botón apagado no dice por qué. Queda activo, atenuado
+     (`aria-disabled`), y al tocarlo abrirProg() explica que hay que guardar primero. */
+  $('#btn-prog').setAttribute('aria-disabled', String(!d.sid));
   $('#btn-prog').title = d.sid ? 'Mandar este informe automáticamente, por correo, Telegram o WhatsApp, en los días y horarios que elijas' : 'Guardá el informe para poder programar su envío';
 }
 function filaCampo(f, usados) {
@@ -663,11 +680,11 @@ function renderFilters() {
   let h = d.def.condiciones.map((c, i) => {
     const f = campoDe(d, c.campo) || campos[0], ops = OPS[f.tipo];
     const lista = c.op === 'en';
-    const num = f.tipo === 'num';
+    const num = f.tipo === 'num', forma = formaDe(f.id, d.def), coma = !num || forma.entero;        // en un campo entero la lista también se escribe con comas
     const entrada = f.tipo === 'fecha' ? '<input class="in v" type="date" data-chg="cv" data-i="' + i + '" value="' + esc(c.valor || '') + '" aria-label="Valor">'
-                                       : '<input class="in v' + (lista ? ' wide' : '') + '" data-chg="cv" data-i="' + i + '" value="' + esc(lista ? listaDe(c.valor, f.tipo).join(num ? '; ' : ', ') : (c.valor == null ? '' : c.valor)) + '" aria-label="' +
-                                         (lista ? (num ? 'Valores, separados por punto y coma' : 'Valores, separados por coma') : 'Valor') + '"' +
-                                         (lista ? ' placeholder="' + (num ? '1; 2; 3' : 'Rodeo 1, Rodeo 2') + '"' : '') + ' autocomplete="off">';
+                                       : '<input class="in v' + (lista ? ' wide' : '') + '" data-chg="cv" data-i="' + i + '" value="' + esc(lista ? listaDe(c.valor, f.tipo, forma.entero).join(coma ? ', ' : '; ') : (c.valor == null ? '' : c.valor)) + '" aria-label="' +
+                                         (lista ? (num ? (forma.entero ? 'Valores, separados por coma' : 'Valores, separados por punto y coma') : 'Valores, separados por coma') : 'Valor') + '"' +
+                                         (lista ? ' placeholder="' + (num ? (forma.entero ? '1, 2, 3' : '1; 2; 3') : 'Rodeo 1, Rodeo 2') + '"' : '') + ' autocomplete="off">';
     return '<span class="cond"><select class="in" data-chg="ck" data-i="' + i + '" aria-label="Campo">' + campos.map(x => opt(x.id, x.etiqueta, x.id === c.campo)).join('') + '</select>' +
       '<select class="in" data-chg="co" data-i="' + i + '" aria-label="Operador">' + ops.map(o => opt(o[0], o[1], c.op === o[0])).join('') + '</select>' + entrada +
       '<button data-act="quitarcond" data-i="' + i + '" aria-label="Quitar condición">×</button></span>';
@@ -826,13 +843,27 @@ async function ejecutar(d) {
 async function refrescarLista() { try { LISTA = (await api('/api/informes')).informes; } catch (e) { toast(e.message); } }
 /* Lo que hay que decirle a quien guarda un informe traído (de DelPro o armado con IA) al que le falta algo que cambia QUÉ animales aparecen: lo guardado no es lo que el otro sistema tenía. */
 function avisoAlGuardar(d) { const im = d.importado; return im && im.alGuardar && (im.grupos || []).some(g => g.clase === 'contenido') ? im.alGuardar : ''; }
+const AL_GUARDAR_DELPRO = 'Ojo: no trae todo lo que tenía en DelPro, así que puede mostrar animales de más o de menos.';
+/* La nota que se guarda con un informe traído de DelPro: SOLO lo que cambia QUÉ animales aparecen (lo demás no hace falta recordarlo). Sin eso el aviso vivía solo en la pestaña y al reabrir
+   el informe se perdía: se podía programar su envío y mandar todos los días otra cantidad de animales que la de DelPro, sin ninguna marca. */
+function origenParaGuardar(d) {
+  const im = d.importado, g = im && (im.grupos || []).filter(x => x.clase === 'contenido')[0];
+  if (!g || !(g.items || []).length) return null;
+  return {titulo: im.titulo, sub: im.sub || '', avisos: g.items.map(t => typeof t === 'string' ? t : t.texto)};
+}
+/* El aviso de un informe que se trajo de DelPro con diferencias, tal como vuelve del servidor al reabrirlo: minimizado (una franja con «Ver el aviso»), para no tapar el informe. */
+function importadoGuardado(o) {
+  return {cerrado: true, guardado: true, titulo: o.titulo, sub: o.sub || '', chip: ESTADO_DP.parcial, alGuardar: AL_GUARDAR_DELPRO,
+    grupos: [{clase: 'contenido', titulo: TITULO_DIF.contenido, items: (o.avisos || []).map(texto => ({texto, detalle: []}))}]};
+}
 async function guardar(d, comoNuevo) {
   const nombre = (d.nombre || '').trim();
   try {
     let j;
     const definicion = Object.assign(limpiaDef(d.def), d.grafico ? {grafico: d.grafico} : {});       // el gráfico se guarda con el informe, si se configuró
-    if (d.sid && !comoNuevo) j = await post('/api/informes/' + d.sid, {nombre, definicion}, 'PUT');
-    else j = await post('/api/informes', {nombre: comoNuevo ? nombre + ' (copia)' : nombre, definicion});
+    const origen = origenParaGuardar(d), nota = origen ? {origen} : {};                                // sin diferencias que cambien los animales no se manda nada: no pisa la nota guardada
+    if (d.sid && !comoNuevo) j = await post('/api/informes/' + d.sid, Object.assign({nombre, definicion}, nota), 'PUT');
+    else j = await post('/api/informes', Object.assign({nombre: comoNuevo ? nombre + ' (copia)' : nombre, definicion}, nota));
     if (comoNuevo || !d.sid) { d.sid = j.id; }
     d.nombre = j.nombre; d.error = '';
     d.base = foto(d);
@@ -982,12 +1013,15 @@ function renderDelpro() {
     lista.innerHTML = j && j.vacio ? '<div class="empty" role="status">' + esc(j.motivo) + '</div>' : '<div class="msg warn" role="alert">' + esc(j ? j.motivo : 'No se pudieron leer los informes de DelPro.') + '</div>';
     return;
   }
-  const q = DP.q.trim().toLowerCase(), c = j.cuenta;
+  const q = DP.q.trim().toLowerCase();
   const filas = j.informes.filter(i => !q || (i.nombre + ' ' + i.carpeta).toLowerCase().indexOf(q) >= 0);
+  /* El resumen cuenta con la MISMA regla que las filas (`estadoDe`): un informe «completo» que trae algún aviso se ve como «Casi igual», y el resumen decía «se trae completo». */
+  const cuantos = est => j.informes.filter(i => estadoDe(i.estado, i.n_diferencias) === est).length;
+  const completos = cuantos('completo'), casi = cuantos('casi'), parcial = cuantos('parcial'), no = cuantos('no_disponible');
   /* Sin aria-live: se reescribe en cada tecla del buscador y un lector de pantalla lo leería entero cada vez. */
   res.textContent = plural(j.informes.length, 'informe', 'informes') + (DP.solo ? ' de tu tambo' : '') + ' en DelPro: ' +
-    (c.completo === 1 ? '1 se trae completo' : fmtNum(c.completo) + ' se traen completos') + ', ' + fmtNum(c.parcial) + ' con diferencias, ' +
-    (c.no_disponible === 1 ? '1 no se puede traer todavía.' : fmtNum(c.no_disponible) + ' no se pueden traer todavía.') + (q ? ' Se muestran ' + filas.length + '.' : '');
+    (completos === 1 ? '1 completo' : fmtNum(completos) + ' completos') + ', ' + (casi === 1 ? '1 casi igual (con algún aviso)' : fmtNum(casi) + ' casi iguales (con algún aviso)') + ', ' +
+    fmtNum(parcial) + ' con diferencias, ' + (no === 1 ? '1 no se puede traer todavía.' : fmtNum(no) + ' no se pueden traer todavía.') + (q ? ' Se muestran ' + filas.length + '.' : '');
   lista.innerHTML = filas.length ? filas.map(i => {
     const est = estadoDe(i.estado, i.n_diferencias), e = ESTADO_DP[est], sub = i.estado === 'no_disponible' && i.motivo ? [i.carpeta, i.motivo] : [i.carpeta, i.nivel];
     const avisos = i.n_diferencias ? ' · ' + plural(i.n_diferencias, 'aviso', 'avisos') : '';
@@ -1018,6 +1052,8 @@ function abrirComoNuevo(nombre, definicion, origen, enSegundoPlano) {
 }
 /* Un teclado o un lector de pantalla tiene que quedar en el aviso: el botón «Traer» desapareció con el cuadro. */
 function enfocarAviso() { const av = document.querySelector('#importado .imp'); if (av) av.focus(); }
+/* Devuelve el foco a lo que acaba de redibujarse: el elemento viejo salió del documento y el teclado (o el lector de pantalla) quedó en el <body>, sin lugar. Dice si lo encontró. */
+function enfocar(selector) { const e = document.querySelector(selector); if (e) e.focus(); return !!e; }
 async function traerDeDelpro(oid) {
   errorDelpro('');
   try {
@@ -1026,11 +1062,13 @@ async function traerDeDelpro(oid) {
     const e = ESTADO_DP[estadoDe(j.estado, j.diferencias.length)] || ESTADO_DP.parcial;
     const grupos = ['contenido', 'columnas', 'presentacion', 'info'].map(g => ({clase: g, titulo: TITULO_DIF[g],
       items: j.diferencias.filter(x => x.gravedad === g).map(x => ({texto: x.texto, detalle: x.detalle || []}))})).filter(x => x.items.length);
+    const aqui = $('#delpro').open;                                  // si el cuadro ya se cerró mientras llegaba la respuesta, el dueño se fue a otra cosa: no se le cambia la pantalla de golpe
     $('#delpro').close();
     const d = abrirComoNuevo(j.nombre, j.definicion, {titulo: 'Traído de DelPro', sub: '«' + j.nombre + '»' + (j.carpeta ? ' · ' + j.carpeta : ''), chip: e, descripcion: j.descripcion, grupos,
-      alGuardar: 'Ojo: no trae todas las condiciones que tenía en DelPro, así que puede mostrar más animales.',
-      vacio: 'Se trajo completo: no hay diferencias que avisar. Revisalo y guardalo con el nombre que quieras.'});
-    enfocarAviso();
+      alGuardar: AL_GUARDAR_DELPRO,
+      vacio: 'Se trajo completo: no hay diferencias que avisar. Revisalo y guardalo con el nombre que quieras.'}, !aqui);
+    if (aqui) enfocarAviso();
+    else toast('Traje «' + j.nombre + '»: está en una pestaña nueva, sin guardar.');
     ejecutar(d);
   } catch (e) { errorDelpro(e.message); }
 }
@@ -1053,7 +1091,9 @@ function renderImportado() {
     '<span class="dpe ' + chip[1] + '">' + esc(chip[0]) + '</span><button class="x" data-act="cerrarimp" aria-label="Cerrar este aviso">×</button></div>' +
     (im.descripcion ? '<div class="muted" style="font-size:12.5px">' + esc(im.descripcion) + '</div>' : '') +
     ((im.grupos || []).length ? im.grupos.map(x => '<h4 class="' + esc(x.clase) + '">' + esc(x.titulo) + '</h4><ul>' + x.items.map(t => li(x.clase, t)).join('') + '</ul>').join('')
-                              : '<div style="font-size:13px">' + esc(im.vacio || '') + '</div>') + '</div>';
+                              : '<div style="font-size:13px">' + esc(im.vacio || '') + '</div>') +
+    (im.guardado ? '<div class="muted" style="font-size:12.5px">Este aviso queda con el informe y sus mensajes programados lo repiten. Si ya lo revisaste y el informe está bien así, podés quitarlo.</div>' +
+      '<div><button class="btn sm ghost" data-act="quitarimp">Ya lo revisé: quitar este aviso</button></div>' : '') + '</div>';
 }
 
 
@@ -1101,18 +1141,26 @@ async function armarConFrase() {
 /* ---------- programar el envío de un informe (Fase 4c) ---------- */
 /* Se manda la versión GUARDADA del informe (por eso solo se programa un informe guardado), por los canales de las alertas y a sus mismos destinatarios.
    Un hilo del servidor lo manda a los horarios elegidos; acá solo se arma la programación, se mira cómo queda y se manda una prueba (a pedido, con doble toque). */
-const PG = {sid: null, nombre: '', sucio: false, datos: null, dias: [], horas: [], canales: [], formato: 'excel', seq: 0, armado: 0};
+const PG = {sid: null, nombre: '', sucio: false, datos: null, dias: [], horas: [], canales: [], formato: 'excel', seq: 0, armado: 0, guardando: null, ocupado: null};
 const NOMBRE_DIA = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
 const nombreCanal = id => { const c = ((PG.datos && PG.datos.canales) || []).filter(x => x.id === id)[0]; return c ? c.nombre : id; };       // «telegram» -> «Telegram»
 const TEXTO_ESTADO_ENVIO = {enviado: 'salió', fallido: 'falló', omitido: 'no salió', en_curso: 'saliendo', sin_confirmar: 'sin confirmar'};
 function pgMsj(texto, malo) { const e = $('#prog-msj'); e.className = 'okline' + (malo ? ' bad' : ''); e.textContent = texto || ''; }
+/* ¿La versión GUARDADA del informe tiene una condición con fechas? Es la que se manda (no la de la pantalla, que puede tener cambios sin guardar). `d.base` es la foto de lo guardado. */
+function fechasFijasGuardadas(d) {
+  let df = d.def;
+  try { df = JSON.parse(d.base)[1] || d.def; } catch (e) { /* sin foto de lo guardado: se mira la pantalla */ }
+  return limpiaDef(df).condiciones.some(c => tipoDe(c.campo) === 'fecha');
+}
 async function abrirProg() {
   const d = docAct();
   if (!d || !d.sid) { toast('Guardá el informe para poder programar su envío.'); return; }
-  PG.sid = d.sid; PG.nombre = d.nombre; PG.sucio = sucio(d); PG.datos = null; PG.armado = 0; PG.fallo = false;
+  PG.sid = d.sid; PG.nombre = d.nombre; PG.sucio = sucio(d); PG.datos = null; desarmarEnvio(); PG.fallo = false;
   PG.dias = []; PG.horas = []; PG.canales = []; PG.formato = 'excel';                       // nada del cuadro anterior
-  PG.fechasFijas = limpiaDef(d.def).condiciones.some(c => tipoDe(c.campo) === 'fecha');    // una condición con fechas mira siempre el mismo período
+  PG.fechasFijas = fechasFijasGuardadas(d);                                                // una condición con fechas mira siempre el mismo período
+  PG.conAviso = !!(d.importado && origenParaGuardar(d));                                   // se trajo de DelPro con diferencias: cada mensaje lo dice en una línea
   pgMsj('', false);
+  $('#prog-reg-cuerpo').textContent = '';                                                  // ni el registro del informe anterior mientras llega el de este
   $('#prog-prev').hidden = true;
   $('#prog').showModal();
   renderProg();
@@ -1137,7 +1185,8 @@ function renderProg() {
   const j = PG.datos, e = j && j.envio;
   $('#prog-t').textContent = 'Programar envío · ' + (PG.nombre || '');
   $('#prog-nota').textContent = 'Se manda la versión guardada del informe, calculada en el momento del envío.' + (PG.sucio ? ' Tenés cambios sin guardar: esos no se incluyen.' : '') +
-    (PG.fechasFijas ? ' Ojo: las fechas de las condiciones no se corren solas, así que cada envío mira siempre el mismo período (no «los últimos 30 días» de cada vez).' : '');
+    (PG.fechasFijas ? ' Ojo: las fechas de las condiciones no se corren solas, así que cada envío mira siempre el mismo período (no «los últimos 30 días» de cada vez).' : '') +
+    (PG.conAviso ? ' Ojo: este informe se trajo de DelPro con diferencias que cambian qué animales aparecen; cada mensaje lo avisa en una línea, así que quien lo recibe sabe que puede no coincidir.' : '');
   $('#prog-dias').innerHTML = NOMBRE_DIA.map((n, i) => '<label class="opt"><input type="checkbox" data-pgdia="' + i + '"' + (PG.dias.indexOf(i) >= 0 ? ' checked' : '') + '> ' + n + '</label>').join('');
   $('#prog-horas').innerHTML = PG.horas.map((h, i) => '<span class="pghora"><input class="in" type="time" data-pghora="' + i + '" value="' + esc(h) + '" aria-label="Horario ' + (i + 1) + '">' +
     '<button type="button" data-act="progquitar" data-i="' + i + '" aria-label="Quitar el horario ' + (i + 1) + '">×</button></span>').join('');
@@ -1146,55 +1195,84 @@ function renderProg() {
     (c.disponible ? '' : '<span class="off">— ' + (c.configurado ? 'está apagado en ⚙ Configuración' : 'sin configurar') + '</span>') + '</div>').join('') : '';
   document.querySelectorAll('input[name="prog-fmt"]').forEach(r => { r.checked = r.value === PG.formato; });
   $('#prog-estado').textContent = !j ? (PG.fallo ? 'No se pudo leer la programación. Cerrá este cuadro y volvé a abrirlo.' : 'Leyendo la programación…') : !e ? 'Todavía no está programado.' : e.activo ? 'Próximo envío: ' + (e.proximo_texto || '—') : 'En pausa: no se manda nada hasta que lo reanudes.';
-  $('#prog-pausa').disabled = !e;
-  $('#prog-pausa').textContent = e && !e.activo ? 'Reanudar envío' : 'Pausar envío';
-  $('#prog-guardar').textContent = e ? 'Guardar cambios' : 'Guardar programación';
-  $('#prog-guardar').disabled = !j;
+  renderGuardar();
   renderLatido();
   renderEnvio();
 }
-/* Solo los dos botones de probar: armar el envío o terminar de mandar no reconstruye el formulario (que perdería el foco y lo que se esté escribiendo). */
+/* Guardar y Pausar/Reanudar guardan LA MISMA programación: mientras hay un guardado en curso, y un instante después, quedan quietos. Un doble clic no es dos decisiones:
+   con un servidor rápido (decenas de milisegundos) la respuesta del primer clic ya cambió el botón a «Reanudar» cuando llega el segundo, que lo deshacía solo. Por eso
+   no alcanza con ignorar los clics mientras se espera la respuesta (como hace `una()`): hay que seguir ignorándolos un momento más (`QUIETO_MS`, como el doble toque de «Enviar ahora»). */
+const QUIETO_MS = 700;
+const guardandoAhora = () => { const g = PG.guardando; return !!g && g.sid === PG.sid && (g.enCurso || Date.now() < g.hasta); };
+function renderGuardar() {
+  const j = PG.datos, e = j && j.envio, g = PG.guardando, enCurso = !!g && g.sid === PG.sid && g.enCurso, quieto = guardandoAhora();
+  $('#prog-guardar').textContent = enCurso ? 'Guardando…' : (e ? 'Guardar cambios' : 'Guardar programación');
+  $('#prog-guardar').disabled = !j || quieto;
+  $('#prog-pausa').textContent = enCurso ? 'Guardando…' : (e && !e.activo ? 'Reanudar envío' : 'Pausar envío');
+  $('#prog-pausa').disabled = !e || quieto;
+}
+/* Solo los dos botones de probar: armar el envío o terminar de mandar no reconstruye el formulario (que perdería el foco y lo que se esté escribiendo).
+   `PG.ocupado` dice QUÉ se está haciendo: «Ver cómo queda» arma el resumen y no manda nada, así que no puede decir «Mandando…». */
 function renderEnvio() {
-  const enviar = $('#prog-enviar'), mandando = PG.ocupado === PG.sid, quieto = mandando || !PG.datos;
+  const op = PG.ocupado && PG.ocupado.sid === PG.sid ? PG.ocupado : null, mandando = !!op && op.enviar, armando = !!op && !op.enviar, quieto = !!op || !PG.datos;
+  const enviar = $('#prog-enviar');
   enviar.textContent = mandando ? 'Mandando…' : (PG.armado ? 'Tocá otra vez para mandarlo de verdad' : 'Enviar ahora');
   enviar.className = 'btn ' + (PG.armado && !mandando ? 'pri' : 'ghost');
   enviar.disabled = quieto;
+  $('#prog-ver').textContent = armando ? 'Armando…' : 'Ver cómo queda';
   $('#prog-ver').disabled = quieto;
 }
 function cuerpoProg(activo) {
   return {dias: PG.dias.slice().sort((a, b) => a - b), horas: PG.horas.filter(h => h), canales: PG.canales.slice(), formato: PG.formato, activo};
 }
 async function guardarProg(activo, mensaje, cuerpo) {
-  try {
-    const j = await post('/api/informes/' + PG.sid + '/envio', cuerpo || cuerpoProg(activo), 'PUT');
+  const sid = PG.sid;
+  if (guardandoAhora()) return;
+  const g = PG.guardando = {sid, enCurso: true, hasta: Date.now() + QUIETO_MS};
+  renderGuardar();
+  let j = null, falla = '';
+  try { j = await post('/api/informes/' + sid + '/envio', cuerpo || cuerpoProg(activo), 'PUT'); }
+  catch (e) { falla = e.message; }
+  g.enCurso = false;
+  if (j) refrescarEnvios().then(() => { if (activeId === 'list') renderList(); });             // lo guardado es de ESE informe, aunque el cuadro ya sea de otro
+  if (sid !== PG.sid) return;                                                                  // el cuadro ya es de otro informe: esta respuesta no es para esta pantalla
+  if (j) {
     if (!cuerpo && j.envio) { PG.dias = j.envio.dias.slice(); PG.horas = j.envio.horas.slice(); PG.canales = j.envio.canales.slice(); PG.formato = j.envio.formato; }      // el formulario muestra lo que el servidor guardó de verdad (sin repetidos y en orden)
     PG.datos = j;
     pgMsj(mensaje + (j.envio && j.envio.activo && j.envio.proximo_texto ? ' Próximo envío: ' + j.envio.proximo_texto + '.' : ''), false);
-    refrescarEnvios().then(() => { if (activeId === 'list') renderList(); });
-  } catch (e) { pgMsj(e.message, true); }
+  } else pgMsj(falla, true);
   renderProg();
+  if (Date.now() < g.hasta) setTimeout(() => { if (sid === PG.sid) renderGuardar(); }, g.hasta - Date.now());       // pasado el instante, los botones vuelven a servir
 }
+/* Qué se ve en «Ver cómo queda» y tras «Enviar ahora»: el texto que recibe CADA canal tildado, con su nombre (el correo, Telegram y WhatsApp no reciben el mismo: el de
+   Telegram entra en un pie de 1.024 letras y el de WhatsApp lleva la lista entera, sin adjunto). Un servidor que no manda `textos` solo tiene el del correo. */
+function textoDeProba(j, canales) {
+  const ts = j.textos;
+  if (!ts || !canales.length) return j.texto;
+  return canales.map(c => '── ' + nombreCanal(c) + ' ──\n' + (typeof ts[c] === 'string' ? ts[c] : j.texto)).join('\n\n');
+}
+function desarmarEnvio() { clearTimeout(PG.armadoTimer); PG.armado = 0; }
 async function probarProg(enviar) {
   const sid = PG.sid;
-  if (PG.ocupado === sid) return;                                     // una vista o un envío a la vez por informe (el servidor también lo exige)
+  if (PG.ocupado && PG.ocupado.sid === sid) return;                   // una vista o un envío a la vez por informe (el servidor también lo exige)
   if (enviar && !PG.canales.length) { pgMsj('Elegí por dónde mandarlo (WhatsApp, Telegram o correo) y probá de nuevo.', true); return; }
-  PG.ocupado = sid; renderEnvio();
+  if (!enviar) desarmarEnvio();                                       // otro botón: el segundo toque de «Enviar ahora» ya no vale
+  const op = PG.ocupado = {sid, enviar: !!enviar}, canales = PG.canales.slice(), formato = PG.formato;
+  renderEnvio();
   pgMsj(enviar ? 'Mandando…' : 'Armando el resumen…', false);
   try {
-    const j = await post('/api/informes/' + sid + '/envio/probar', {enviar, canales: PG.canales.slice()});
+    const j = await post('/api/informes/' + sid + '/envio/probar', {enviar, canales, formato});           // con el formato del formulario, no el guardado: lo que se ve y se manda es lo que se eligió
     if (sid !== PG.sid) return;                                       // el cuadro ya es de otro informe: esta respuesta no es para esta pantalla
-    $('#prog-prev').textContent = j.texto;
+    $('#prog-prev').textContent = textoDeProba(j, canales);
     $('#prog-prev').hidden = false;
     const por = Object.keys(j.enviado || {});
-    const fmtGuardado = PG.datos && PG.datos.envio ? PG.datos.envio.formato : 'excel';
-    if (!enviar) pgMsj('Así saldría: ' + fmtNum(j.animales) + (j.animales === 1 ? ' animal' : ' animales') + (j.bytes ? ' y el Excel (' + fmtNum(Math.round(j.bytes / 1024)) + ' KB)' : '') + '. No se mandó nada.' +
-      (PG.formato !== fmtGuardado ? ' Esta vista usa lo que está guardado (' + (fmtGuardado === 'excel' ? 'con el Excel' : 'solo el resumen') + '): tocá «Guardar» para que cambie.' : ''), false);
+    if (!enviar) pgMsj('Así saldría: ' + fmtNum(j.animales) + (j.animales === 1 ? ' animal' : ' animales') + (j.bytes ? ' y el Excel (' + fmtNum(Math.round(j.bytes / 1024)) + ' KB)' : (formato === 'texto' ? ', solo el resumen en texto' : '')) + '. No se mandó nada.', false);
     else {
       const bien = por.filter(c => j.enviado[c] === 'ok'), mal = por.filter(c => j.enviado[c] !== 'ok');
       pgMsj((bien.length ? 'Salió por: ' + bien.map(nombreCanal).join(', ') + '. ' : '') + mal.map(c => j.enviado[c].replace(/^error: /, '')).join(' '), mal.length > 0);
     }
   } catch (e) { if (sid === PG.sid) pgMsj(e.message, true); }
-  finally { if (PG.ocupado === sid) PG.ocupado = null; renderEnvio(); }
+  finally { if (PG.ocupado === op) PG.ocupado = null; renderEnvio(); }
   if (sid === PG.sid) cargarRegistroProg();
 }
 /* El hilo que manda los envíos deja la hora de su última revisión: si hace rato que no mira (el hilo trabado, o un servidor que no arrancó bien), la pantalla lo dice en vez de
@@ -1210,13 +1288,14 @@ function renderLatido() {
   e.textContent = texto;
 }
 async function cargarRegistroProg() {
-  const caja = $('#prog-reg-cuerpo');
+  const sid = PG.sid, caja = $('#prog-reg-cuerpo');
   try {
-    const j = await api('/api/informes/' + PG.sid + '/envio/registro');
+    const j = await api('/api/informes/' + sid + '/envio/registro');
+    if (sid !== PG.sid) return;                                       // el cuadro ya es de otro informe: ni su registro ni su latido se pintan acá
     if (PG.datos) { PG.datos.ultima_pasada_texto = j.ultima_pasada_texto; PG.datos.ultima_pasada_hace_s = j.ultima_pasada_hace_s; renderLatido(); }
     caja.innerHTML = j.registro.length ? j.registro.map(r0 => Object.assign({}, r0, {canal: nombreCanal(r0.canal)})).map(r => '<div' + (r.estado === 'fallido' || r.estado === 'sin_confirmar' ? ' class="bad"' : '') + '>' + esc(r.slot_texto) + ' · ' + esc(r.canal) + ' · ' + esc(TEXTO_ESTADO_ENVIO[r.estado] || r.estado) +
       (r.detalle ? ' — ' + esc(r.detalle) : '') + '</div>').join('') : '<div class="muted">Todavía no salió ningún envío programado.</div>';
-  } catch (e) { caja.textContent = ''; }
+  } catch (e) { if (sid === PG.sid) caja.textContent = ''; }
 }
 async function refrescarEnvios() { try { ENVIOS = (await api('/api/informes/envios')).envios || {}; } catch (e) { ENVIOS = {}; } }
 
@@ -1381,8 +1460,17 @@ document.addEventListener('click', e => {
   else if (a === 'quitarcol') { d.def.columnas.splice(+b.dataset.i, 1); normalizar(d); renderFields(); renderChips(); renderGroup(); marcarCambio(d); }
   else if (a === 'progquitar') { PG.horas.splice(+b.dataset.i, 1); renderProg(); const hs = document.querySelectorAll('#prog-horas input'); (hs[Math.min(+b.dataset.i, hs.length - 1)] || $('#prog-mas')).focus(); }          // el teclado no pierde el lugar
   else if (a === 'dptraer') una('dptraer', () => traerDeDelpro(+b.dataset.oid));
-  else if (a === 'cerrarimp') { if (d && d.importado) d.importado.cerrado = true; renderImportado(); }
+  else if (a === 'cerrarimp') {
+    if (d && d.importado) d.importado.cerrado = true;
+    renderImportado();
+    enfocar('#importado [data-act="abririmp"]') || enfocar('#rname');                  // la × desapareció con el aviso: el foco va a «Ver el aviso» (si quedó la franja) o al nombre del informe
+  }
   else if (a === 'abririmp') { if (d && d.importado) d.importado.cerrado = false; renderImportado(); enfocarAviso(); }
+  else if (a === 'quitarimp') una('quitarimp' + (d && d.sid), async () => {              // «ya lo revisé»: se borra la nota guardada (y con ella la línea de cada mensaje programado)
+    if (!d || !d.sid) return;
+    try { await post('/api/informes/' + d.sid, {origen: null}, 'PUT'); d.importado = null; await refrescarLista(); render(); enfocar('#rname'); }
+    catch (e) { toast('No se pudo quitar el aviso: ' + e.message); }
+  });
   else if (a === 'nuevocalc') abrirCalc(null);
   else if (a === 'editcalc') abrirCalc(b.dataset.id);
   else if (a === 'plegar') { const k = b.dataset.k; if (d.plegados[k]) delete d.plegados[k]; else d.plegados[k] = true; renderResultado(); }
@@ -1390,7 +1478,11 @@ document.addEventListener('click', e => {
   else if (a === 'desplegartodo') { d.plegados = {}; renderResultado(); }
   else if (a === 'gseg') cambioGrafico(d, b.dataset.k === 'periodo' ? {periodo: b.dataset.v, desde: null, hasta: null} : {[b.dataset.k]: b.dataset.v});
   else if (a === 'gser') { if (d.ocultas[b.dataset.id]) delete d.ocultas[b.dataset.id]; else d.ocultas[b.dataset.id] = true; dibujarGrafico(d, cfgGraf(d)); }
-  else if (a === 'agregarcond') { d.def.condiciones.push({campo: 'CurrentDIM', op: '>=', valor: ''}); renderFilters(); renderTabs(); renderHead(); }
+  else if (a === 'agregarcond') {
+    d.def.condiciones.push({campo: 'CurrentDIM', op: '>=', valor: ''});
+    renderFilters(); renderTabs(); renderHead();
+    enfocar('#filters [data-chg="ck"][data-i="' + (d.def.condiciones.length - 1) + '"]');         // el botón se redibujó: el teclado sigue en la fila nueva
+  }
   else if (a === 'quitarcond') { d.def.condiciones.splice(+b.dataset.i, 1); renderFilters(); marcarCambio(d); }
   else if (a === 'orden') {
     const o = d.def.orden;
@@ -1411,15 +1503,18 @@ document.addEventListener('change', e => {
     return;
   }
   if (a === 'gsolo') { cambioGrafico(d, {solo_informe: el.checked}); return; }
-  if (a === 'ck') { const c = d.def.condiciones[i]; c.campo = el.value; c.op = OPS[campoDe(d, c.campo).tipo][0][0]; c.valor = ''; renderFilters(); }
+  if (a === 'ck') {
+    const c = d.def.condiciones[i]; c.campo = el.value; c.op = OPS[campoDe(d, c.campo).tipo][0][0]; c.valor = '';
+    renderFilters();
+    enfocar('#filters [data-chg="ck"][data-i="' + i + '"]');                                                       // el selector se redibujó: el teclado no pierde el lugar
+  }
   else if (a === 'co') {
     const c = d.def.condiciones[i], antes = c.op;
     c.op = el.value;
     if ((antes === 'en') !== (c.op === 'en')) {                       // solo al entrar o salir de «es uno de» cambia el campo del valor: el resto de los cambios no redibuja
-      if (antes === 'en') { const l = listaDe(c.valor, tipoDe(c.campo)); c.valor = l.length ? l[0] : ''; }          // el primero de la lista, aunque sea el número 0
+      if (antes === 'en') { const f = formaDe(c.campo, d.def), l = listaDe(c.valor, f.tipo, f.entero); c.valor = l.length ? l[0] : ''; }          // el primero de la lista, aunque sea el número 0
       renderFilters();
-      const s = document.querySelector('#filters [data-chg="co"][data-i="' + i + '"]');                            // el teclado no pierde el lugar
-      if (s) s.focus();
+      enfocar('#filters [data-chg="co"][data-i="' + i + '"]');                                                     // el teclado no pierde el lugar
     }
   }
   else if (a === 'lim') { const n = parseInt(el.value, 10); if (Number.isFinite(n) && n >= 1) d.def.limite = Math.min(n, 5000); else delete d.def.limite; el.value = d.def.limite || ''; }        // vacío = el de siempre (hasta 2000); el tope del servidor es 5000
@@ -1452,13 +1547,14 @@ $('#prog-enviar').addEventListener('click', () => {
   if (!PG.armado) {                                     // el primer toque solo arma el botón (como el cierre de una pestaña con cambios): el mensaje sale de verdad en el segundo
     if (!PG.canales.length) { pgMsj('Elegí por dónde mandarlo (WhatsApp, Telegram o correo) y probá de nuevo.', true); return; }
     PG.armado = Date.now(); renderEnvio();
-    pgMsj('Tocá «Enviar ahora» otra vez para mandarlo de verdad. Si no, se cancela solo en 8 segundos.', false);
+    const que = PG.formato === 'texto' ? 'solo el resumen en texto' : 'el resumen y el Excel adjunto' + (PG.canales.indexOf('whatsapp') >= 0 ? ' (por WhatsApp va solo el resumen)' : '');       // lo que el formulario dice ahora, aunque no esté guardado
+    pgMsj('Va a salir ' + que + ', por ' + PG.canales.map(nombreCanal).join(', ') + '. Tocá «Enviar ahora» otra vez para mandarlo de verdad. Si no, se cancela solo en 8 segundos.', false);
     clearTimeout(PG.armadoTimer);
     PG.armadoTimer = setTimeout(() => { if (PG.armado) { PG.armado = 0; renderEnvio(); pgMsj('No se mandó nada: no se confirmó el envío.', false); } }, 8000);
     return;
   }
   if (Date.now() - PG.armado < 700) return;             // un doble clic no es confirmar: hace falta ver el cambio del botón
-  clearTimeout(PG.armadoTimer); PG.armado = 0; renderEnvio(); probarProg(true);
+  desarmarEnvio(); renderEnvio(); probarProg(true);
 });
 $('#prog').addEventListener('change', e => {
   const t = e.target;

@@ -3,6 +3,7 @@
     C:\\Python314\\python.exe -m unittest tests.test_informes_pagina -v
 """
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -201,13 +202,15 @@ class TestFase4cEnLaPantalla(unittest.TestCase):
 
     def test_solo_se_programa_un_informe_guardado(self):
         fuente = self.fuente()
-        self.assertIn("$('#btn-prog').disabled = !d.sid;", fuente)
+        # Sin guardar el botón sigue activo (con aria-disabled) y al tocarlo explica por qué: un botón `disabled` no dice nada (lo ejecuta TestPantallaEjecutada).
+        self.assertIn("$('#btn-prog').setAttribute('aria-disabled', String(!d.sid));", fuente)
+        self.assertNotIn("$('#btn-prog').disabled", fuente)
         self.assertIn("if (!d || !d.sid) { toast('Guardá el informe para poder programar su envío.'); return; }", fuente)
 
     def test_mandar_de_verdad_pide_dos_toques_y_ver_como_queda_no_manda(self):
         fuente = self.fuente()
         self.assertIn("probarProg(false)", fuente)
-        self.assertIn("{enviar, canales: PG.canales.slice()}", fuente)
+        self.assertIn("{enviar, canales, formato}", fuente)                    # el formato del formulario viaja siempre: lo que se ve y lo que se manda es lo que se eligió
         bloque = fuente[fuente.index("$('#prog-enviar').addEventListener"):fuente.index("$('#prog').addEventListener('change'")]
         self.assertIn("if (!PG.armado)", bloque)
         self.assertIn("Tocá otra vez para mandarlo de verdad", fuente)
@@ -217,7 +220,7 @@ class TestFase4cEnLaPantalla(unittest.TestCase):
         fuente = self.fuente()
         for pieza in ("esc(c.nombre)", "esc(c.id)", "esc(r.slot_texto)", "esc(r.canal)", "esc(r.detalle)", "esc(h)", "esc(TEXTO_ESTADO_ENVIO[r.estado] || r.estado)"):
             self.assertTrue(pieza in fuente, pieza)
-        for pieza in ("e.textContent = texto || ''", "$('#prog-prev').textContent = j.texto", "$('#prog-estado').textContent =", "$('#prog-t').textContent ="):
+        for pieza in ("e.textContent = texto || ''", "$('#prog-prev').textContent = textoDeProba(j, canales)", "$('#prog-estado').textContent =", "$('#prog-t').textContent ="):
             self.assertTrue(pieza in fuente, pieza)
         self.assertNotIn("$('#prog-prev').innerHTML", fuente)
         self.assertNotIn("$('#prog-msj').innerHTML", fuente)
@@ -297,14 +300,17 @@ class TestFase4aRevisionEnLaPantalla(unittest.TestCase):
     def test_cambiar_el_operador_solo_redibuja_al_entrar_o_salir_de_es_uno_de_y_no_pierde_el_foco(self):
         b = self.bloque("else if (a === 'co') {", "else if (a === 'cv')")
         self.assertIn("(antes === 'en') !== (c.op === 'en')", b)
-        self.assertIn(".focus()", b)
+        self.assertIn("enfocar('#filters [data-chg=\"co\"]", b)                    # enfocar() = querySelector + focus()
         self.assertIn("l.length ? l[0] : ''", b)                                  # el primero de la lista, aunque sea el 0 (`l[0] || ''` lo perdía)
         self.assertNotIn("[0] || ''", b)
 
     def test_los_errores_de_traer_van_dentro_del_cuadro_y_no_en_un_toast(self):
         f = self.fuente()
         traer = self.bloque("async function traerDeDelpro", "function renderImportado")
-        self.assertNotIn("toast(", traer)                                         # un toast queda debajo del fondo del cuadro modal y no se lee
+        # Un toast queda debajo del fondo del cuadro modal y no se lee: el único que hay sale cuando el cuadro YA se cerró (la respuesta llegó tarde).
+        self.assertEqual(traer.count("toast("), 1)
+        self.assertIn("else toast('Traje «'", traer)
+        self.assertLess(traer.index("const aqui = $('#delpro').open;"), traer.index("else toast("))
         self.assertIn("errorDelpro(", traer)
         self.assertRegex(f, r'<div class="msg err" id="dp-err" role="alert" hidden>')
 
@@ -335,7 +341,7 @@ class TestFase4aRevisionEnLaPantalla(unittest.TestCase):
         f = self.fuente()
         self.assertIn("const plural = (n, uno, varios)", f)
         self.assertIn("plural(i.columnas.total, 'columna', 'columnas')", f)
-        self.assertIn("'1 se trae completo'", f)
+        self.assertIn("'1 completo'", f)
         self.assertIn('aria-label="Traer «\' + esc(i.nombre) + \'»"', f)          # 66 botones «Traer» iguales no se distinguen con un lector de pantalla
         self.assertIn("filtro sin traer: puede mostrar más animales", f)          # la consecuencia a la vista, no solo en un tooltip
 
@@ -347,7 +353,8 @@ class TestFase4aRevisionEnLaPantalla(unittest.TestCase):
         g = self.bloque("async function guardar(d, comoNuevo)", "async function exportar(d)")
         self.assertIn("avisoAlGuardar(d)", g)
         self.assertIn("function toast(m, ms)", f)
-        self.assertIn("alGuardar: 'Ojo: no trae todas las condiciones que tenía en DelPro", f)
+        self.assertIn("AL_GUARDAR_DELPRO = 'Ojo: no trae todo lo que tenía en DelPro, así que puede mostrar animales de más o de menos.'", f)
+        self.assertIn("alGuardar: AL_GUARDAR_DELPRO", f)                                       # lo que se trae de DelPro avisa lo mismo que lo que se reabre
 
     @unittest.skipUnless(shutil.which("node"), "hace falta node para correr el JavaScript de la pantalla")
     def test_el_aviso_al_guardar_solo_sale_si_falta_algo_que_cambia_los_animales(self):
@@ -422,7 +429,7 @@ class TestFase4bcRevisionEnLaPantalla(unittest.TestCase):
     def test_la_respuesta_de_otro_informe_no_se_pinta_en_este_cuadro(self):
         b = self.bloque("async function probarProg(enviar)", "async function cargarRegistroProg")
         self.assertIn("if (sid !== PG.sid) return;", b)
-        self.assertIn("if (PG.ocupado === sid) return;", b)
+        self.assertIn("if (PG.ocupado && PG.ocupado.sid === sid) return;", b)
 
     def test_un_canal_apagado_que_estaba_tildado_se_puede_destildar(self):
         self.assertIn("(c.disponible || PG.canales.indexOf(c.id) >= 0 ? '' : ' disabled')", self.fuente())
@@ -431,7 +438,7 @@ class TestFase4bcRevisionEnLaPantalla(unittest.TestCase):
         b = self.bloque("async function abrirProg()", "async function cargarProg()")
         self.assertIn("PG.dias = []; PG.horas = []; PG.canales = []; PG.formato = 'excel';", b)
         self.assertIn("PG.fallo = false;", b)
-        self.assertIn("$('#prog-guardar').disabled = !j;", self.fuente())
+        self.assertIn("$('#prog-guardar').disabled = !j || quieto;", self.fuente())
 
     def test_una_respuesta_tardia_de_la_ia_no_cambia_la_pantalla_de_golpe(self):
         f = self.fuente()
@@ -493,6 +500,124 @@ class TestFase4bcRevisionEnLaPantalla(unittest.TestCase):
         self.assertEqual(a, "Tomé «Promedio producción diaria de leche 7 d.» > 0 como en ordeño")
         self.assertEqual(b, "Usé «Días en ordeño» y Foobar")                       # lo que no es del catálogo se deja como está
         self.assertEqual(c, "Nada técnico: rodeo 3")
+
+
+RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NODE = shutil.which("node") or next((n for n in (r"C:\Program Files\nodejs\node.exe", "/usr/bin/node", "/usr/local/bin/node") if os.path.exists(n)), None)
+
+
+@unittest.skipUnless(NODE, "hace falta node para correr el JavaScript de la pantalla")
+class TestPantallaEjecutada(unittest.TestCase):
+    """El JavaScript REAL de `templates/informes.html`, ejecutado con Node sobre un DOM mínimo y una API simulada (`tests/js/pantalla_informes.js`, `mini_dom.js`).
+
+    Las pruebas de arriba buscan texto en el código de la plantilla; estas, en cambio, hacen lo que hace el usuario (tocar, tocar dos veces, cambiar de informe mientras un pedido
+    está en camino, usar el teclado) y miran lo que queda en pantalla y lo que se le manda al servidor. Los casos viven en `tests/js/informes_pantalla.test.js`; Node los corre una
+    sola vez para toda la clase. No hay red, ni base, ni canales: lo que llama a `fetch` lo atiende un manejador de mentira.
+    """
+    resultados = {}
+
+    @classmethod
+    def setUpClass(cls):
+        r = subprocess.run([NODE, os.path.join("tests", "js", "informes_pantalla.test.js")], cwd=RAIZ, capture_output=True, text=True, encoding="utf-8", timeout=180)
+        lineas = [l for l in (r.stdout or "").splitlines() if l.startswith("RESULTADOS ")]
+        if not lineas:
+            raise AssertionError("Node no llegó a dar resultados:\n" + (r.stdout or "")[-1500:] + (r.stderr or "")[-1500:])
+        cls.resultados = {x["nombre"]: x for x in json.loads(lineas[0][len("RESULTADOS "):])}
+
+    def pasa(self, nombre):
+        r = self.resultados.get(nombre)
+        self.assertIsNotNone(r, "no existe el caso «%s» en tests/js/informes_pantalla.test.js" % nombre)
+        self.assertTrue(r["ok"], "%s\n%s" % (nombre, r.get("error", "")))
+
+    def test_todos_los_casos_de_la_pantalla_pasan(self):
+        self.assertGreaterEqual(len(self.resultados), 20)
+        fallan = ["%s\n%s" % (n, r.get("error", "")) for n, r in self.resultados.items() if not r["ok"]]
+        self.assertEqual(fallan, [])
+
+    def test_es_uno_de_sobre_un_campo_calculado_separa_con_punto_y_coma(self):
+        """[regresion #1] y [pantalla #1]: antes viajaba UNA cadena («3; 4») y el servidor la rechazaba, o «0,5; 1» se partía en 0, 5 y 1."""
+        self.pasa("lista: un campo calculado separa con la regla de los números")
+        self.pasa("lista: al salir de «es uno de» en un campo calculado queda el primer valor entero")
+
+    def test_en_un_campo_entero_la_coma_tambien_separa(self):
+        """[regresion #3]: «1,2,3» en Nº Lactación; con decimales la coma sigue siendo la decimal."""
+        self.pasa("lista: en un campo entero la coma también separa; con decimales sigue siendo la coma decimal")
+        self.pasa("lista: al salir de «es uno de» en un campo entero queda el primer valor")
+
+    def test_una_respuesta_tardia_de_guardar_no_toca_el_cuadro_de_otro_informe(self):
+        """[pantalla #2]."""
+        self.pasa("programar: una respuesta tardía de «Guardar» no pinta ni escribe el cuadro de otro informe")
+        self.pasa("programar: un error tardío del guardado de otro informe no se muestra")
+
+    def test_el_registro_tardio_no_se_mezcla_y_el_cuadro_nuevo_arranca_vacio(self):
+        """[pantalla #2]."""
+        self.pasa("programar: el registro que llega tarde no se mezcla con el de otro informe")
+        self.pasa("programar: al abrir el cuadro de otro informe se vacían el registro y el mensaje")
+
+    def test_enviar_ahora_manda_el_formato_del_formulario_y_avisa_antes(self):
+        """[pantalla #3]: antes mandaba lo guardado sin decirlo."""
+        self.pasa("programar: «Enviar ahora» manda el formato del formulario y el primer toque dice qué va a salir")
+        self.pasa("programar: «Ver cómo queda» también manda el formato y no dice que usa lo guardado")
+
+    def test_se_muestra_el_texto_de_cada_canal(self):
+        """[envios #6]: el correo, Telegram y WhatsApp no reciben el mismo texto."""
+        self.pasa("programar: se muestra el texto de cada canal tildado, rotulado, y sin «textos» el del correo")
+
+    def test_un_doble_clic_en_pausar_no_se_deshace(self):
+        """[pantalla #4]: el segundo clic llegaba con el botón ya en «Reanudar» y lo deshacía."""
+        self.pasa("programar: un doble clic en «Pausar envío» no se deshace solo, aunque el servidor conteste enseguida")
+        self.pasa("programar: mientras se guarda, «Guardar» y «Pausar» quedan quietos y dicen «Guardando…»")
+
+    def test_ver_como_queda_no_dice_mandando(self):
+        """[pantalla #5]."""
+        self.pasa("programar: la vista previa dice «Armando…» y no «Mandando…»; el envío sí dice «Mandando…»")
+
+    def test_el_aviso_de_fechas_fijas_mira_lo_guardado(self):
+        """[pantalla #7]."""
+        self.pasa("programar: el aviso de fechas fijas mira lo guardado y no lo que está en pantalla sin guardar")
+
+    def test_programar_un_informe_sin_guardar_explica_por_que_no(self):
+        """[pantalla #10]."""
+        self.pasa("programar: en un informe sin guardar el botón sigue activo y al tocarlo explica por qué no")
+
+    def test_el_resumen_del_cuadro_de_delpro_cuenta_como_las_filas(self):
+        """[pantalla #9]."""
+        self.pasa("traer: el resumen cuenta con la misma regla que las filas (completo con avisos es «casi igual»)")
+
+    def test_un_informe_traido_que_llega_tarde_no_cambia_la_pantalla(self):
+        """[pantalla #6]."""
+        self.pasa("traer: si el cuadro ya no está abierto cuando llega el informe, queda en una pestaña de fondo")
+        self.pasa("traer: con el cuadro abierto el informe se abre y el foco queda en su aviso")
+
+    def test_el_foco_del_teclado_no_se_pierde(self):
+        """[pantalla #8]: al cambiar el campo de una condición, con «+ Condición» y al cerrar el aviso del informe traído."""
+        self.pasa("foco: al cambiar el campo de una condición el foco sigue en el mismo selector")
+        self.pasa("foco: «+ Condición» pasa el foco al campo de la fila nueva")
+        self.pasa("foco: cerrar el aviso del informe traído deja el foco en «Ver el aviso» o, si no queda franja, en el nombre")
+
+
+class TestBarraDelInforme(unittest.TestCase):
+    """[regresion #4]: con «Programar» la barra de botones pasó de una línea a dos a 1280 px y «Actualizar», el botón principal, quedaba solo abajo."""
+
+    def fuente(self):
+        with open("templates/informes.html", encoding="utf-8") as f:
+            return f.read()
+
+    def test_sin_guardar_va_junto_al_nombre_y_no_entre_los_botones(self):
+        f = self.fuente()
+        i = f.index('<div class="acts">')
+        barra = f[i:f.index("</div>", i)]
+        self.assertNotIn('id="unsaved"', barra)
+        self.assertIn('<label class="eyebrow" for="rname">Nombre del informe</label><span class="unsaved" id="unsaved" hidden>', f)
+        self.assertRegex(f, r"\.lblrow\{[^}]*min-height:18px")                          # el alto fijo evita que el campo del nombre salte al aparecer el aviso
+
+    def test_el_boton_de_programar_es_corto_y_dice_todo_en_su_nombre_accesible_y_su_ayuda(self):
+        f = self.fuente()
+        m = re.search(r'<button class="btn" id="btn-prog"([^>]*)>([^<]*)</button>', f)
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(2), "Programar")
+        self.assertIn('aria-label="Programar envío"', m.group(1))                       # el nombre accesible contiene el rótulo visible
+        self.assertIn('title="Mandar este informe automáticamente', m.group(1))
 
 
 class TestMenu(unittest.TestCase):

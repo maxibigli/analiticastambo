@@ -8,6 +8,9 @@ import os
 import unittest
 from unittest import mock
 
+import anthropic
+import httpx
+
 import agente
 import app
 import informes_lenguaje as il
@@ -123,6 +126,18 @@ class TestDescribir(Base):
         r = self.pedir()
         self.assertEqual(r.status_code, 429)
         self.assertIn("muchos pedidos", r.get_json()["error"])
+        self.assertRegex(r.get_json()["error"], r"en \d+ minutos?:")                   # dice cuándo se libera un turno, no «unos minutos»
+        self.assertNotIn("unos minutos", r.get_json()["error"])
+
+    def test_los_pedidos_que_fallan_enseguida_no_gastan_turnos(self):
+        """Revisión final, ia #8: 20 respuestas 502 por la sobrecarga de la API (529) dejaban el pedido 21 en un 429 con la IA ya sana."""
+        sobrecarga = anthropic.InternalServerError("x", response=httpx.Response(529, request=httpx.Request("POST", "https://api.example.invalid/v1/messages")), body=None)
+        self.cliente.respuestas = [sobrecarga] * il.PEDIDOS_POR_HORA + [respuesta(BUENA)]
+        for _ in range(il.PEDIDOS_POR_HORA):
+            r = self.pedir()
+            self.assertEqual(r.status_code, 502)
+            self.assertNotIn("api.example", r.get_data(as_text=True))
+        self.assertEqual(self.pedir().status_code, 200)
 
 
 class TestCamposAvisaSiHayIA(Base):

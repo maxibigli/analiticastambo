@@ -42,6 +42,7 @@ import db
 import cotizaciones_externas
 import despachos_delpro
 import diagnostico_baja
+import envio_red
 import clima
 import ficha_animal
 import historial_animal
@@ -3401,7 +3402,6 @@ def api_iot_mapa_guardar():
     return jsonify({"ok": True})
 
 
-@app.get("/api/iot/analogicas")
 @app.post("/api/iot/mapa/probar")
 @auth.requiere_rol("admin")
 def api_iot_mapa_probar():
@@ -3438,6 +3438,7 @@ def api_iot_mapa_probar_cancelar(pedido):
     return jsonify({"cancelado": iot_monitoreo.cancelar_pulso(pedido)})
 
 
+@app.get("/api/iot/analogicas")
 @auth.requiere_rol("admin")
 def api_iot_analogicas_listar():
     """Entradas analógicas (4-20 mA) del M300: asignación a un sensor del panel, escala y lectura en vivo, para
@@ -6819,7 +6820,8 @@ def api_informes_envios_resumen():
     return jsonify({"envios": {i: {"activo": e["activo"], "proximo_texto": e["proximo_texto"], "canales": e["canales"]} for i, e in r.items()}})
 
 
-@app.get("/api/informes/<int:informe_id>/envio")
+# El id de un informe es un INTEGER de SQLite: uno mayor que 2^63-1 (o 0) no puede existir, y en el conversor contesta 404 en vez de dar un 500 al llegar a la base.
+@app.get("/api/informes/<int(min=1, max=9223372036854775807):informe_id>/envio")
 @auth.requiere_rol("admin")
 def api_informe_envio_ver(informe_id):
     tambo = _tambo_del_request()
@@ -6828,7 +6830,7 @@ def api_informe_envio_ver(informe_id):
     return jsonify(_estado_del_envio(tambo, informe_id))
 
 
-@app.put("/api/informes/<int:informe_id>/envio")
+@app.put("/api/informes/<int(min=1, max=9223372036854775807):informe_id>/envio")
 @auth.requiere_rol("admin")
 def api_informe_envio_guardar(informe_id):
     """Programa (o cambia, o pausa con `activo: false`) el envío de un informe guardado. No hay forma de borrar una programación."""
@@ -6849,7 +6851,7 @@ def api_informe_envio_guardar(informe_id):
     return jsonify(_estado_del_envio(tambo, informe_id))
 
 
-@app.get("/api/informes/<int:informe_id>/envio/registro")
+@app.get("/api/informes/<int(min=1, max=9223372036854775807):informe_id>/envio/registro")
 @auth.requiere_rol("admin")
 def api_informe_envio_registro(informe_id):
     tambo = _tambo_del_request()
@@ -6858,7 +6860,7 @@ def api_informe_envio_registro(informe_id):
     return jsonify({"registro": informes_envios.registro(tambo, informe_id), **_latido_del_envio()})
 
 
-@app.post("/api/informes/<int:informe_id>/envio/probar")
+@app.post("/api/informes/<int(min=1, max=9223372036854775807):informe_id>/envio/probar")
 @auth.requiere_rol("admin")
 def api_informe_envio_probar(informe_id):
     """«Enviar ahora»: arma el informe como se mandaría y, SOLO si se pide (`enviar: true`), lo manda de verdad por los canales elegidos. No anota nada en
@@ -6870,7 +6872,9 @@ def api_informe_envio_probar(informe_id):
     if informes_guardados.obtener(tambo, informe_id) is None:
         return jsonify({"error": "Ese informe no existe."}), 404
     try:
-        r = informes_envios.probar(tambo, informe_id, _enviar_informe_a_canal, cuerpo.get("canales"), cuerpo.get("enviar") is True, _ids_de_canales_disponibles)
+        # `formato` (opcional): el del formulario, todavía sin guardar; `probar` lo valida contra «excel»/«texto». Sin él se usa el guardado.
+        r = informes_envios.probar(tambo, informe_id, _enviar_informe_a_canal, cuerpo.get("canales"), cuerpo.get("enviar") is True, _ids_de_canales_disponibles,
+                                   formato=cuerpo.get("formato"))
     except informes_envios.EnvioError as exc:
         return jsonify({"error": str(exc)}), 400
     except informes_motor.InformeError as exc:
@@ -6948,7 +6952,7 @@ def api_informes_listar():
     return jsonify({"informes": informes_guardados.listar(_tambo_del_request())})
 
 
-@app.get("/api/informes/<int:informe_id>")
+@app.get("/api/informes/<int(min=1, max=9223372036854775807):informe_id>")
 @auth.requiere_rol("admin")
 def api_informes_obtener(informe_id):
     r = informes_guardados.obtener(_tambo_del_request(), informe_id)
@@ -6963,13 +6967,13 @@ def api_informes_crear():
         return jsonify({"error": "El informe tiene que enviarse como JSON."}), 400
     try:
         r = informes_guardados.crear(_tambo_del_request(), cuerpo.get("nombre"), cuerpo.get("definicion"),
-                                     auth.usuario_actual(), favorito=bool(cuerpo.get("favorito")))
+                                     auth.usuario_actual(), favorito=bool(cuerpo.get("favorito")), origen=cuerpo.get("origen"))
     except informes_guardados.InformeGuardadoError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(r), 201
 
 
-@app.put("/api/informes/<int:informe_id>")
+@app.put("/api/informes/<int(min=1, max=9223372036854775807):informe_id>")
 @auth.requiere_rol("admin")
 def api_informes_actualizar(informe_id):
     cuerpo = _cuerpo_json_o_400()
@@ -6981,7 +6985,8 @@ def api_informes_actualizar(informe_id):
     try:
         r = informes_guardados.actualizar(tambo, informe_id, nombre=cuerpo.get("nombre"),
                                           definicion=cuerpo.get("definicion"),
-                                          favorito=cuerpo.get("favorito") if "favorito" in cuerpo else None)
+                                          favorito=cuerpo.get("favorito") if "favorito" in cuerpo else None,
+                                          origen=cuerpo["origen"] if "origen" in cuerpo else informes_guardados.SIN_CAMBIO)   # sin la clave queda la nota; con null se quita
     except informes_guardados.InformeGuardadoError as exc:
         return jsonify({"error": str(exc)}), 400
     return jsonify(r)
@@ -7003,7 +7008,7 @@ def api_informes_exportar():
     except Exception:  # noqa: BLE001
         return jsonify({"error": "No se pudo leer la base de datos para este informe."}), 502
     ahora = datetime.datetime.now()
-    datos = informes_excel.a_xlsx(r, nombre or "Informe", condiciones=informes_motor.describir_condiciones(defn), generado=ahora)
+    datos = informes_excel.a_xlsx(r, nombre or "Informe", condiciones=informes_motor.describir_condiciones(defn, con_dia=True, con_limite=True), generado=ahora)
     return send_file(io.BytesIO(datos), as_attachment=True, download_name=informes_excel.nombre_de_archivo(nombre, ahora.date()),
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
@@ -7137,17 +7142,17 @@ def _enviar_informe_a_canal(canal: str, armado: dict) -> None:
     traga nada, y quien llama guarda solo una frase fija (nunca el texto de la excepción)."""
     mod = _CANALES_MOD.get(canal)
     if mod is None or not (config_alertas.activo(canal) and mod.configurado()):
-        raise RuntimeError("canal no disponible")
+        raise envio_red.CanalNoDisponible()                                     # se SABE que no se llamó a ningún canal: se anota «fallido», no «sin confirmar»
     datos = armado.get("datos")
-    sin_adjunto = armado.get("texto_sin_adjunto", armado["texto"])             # el que no promete un archivo que el canal no recibe
+    texto = informes_envios.texto_para(armado, canal)                           # el MISMO texto que «Ver cómo queda» le muestra a cada canal
     if datos and canal == "correo":
-        correo.enviar_con_adjunto(armado["asunto"], armado["texto"], armado["nombre_archivo"], datos)
+        correo.enviar_con_adjunto(armado["asunto"], texto, armado["nombre_archivo"], datos)
     elif datos and canal == "telegram":
-        telegram_bot.enviar_documento(armado["nombre_archivo"], datos, armado.get("texto_telegram", armado["texto"]))      # el pie de un archivo: 1.024 letras como máximo
+        telegram_bot.enviar_documento(armado["nombre_archivo"], datos, texto)      # el pie de un archivo: 1.024 letras como máximo
     elif canal == "correo":
-        mod.enviar(sin_adjunto, asunto=armado.get("asunto"))                    # el asunto del informe, no el de una alerta
+        mod.enviar(texto, asunto=armado.get("asunto"))                          # el asunto del informe, no el de una alerta
     else:
-        mod.enviar(sin_adjunto)
+        mod.enviar(texto)
 
 
 def _enviar_a_canales_activos(mensaje: str):

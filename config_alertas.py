@@ -43,7 +43,8 @@ def set_activo(canal: str, valor: bool) -> None:
             json.dump(actual, f)
 
 
-_HORA_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+# `fullmatch` y `[0-9]`: con `$` un salto de línea final («08:00\n») pasaba como un horario distinto, y `\d` acepta dígitos de otros alfabetos.
+_HORA_RE = re.compile(r"([01][0-9]|2[0-3]):([0-5][0-9])")
 
 
 def horario() -> dict:
@@ -56,7 +57,7 @@ def horario() -> dict:
     horas = guardado.get("horas")
     if not isinstance(dias, list) or not dias or not all(isinstance(d, int) and 0 <= d <= 6 for d in dias):
         dias = list(range(7))
-    if not isinstance(horas, list) or not horas or not all(isinstance(h, str) and _HORA_RE.match(h) for h in horas):
+    if not isinstance(horas, list) or not horas or not all(isinstance(h, str) and _HORA_RE.fullmatch(h) for h in horas):
         horas = ["08:00", "20:00"]
     return {"dias": sorted(set(dias)), "horas": sorted(set(horas))}
 
@@ -71,7 +72,7 @@ def set_horario(dias: list, horas: list) -> None:
         raise ValueError("Elegí al menos un día de la semana.")
     if not horas:
         raise ValueError("Elegí al menos un horario.")
-    if not all(_HORA_RE.match(h) for h in horas):
+    if not all(_HORA_RE.fullmatch(h) for h in horas):
         raise ValueError("Los horarios tienen que tener formato HH:MM.")
     if len(horas) > MAX_HORARIOS:
         raise ValueError(f"Como máximo {MAX_HORARIOS} horarios por día.")

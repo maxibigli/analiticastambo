@@ -15,6 +15,7 @@ from unittest import mock
 import app
 import config_alertas
 import correo
+import envio_red
 import informes_envios as ie
 import informes_guardados as ig
 import informes_motor as im
@@ -217,6 +218,73 @@ class TestProbar(Base):
         self.assertEqual(r.status_code, 200)
         self.assertEqual(self.enviados, [])                                    # «enviar» tiene que pedirse a propósito
 
+    def test_devuelve_el_texto_que_recibe_cada_canal(self):
+        """Revisión final (envíos #6): «Ver cómo queda» mostraba siempre el texto del correo; cada canal recibe el suyo."""
+        self.admin.put(self.url, json=self.cuerpo)
+        j = self.admin.post(self.url + "/probar", json={"enviar": False}).get_json()
+        self.assertEqual(set(j["textos"]), {"correo", "telegram", "whatsapp"})
+        self.assertEqual(j["textos"]["correo"], j["texto"])
+        self.assertIn("adjunto", j["textos"]["telegram"])
+        self.assertNotIn("adjunto", j["textos"]["whatsapp"])                  # a WhatsApp no le llega el archivo
+
+    def test_el_formato_del_formulario_se_usa_en_vez_del_guardado(self):
+        """Contrato con la pantalla: «Enviar ahora» y «Ver cómo queda» mandan el formato elegido, todavía sin guardar."""
+        self.admin.put(self.url, json=self.cuerpo)                                           # guardado: excel
+        j = self.admin.post(self.url + "/probar", json={"enviar": True, "canales": ["telegram"], "formato": "texto"}).get_json()
+        self.assertEqual(j["bytes"], 0)
+        self.assertIsNone(self.enviados[-1][1]["datos"])
+        self.assertNotIn("adjunto", j["textos"]["correo"])
+        j = self.admin.post(self.url + "/probar", json={"enviar": False, "formato": "excel"}).get_json()
+        self.assertGreater(j["bytes"], 0)
+        self.assertEqual(self.admin.get(self.url).get_json()["envio"]["formato"], "excel")   # lo guardado no cambió
+
+    def test_sin_formato_se_usa_el_guardado_y_sin_programacion_el_excel(self):
+        self.assertGreater(self.admin.post(self.url + "/probar", json={"enviar": False}).get_json()["bytes"], 0)
+        self.admin.put(self.url, json=dict(self.cuerpo, formato="texto"))
+        self.assertEqual(self.admin.post(self.url + "/probar", json={"enviar": False}).get_json()["bytes"], 0)
+
+    def test_un_formato_que_no_existe_es_400_y_no_manda_nada(self):
+        for malo in ("pdf", "EXCEL", "", 3, ["excel"], True):
+            r = self.admin.post(self.url + "/probar", json={"enviar": True, "canales": ["telegram"], "formato": malo})
+            self.assertEqual(r.status_code, 400, repr(malo))
+            self.assertIn("formato", r.get_json()["error"])
+        self.assertEqual(self.enviados, [])
+
+    def test_un_formato_nulo_es_como_no_decirlo(self):
+        self.assertEqual(self.admin.post(self.url + "/probar", json={"enviar": False, "formato": None}).status_code, 200)
+
+    def test_un_excel_que_no_se_puede_armar_es_400_sin_el_texto_de_la_excepcion(self):
+        with mock.patch("informes_excel.a_xlsx", side_effect=ValueError("detalle-secreto")):
+            r = self.admin.post(self.url + "/probar", json={"enviar": False, "formato": "excel"})
+        self.assertEqual(r.status_code, 400)
+        self.assertIn("No se pudo armar el Excel", r.get_json()["error"])
+        self.assertNotIn("secreto", r.get_data(as_text=True))
+
+
+class TestUnIdQueNoCabeEnSQLite(Base):
+    """Revisión final (seguridad #3): un id de 2^63 o más daba un 500 en todas las rutas por id (SQLite no lo puede guardar). Es un informe que no existe: 404."""
+
+    def test_todas_las_rutas_por_id_contestan_404(self):
+        for id_ in (2 ** 63, 2 ** 63 + 1, 10 ** 30):
+            base = f"/api/informes/{id_}"
+            pedidos = [("get", base, {}), ("put", base, {"json": {"nombre": "x"}}), ("get", base + "/envio", {}), ("put", base + "/envio", {"json": self.cuerpo}),
+                       ("get", base + "/envio/registro", {}), ("post", base + "/envio/probar", {"json": {"enviar": False}})]
+            for metodo, url, extra in pedidos:
+                r = getattr(self.admin, metodo)(url, **extra)
+                # Con el conversor de la ruta (`<int(max=...)>`) un id imposible no calza con ninguna ruta: un GET da 404; los demás métodos dan 404 o 405 (hay una ruta
+                # general de archivos solo-GET) y NUNCA un 500 ni un 200.
+                self.assertIn(r.status_code, (404,) if metodo == "get" else (404, 405), f"{metodo} {url}")
+        self.assertEqual(self.enviados, [])
+
+    def test_el_mayor_id_que_cabe_es_un_informe_que_no_existe_y_el_cero_tambien(self):
+        for id_ in (2 ** 63 - 1, 0):
+            self.assertEqual(self.admin.get(f"/api/informes/{id_}").status_code, 404, id_)
+            self.assertEqual(self.admin.get(f"/api/informes/{id_}/envio").status_code, 404, id_)
+
+    def test_un_informe_de_verdad_sigue_andando(self):
+        self.assertEqual(self.admin.get(f"/api/informes/{self.informe['id']}").status_code, 200)
+        self.assertEqual(self.admin.get(self.url).status_code, 200)
+
 
 class TestDespachoPorCanal(unittest.TestCase):
     """`app._enviar_informe_a_canal`: qué función de cada canal se usa. Los módulos de canal son de mentira."""
@@ -274,6 +342,36 @@ class TestDespachoPorCanal(unittest.TestCase):
         with mock.patch.object(config_alertas, "activo", lambda canal: canal != "correo"):
             with self.assertRaises(RuntimeError):
                 app._enviar_informe_a_canal("correo", self.ARMADO)
+
+    def test_un_canal_que_no_esta_disponible_levanta_un_error_que_se_sabe_que_no_salio(self):
+        """Revisión final (envíos #5): un RuntimeError liso se anotaba «No se pudo confirmar si salió» cuando se SABE que no se llamó a ningún canal."""
+        self.mod["telegram"].configurado.return_value = False
+        with self.assertRaises(envio_red.CanalNoDisponible) as cm:
+            app._enviar_informe_a_canal("telegram", self.ARMADO)
+        self.assertIs(cm.exception.no_salio, True)
+        self.assertIs(cm.exception.reintentable, False)
+        estado, detalle, _ = ie._fallo_de_canal("telegram", cm.exception)
+        self.assertEqual(estado, "fallido")
+        self.assertIn("no está configurado o está apagado", detalle)
+        for canal in ("correo", "telegram", "whatsapp"):
+            self.mod[canal].enviar.assert_not_called()
+
+    def texto_mandado(self, canal, armado):
+        self.mod[canal].reset_mock()
+        with mock.patch.object(correo, "enviar_con_adjunto") as adj, mock.patch.object(telegram_bot, "enviar_documento") as doc:
+            app._enviar_informe_a_canal(canal, armado)
+        if adj.called:
+            return adj.call_args.args[1]
+        if doc.called:
+            return doc.call_args.args[2]
+        return self.mod[canal].enviar.call_args.args[0]
+
+    def test_cada_canal_manda_el_texto_que_ver_como_queda_le_muestra(self):
+        """`probar` devuelve `textos` con `texto_para`: es el MISMO que usa el envío de verdad, con y sin el archivo."""
+        for canal in ("correo", "telegram", "whatsapp"):
+            for datos in (self.ARMADO["datos"], None):
+                armado = dict(self.ARMADO, datos=datos)
+                self.assertEqual(self.texto_mandado(canal, armado), ie.texto_para(armado, canal), (canal, bool(datos)))
 
     def test_un_canal_desconocido(self):
         with self.assertRaises(RuntimeError):

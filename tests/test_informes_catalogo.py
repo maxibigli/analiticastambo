@@ -41,6 +41,18 @@ class TestCatalogo(unittest.TestCase):
         db.validate_sql(r["sql"])
         self.assertIn("GETDATE()", r["sql"])
 
+    def test_cada_campo_de_fecha_se_compara_por_dia_con_cada_operador_y_pasa_la_validacion(self):
+        """Revisión final (ia #1): un campo de fecha del catálogo puede traer hora (`MAX(DateAndTime)`): «=», «<=» y «>» comparan el DÍA."""
+        fechas = [c for c in cat.CATALOGO.values() if c.tipo == "fecha"]
+        self.assertTrue(fechas)
+        for c in fechas:
+            for op in im.OPERADORES["fecha"]:
+                r = im.compilar({"columnas": [{"campo": c.id}], "condiciones": [{"campo": c.id, "op": op, "valor": "2026-08-15"}]}, herd=1, hoy="2026-08-27")
+                self.assertIn(f"CAST({c.expr} AS date) {op} CONVERT(date, '2026-08-15', 23)", r["sql"], f"{c.id} {op}")
+                db.validate_sql(r["sql"])
+                p = im.poblacion_sql({"columnas": [{"campo": c.id}], "condiciones": [{"campo": c.id, "op": op, "valor": "2026-08-15"}]}, herd=1, hoy="2026-08-27")
+                db.validate_sql(p)
+
     def test_los_bloques_no_multiplican_filas(self):
         """Un LEFT JOIN a algo que puede devolver varias filas por animal duplicaría animales en el informe. Cada bloque
         o agrupa por animal o une por una clave única de una fila por animal (AnimalReproductionInfo, AnimalGroup...)."""

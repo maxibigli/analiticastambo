@@ -26,6 +26,7 @@ import math
 import re
 import threading
 import time
+import unicodedata
 
 import informes_catalogo
 import informes_motor
@@ -170,6 +171,7 @@ class _Lector:
         self.tok = _tokenizar(texto)
         self.i = 0
         self.nivel = 0
+        self.operaciones = 0                                    # las cuentas de TODO el filtro (no de cada paréntesis): ver `suma`
 
     # --- utilidades
     def ver(self, k=0):
@@ -279,11 +281,12 @@ class _Lector:
 
     def suma(self):
         izq = self.unario()
-        cuentas = 0
         while self.es_op("+", "-", "*", "/", "%"):
-            cuentas += 1
-            if cuentas > MAX_OPERACIONES:
-                raise CriterioError("demasiadas cuentas seguidas")
+            # El tope es de TODO el filtro: contado por cada llamada, 10 grupos de 190 cuentas entre paréntesis (3,8 KB) pasaban y armaban un árbol de 1.900
+            # niveles, que agotaba la pila al recorrerlo (`RecursionError`) y dejaba al informe entero «no se pudo leer» en vez de «parcial».
+            self.operaciones += 1
+            if self.operaciones > MAX_OPERACIONES:
+                raise CriterioError("demasiadas cuentas en el filtro")
             op = self.tomar()
             der = self.unario()
             izq = _n("arit", izq["ini"], der["fin"], op=op[1], izq=izq, der=der)
@@ -467,7 +470,10 @@ def resolver_por_nombre(catalogo):
         if re.fullmatch(r"[A-Za-z_]\w*", limpio):
             return limpio, (limpio if limpio in catalogo else None)
         if limpio.startswith("ReproductionInfo.") and re.fullmatch(r"[A-Za-z_]\w*", limpio.split(".", 1)[1]):
-            return limpio.split(".", 1)[1], None
+            suelto = limpio.split(".", 1)[1]
+            # Si el catálogo YA tiene un campo con ese nombre, el de la reproducción es otra definición (`_campo_de` lo explica): se queda con su ruta, para
+            # que ni el aviso ni el ranking de «campos que faltan» digan que «LastCalvingDate todavía no existe acá».
+            return (limpio if suelto in catalogo else suelto), None
         return limpio, None
     return res
 
@@ -478,7 +484,7 @@ def resolver_por_columnas(columnas, catalogo):
 
     def res(path):
         limpio = _sin_calificador(path)
-        m = re.fullmatch(r"C(\d+)", limpio)
+        m = re.fullmatch(r"(?:UN-)?C([0-9]+)", limpio)                              # DelPro también escribe `UN-C2971`: es la misma columna
         if m and int(m.group(1)) in por_oid:
             item = por_oid[int(m.group(1))]
             return item, (item if item in catalogo else None)
@@ -496,17 +502,20 @@ def _aplanar_y(n) -> list:
 
 
 def _props(n, out) -> None:
-    if n is None:
-        return
-    if n["t"] == "prop":
-        out.append(n)
-        return
-    for k in ("izq", "der", "x", "a", "b", "patron"):
-        if k in n:
-            _props(n[k], out)
-    for k in ("items", "valores", "args"):
-        for x in n.get(k, ()):
-            _props(x, out)
+    """Los campos (`prop`) que usa un árbol, en el orden en que se leen. SIN recursión: el árbol viene de un texto de DelPro y puede ser mucho más profundo que
+    la pila de Python (una recursión acá dejaba al informe entero «no se pudo leer»)."""
+    pila = [n]
+    while pila:
+        x = pila.pop()
+        if x is None:
+            continue
+        if x["t"] == "prop":
+            out.append(x)
+            continue
+        hijos = [x[k] for k in ("izq", "der", "x", "a", "b", "patron") if k in x]
+        for k in ("items", "valores", "args"):
+            hijos += list(x.get(k, ()))
+        pila.extend(reversed(hijos))                                     # al revés, para sacarlos en el mismo orden de siempre
 
 
 def _faltantes_de(termino, resolver) -> list:
@@ -529,11 +538,40 @@ def _campo_de(n, resolver, catalogo):
         raise _NoTraducible("Compara algo que no es un campo.")
     nombre, id_ = resolver(n["path"])
     if id_ is None:
+        suelto = nombre.split(".", 1)[1] if nombre.startswith("ReproductionInfo.") else None
+        if suelto in catalogo:                                                       # existe, pero NO es el mismo dato: decir «no existe» sería mentira
+            e = catalogo[suelto].etiqueta
+            raise _NoTraducible(f"Es la fecha guardada en la reproducción, distinta de la «{e}» de acá." if catalogo[suelto].tipo == "fecha"
+                                else f"Es el dato guardado en la reproducción, distinto de «{e}» de acá.")
+        if _ID_COLUMNA.match(nombre):                                                # una columna que no es de este informe: no hay nombre que mostrar
+            raise _NoTraducible(f"No se pudo identificar a qué campo de DelPro corresponde «{nombre}».")
         raise _NoTraducible(f"El campo «{nombre}» todavía no existe acá.")
     return catalogo[id_]
 
 
-def _valor_de(campo, lit):
+def _sin_tildes(texto) -> str:
+    """Para comparar un texto sin importar mayúsculas, tildes ni espacios de los costados («prenada» = «Preñada»)."""
+    return "".join(c for c in unicodedata.normalize("NFD", str(texto)) if not unicodedata.combining(c)).casefold().strip()
+
+
+def _de_la_lista(campo, texto, parcial=False):
+    """Un campo de texto CERRADO (`Campo.valores`: el estado de la reproducción) solo puede valer lo que dice su lista. Un código de DelPro («1»), un nombre en
+    inglés («Open») o cualquier otra cosa no es ninguno de esos: traerlo tal cual daba un informe «completo» que no devuelve ningún animal. Se devuelve el valor
+    con el nombre de la lista (sin tildes ni mayúsculas se reconoce igual). `parcial`: para «contiene», que alcanza con un pedazo de alguno."""
+    if not campo.valores:
+        return texto
+    buscado = _sin_tildes(texto)
+    if parcial:
+        if buscado and any(buscado in _sin_tildes(v) for v in campo.valores):
+            return texto
+    else:
+        for v in campo.valores:
+            if _sin_tildes(v) == buscado:
+                return v
+    raise _NoTraducible("Compara con un código de DelPro que acá no existe.")
+
+
+def _valor_de(campo, lit, parcial=False):
     if lit["t"] != "lit":
         raise _NoTraducible("Compara con algo que no es un valor fijo.")
     k = lit["k"]
@@ -542,7 +580,7 @@ def _valor_de(campo, lit):
     if campo.tipo == "num" and k == "num":
         return lit["v"]
     if campo.tipo == "txt" and k == "str":
-        return lit["v"]
+        return _de_la_lista(campo, lit["v"], parcial)
     if campo.tipo == "fecha" and k == "fecha":
         if lit["v"] is None:
             raise _NoTraducible("La fecha tiene una hora: acá se compara solo por día." if _HORA_EN_FECHA.search(lit.get("raw") or "")
@@ -593,7 +631,7 @@ def _traducir_termino(n, resolver, catalogo):
             campo = _campo_de(args[0], resolver, catalogo)
             if campo.tipo != "txt":
                 raise _NoTraducible(f"«{campo.etiqueta}» no es un texto.")
-            return [_cond(campo.id, "contiene", _valor_de(campo, args[1]))], None, False
+            return [_cond(campo.id, "contiene", _valor_de(campo, args[1], parcial=True))], None, False
         raise _NoTraducible(f"Usa «{nombre}», que acá no existe.")
     if t == "isnull":
         campo = _campo_de(n["x"], resolver, catalogo)
@@ -688,6 +726,11 @@ def _corto(texto: str, largo: int = 300) -> str:
     return re.sub(r"\s+", " ", str(texto)).strip()[:largo]
 
 
+def _para_mostrar(nombre: str) -> str:
+    """El nombre de un campo de DelPro en un aviso: «En ordeño (InMilk)» si se sabe cómo se llama en castellano; si no, tal cual (una ruta no se toca)."""
+    return f"{NOMBRE_EN_DELPRO[nombre]} ({nombre})" if nombre in NOMBRE_EN_DELPRO else nombre
+
+
 def _pendiente(texto: str, motivo: str, campos=()) -> dict:
     return {"texto": texto, "motivo": motivo, "campos": list(campos)}
 
@@ -707,11 +750,11 @@ def condiciones_de(texto, resolver, catalogo, maximo, previas=(), en_memoria=Fal
     existen). Si faltan términos, el informe va a mostrar MÁS animales que en DelPro, nunca menos. Un término que ni se puede leer no se lleva puestos a los
     otros: el texto se parte en sus «y» de primer nivel. `maximo` = cuántas condiciones caben EN TOTAL, y `previas` las que ya se aceptaron de otra fuente (lo
     repetido no ocupa lugar). `en_memoria`: el filtro lo evalúa DelPro en memoria (el de la lista), donde un animal SIN dato pasa un «menor que» o un
-    «distinto de»; SQL lo deja afuera, así que esos términos solo se traen si el mismo campo pide «con dato»."""
+    «distinto de»; SQL lo deja afuera, así que esos términos solo se traen si el mismo campo pide «con dato» o ya tiene otra condición que deja afuera a los nulos."""
     if texto is None or not str(texto).strip():
         return [], []
     texto = str(texto)
-    nombre_de = lambda p: resolver(p)[0]
+    nombre_de = lambda p: _para_mostrar(resolver(p)[0])
     nodos = []                                                                      # (nodo, texto de donde salió); nodo None = un término ilegible
     try:
         nodos = [(n, texto) for n in _aplanar_y(analizar(texto))]
@@ -742,12 +785,17 @@ def condiciones_de(texto, resolver, catalogo, maximo, previas=(), en_memoria=Fal
             pend.append(_pendiente(_texto_de_termino(nodo, fuente, nombre_de), "No se pudo leer esta condición de DelPro."))
             continue
         items.append((nodo, fuente, nuevas, exige, nulos))
-    con_dato = {exige for _, _, _, exige, _ in items if exige}
+    # Un campo está «cubierto» si DelPro ya deja afuera a sus animales sin dato por otro lado: un «con dato» de la misma lista, una comparación de otro tipo sobre el
+    # mismo campo (un «mayor que», un «igual», un «entre», «es uno de»: un rango escrito con dos comparaciones) o una condición que ya se aceptó antes (`previas`,
+    # que en DelPro también dejó afuera a los nulos). Un «menor que» o un «distinto de» no cubre a otro: los dos dejan pasar al animal sin dato.
+    cubiertos = {exige for _, _, _, exige, _ in items if exige}
+    cubiertos |= {c["campo"] for _, _, nuevas, exige, nulos in items if not exige and not nulos for c in nuevas}
+    cubiertos |= {c["campo"] for c in previas}
     conds, previos = [], list(previas)
     for nodo, fuente, nuevas, exige, nulos in items:
         if exige:
             continue
-        if en_memoria and nulos and not all(c["campo"] in con_dato for c in nuevas):
+        if en_memoria and nulos and not all(c["campo"] in cubiertos for c in nuevas):
             pend.append(_pendiente(_texto_de_termino(nodo, fuente, nombre_de),
                                    "En DelPro los animales sin dato también pasan este filtro: traerlo solo mostraría menos animales."))
             continue
@@ -877,14 +925,16 @@ def _codigos(col) -> tuple:
     return [c for c in total if c not in SIN_RESUMEN], (None if g in SIN_RESUMEN else g)
 
 
-def _resumen_de_campo(dups: list, campo) -> tuple:
+def _resumen_de_campo(dups: list, campo, hay_grupos: bool = True) -> tuple:
     """(resumen elegido o None, frase de lo que se pierde o None, ¿se veía solo en el total o solo en los grupos?). `dups` = las columnas de DelPro que son
-    este mismo campo (repetir una columna es cómo DelPro muestra dos resúmenes del mismo campo; acá una columna lleva uno solo)."""
+    este mismo campo (repetir una columna es cómo DelPro muestra dos resúmenes del mismo campo; acá una columna lleva uno solo).
+    `hay_grupos`: ¿el informe de DelPro tenía alguna columna agrupada? Si no, el resumen «de grupo» no se muestra NUNCA: su 0 («suma») es el valor por defecto de
+    la columna (1.450 de las 2.244 columnas de informes sin grupos del volcado real; en los que sí tienen grupos casi nunca es 0) y no una elección: se ignora."""
     totales, grupos = [], []
     for d in dups:
         t, g = _codigos(d)
         totales += [x for x in t if x not in totales]
-        if g is not None and g not in grupos:
+        if hay_grupos and g is not None and g not in grupos:
             grupos.append(g)
     posibles = [c for c in totales + grupos if c in RESUMEN_DE_CODIGO and RESUMEN_DE_CODIGO[c] in informes_motor.RESUMENES[campo.tipo]]
     elegido = posibles[0] if posibles else None
@@ -896,7 +946,7 @@ def _resumen_de_campo(dups: list, campo) -> tuple:
         else:
             frase = f"«{campo.etiqueta}»: en DelPro tenía {tenia}, que acá no se puede calcular para ese campo"
         return (RESUMEN_DE_CODIGO[elegido] if elegido is not None else None), frase, False
-    asimetria = elegido is not None and bool(totales) != bool(grupos)
+    asimetria = hay_grupos and elegido is not None and bool(totales) != bool(grupos)
     return (RESUMEN_DE_CODIGO[elegido] if elegido is not None else None), None, asimetria
 
 
@@ -1012,9 +1062,10 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
 
     # --- resúmenes por columna (una columna repetida es un resumen más del mismo campo)
     columnas_def, perdidos, asimetria = [], [], False
+    hay_grupos = any((c.get("GroupIndex") if c.get("GroupIndex") is not None else -1) >= 0 for c in cols)       # de cualquier campo, se lo traiga o no
     for e in elegidas:
         campo, col_def = catalogo[e["item"]], {"campo": e["item"]}
-        resumen, frase, asim = _resumen_de_campo([c for c in cols if c["item"] == e["item"]], campo)
+        resumen, frase, asim = _resumen_de_campo([c for c in cols if c["item"] == e["item"]], campo, hay_grupos)
         if resumen:
             col_def["resumen"] = resumen
         if frase:
@@ -1059,6 +1110,11 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
     if herd == 0:
         difs.append(_dif("alcance", "info", "En DelPro este informe mira todos los rebaños de la base de datos (también los animales de otros tambos). "
                          "Acá solo salen los animales de este tambo, así que los totales pueden ser menores que los de DelPro."))
+    if fila.get("IncludeCulledAndExitedAnimals"):
+        # Acá «incluir descartados» suma a los animales que alguna vez ordeñaron (`rebano.filtro_historico` mira `AnimalDaily`): las terneras y la recría que ya
+        # salieron sin haber ordeñado nunca no están. Es un cambio de QUÉ animales aparecen (menos, a diferencia de un filtro sin traer), así que es «contenido».
+        difs.append(_dif("alcance", "contenido", "En DelPro este informe incluía también los animales descartados y los que ya salieron del tambo (terneras y recría "
+                         "incluidas); acá solo se suman los que alguna vez ordeñaron, así que pueden salir menos animales."))
     if fila.get("ConColores"):
         difs.append(_dif("formato", "presentacion", "En DelPro este informe pintaba celdas con reglas de color; acá no se traen."))
 
@@ -1108,7 +1164,8 @@ def listar(datos, solo_tambo=False, catalogo=None, rebanos=None) -> dict:
             faltantes[f] = faltantes.get(f, 0) + 1
         items.append({"oid": oid, "nombre": t["nombre"], "carpeta": t["carpeta"], "nivel": t["nivel"], "del_tambo": t["del_tambo"],
                       "estado": t["estado"], "motivo": t.get("motivo", ""), "columnas": t["columnas"], "descripcion": t["descripcion"],
-                      "filtro_sin_traer": any(d["gravedad"] == "contenido" for d in t["diferencias"]), "n_diferencias": len(t["diferencias"])})
+                      # «filtro sin traer: puede mostrar MÁS animales»: solo un filtro. Lo de los animales descartados también es «contenido» pero muestra MENOS.
+                      "filtro_sin_traer": any(d["tipo"] == "filtro" and d["gravedad"] == "contenido" for d in t["diferencias"]), "n_diferencias": len(t["diferencias"])})
     items.sort(key=lambda i: (ORDEN_DE_ESTADO[i["estado"]], not i["del_tambo"], i["nombre"].casefold()))
     top = sorted(faltantes.items(), key=lambda kv: (-kv[1], kv[0].casefold()))[:FALTANTES_TOP]
     return {"informes": items, "cuenta": cuenta, "faltantes": [{"campo": k, "informes": v, "nombre": NOMBRE_EN_DELPRO.get(k)} for k, v in top]}

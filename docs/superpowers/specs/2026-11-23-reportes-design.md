@@ -1,6 +1,7 @@
 # Informes personalizables (estilo DelPro, en la web) — diseño
 
-Fecha: 23/11/2026. Estado: **aprobado para la Fase 0** por el usuario; las fases siguientes se deciden con lo que enseñe la Fase 0.
+Fecha: 23/11/2026. Estado: **aprobado para la Fase 0** por el usuario; las fases siguientes se deciden con lo que enseñe la Fase 0. **Fases 1 a 4 hechas y en master** (24/11/2026); la Fase 4 pasó por dos
+revisiones independientes (ver «Revisión final de la Fase 4»). Lo que falta es probarla en SERVER-DELPRO y aceptar la Fase 0 (ver «Pendientes de la Fase 4»).
 
 Maquetas navegables (datos de ejemplo, privadas): versión elegida
 <https://claude.ai/artifact/YTvaKfeT2AWaPqZkeNwivA> (pestañas de documento como DelPro) y la primera
@@ -30,7 +31,7 @@ DelPro guarda su propio diseñador de informes dentro de la base:
   (`AnimalDaily.AnimalGroup.Number`, `History[ObjectType = TMilkTest() AND ...]`), no es SQL, y las etiquetas en español no están en
   esas tablas. Sí sirve como **fuente de verdad de qué significa cada campo** al traducirlo a SQL.
 * Resúmenes por columna usados (783 columnas): ninguno 619, promedio 88, conteo 57, suma 17, máximo 2 (códigos supuestos del
-  enum estándar de DevExpress: **sin verificar**). Solo 10 columnas agrupadas.
+  enum estándar de DevExpress; **verificado en la Fase 4** contra la base real: 0 suma, 1 mínimo, 2 máximo, 3 conteo, 4 promedio, 5 y 6 ninguno). Solo 10 columnas agrupadas.
 
 ## Decisiones
 
@@ -58,7 +59,7 @@ DelPro guarda su propio diseñador de informes dentro de la base:
 * Fase 1: pantalla (pestañas, árbol, filtros) y guardado con nombre, exportar a Excel.
 * Fase 2: resúmenes, agrupación, totales, campos calculados. **Hecha** (ver «Fase 2: estado»).
 * Fase 3: nivel «Animal por día» y gráficos con rango de fechas. **Hecha** (ver «Fase 3: estado»), sin un nivel «Animal por día» general.
-* Fase 4: importar los informes de DelPro, armarlos por lenguaje natural, envío programado.
+* Fase 4: importar los informes de DelPro, armarlos por lenguaje natural, envío programado. **Hecha** (ver «Fase 4: estado» y «Revisión final de la Fase 4»); sin probar contra la base real ni con el modelo real.
 
 ## Fase 0: plan y criterio de aceptación
 
@@ -242,9 +243,12 @@ con `;`, `--` o `/*` se descarta y se avisa.
 * **Estados:** `completo` (sin diferencias de contenido ni de columnas), `parcial`, `no_disponible`. La lista los ordena (completos primero, los del tambo antes que los de fábrica) y marca «filtro sin traer».
 * **Pantalla:** «Traer de DelPro…» en la lista abre un cuadro con búsqueda, el estado de cada informe y los campos de DelPro que más faltan; «Traer» abre el informe como **uno nuevo, sin guardar**, con un aviso arriba (qué cambia qué animales
   aparecen, qué falta, qué se ve distinto). API (admin): `GET /api/informes/delpro` y `GET /api/informes/delpro/<oid>`.
-* **Cobertura real, medida sobre la copia local** (58 informes de animales del tambo; el catálogo tiene 10 campos): solo 4 se traen completos por sus columnas. Los campos que más faltan: `InMilk` (19 informes),
-  `YieldYesterdayForAllMilkingInSession` (16), `ToBeCulled` (15), `NumberOfInseminations` (11), `DaysToCalving` (9), `DiagnosisFromDiagnosisTreatmentEvent` (9), `CMSTakeOffFlowYesterday` (9), `ExpectedCalvingDate` (8), `IsPregnant` (8),
-  `IsDryingOff` (8). **Ampliar el catálogo (cada campo con su verificación contra DelPro) es lo que más hace crecer el valor del importador.**
+* **Cobertura real, medida sobre el volcado de la copia local** (el catálogo tiene 10 campos). De los 65 informes del tambo que lista el cuadro (sin los predefinidos de fábrica) **1 sale «completo», 56 «parcial» (casi
+  siempre por un filtro que no se trae) y 8 no se pueden traer**. Mirando solo las columnas, 4 de los 58 informes de animales caben enteros en el catálogo. Los campos que más faltan, **contados en INFORMES distintos** (no en columnas: una
+  columna repetida cuenta una vez): `InMilk` (19), `ToBeCulled` (15), `NumberOfInseminations` (11), `DaysToCalving` (9), `DiagnosisFromDiagnosisTreatmentEvent` (9), `ExpectedCalvingDate` (8), `IsPregnant` (8), `IsDryingOff` (8),
+  `YieldYesterdayForAllMilkingInSession` (6) y `CMSTakeOffFlowYesterday` (3). (La primera versión de este párrafo contaba 16 y 9 para los dos últimos: eran apariciones de la columna, con repeticiones dentro del mismo informe.)
+  El volcado no trae el OID de cada columna, así que el filtro de la grilla no se pudo leer con él: con la base real el cuadro puede dar otras cifras. **Ampliar el catálogo (cada campo con su verificación contra DelPro) es lo que más hace
+  crecer el valor del importador.**
 
 **Revisión independiente de las tres funciones (la noche del 24/11/2026).** Cuatro miradas por función (traductor, seguridad, semántica de lo que se importa, uso de la pantalla, y regresión contra la versión commiteada) y UN
 verificador adversarial por hallazgo, que intentó refutarlo con una reproducción propia. De los hallazgos de la 4a se confirmaron casi todos (los de pantalla, 15 de 15) y se **refutaron 5**; los de la 4b (9 de 9) y la 4c (todos menos 1) se
@@ -294,7 +298,8 @@ correo y Telegram, el **Excel adjunto** (WhatsApp con Twilio lleva solo el resum
 * `correo.enviar_con_adjunto` y `telegram_bot.enviar_documento` son nuevos (el pie de un archivo en Telegram se corta en 1.024 letras: lo importante va antes que la lista de filas).
 
 **Pruebas nuevas:** `tests/test_informes_delpro.py`, `test_informes_delpro_api.py`, `test_informes_lenguaje.py`, `test_informes_lenguaje_api.py`, `test_informes_envios.py`, `test_informes_envios_api.py`, `test_envio_adjuntos.py`, más ampliaciones del motor, los guardados
-y la página.
+y la página. De las dos revisiones: `test_informes_delpro_revision.py`, `test_informes_lenguaje_revision.py`, `test_informes_envios_revision.py`, `test_informes_envios_final.py`, `test_informes_bordes.py` (casos límite de los tres módulos) y
+`test_informes_origen.py` (la nota de origen); y en Node, `tests/js/informes_pantalla.test.js` (con `mini_dom.js` y `pantalla_informes.js`), lanzado por `TestPantallaEjecutada` de `test_informes_pagina.py`.
 
 **Límites conocidos:**
 * Cobertura baja del catálogo (10 campos): la mayoría de los informes de DelPro se traen «parcial» y la IA va a contestar «no se puede» seguido.
@@ -305,6 +310,41 @@ y la página.
 * **No se pudo probar contra la base real en esta sesión**: el servicio de SQL Server de la PC de desarrollo (`MSSQL$DELPRO`) estaba detenido (había estado sin memoria durante horas). Las cuatro consultas fijas del importador (que cambiaron
   en dos columnas: `IsHidden` y `ConColores`) solo se probaron con la validación de solo lectura de la app y contra el volcado que se había hecho antes de que la base dejara de contestar.
 
+## Revisión final de la Fase 4 (24/11/2026)
+
+Segunda revisión independiente, **después** del commit de la Fase 4 (`2caa4b5`): siete miradas (IA, regresión, seguridad, pantalla, envíos, importador, completitud) y un verificador adversarial por hallazgo. **59 hallazgos: 53 confirmados y 6
+refutados.** Los 53 se arreglaron, cada uno con una prueba que primero falló. Lo que cambia el comportamiento, por área:
+
+* **Motor.** Una condición de fecha se compara **por día** (`CAST(campo AS date)`): `LastCalvingDate` es `MAX(DateAndTime)` y, si trae hora, `=`, `<=` y `>` contra un `date` comparaban contra las 00:00 («parieron hasta el 15» dejaba afuera a las del 15).
+  *No se pudo medir si `DateAndTime` de un parto trae hora; el cambio es inocuo si no la trae.* `ejecutar()` devuelve `limite_pedido`: cuando el corte lo eligió el informe («las 10 vacas que más producen») el Excel y el mensaje dicen «se listan las primeras N filas,
+  como pide el informe» y no «se cortó en el tope». `describir_condiciones` agrega esa línea solo con `con_limite=True` (la IA ya escribe la suya en «Se lee así»).
+* **Importador.** Los resúmenes «de grupo» se ignoran si el informe no tiene ninguna columna agrupada (el 0 es el valor por defecto: 1.450 de 2.244 columnas de informes sin grupos); «incluir animales descartados y salidos» ahora es una diferencia `contenido`
+  (acá solo se ven los que alguna vez ordeñaron: **salen menos animales**, no más); un filtro de texto sobre un campo cerrado con un valor que no es de la lista (un código de DelPro) no se trae; un campo con otra condición que excluye nulos «cubre» al
+  «menor que» (un rango de dos comparaciones ya no pierde la mitad); los avisos dicen «En ordeño (InMilk)» y no el código de columna; el tope de 200 cuentas es de TODO el filtro (un filtro de 3,8 KB con sumas anidadas daba `RecursionError` y el informe quedaba «no se pudo leer»).
+* **«Describí el informe».** Nuevos avisos (todos con texto fijo, ninguno cambia el informe): una fecha de condición que no sale de lo escrito (con el día de la semana) o un operador que contradice las palabras («desde» con «<»); un número escrito con palabras o un
+  valor cerrado («preñadas») que la frase pide y el informe no tiene. Se corrigieron los falsos avisos del lector de números (el 7 de «últimos 7 días» y del campo «… 7 d.», «rodeos 3,4», «rodeo 2/3», ordinales hasta décimo, «la vaca» con límite 1). El nombre del informe no puede decir
+  «últimos 30 días», «mes pasado»… (las fechas son fijas). **Un pedido que falla antes de que la API acepte el trabajo (sin red, 429, 5xx) devuelve su turno del cupo de 20 por hora**; el mensaje del tope dice en cuántos minutos se libera uno. El prompt ya no trae un nombre
+  de rodeo real. `max_retries` sigue en 0 (con 1, un pedido colgado esperaría hasta 180 s, más que el corte de ~100 s del túnel).
+* **Envíos.** Antes de CADA envío se vuelve a mirar la programación (pausar o cambiar mientras se calcula frena lo que falta); **un horario perdido por el servidor apagado deja una fila «no salió»** en el registro; el texto «Se reintenta.» no queda escrito si
+  el reintento ya no ocurre; un canal destildado mientras se calcula es «fallido» (no «sin confirmar»); «Ver cómo queda» y «Enviar ahora» muestran el texto de CADA canal (`textos`) y respetan el formato del cuadro (`formato`); lo fijo del mensaje (total, «Ojo»,
+  «va adjunto») nunca se recorta; WhatsApp «undelivered» se anota con una frase fija (ventana de 24 horas, sandbox, no entregado) y un 429 de Telegram se reintenta; el Excel lleva el día de la semana en «Generado» y en las fechas de las condiciones; los redondeos
+  (mitad hacia arriba) coinciden con los de la pantalla; un horario con salto de línea o dígitos de otro alfabeto se rechaza; dos «Guardar» a la vez no dan 500; un id de informe imposible da 404; el «latido» del hilo se escribe durante la pasada. **`backup_config.bat`
+  copia `informes.db` (y su `-wal`/`-shm`)**: sin eso los informes, las programaciones y el registro que evita duplicados no tenían ningún respaldo.
+* **Pantalla.** «Es uno de» sobre un campo calculado separa por «;»; en un campo entero separa también por coma; una respuesta tardía (guardar la programación, el registro, traer de DelPro) no pinta ni escribe el cuadro de OTRO informe; un doble clic en «Pausar» no se
+  deshace solo; «Ver cómo queda» no dice «Mandando…»; el foco del teclado no se pierde; el aviso de fechas fijas mira lo GUARDADO; la barra de botones vuelve a una línea a 1280 px; las pruebas de la pantalla ahora **ejecutan** el JavaScript de la plantilla en Node con un DOM mínimo
+  (`tests/js/mini_dom.js`, `pantalla_informes.js`, `informes_pantalla.test.js`), no solo buscan texto en el código.
+* **El aviso de un informe traído de DelPro sobrevive al guardado.** Antes vivía solo en la pestaña: se guardaba el informe, se reabría y ya no decía nada, y se podía programar su envío con otra cantidad de animales que la de DelPro sin ninguna marca. Ahora el informe guardado
+  lleva una **«nota de origen»** (`informes.origen`, columna nueva que se agrega sola; fuera de la definición): las diferencias que cambian QUÉ animales aparecen. Se ve al reabrir (una franja con «Ver el aviso»), en la lista («⚠ traído de DelPro»), en «Programar envío»
+  y como **una línea fija en cada mensaje programado** (`informes_envios.AVISO_ORIGEN`, de lo que nunca se recorta). Se quita a mano con «Ya lo revisé» (`PUT {origen: null}`): corregir el informe no la borra sola.
+
+**Refutados (6), y por qué:** [ia #2] el «o» entre campos distintos: lo que falla es la respuesta del modelo, que solo se puede medir con el modelo real; [seguridad #1] listar el nombre de informes de otro rebaño de la base compartida es una decisión documentada y no cruza ningún acceso;
+[importador #4], [importador #6] y [completitud #7] leer `Group`/`Selection`/`DateFilter` del informe de DelPro y si una fecha trae hora: nadie midió lo que significan `-1` y `2` (en el volcado, `Group` vale 0 y `DateFilter` es NULL en los 58 informes de animales) y SQL Server no se
+puede arrancar acá; [completitud #9] «`pausar()` no se usa en producción»: la suite igual falla si `guardar` deja de pausar.
+
+**Lo que NO se hizo, a propósito:** (1) la pantalla es **solo oscura** (el marco `/informes/?embebido=1` fija `data-theme="dark"`): en la app con tema claro queda una isla oscura. Era anterior a la Fase 4; llevarlo a los tokens claros es un trabajo aparte. (2) `backup_config.bat` copia los
+archivos sueltos (como con `checklist.db`): con el hilo de envíos escribiendo no es una instantánea perfecta; la API de respaldo de SQLite lo sería. (3) En el importador, la regla del «menor que» depende del orden en que se leen las fuentes: dos columnas del mismo campo con filtro propio
+se ven una a la otra solo en un sentido. (4) `UN-C<oid>` se traduce igual que `C<oid>` (no se sabe qué significa «UN-»). (5) Los avisos de fechas de la IA avisan de menos, nunca de más: «15 ago» (mes abreviado) y «quincena» no se leen como fecha.
+
 ## Pendientes de la Fase 4: lo que decide el tambo o falta probar
 
 1. **Probar en SERVER-DELPRO (en este orden):** (a) `git pull` y `actualizar.bat` **como Administrador**; verificar con el `Get-CimInstance` de `CLAUDE.md` que hay UN solo `servidor.py` y es nuevo (el hilo `envios-informes` arranca ahí, nunca al importar
@@ -312,7 +352,8 @@ y la página.
    es lo único que no se probó con el modelo real (los tests usan un cliente de mentira) y es donde puede haber diferencias de interpretación. (d) «Programar envío» con «Ver cómo queda» y recién después «Enviar ahora» a un solo canal.
 2. **¿«Hoy» o el último día completo en los envíos programados?** El informe se calcula con la fecha del día del envío. Si DelPro consolida con atraso, los números del último día pueden estar incompletos a las 08:00 (hoy el mensaje dice a qué hora se calculó,
    no hasta qué día llegan los datos). Opción: calcular contra el último día completo (como hace Rendimiento Sala).
-3. **¿WhatsApp para los informes programados?** Twilio manda solo texto (sin Excel) y, fuera de la ventana de 24 horas, solo plantillas: con el sandbox esto puede fallar seguido. Correo y Telegram llevan el Excel.
+3. **¿WhatsApp para los informes programados?** Twilio manda solo texto (sin Excel) y, fuera de la ventana de 24 horas, solo plantillas: con el sandbox esto puede fallar seguido (Twilio acepta el pedido y después marca «undelivered»; el registro lo anota con una frase fija:
+   ventana de 24 horas, sandbox o «no entregado»). Correo y Telegram llevan el Excel.
 4. **Ampliar el catálogo de campos.** Es lo que más hace crecer el valor del importador y de la IA. Los más pedidos por los informes reales: `InMilk`, `IsDryingOff`, `ToBeCulled`, `PossiblyInWrongGroup`, `Sex`, `IsExited`, `NumberOfInseminations`, `IsPregnant`
    (cada uno con su verificación contra DelPro, como los diez que hay).
 5. **Fechas relativas en el motor** («hoy menos N días»): sin eso un informe de «últimos 30 días» no sirve para programar. Hoy el aviso solo lo dice.

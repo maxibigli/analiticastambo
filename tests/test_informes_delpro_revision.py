@@ -6,6 +6,7 @@ una definición o un filtro que mostraba MENOS animales que DelPro, un informe �
 import re
 import time
 import unittest
+from unittest import mock
 
 import db
 import informes_catalogo as cat
@@ -387,6 +388,337 @@ class TestElMotorYLosNumerosEnormes(unittest.TestCase):
     def test_nunca_sale_inf_en_la_consulta(self):
         sql = im.compilar({"columnas": [{"campo": "CurrentDIM"}], "condiciones": [{"campo": "CurrentDIM", "op": "<", "valor": 1e300}]}, herd=1)["sql"]
         self.assertIsNone(re.search(r"\b(inf|infinity|nan)\b", sql.lower()), sql)
+
+
+# ============================================================================================== la revisión final (24/11/2026, sexta mirada)
+# Cada caso salió de un hallazgo confirmado por un verificador adversarial con una reproducción propia.
+
+def cond_nombre(texto, maximo=10, en_memoria=False, previas=()):
+    return dl.condiciones_de(texto, dl.resolver_por_nombre(cat.CATALOGO), cat.CATALOGO, maximo, previas=previas, en_memoria=en_memoria)
+
+
+def diferencias(r, tipo):
+    return [d for d in r["diferencias"] if d["tipo"] == tipo]
+
+
+class TestElResumenDeGrupoSinGrupos(unittest.TestCase):
+    """[importador #1] El `GroupSummaryType` es 0 («suma») en 1.450 de las 2.244 columnas de los informes SIN grupos del volcado real: es el valor por defecto
+    de una columna, no una elección. Sin ninguna columna agrupada el resumen «de grupo» no se muestra nunca, así que no se trae (daba sumas sin sentido en el
+    total y un «parcial» falso por «tenía conteo y suma»)."""
+
+    def test_el_valor_por_defecto_de_un_informe_sin_grupos_no_trae_nada(self):
+        r = tr([informe(1)], [columna(11, 1, 1, "SevenDayAverage", SummaryType=6, SummaryTypes=None, GroupSummaryType=0)])
+        self.assertNotIn("resumen", r["definicion"]["columnas"][0])
+        self.assertEqual(diferencias(r, "resumen"), [])
+        self.assertEqual(r["estado"], "completo")
+
+    def test_con_un_total_y_un_cero_de_grupo_por_defecto_no_hay_falso_parcial(self):
+        r = tr([informe(1)], [columna(11, 1, 1, "SevenDayAverage", SummaryType=4, SummaryTypes="4", GroupSummaryType=0)])
+        self.assertEqual(r["definicion"]["columnas"][0]["resumen"], "avg")
+        self.assertEqual(diferencias(r, "resumen"), [])                           # ni «tenía promedio y suma» ni «solo en el total o solo en los grupos»
+        self.assertEqual(r["estado"], "completo")
+
+    def test_un_total_solo_en_un_informe_sin_grupos_no_es_una_asimetria(self):
+        r = tr([informe(1)], [columna(11, 1, 1, "SevenDayAverage", SummaryType=4, SummaryTypes="4", GroupSummaryType=6)])
+        self.assertEqual(diferencias(r, "resumen"), [])
+
+    def test_con_grupos_el_resumen_de_grupo_sigue_trayendose(self):
+        cols = [columna(10, 1, 1, "AnimalGroupName", GroupIndex=0), columna(11, 1, 2, "SevenDayAverage", SummaryType=6, GroupSummaryType=4)]
+        r = tr([informe(1)], cols)
+        self.assertEqual(r["definicion"]["columnas"][1]["resumen"], "avg")
+        self.assertEqual([d["gravedad"] for d in diferencias(r, "resumen")], ["info"])      # solo en los grupos: la asimetría se sigue avisando
+
+    def test_con_grupos_un_total_y_un_grupo_distintos_siguen_avisandose(self):
+        cols = [columna(10, 1, 1, "AnimalGroupName", GroupIndex=0), columna(11, 1, 2, "SevenDayAverage", SummaryType=4, SummaryTypes="4", GroupSummaryType=0)]
+        r = tr([informe(1)], cols)
+        self.assertEqual(r["estado"], "parcial")
+        self.assertIn("suma", diferencias(r, "resumen")[0]["texto"].lower())
+
+    def test_el_grupo_cuenta_aunque_el_campo_agrupado_no_este_en_el_catalogo(self):
+        """Se mire o no el campo: DelPro agrupaba por algo (acá no se puede), así que los resúmenes de grupo de ese informe eran reales."""
+        cols = [columna(10, 1, 1, "InMilk", GroupIndex=0), columna(11, 1, 2, "SevenDayAverage", SummaryType=6, GroupSummaryType=4)]
+        r = tr([informe(1)], cols)
+        self.assertEqual(r["definicion"]["columnas"][0]["resumen"], "avg")
+
+    def test_un_indice_de_grupo_vacio_no_es_un_grupo(self):
+        for g in (None, -1):
+            r = tr([informe(1)], [columna(11, 1, 1, "SevenDayAverage", GroupIndex=g, SummaryType=6, GroupSummaryType=0)])
+            self.assertNotIn("resumen", r["definicion"]["columnas"][0], g)
+
+
+class TestIncluirAnimalesDescartados(unittest.TestCase):
+    """[importador #2] En DelPro el tilde incluye también a los animales que ya salieron (terneros y recría incluidos); acá solo ve a los que alguna vez
+    ordeñaron (`rebano.filtro_historico`). Se trae igual, pero se dice: puede salir MENOS gente, y el informe es «parcial»."""
+
+    def test_se_avisa_como_alcance_de_contenido_y_el_informe_queda_parcial(self):
+        r = tr([informe(1, IncludeCulledAndExitedAnimals=True)], columnas_de(1, ["Number"]))
+        self.assertIs(r["definicion"]["incluir_descartados"], True)
+        d = diferencias(r, "alcance")
+        self.assertEqual(len(d), 1)
+        self.assertEqual(d[0]["gravedad"], "contenido")
+        self.assertEqual(r["estado"], "parcial")
+        self.assertIn("ya salieron", d[0]["texto"])
+        self.assertIn("alguna vez ordeñaron", d[0]["texto"])
+        self.assertIn("menos", d[0]["texto"])
+
+    def test_sin_el_tilde_no_se_dice_nada(self):
+        for valor in (False, None, 0):
+            r = tr([informe(1, IncludeCulledAndExitedAnimals=valor)], columnas_de(1, ["Number"]))
+            self.assertEqual(diferencias(r, "alcance"), [], valor)
+            self.assertEqual(r["estado"], "completo", valor)
+
+    def test_se_suma_al_aviso_de_todos_los_rebanos_sin_pisarlo(self):
+        r = tr([informe(1, IncludeCulledAndExitedAnimals=True, Herd=0)], columnas_de(1, ["Number"]))
+        self.assertEqual(sorted(d["gravedad"] for d in diferencias(r, "alcance")), ["contenido", "info"])
+
+    def test_la_lista_no_lo_confunde_con_un_filtro_sin_traer(self):
+        """`filtro_sin_traer` dice «puede mostrar MÁS animales»; los descartados son lo contrario y no son un filtro."""
+        d = datos([informe(1, "Con el tilde", IncludeCulledAndExitedAnimals=True), informe(2, "Con un filtro", ServerFilter=7)],
+                  columnas_de(1, ["Number"], 10) + columnas_de(2, ["Number"], 20), [filtro(7, "F", "[<AnimalExtended>InMilk] = True")])
+        por = {i["oid"]: i for i in dl.listar(d)["informes"]}
+        self.assertEqual((por[1]["estado"], por[1]["filtro_sin_traer"], por[1]["n_diferencias"]), ("parcial", False, 1))
+        self.assertTrue(por[2]["filtro_sin_traer"])
+
+
+class TestUnCampoDeTextoCerrado(unittest.TestCase):
+    """[importador #3] «Estado de la reproducción» (Abierta, Inseminada, Preñada, Seca) tiene valores cerrados. Un filtro de DelPro con un código (1) o un
+    nombre en inglés (Open) no lo entiende nadie acá: se traía tal cual y el informe «completo» no devolvía ningún animal."""
+
+    MOTIVO = "Compara con un código de DelPro que acá no existe."
+
+    def test_un_valor_que_no_es_de_la_lista_no_se_trae(self):
+        for v in ("1", "Open", "Pregnant", ""):
+            cs, pend = cond_nombre(f"[CurrentReproductionStatus] = '{v}'")
+            self.assertEqual((cs, len(pend)), ([], 1), v)
+            self.assertEqual(pend[0]["motivo"], self.MOTIVO, v)
+
+    def test_un_valor_de_la_lista_se_trae(self):
+        cs, pend = cond_nombre("[CurrentReproductionStatus] = 'Abierta'")
+        self.assertEqual(cs, [{"campo": "CurrentReproductionStatus", "op": "es", "valor": "Abierta"}])
+        self.assertEqual(pend, [])
+
+    def test_sin_tildes_ni_mayusculas_y_se_trae_con_el_nombre_de_la_lista(self):
+        for escrito, canonico in (("abierta", "Abierta"), ("PREÑADA", "Preñada"), ("prenada", "Preñada"), (" seca ", "Seca"), ("INSEMINADA", "Inseminada")):
+            cs, pend = cond_nombre(f"[CurrentReproductionStatus] = '{escrito}'")
+            self.assertEqual(cs, [{"campo": "CurrentReproductionStatus", "op": "es", "valor": canonico}], escrito)
+            self.assertEqual(pend, [], escrito)
+
+    def test_en_una_lista_un_solo_valor_malo_deja_afuera_a_toda_la_lista(self):
+        cs, pend = cond_nombre("[CurrentReproductionStatus] In ('Abierta', 'Open')")
+        self.assertEqual((cs, len(pend)), ([], 1))
+        self.assertEqual(pend[0]["motivo"], self.MOTIVO)
+
+    def test_en_una_lista_todos_buenos_se_traen(self):
+        cs, pend = cond_nombre("[CurrentReproductionStatus] In ('abierta', 'Preñada', 'SECA')")
+        self.assertEqual(cs, [{"campo": "CurrentReproductionStatus", "op": "en", "valor": ["Abierta", "Preñada", "Seca"]}])
+        self.assertEqual(pend, [])
+
+    def test_contiene_acepta_un_pedazo_de_un_valor_y_rechaza_lo_que_no_es_de_ninguno(self):
+        self.assertEqual(cond_nombre("Contains([CurrentReproductionStatus], 'Prena')")[1], [])
+        cs, pend = cond_nombre("Contains([CurrentReproductionStatus], 'Open')")
+        self.assertEqual((cs, len(pend)), ([], 1))
+        self.assertEqual(pend[0]["motivo"], self.MOTIVO)
+
+    def test_un_campo_de_texto_abierto_no_se_toca(self):
+        cs, pend = cond_nombre("[AnimalGroupName] = 'cualquier cosa'")
+        self.assertEqual(cs, [{"campo": "AnimalGroupName", "op": "es", "valor": "cualquier cosa"}])
+        self.assertEqual(pend, [])
+
+    def test_en_un_informe_queda_dicho_y_el_informe_es_parcial(self):
+        cols = [columna(11, 1, 1, "Number"), columna(12, 1, 2, "CurrentReproductionStatus")]
+        r = tr([informe(1, CustomFilter="[C12] = 'Open'")], cols)
+        self.assertEqual(r["estado"], "parcial")
+        self.assertNotIn("condiciones", r["definicion"])
+        self.assertIn(self.MOTIVO, " ".join(" ".join(d.get("detalle", [])) for d in diferencias(r, "filtro")))
+
+
+class TestUnRangoEscritoConDosComparaciones(unittest.TestCase):
+    """[importador #5] El filtro de la grilla se evalúa EN MEMORIA: un animal sin dato pasa un «menor que». Pero si el mismo campo tiene OTRA condición que
+    deja afuera a los nulos (un «mayor que», un «igual», un «entre»…), el sin dato ya no pasa y los dos mundos coinciden: no hay por qué perder la mitad del rango."""
+
+    def c(self, texto, **kw):
+        return cond_nombre(texto, en_memoria=True, **kw)
+
+    def test_un_rango_con_dos_comparaciones_se_trae_entero(self):
+        cs, pend = self.c("[SevenDayAverage] >= 3 And [SevenDayAverage] < 18")
+        self.assertEqual(cs, [{"campo": "SevenDayAverage", "op": ">=", "valor": 3}, {"campo": "SevenDayAverage", "op": "<", "valor": 18}])
+        self.assertEqual(pend, [])
+
+    def test_el_orden_de_los_terminos_no_importa(self):
+        cs, pend = self.c("[SevenDayAverage] < 18 And [SevenDayAverage] > 3")
+        self.assertEqual(sorted((x["op"], x["valor"]) for x in cs), [("<", 18), (">", 3)])
+        self.assertEqual(pend, [])
+
+    def test_un_igual_o_un_es_uno_de_o_un_entre_tambien_cubren(self):
+        for otro in ("[CurrentLactationNumber] = 2", "[CurrentLactationNumber] In (1b, 2b)", "[CurrentLactationNumber] Between(1, 3)"):
+            cs, pend = self.c(f"[CurrentLactationNumber] <> 5 And {otro}")
+            self.assertEqual(pend, [], otro)
+            self.assertIn({"campo": "CurrentLactationNumber", "op": "<>", "valor": 5}, cs, otro)
+
+    def test_otro_menor_que_o_distinto_de_no_cubre(self):
+        """Dos «menor que» (o un «menor que» y un «distinto de») dejan pasar al animal sin dato igual que uno solo."""
+        for texto in ("[SevenDayAverage] < 18 And [SevenDayAverage] < 20", "[CurrentLactationNumber] < 5 And [CurrentLactationNumber] <> 3"):
+            cs, pend = self.c(texto)
+            self.assertEqual((cs, len(pend)), ([], 2), texto)
+
+    def test_una_condicion_de_otro_campo_no_cubre(self):
+        cs, pend = self.c("[SevenDayAverage] < 18 And [CurrentLactationNumber] > 1")
+        self.assertEqual(cs, [{"campo": "CurrentLactationNumber", "op": ">", "valor": 1}])
+        self.assertEqual(len(pend), 1)
+
+    def test_un_menor_que_solo_sigue_sin_traerse(self):
+        cs, pend = self.c("[SevenDayAverage] < 18")
+        self.assertEqual((cs, len(pend)), ([], 1))
+
+    def test_una_condicion_previa_del_mismo_campo_cubre(self):
+        previa = {"campo": "SevenDayAverage", "op": ">", "valor": 3}
+        cs, pend = self.c("[SevenDayAverage] < 18", previas=[previa])
+        self.assertEqual(cs, [{"campo": "SevenDayAverage", "op": "<", "valor": 18}])
+        self.assertEqual(pend, [])
+        cs, pend = self.c("[CurrentLactationNumber] < 18", previas=[previa])                  # de otro campo: no
+        self.assertEqual((cs, len(pend)), ([], 1))
+
+    def test_dos_columnas_del_mismo_campo_con_su_propio_filtro_se_cubren_entre_si(self):
+        """Sin filtro de la grilla DelPro usa el de cada columna; el de una cubre al de la otra (la segunda ve la primera como `previas`)."""
+        cols = [columna(11, 1, 1, "SevenDayAverage", FilterString="[{0}] > 3"), columna(12, 1, 2, "CurrentDIM"),
+                columna(13, 1, 3, "SevenDayAverage", FilterString="[{0}] < 18")]
+        r = tr([informe(1)], cols)
+        self.assertEqual(r["definicion"]["condiciones"], [{"campo": "SevenDayAverage", "op": ">", "valor": 3}, {"campo": "SevenDayAverage", "op": "<", "valor": 18}])
+
+    def test_el_filtro_de_servidor_no_cambia(self):
+        cs, pend = cond_nombre("[SevenDayAverage] < 18", en_memoria=False)
+        self.assertEqual(len(cs), 1)
+
+    def test_un_informe_con_el_rango_escrito_asi_es_completo(self):
+        cols = [columna(12, 1, 1, "CurrentLactationNumber"), columna(13, 1, 2, "SevenDayAverage")]
+        r = tr([informe(1, CustomFilter="[C13] >= 3 And [C13] < 18")], cols)
+        self.assertEqual(len(r["definicion"]["condiciones"]), 2)
+        self.assertEqual(r["estado"], "completo")
+
+
+class TestLosMensajesNoEngañan(unittest.TestCase):
+    """[importador #7] «El campo LastCalvingDate todavía no existe acá» cuando sí existe (es otra definición), y columnas mostradas como «UN-C2971»."""
+
+    def test_un_campo_de_la_reproduccion_que_existe_pero_es_otra_definicion(self):
+        cs, pend = cond_nombre("ReproductionInfo.LastCalvingDate > #2026-01-01#")
+        self.assertEqual(cs, [])
+        self.assertEqual(len(pend), 1)
+        self.assertNotIn("todavía no existe", pend[0]["motivo"])
+        self.assertIn("reproducción", pend[0]["motivo"])
+        self.assertIn("Fecha del último parto", pend[0]["motivo"])
+        self.assertIn("ReproductionInfo.LastCalvingDate", pend[0]["texto"])             # se muestra con el nombre que tiene en DelPro
+        self.assertEqual(pend[0]["campos"], [])                                         # existe en el catálogo: no es un campo que «falte»
+
+    def test_un_campo_de_la_reproduccion_que_no_existe_sigue_diciendo_que_falta(self):
+        cs, pend = cond_nombre("ReproductionInfo.IsDryingOff = False")
+        self.assertIn("todavía no existe", pend[0]["motivo"])
+        self.assertEqual(pend[0]["campos"], ["IsDryingOff"])
+
+    def test_el_mismo_nombre_sin_el_prefijo_si_es_el_del_catalogo(self):
+        cs, pend = cond_nombre("[LastCalvingDate] > #2026-01-01#")
+        self.assertEqual(cs, [{"campo": "LastCalvingDate", "op": ">", "valor": "2026-01-01"}])
+
+    def test_la_lactancia_de_la_reproduccion_sigue_siendo_la_del_catalogo(self):
+        cs, pend = cond_nombre("ReproductionInfo.LactationNumber > 0")
+        self.assertEqual(cs, [{"campo": "CurrentLactationNumber", "op": ">", "valor": 0}])
+        self.assertEqual(pend, [])
+
+    def test_el_informe_con_ese_filtro_no_lista_el_campo_como_faltante(self):
+        r = tr([informe(1, ServerFilter=7)], columnas_de(1, ["Number"]), [filtro(7, "F", "ReproductionInfo.LastCalvingDate > #2026-01-01#")])
+        self.assertEqual(r["faltan"], [])
+        self.assertEqual(r["estado"], "parcial")
+
+    # --- «UN-C2971»
+
+    def test_el_prefijo_un_se_acepta_igual_que_la_c(self):
+        cols = [columna(2511, 1, 1, "CurrentLactationNumber"), columna(2691, 1, 2, "CMSFourteenDayAverage")]
+        res = dl.resolver_por_columnas(cols, cat.CATALOGO)
+        self.assertEqual(res("UN-C2511"), ("CurrentLactationNumber", "CurrentLactationNumber"))
+        self.assertEqual(res("UN-C2691"), ("CMSFourteenDayAverage", None))
+        self.assertEqual(res("C2691"), ("CMSFourteenDayAverage", None))
+
+    def test_un_codigo_que_no_es_de_ninguna_columna_queda_como_esta(self):
+        res = dl.resolver_por_columnas([columna(2511, 1, 1, "CurrentDIM")], cat.CATALOGO)
+        self.assertEqual(res("UN-C9999"), ("UN-C9999", None))
+        self.assertEqual(res("C9999"), ("C9999", None))
+
+    def test_el_filtro_con_un_c_muestra_el_nombre_del_campo_y_no_el_codigo(self):
+        cols = [columna(2691, 1, 1, "CMSFourteenDayAverage"), columna(2692, 1, 2, "Number")]
+        r = tr([informe(1, CustomFilter="[UN-C2691] Is Not Null And [UN-C2691] < 18 And [UN-C2692] > 0")], cols)
+        detalle = " ".join(" ".join(d.get("detalle", [])) + d["texto"] for d in diferencias(r, "filtro"))
+        self.assertNotIn("UN-C", detalle)
+        self.assertIn("CMSFourteenDayAverage", detalle)
+        self.assertEqual(r["faltan"], ["CMSFourteenDayAverage"])
+
+    def test_los_campos_conocidos_de_delpro_se_muestran_en_castellano_en_el_filtro(self):
+        cols = [columna(12, 1, 1, "InMilk"), columna(13, 1, 2, "Number")]
+        r = tr([informe(1, CustomFilter="[C12] = True")], cols)
+        detalle = " ".join(" ".join(d.get("detalle", [])) for d in diferencias(r, "filtro"))
+        self.assertIn("En ordeño (InMilk)", detalle)
+        self.assertEqual(r["faltan"], ["InMilk"])                                      # el ranking de faltantes sigue usando el nombre interno
+
+    def test_un_codigo_sin_identificar_no_dice_que_el_campo_no_existe(self):
+        cs, pend = dl.condiciones_de("[C9999] > 5", dl.resolver_por_columnas([columna(1, 1, 1, "Number")], cat.CATALOGO), cat.CATALOGO, 10)
+        self.assertEqual(cs, [])
+        self.assertNotIn("todavía no existe", pend[0]["motivo"])
+        self.assertIn("No se pudo identificar", pend[0]["motivo"])
+
+
+class TestUnFiltroConSumasAnidadasNoTumbaElInforme(unittest.TestCase):
+    """[seguridad #2] Los 200 operadores («+ - * /») eran POR llamada: 10 grupos de 190 entre paréntesis (3,8 KB) armaban un árbol de 1.900 niveles que
+    al escribirlo en palabras agotaba la pila de Python (`RecursionError`) y el informe entero quedaba «no se pudo leer» en vez de «parcial»."""
+
+    @staticmethod
+    def anidado(grupos=10, por_grupo=190):
+        s = "1" + "+1" * por_grupo
+        for _ in range(grupos - 1):
+            s = "(" + s + ")" + "+1" * por_grupo
+        return "[CurrentDIM] > " + s
+
+    def test_el_filtro_de_prueba_cabe_en_el_largo_maximo_y_pasaba_el_lector_por_partes(self):
+        texto = self.anidado()
+        self.assertLess(len(texto), dl.TEXTO_FILTRO_MAX)
+        self.assertGreater(texto.count("+"), 10 * dl.MAX_OPERACIONES // 2)
+
+    def test_el_tope_de_cuentas_es_de_todo_el_filtro(self):
+        with self.assertRaises(dl.CriterioError):
+            dl.analizar(self.anidado())
+        cien = "+".join(["1"] * 101)                                                    # 100 cuentas
+        noventa_y_nueve = "+".join(["1"] * 100)
+        dl.analizar(f"[A] > ({cien}) + ({noventa_y_nueve})")                            # 100 + 1 + 99 = 200: entra
+        with self.assertRaises(dl.CriterioError):
+            dl.analizar(f"[A] > ({cien}) + ({cien})")                                   # 100 + 1 + 100 = 201: no entra
+
+    def test_las_cuentas_normales_siguen_entrando(self):
+        dl.analizar("[A] > ([B] + 5) * 2 - 1")
+        dl.analizar("[A] > " + "+".join(["1"] * 200))                                    # 199 cuentas
+
+    def test_condiciones_de_no_levanta_y_dice_que_no_se_pudo_leer(self):
+        cs, pend = cond_nombre(self.anidado())
+        self.assertEqual(cs, [])
+        self.assertEqual(len(pend), 1)
+
+    def test_el_informe_queda_parcial_y_no_ilegible(self):
+        cols = [columna(2001, 1, 1, "CurrentDIM")]
+        filtro_malo = self.anidado().replace("[CurrentDIM]", "[C2001]")
+        r = tr([informe(1, CustomFilter=filtro_malo)], cols)
+        self.assertEqual(r["estado"], "parcial")
+        self.assertTrue(diferencias(r, "filtro"))
+        por = {i["oid"]: i for i in dl.listar(datos([informe(1, CustomFilter=filtro_malo)], cols))["informes"]}
+        self.assertEqual(por[1]["estado"], "parcial")
+        self.assertNotIn("No se pudo leer este informe", por[1]["motivo"])
+
+    def test_aunque_el_lector_dejara_pasar_un_arbol_profundo_el_informe_no_se_cae(self):
+        """Segunda red: el árbol que sí llega a `_faltantes_de` y a `mostrar` puede ser profundo (aquí 5.000 niveles armados a mano)."""
+        n = dl._n("prop", 0, 10, path="CurrentDIM")
+        profundo = dl._n("lit", 12, 13, k="num", v=1)
+        for _ in range(5000):
+            profundo = dl._n("arit", 0, 1, op="+", izq=profundo, der=dl._n("lit", 0, 1, k="num", v=1))
+        arbol = dl._n("cmp", 0, 40, op=">", izq=n, der=profundo)
+        with mock.patch.object(dl, "analizar", return_value=arbol):
+            cs, pend = cond_nombre("[CurrentDIM] > algo muy profundo")
+        self.assertEqual(cs, [])
+        self.assertEqual(len(pend), 1)
 
 
 if __name__ == "__main__":

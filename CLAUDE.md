@@ -4237,8 +4237,8 @@ funciona con el dedo en un celular (ahí están ▲▼). Pruebas: `tests/test_io
 Diseñador de informes como el de DelPro, en la web: el usuario elige campos de un árbol, filtra, ordena, agrupa, resume, agrega campos calculados y
 **guarda cada informe con nombre**. Diseño y estado por fase: `docs/superpowers/specs/2026-11-23-reportes-design.md`. Pantalla propia `/informes/`
 (`templates/informes.html`, solo administrador; el menú principal la muestra en un marco con `?embebido=1`, primer grupo, después de «Consultas e IA»).
-**Fases 0 a 3 hechas y en master. La Fase 4 (importar los informes de DelPro, armarlos por lenguaje natural, envío programado) está hecha y probada en el árbol de trabajo, SIN
-commitear (24/11/2026): ver «Fase 4» más abajo y en el documento de diseño.**
+**Fases 0 a 4 hechas y en master (la 4: importar los informes de DelPro, armarlos por lenguaje natural, envío programado; 24/11/2026). Pasó por DOS revisiones independientes: ver «Fase 4» y «Revisión final de la
+Fase 4» más abajo y en el documento de diseño. Falta probarla en SERVER-DELPRO (base real, modelo real, un canal de verdad) y aceptar la Fase 0.**
 
 **Piezas.** `informes_catalogo.py` (la lista CERRADA de campos y los «bloques» de datos), `informes_motor.py` (compila una definición y la ejecuta),
 `informes_formula.py` (traductor de las fórmulas de campos calculados), `informes_guardados.py` (SQLite propio `informes.db`, fuera de git, por tambo:
@@ -4291,16 +4291,17 @@ La configuración (`grafico`) se guarda CON el informe, validada (`informes_seri
     se juzgara por las válidas se ocultaría el 25/05/2026, que tiene la leche medida (10.112 kg contra ~12.000) pero casi la mitad de las vacas con el total del día no válido. En la copia local solo
     marca el **27/07/2026** (8.596 kg contra ~61.000: el día al que le faltan ordeños enteros, ya documentado). Esos días no se grafican (hueco y franja amarilla) ni cuentan en el promedio de su semana.
 
-**Fase 4 (24/11/2026, sin commitear).** Tres funciones nuevas; las tres entran por la misma puerta: una DEFINICIÓN que pasa por `informes_guardados.validar_definicion` (o sea `compilar`).
+**Fase 4 (24/11/2026).** Tres funciones nuevas; las tres entran por la misma puerta: una DEFINICIÓN que pasa por `informes_guardados.validar_definicion` (o sea `compilar`).
   * **Operador «es uno de»** (`en`, hasta `LISTA_MAX` = 20 valores, cada uno validado como un valor suelto) y `CONDICIONES_MAX` = 10. En la pantalla se escribe separado por comas (por `;` si el campo es numérico con decimales) y viaja como lista.
   * **4a — Traer los informes de DelPro** (`informes_delpro.py`, «Traer de DelPro…»; `GET /api/informes/delpro` y `/<oid>`, admin). **Solo LEE** las tablas de informes de DDM con cuatro SELECT fijos (`CONSULTAS`, guardados 10 min;
     el tipo de cada fila sale de `XPObjectType.TypeName`, no del OID). El `Name` de cada `DDMReportItem` es el id del catálogo; el `CustomFilter` llama a cada columna `C<OID de la columna>`; los resúmenes son los
-    `SummaryItemType` de DevExpress (0 suma, 2 máx., 3 conteo, 4 promedio, 5/6 ninguno). Los filtros están en el lenguaje de criterios de DevExpress (NO es SQL): un lector propio (sin `eval`) traduce solo una
+    `SummaryItemType` de DevExpress (0 suma, 1 mín., 2 máx., 3 conteo, 4 promedio, 5/6 ninguno; comprobado contra la base real). Los filtros están en el lenguaje de criterios de DevExpress (NO es SQL): un lector propio (sin `eval`) traduce solo una
     conjunción de comparaciones simples, «es uno de», «entre» y rangos de fechas sobre campos del catálogo; **lo demás se DICE, con el motivo**, y el informe queda «parcial». Gravedades de las diferencias:
     `contenido` (cambia QUÉ animales aparecen: un filtro sin traer, el alcance por rebaño), `columnas` (falta algo del diseño), `presentacion`, `info`. Cada condición traducida se valida otra vez con `compilar` y
     `db.validate_sql`. **Un informe «completo» no es «idéntico»**: los campos sin verificar y las diferencias de presentación igual se avisan. Se abre como un informe NUEVO, sin guardar, con el aviso arriba.
-    **Cobertura real (copia local): de 58 informes de animales del tambo, solo 4 caben completos con los 10 campos del catálogo**; faltan sobre todo `InMilk`, `YieldYesterdayForAllMilkingInSession`, `ToBeCulled`,
-    `NumberOfInseminations`, `DaysToCalving`: ampliar el catálogo (cada campo verificado contra DelPro) es lo que más valor suma. Los nombres de las carpetas de DelPro llevan nombres de personas: no van a pruebas ni documentos.
+    **Cobertura real (volcado de la copia local): de los 65 informes del tambo que lista el cuadro, 1 sale «completo», 56 «parcial» y 8 no se pueden traer; solo 4 de los 58 informes de animales caben enteros en las columnas del catálogo de 10 campos**.
+    Faltan sobre todo (en cuántos INFORMES): `InMilk` 19, `ToBeCulled` 15, `NumberOfInseminations` 11, `DaysToCalving` 9, `ExpectedCalvingDate` 8 (`YieldYesterdayForAllMilkingInSession` son 6 y `CMSTakeOffFlowYesterday` 3: los «16» y «9» de antes eran apariciones de la columna).
+    Ampliar el catálogo (cada campo verificado contra DelPro) es lo que más valor suma. Los nombres de las carpetas de DelPro llevan nombres de personas: no van a pruebas ni documentos.
     **Revisión independiente de la 4a (la noche del 24/11/2026: cuatro miradas más un verificador adversarial por hallazgo; casi todo se reprodujo) y lo que cambió por ella** (`tests/test_informes_delpro_revision.py`):
       * **70 de los 133 filtros de servidor reales vienen SIN corchetes** (`ReproductionInfo.LactationNumber > 0 AND ReproductionInfo.IsDryingOff = False`): el lector los entiende, y **un término ilegible ya no se lleva puestos
         a los demás** (se parte por los «y» de primer nivel; con un «o» afuera no se parte, porque cambiaría el sentido). El aviso de un filtro dice cuántas condiciones no se trajeron y cada una, con su motivo, va en `detalle`.
@@ -4319,7 +4320,7 @@ La configuración (`grafico`) se guarda CON el informe, validada (`informes_seri
       * En la pantalla: cada aviso lleva su detalle; «Completo» con avisos es «Casi igual»; el error de «Traer» sale dentro del cuadro (un toast queda debajo del fondo del cuadro modal); el foco no se pierde al cambiar el
         operador ni al traer; en un campo numérico la lista se separa con «;» o con coma y espacio (la coma sola es la coma decimal: «38,5»); guardar un informe traído con condiciones sin traer avisa; el cuadro entra en un celular.
   * **4b — «Describí el informe»** (`informes_lenguaje.py`, `POST /api/informes/describir`, admin). Una llamada a Claude (el cliente de `agente._client()`) con un esquema JSON cerrado y el catálogo en el prompt (sin SQL ni
-    datos del tambo) + UNA repetición con el motivo si la definición no pasó la validación; tope de 20 pedidos por hora; sin clave de API → 503, IA caída → 502 sin detalles, y el diseñador manual sigue andando. **El
+    datos del tambo: el modelo ve el catálogo, los valores posibles de un campo cerrado y la frase; el ejemplo del prompt es un rodeo inventado) + UNA repetición con el motivo si la definición no pasó la validación; tope de 20 pedidos por hora; sin clave de API → 503, IA caída → 502 sin detalles, y el diseñador manual sigue andando. **El
     modelo no decide nada de seguridad**: claves de más se rechazan (no se descartan en silencio) y lo que se le muestra al usuario («Se lee así») lo arma el servidor desde lo ya validado. Avisa (no rechaza) campos sin
     verificar, un número que no figura en la frase (y, al revés, un número de la frase que no llegó al informe: una condición que la IA se olvidó), un informe sin condiciones, un límite contra totales y que **las fechas son fijas**
     (el motor no tiene «hoy menos 30 días»: un informe «últimos 30 días» programado repite siempre el mismo período). **No se probó con el modelo real**: los tests usan un cliente de mentira (la primera prueba real, en SERVER-DELPRO).
@@ -4341,6 +4342,23 @@ La configuración (`grafico`) se guarda CON el informe, validada (`informes_seri
     cambiar mientras trabaja en otra la frena) y usa el reloj de cada decisión; una tabla que falta no se recalcula 3 veces; «Enviar ahora» sin canales es 400; `activo` tiene que ser verdadero o falso (y guardar sin decirlo no reactiva una pausa);
     la pantalla muestra la última revisión del hilo y avisa si hace más de 5 minutos que no revisa.
 
+**Revisión final de la Fase 4 (24/11/2026, DESPUÉS del commit `2caa4b5`).** Siete miradas y un verificador adversarial por hallazgo: 59 hallazgos, **53 confirmados y 6 refutados**; los 53 se arreglaron con una prueba que primero falló. El detalle por área está en el
+documento de diseño («Revisión final de la Fase 4»). Lo que hay que saber al tocar este código:
+  * **Una condición de fecha se compara POR DÍA** (`CAST(campo AS date)` en `informes_motor._donde`): `LastCalvingDate` es `MAX(DateAndTime)` y con hora, `=`/`<=`/`>` contra un `date` comparaban contra las 00:00. `ejecutar()` devuelve `limite_pedido`
+    (el corte lo eligió el informe) y `describir_condiciones(defn, con_dia=True, con_limite=True)` es lo que usan el Excel de los envíos y `/exportar` (las fechas y el «Generado» llevan el día de la semana).
+  * **Envíos**: antes de CADA `enviar` se relee `activo`/`modificado` (pausar o guardar mientras se calcula frena lo que falta); un horario que venció con el servidor apagado deja una fila «omitido» (no sale, pero deja rastro); «Se reintenta.» se cierra cuando ya no ocurre;
+    `probar()` acepta `formato` y devuelve `textos {correo, telegram, whatsapp}` (`informes_envios.texto_para` es lo que usa también el envío real); un fallo de WhatsApp (`motivo`: `ventana_24h`, `sandbox`, `no_entregado`, sacado del código de Twilio) se anota con una
+    frase fija; `CanalNoDisponible` (`envio_red.py`) es «fallido», no «sin confirmar»; un Excel que no se arma es permanente (`ExcelError`); `_n` redondea mitad hacia arriba como la pantalla; los horarios se validan con `fullmatch` y `[0-9]` (también en `config_alertas`); un id de
+    informe fuera del rango de SQLite es 404 (`informes_guardados.id_valido`); el «latido» del hilo se escribe durante la pasada. **`backup_config.bat` copia `informes.db` (+ `-wal`, `-shm`)**: sin eso los informes y las programaciones no tenían respaldo.
+  * **La nota de origen.** Un informe traído de DelPro con diferencias que cambian QUÉ animales aparecen guarda esa lista en `informes.origen` (columna nueva, se agrega sola; NO es parte de la definición): `informes_guardados.normalizar_origen` (solo texto, acotado, nunca da error), `crear(..., origen=)`,
+    `actualizar(..., origen=SIN_CAMBIO|None|nota)`, `listar` trae `con_aviso`. Se ve al reabrir (franja «Ver el aviso»), en la lista, en «Programar envío» y como **una línea fija en cada mensaje programado** (`informes_envios.AVISO_ORIGEN`). Se quita con «Ya lo revisé» (`PUT {origen: null}`);
+    corregir el informe no la borra sola. «Incluir descartados» del informe de DelPro es una diferencia `contenido`, pero **muestra MENOS animales**, no más: la etiqueta «filtro sin traer: puede mostrar más animales» es solo para `tipo == "filtro"`.
+  * **«Describí el informe»**: avisos nuevos (fechas que no salen de lo escrito, operador que contradice las palabras, número con palabras olvidado, valor cerrado mencionado y ausente) y menos falsos avisos; un pedido que falla ANTES de que la API acepte el trabajo (sin red, 429, 5xx) **devuelve su turno** del cupo
+    de 20 por hora; `max_retries` sigue en 0 a propósito. **Sigue sin probarse con el modelo real.**
+  * **La pantalla es SOLO OSCURA** (el marco fija `data-theme="dark"`): en la app con tema claro es una isla oscura. Es anterior a la Fase 4 y se dejó así a propósito (hay que pasar los colores a los tokens claros). Sus pruebas ejecutan el JavaScript real en Node con un DOM mínimo
+    (`tests/js/mini_dom.js`, `pantalla_informes.js`, `informes_pantalla.test.js`; `INFORMES_HTML=<otra plantilla>` sirve para comprobar que una prueba detecta su error).
+  * **Refutados**: [ia #2] («o» entre campos), [seguridad #1] (nombre de informes de otro rebaño en la lista), [importador #4/#6] y [completitud #7] (`Group`/`Selection`/`DateFilter` y fechas con hora: nadie midió su significado), [completitud #9].
+
 **Cosas que costaron encontrar:**
   * **El número de animal NO es único entre rebaños** de la misma base: todo informe filtra por rebaño (`rebano.filtro`).
   * El motor trae TODOS los animales del rebaño (5.645 en la copia local: crianza, piquetes, recría…); el informe de lactancia de DelPro trae solo vacas en ordeño (1.779 con lactancia).
@@ -4355,5 +4373,6 @@ La configuración (`grafico`) se guarda CON el informe, validada (`informes_seri
     lo reintenta unos instantes (el modo queda guardado en el archivo); lo usan `informes_guardados._con` y `informes_envios._con`. Los otros SQLite propios (`checklist.db`, `bitacora.db`, `ups_registro`) tienen el mismo patrón, sin tocar.
 
 **Pruebas:** `tests/test_informes_*.py` (motor; catálogo, que comprueba que cada combinación de campo, resumen y agrupación pase `db.validate_sql`; fórmula, con un fuzz de 7.500 casos;
-guardados; API; Excel; serie; página; y el módulo JavaScript del gráfico, con Node: se salta si esta PC no lo tiene). Verificación contra la base real y números: ver «Fase 2» y «Fase 3» en el
+guardados; API; Excel; serie; página; importador, IA y envíos con sus módulos `_revision` y `_final`; `test_informes_bordes.py`; `test_informes_origen.py`; y el JavaScript con Node —el gráfico y la pantalla—: se salta si esta PC no lo tiene).
+**Se corre cada módulo por separado** (`python -m unittest tests.<modulo>`; `discover` no anda porque `tests` no es un paquete). Verificación contra la base real y números: ver «Fase 2» y «Fase 3» en el
 documento de diseño. **Lo que NO se verificó:** que el gráfico coincida con uno de DelPro del mismo período; solo que SQL coincide con un recálculo independiente sobre las filas crudas.

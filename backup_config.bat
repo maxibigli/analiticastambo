@@ -26,7 +26,7 @@ echo.
 
 if not exist "%DESTINO%" mkdir "%DESTINO%"
 
-set ARCHIVOS=usuarios.json secret_key.txt alertas_canales.json podal.db iot_sensores.db metas_reproductivas.json parametros_reproductivos.json conciliacion_grupos.json clima_cache.json sala_convencional.json configuracion_tambos.json Precios_alimentos.xlsx tablero_umbrales.json tablero_lecturas.json checklist.db checklist.db-wal checklist.db-shm
+set ARCHIVOS=usuarios.json secret_key.txt alertas_canales.json podal.db iot_sensores.db metas_reproductivas.json parametros_reproductivos.json conciliacion_grupos.json clima_cache.json sala_convencional.json configuracion_tambos.json Precios_alimentos.xlsx tablero_umbrales.json tablero_lecturas.json checklist.db checklist.db-wal checklist.db-shm informes.db informes.db-wal informes.db-shm
 
 for %%A in (%ARCHIVOS%) do (
     if exist "%ORIGEN%%%A" (

@@ -6,6 +6,7 @@ Solo administrador. El catálogo que sale por la API nunca lleva el SQL de los c
 """
 import io
 import os
+import re
 import tempfile
 import unittest
 from unittest import mock
@@ -135,6 +136,16 @@ class TestEjecutar(Base):
         self.assertEqual(r.get_json()["totales"], {"n": 3})
         self.assertEqual(r.get_json()["grupos"], [{"nivel": 1}])
 
+    def test_dice_si_el_corte_de_la_lista_lo_pidio_el_informe(self):
+        """Revisión final (regresión #2): la pantalla puede decir «se listan las primeras N» en vez de «se cortó en el tope» (el motor lo calcula; acá solo se verifica que llegue)."""
+        import rebano
+        filas = {"columns": ["c0"], "rows": [["1"], ["2"], ["3"], ["4"]], "truncated": False}
+        for limite, esperado in (({"limite": 3}, True), ({}, False)):
+            with mock.patch.object(db, "run_query", return_value=filas), mock.patch.object(rebano, "por_defecto", return_value=1):
+                j = self.post(dict({"columnas": [{"campo": "Number"}]}, **limite)).get_json()
+            self.assertIs(j["limite_pedido"], esperado)
+            self.assertTrue(j["truncado"] if limite else not j["truncado"])
+
     def test_la_fecha_de_referencia_llega_al_motor(self):
         falso = {"columnas": [], "filas": [], "truncado": False, "sql": ""}
         with mock.patch.object(im, "ejecutar", return_value=falso) as m:
@@ -248,6 +259,24 @@ class TestExportar(BaseGuardados):
             r = self.exportar()
         self.assertEqual(r.status_code, 502)
         self.assertNotIn("SECRETO", r.get_data(as_text=True))
+
+    def test_las_fechas_de_la_hoja_de_condiciones_y_el_generado_llevan_el_dia_de_la_semana(self):
+        """Revisión final (completitud #4): las fechas de los textos de la app llevan el día de la semana, también en el Excel que se baja a mano."""
+        with mock.patch.object(im, "ejecutar", return_value=self.RES):
+            r = self.exportar(condiciones=[{"campo": "LastCalvingDate", "op": ">=", "valor": "2026-08-27"}])
+        textos = [str(c.value) for fila in openpyxl.load_workbook(io.BytesIO(r.data))["Condiciones"].iter_rows() for c in fila if c.value]
+        self.assertIn("Fecha del último parto ≥ jue 27/08/2026", textos)
+        self.assertTrue(any(re.fullmatch(r"(lun|mar|mié|jue|vie|sáb|dom) \d{2}/\d{2}/\d{4} \d{2}:\d{2}", t) for t in textos), textos)       # «Generado»
+
+    def test_un_corte_pedido_por_el_informe_no_es_el_tope(self):
+        """Revisión final (regresión #2): con «Listar hasta» el Excel dice cuántas filas se listan, no que «se cortó en el tope»."""
+        res = dict(self.RES, truncado=True, limite_pedido=True)
+        with mock.patch.object(im, "ejecutar", return_value=res):
+            r = self.exportar(limite=2)
+        textos = " ".join(str(c.value) for fila in openpyxl.load_workbook(io.BytesIO(r.data))["Condiciones"].iter_rows() for c in fila if c.value)
+        self.assertIn("Lista limitada a las primeras 2 filas", textos)
+        self.assertIn("Se listan las primeras 2 filas, como pide el informe", textos)
+        self.assertNotIn("tope", textos)
 
 
 class TestSerie(BaseGuardados):

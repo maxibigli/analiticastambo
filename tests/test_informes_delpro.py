@@ -492,8 +492,9 @@ class TestTraducirInforme(unittest.TestCase):
             self.assertNotIn("resumen", r["definicion"]["columnas"][0])
 
     def test_un_resumen_solo_para_los_grupos_tambien_se_trae(self):
-        r = self.tr([informe(1)], [columna(11, 1, 1, "SevenDayAverage", SummaryType=6, GroupSummaryType=4)])
-        self.assertEqual(r["definicion"]["columnas"][0]["resumen"], "avg")
+        """Solo si el informe TIENE grupos: sin ninguna columna agrupada el resumen «de grupo» no se ve nunca (ver test_informes_delpro_revision)."""
+        r = self.tr([informe(1)], [columna(10, 1, 1, "AnimalGroupName", GroupIndex=0), columna(11, 1, 2, "SevenDayAverage", SummaryType=6, GroupSummaryType=4)])
+        self.assertEqual(r["definicion"]["columnas"][1]["resumen"], "avg")
 
     def test_un_resumen_que_el_tipo_no_admite_se_descarta_y_se_avisa(self):
         r = self.tr([informe(1)], [columna(11, 1, 1, "Number", SummaryType=0, SummaryTypes="0"), columna(12, 1, 2, "CurrentDIM")])
@@ -514,8 +515,9 @@ class TestTraducirInforme(unittest.TestCase):
         self.assertTrue([x for x in r["diferencias"] if x["tipo"] == "resumen"])
 
     def test_un_resumen_en_los_totales_y_otro_en_los_grupos_se_avisa_como_dato(self):
-        r = self.tr([informe(1)], [columna(11, 1, 1, "SevenDayAverage", SummaryType=4, SummaryTypes="4", GroupSummaryType=6),
-                                   columna(12, 1, 2, "CurrentDIM", SummaryType=4, SummaryTypes="4", GroupSummaryType=4)])
+        r = self.tr([informe(1)], [columna(10, 1, 1, "AnimalGroupName", GroupIndex=0),
+                                   columna(11, 1, 2, "SevenDayAverage", SummaryType=4, SummaryTypes="4", GroupSummaryType=6),
+                                   columna(12, 1, 3, "CurrentDIM", SummaryType=4, SummaryTypes="4", GroupSummaryType=4)])
         d = [x for x in r["diferencias"] if x["tipo"] == "resumen"]
         self.assertEqual(len(d), 1)
         self.assertEqual(d[0]["gravedad"], "info")

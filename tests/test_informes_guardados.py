@@ -233,5 +233,28 @@ class TestPrimerUsoConPedidosALaVez(unittest.TestCase):
                 con.close()
 
 
+class TestUnIdQueSQLiteNoPuedeGuardar(Base):
+    """Revisión final (seguridad #3): un id de 2^63 o más no cabe en un INTEGER de SQLite (`OverflowError`) y daba un 500 en todas las rutas por id.
+    Para el que lo pide es simplemente un informe que no existe."""
+
+    def test_obtener_no_levanta_y_dice_que_no_existe(self):
+        ig.crear(T, "Uno", DEF, "maxi")
+        for id_ in (2 ** 63, 2 ** 63 + 5, 2 ** 200, 0, -1):
+            self.assertIsNone(ig.obtener(T, id_), id_)
+
+    def test_el_mayor_id_que_cabe_se_consulta_normal(self):
+        self.assertIsNone(ig.obtener(T, 2 ** 63 - 1))
+
+    def test_actualizar_dice_que_no_existe(self):
+        for id_ in (2 ** 63, 2 ** 200):
+            with self.assertRaises(ig.InformeGuardadoError) as cm:
+                ig.actualizar(T, id_, nombre="Otro")
+            self.assertIn("no existe", str(cm.exception))
+
+    def test_lo_que_no_es_un_numero_tampoco_rompe(self):
+        for id_ in (None, "1", 1.5, True, [1]):
+            self.assertIsNone(ig.obtener(T, id_), repr(id_))
+
+
 if __name__ == "__main__":
     unittest.main()

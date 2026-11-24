@@ -45,7 +45,7 @@ def enviar(mensaje: str) -> None:
         sin_llegar = envio_red.no_llego(exc)
         raise TelegramError(f"No se pudo conectar con Telegram ({type(exc).__name__}).", no_salio=sin_llegar, reintentable=sin_llegar) from None
     if r.status_code != 200:
-        raise TelegramError(f"Telegram respondió {r.status_code}: {r.text[:300]}", no_salio=400 <= r.status_code < 500)
+        raise TelegramError(f"Telegram respondió {r.status_code}: {r.text[:300]}", no_salio=400 <= r.status_code < 500, reintentable=r.status_code == 429)       # 429: límite de velocidad
 
 
 def enviar_documento(nombre: str, datos: bytes, texto: str = "", mime: str = MIME_XLSX) -> None:
@@ -63,4 +63,4 @@ def enviar_documento(nombre: str, datos: bytes, texto: str = "", mime: str = MIM
         sin_llegar = envio_red.no_llego(exc)
         raise TelegramError(f"No se pudo conectar con Telegram ({type(exc).__name__}).", no_salio=sin_llegar, reintentable=sin_llegar) from None
     if r.status_code != 200:
-        raise TelegramError(f"Telegram respondió {r.status_code}.", no_salio=400 <= r.status_code < 500)
+        raise TelegramError(f"Telegram respondió {r.status_code}.", no_salio=400 <= r.status_code < 500, reintentable=r.status_code == 429)

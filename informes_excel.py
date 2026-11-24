@@ -26,7 +26,10 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import Outline, PageSetupProperties
 
 _PELIGROSO = ("=", "+", "-", "@", "\t", "\r")
-_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")          # Excel no admite estos caracteres (el tabulador y el salto de línea sí): `openpyxl` levanta si se los escribe
+# Excel no admite estos caracteres en un texto (el tabulador y el salto de línea sí): los de control, U+FFFE y U+FFFF, y los sustitutos sueltos (U+D800 a U+DFFF). `openpyxl` levanta
+# o deja un XML que no se puede abrir si se los escribe, y el envío programado mandaba ese archivo roto como si nada.
+_CONTROL = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
+DIAS = ("lun", "mar", "mié", "jue", "vie", "sáb", "dom")           # el día de la semana de las fechas de los textos de la app
 ANCHO_MAX = 42
 SIN_DATO = "(sin dato)"
 SIN_GRUPO = "Sin grupo identificado"
@@ -55,10 +58,11 @@ def _formato_num(decimales: int) -> str:
 
 
 def _fecha(v):
+    """La fecha de una celda, SIN zona horaria: Excel no la admite (`openpyxl` levanta), y una fecha de la base con zona hacía fallar todo el armado. Se conserva la hora que traía."""
     if isinstance(v, (datetime.datetime, datetime.date)):
-        return v if isinstance(v, datetime.datetime) else datetime.datetime(v.year, v.month, v.day)
+        return v.replace(tzinfo=None) if isinstance(v, datetime.datetime) else datetime.datetime(v.year, v.month, v.day)
     try:
-        return datetime.datetime.fromisoformat(str(v).replace("Z", ""))
+        return datetime.datetime.fromisoformat(str(v).replace("Z", "")).replace(tzinfo=None)
     except ValueError:
         return None
 
@@ -318,7 +322,7 @@ def _hoja_condiciones(wb, resultado: dict, nombre: str, condiciones, generado) -
     info.column_dimensions["B"].width = 70
     generado = generado or datetime.datetime.now()
     tot = resultado.get("totales")
-    filas_info = [("Informe", nombre), ("Generado", generado.strftime("%d/%m/%Y %H:%M"))]
+    filas_info = [("Informe", nombre), ("Generado", f"{DIAS[generado.weekday()]} {generado:%d/%m/%Y %H:%M}")]        # con el día de la semana, como toda fecha de un texto de la app
     if resultado.get("detalle", True):
         filas_info.append(("Filas", len(resultado["filas"])))
     if tot is not None:
@@ -332,11 +336,15 @@ def _hoja_condiciones(wb, resultado: dict, nombre: str, condiciones, generado) -
         _texto(info, r + k, 2, str(c))
     if resultado.get("truncado"):
         n = r + len(condiciones or ["x"]) + 1
-        info.cell(row=n, column=1, value="Aviso").font = Font(bold=True, color="B00020")
-        aviso = "La lista se cortó en el tope de filas: hay más animales que los que figuran acá."
-        if tot is not None:
-            aviso += " Los totales y resúmenes cuentan a todos los animales del informe."
-        info.cell(row=n, column=2, value=aviso)
+        cuenta_a_todos = " Los totales y resúmenes cuentan a todos los animales del informe." if tot is not None else ""
+        if resultado.get("limite_pedido"):
+            # El informe eligió ese límite («las 10 vacas que más producen», «Listar hasta»): es lo que se pidió, no un aviso, y no es «el tope».
+            k = len(resultado["filas"])
+            info.cell(row=n, column=1, value="Límite").font = Font(bold=True)
+            info.cell(row=n, column=2, value=("Se lista la primera fila" if k == 1 else f"Se listan las primeras {_miles(k)} filas") + ", como pide el informe." + cuenta_a_todos)
+        else:
+            info.cell(row=n, column=1, value="Aviso").font = Font(bold=True, color="B00020")
+            info.cell(row=n, column=2, value="La lista se cortó en el tope de filas: hay más animales que los que figuran acá." + cuenta_a_todos)
 
 
 def a_xlsx(resultado: dict, nombre: str, condiciones=None, generado=None) -> bytes:

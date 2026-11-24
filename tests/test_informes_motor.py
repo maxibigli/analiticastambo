@@ -191,7 +191,7 @@ class TestValores(unittest.TestCase):
 
     def test_fecha(self):
         sql = comp(columnas=[{"campo": "Parto"}], condiciones=[{"campo": "Parto", "op": ">=", "valor": "2025-09-16"}])["sql"]
-        self.assertIn("rep.parto >= CONVERT(date, '2025-09-16', 23)", sql)
+        self.assertIn("CAST(rep.parto AS date) >= CONVERT(date, '2025-09-16', 23)", sql)
 
     def test_varias_condiciones_se_unen_con_and(self):
         sql = comp(columnas=[{"campo": "P24"}, {"campo": "Dim"}],
@@ -749,6 +749,93 @@ class TestOrdenNumericoDelNumero(unittest.TestCase):
         sql = self.sql(columnas=[{"campo": "Number"}, {"campo": "AnimalGroupName"}], agrupar_por=["AnimalGroupName"])
         self.assertIn("ag.Name, CASE WHEN b.Number IS NULL THEN 1 ELSE 0 END, b.Number ASC", sql)
         db.validate_sql(sql)
+
+
+class TestUnaFechaSeComparaPorDia(unittest.TestCase):
+    """Revisión final (24/11/2026, ia #1): la fecha del último parto es `MAX(DateAndTime)`, o sea que puede traer HORA. Contra «CONVERT(date, ...)» un datetime se compara con las
+    00:00 de ese día: «=» solo calzaba con partos a medianoche exacta y «<=» dejaba afuera los partos de ese día. Para cualquier campo de tipo fecha se compara el DÍA."""
+
+    def sql(self, op, valor="2026-08-15", **kw):
+        return comp(columnas=[{"campo": "Parto"}], condiciones=[{"campo": "Parto", "op": op, "valor": valor}], **kw)["sql"]
+
+    def test_los_cinco_operadores_comparan_el_dia_del_campo(self):
+        for op in ("=", "<", "<=", ">", ">="):
+            self.assertIn(f"CAST(rep.parto AS date) {op} CONVERT(date, '2026-08-15', 23)", self.sql(op), op)
+
+    def test_la_condicion_no_deja_el_campo_pelado(self):
+        for op in ("=", "<=", ">"):
+            donde = self.sql(op).split("WHERE", 1)[1].split("ORDER BY", 1)[0]
+            self.assertNotIn(f"AND rep.parto {op} ", donde, op)
+
+    def test_el_resto_del_informe_no_se_toca(self):
+        sql = self.sql("<=")
+        self.assertIn("rep.parto AS c0", sql)                                           # la columna que se muestra sigue siendo el campo tal cual
+        self.assertIn("ORDER BY CASE WHEN rep.parto IS NULL THEN 1 ELSE 0 END, rep.parto ASC", sql)
+
+    def test_el_grafico_sigue_a_la_misma_poblacion_con_la_misma_comparacion(self):
+        pob = im.poblacion_sql({"columnas": [{"campo": "Parto"}], "condiciones": [{"campo": "Parto", "op": "=", "valor": "2026-08-15"}]}, CAT, BLOQUES, herd=1)
+        self.assertIn("CAST(rep.parto AS date) = CONVERT(date, '2026-08-15', 23)", pob)
+
+    def test_el_sql_pasa_la_validacion_de_solo_lectura(self):
+        for op in ("=", "<", "<=", ">", ">="):
+            db.validate_sql(self.sql(op))
+
+    def test_un_numero_o_un_texto_se_comparan_como_siempre(self):
+        self.assertIn("ord.p24 <= 30", comp(columnas=[{"campo": "P24"}], condiciones=[{"campo": "P24", "op": "<=", "valor": 30}])["sql"])
+        self.assertIn("ag.Name = N'Rodeo 1'", comp(condiciones=[{"campo": "GroupName", "op": "es", "valor": "Rodeo 1"}])["sql"])
+
+    def test_con_el_catalogo_real_la_fecha_del_ultimo_parto_se_compara_por_dia(self):
+        sql = im.compilar({"columnas": [{"campo": "LastCalvingDate"}], "condiciones": [{"campo": "LastCalvingDate", "op": "<=", "valor": "2026-08-15"}]}, herd=1)["sql"]
+        self.assertIn("CAST(pa.fecha AS date) <= CONVERT(date, '2026-08-15', 23)", sql)
+
+
+class TestElLimiteLoPidioElInforme(unittest.TestCase):
+    """Revisión final (regresión #2): el corte de la lista puede ser el tope de 2.000 (un aviso) o el límite que eligió el informe («Listar hasta», «las 10 vacas que más producen»,
+    que es lo que PIDIÓ). El resultado dice cuál de los dos: el Excel y el mensaje programado no pueden decir «se cortó en el tope» de algo que se pidió."""
+
+    def correr(self, defn, filas=4):
+        falso = lambda sql, validate=True, tambo=None, max_rows=None: {"columns": ["c0"], "rows": [[str(i)] for i in range(filas)], "truncated": False}
+        return im.ejecutar(dict({"columnas": [{"campo": "Number"}]}, **defn), "ponderosa", CAT, BLOQUES, run=falso, herd=1)
+
+    def test_con_limite_en_la_definicion_el_corte_es_pedido(self):
+        r = self.correr({"limite": 3})
+        self.assertTrue(r["truncado"])
+        self.assertIs(r["limite_pedido"], True)
+
+    def test_sin_limite_el_corte_es_el_tope(self):
+        r = self.correr({})
+        self.assertIs(r["limite_pedido"], False)
+
+    def test_aunque_no_se_corte_dice_si_hubo_limite(self):
+        r = self.correr({"limite": 10}, 2)
+        self.assertFalse(r["truncado"])
+        self.assertIs(r["limite_pedido"], True)
+
+
+class TestDescribirConElLimite(unittest.TestCase):
+    D = {"columnas": [{"campo": "Number"}], "limite": 10, "condiciones": [{"campo": "P24", "op": "<", "valor": 30}]}
+
+    def test_con_con_limite_dice_hasta_donde_se_lista(self):
+        self.assertEqual(im.describir_condiciones(self.D, CAT, con_limite=True), ["Producción 24 h < 30", "Lista limitada a las primeras 10 filas"])
+
+    def test_una_sola_fila_va_en_singular(self):
+        self.assertEqual(im.describir_condiciones(dict(self.D, limite=1), CAT, con_limite=True)[-1], "Lista limitada a la primera fila")
+
+    def test_por_defecto_no_cambia_lo_de_siempre(self):
+        self.assertEqual(im.describir_condiciones(self.D, CAT), ["Producción 24 h < 30"])           # «Se lee así» de la IA ya dice su propia línea de límite
+
+    def test_sin_limite_o_con_uno_que_no_sirve_no_agrega_nada(self):
+        for limite in (None, 0, -3, True, "10", 1.5):
+            self.assertEqual(im.describir_condiciones(dict(self.D, limite=limite), CAT, con_limite=True), ["Producción 24 h < 30"], repr(limite))
+        sin = {k: v for k, v in self.D.items() if k != "limite"}
+        self.assertEqual(im.describir_condiciones(sin, CAT, con_limite=True), ["Producción 24 h < 30"])
+
+    def test_va_antes_del_agrupado_y_de_los_descartados_o_despues_sin_romper_el_orden_de_las_demas(self):
+        d = dict(self.D, incluir_descartados=True, agrupar_por=["GroupName"])
+        r = im.describir_condiciones(d, CAT, con_limite=True)
+        self.assertEqual(r[0], "Producción 24 h < 30")
+        self.assertIn("Lista limitada a las primeras 10 filas", r)
+        self.assertIn("Incluye animales descartados", r)
 
 
 class TestDescartadosSonUnaUnion(unittest.TestCase):
