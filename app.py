@@ -55,6 +55,7 @@ import iot_conexion
 import iot_ingreso
 import iot_mapa
 import iot_monitoreo
+import iot_ordenes
 import iot_origenes
 import iot_sensores
 import iot_vumetros
@@ -3518,11 +3519,10 @@ def _ip_para_el_bloqueo() -> str:
     return request.remote_addr or "desconocida"
 
 
-@app.post("/api/iot/ingreso/<origen_id>")
-def api_iot_ingreso(origen_id):
-    """Recibe lecturas de un origen. Autoriza SOLO con el token del origen: cabecera `X-Token` (o `?token=` si el formato es
-    `chirpstack`, cuyo servidor puede no dejar poner cabeceras propias). El token no se loguea ni se devuelve."""
-    from werkzeug.exceptions import RequestEntityTooLarge
+def _autenticar_ingreso(origen_id):
+    """Todo lo que un pedido de un equipo tiene que pasar ANTES de que se mire su cuerpo: el bloqueo por IP, el token (cabecera
+    `X-Token`; `?token=` solo si el formato es `chirpstack`, cuyo servidor puede no dejar poner cabeceras propias) y el mismo 403
+    para token malo, sin token, origen inexistente u origen Modbus. Devuelve (origen, None) o (None, respuesta_de_rechazo)."""
     origen = iot_origenes.obtener(origen_id)
     # Contador propio (una tupla: el login usa texto y no puede llenarlo) por IP y por «balde» del id: un servidor LoRaWAN que
     # atiende varios orígenes es una sola IP, y un token viejo en uno no debe frenar a los otros. El balde sale del id PEDIDO,
@@ -3530,15 +3530,26 @@ def api_iot_ingreso(origen_id):
     # solo 64 por IP (probar miles de ids no agranda la tabla sin límite).
     clave_intentos = ("iot", _ip_para_el_bloqueo(), zlib.crc32(origen_id.encode("utf-8")) % 64)
     if auth.login_bloqueado(clave_intentos):
-        return jsonify({"error": "Demasiados intentos con un token incorrecto. Esperá unos minutos."}), 429
+        return None, (jsonify({"error": "Demasiados intentos con un token incorrecto. Esperá unos minutos."}), 429)
     candidato = request.headers.get("X-Token", "").strip()
     if not candidato and origen is not None and origen.get("formato") == "chirpstack":
         candidato = request.args.get("token", "").strip()
     if not iot_origenes.token_valido(origen_id, candidato):
         auth.registrar_intento_fallido(clave_intentos)
         cuerpo, codigo = _INGRESO_NO_AUTORIZADO
-        return jsonify(cuerpo), codigo
+        return None, (jsonify(cuerpo), codigo)
     auth.limpiar_intentos(clave_intentos)
+    return origen, None
+
+
+@app.post("/api/iot/ingreso/<origen_id>")
+def api_iot_ingreso(origen_id):
+    """Recibe lecturas de un origen. Autoriza SOLO con el token del origen (ver `_autenticar_ingreso`). El token no se loguea ni
+    se devuelve."""
+    from werkzeug.exceptions import RequestEntityTooLarge
+    origen, rechazo = _autenticar_ingreso(origen_id)
+    if rechazo:
+        return rechazo
     request.max_content_length = _INGRESO_MAX_BYTES    # también corta un cuerpo sin Content-Length (chunked)
     if (request.content_length or 0) > _INGRESO_MAX_BYTES:
         return jsonify({"error": "El pedido es demasiado grande."}), 413
@@ -3561,6 +3572,52 @@ def api_iot_ingreso(origen_id):
     return jsonify({"ok": True, **r})
 
 
+@app.get("/api/iot/ingreso/<origen_id>/ordenes")
+def api_iot_ingreso_ordenes(origen_id):
+    """El equipo consulta sus órdenes pendientes (ver `iot_ordenes`): cada una se entrega UNA sola vez y nunca vencida."""
+    origen, rechazo = _autenticar_ingreso(origen_id)
+    if rechazo:
+        return rechazo
+    try:
+        return jsonify({"ordenes": iot_ordenes.entregar(origen_id)})
+    except iot_ordenes.OrdenError as exc:
+        return jsonify({"error": str(exc)}), exc.codigo
+    except sqlite3.OperationalError:
+        return jsonify({"error": "La base de datos está ocupada. Reintentá en unos segundos."}), 503
+
+
+@app.post("/api/iot/ingreso/<origen_id>/ordenes/<orden>/ok")
+def api_iot_ingreso_orden_ok(origen_id, orden):
+    """El equipo confirma que ejecutó una orden (cuerpo vacío) o que no pudo (`{"error": "…"}`)."""
+    from werkzeug.exceptions import RequestEntityTooLarge
+    origen, rechazo = _autenticar_ingreso(origen_id)
+    if rechazo:
+        return rechazo
+    request.max_content_length = _INGRESO_MAX_BYTES
+    if (request.content_length or 0) > _INGRESO_MAX_BYTES:
+        return jsonify({"error": "El pedido es demasiado grande."}), 413
+    try:
+        crudo = request.get_data()
+        cuerpo = request.get_json(force=True, silent=True) if crudo.strip() else {}
+    except RequestEntityTooLarge:
+        return jsonify({"error": "El pedido es demasiado grande."}), 413
+    except RecursionError:
+        cuerpo = None
+    if not isinstance(cuerpo, dict):
+        return jsonify({"error": "El cuerpo tiene que estar vacío o ser un objeto JSON (con «error» si no pudo ejecutarla)."}), 400
+    try:
+        try:
+            numero = int(orden)
+        except ValueError:
+            raise iot_ordenes.OrdenError("El número de orden tiene que ser un entero.", 400) from None
+        r = iot_ordenes.confirmar(origen_id, numero, cuerpo.get("error"))
+    except iot_ordenes.OrdenError as exc:
+        return jsonify({"error": str(exc)}), exc.codigo
+    except sqlite3.OperationalError:
+        return jsonify({"error": "La base de datos está ocupada. Reintentá en unos segundos."}), 503
+    return jsonify({"ok": True, "estado": r["estado"]})
+
+
 def _contexto_de_origenes() -> dict:
     """Lo que `iot_origenes` necesita saber del catálogo para validar sin importarlo (ver su docstring)."""
     return {"sensores_analogicos": iot_monitoreo.sensores_asignables(),
@@ -3570,11 +3627,43 @@ def _contexto_de_origenes() -> dict:
 
 def _origen_para_pantalla(o: dict) -> dict:
     """Un origen con lo que la pantalla muestra: nunca el hash del token. `ultimo` es lo último que llegó a cada canal."""
-    canales = [{**c, "ultimo": iot_ingreso.ultimo_de_canal(o["id"], c["clave"])} for c in o["canales"]]
+    comanda = o["tipo"] == "http" and o.get("puede_comandar")
+    ultimas = iot_ordenes.ultima_por_canal(o["id"]) if comanda else {}
+    canales = [({**c, "ultima_orden": ultimas.get(c["clave"])} if c["grupo"] == "salida"
+                else {**c, "ultimo": iot_ingreso.ultimo_de_canal(o["id"], c["clave"])}) for c in o["canales"]]
     resto = {k: v for k, v in o.items() if k not in ("token_hash", "canales")}
+    if o["tipo"] == "http":
+        resto["ordenes"] = iot_ordenes.listar(o["id"], limite=10) if comanda else []
     # Solo los equipos que MANDAN sus datos por HTTP tienen una dirección de ingreso; uno Modbus lo consulta LactIA.
     ingreso = {"url_ingreso": f"/api/iot/ingreso/{o['id']}"} if o["tipo"] == "http" else {}
     return {**resto, **ingreso, "canales": canales, "estado": iot_ingreso.estado(o["id"])}
+
+
+def _cancelar_ordenes_que_ya_no_valen(antes: dict, despues: dict) -> None:
+    """Lo que estaba vivo y ya no corresponde después de guardar un equipo: se apagó «Puede recibir órdenes», se sacó una salida
+    o se le cambió el modo. No se entrega nunca más (una orden vieja no puede disparar algo que ya no es lo mismo)."""
+    if not antes or antes.get("tipo") != "http" or not antes.get("puede_comandar"):
+        return
+    if not despues.get("puede_comandar"):
+        iot_ordenes.cancelar(antes["id"], None, "se desactivó «Puede recibir órdenes» en este equipo")
+        return
+    ahora = {c["clave"]: c for c in despues["canales"] if c["grupo"] == "salida"}
+    for c in antes["canales"]:
+        if c["grupo"] != "salida":
+            continue
+        nuevo = ahora.get(c["clave"])
+        if nuevo is None:
+            iot_ordenes.cancelar(antes["id"], c["clave"], "se sacó la salida")
+        elif (nuevo["modo"], nuevo["pulso_s"]) != (c["modo"], c["pulso_s"]):
+            iot_ordenes.cancelar(antes["id"], c["clave"], "cambió el modo de la salida")
+
+
+def _actualizar_ordenes_tras_guardar(antes: dict, despues: dict) -> None:
+    """Después de guardar un equipo: cancela lo que ya no corresponde y, si se BAJÓ el vencimiento, acorta lo que ya esperaba."""
+    _cancelar_ordenes_que_ya_no_valen(antes, despues)
+    if (antes and despues and despues.get("tipo") == "http" and despues.get("puede_comandar")
+            and antes.get("vencimiento_orden_s") != despues["vencimiento_orden_s"]):
+        iot_ordenes.reajustar_vencimiento(despues["id"], despues["vencimiento_orden_s"])
 
 
 def _cuerpo_objeto():
@@ -3586,10 +3675,14 @@ def _cuerpo_objeto():
 @auth.requiere_rol("admin")
 def api_iot_origenes_listar():
     """Los orígenes de datos (el equipo principal y los HTTP) para ⚙ Configuración › 🔌 Entradas/Salidas."""
+    try:
+        origenes = [_origen_para_pantalla(o) for o in iot_origenes.cargar()]
+    except sqlite3.OperationalError:       # leer las órdenes resuelve lo vencido (escribe): con la base tomada, que se reintente
+        return jsonify({"error": "La base de datos está ocupada. Reintentá en unos segundos."}), 503
     return jsonify({
         "principal": {"id": iot_origenes.PRINCIPAL_ID, "nombre": "Equipo principal (gateway M300)", "tipo": "modbus_tcp",
                       "ventana_lectura_min": iot_origenes.VENTANA_PRINCIPAL_MIN},
-        "origenes": [_origen_para_pantalla(o) for o in iot_origenes.cargar()],
+        "origenes": origenes,
         "sensores_analogicos": [{"clave": s["clave"], "label": s["label"], "unidad": s["unidad"]}
                                 for s in iot_sensores.analogicos()],
         "funciones_entrada": list(iot_mapa.FUNCIONES_ENTRADA), "funciones_analogica": list(iot_origenes.FUNCIONES_ANALOGICA),
@@ -3631,10 +3724,21 @@ def api_iot_origenes_guardar(origen_id):
                                         cuerpo.get("unit_id"), cuerpo.get("ventana_lectura_min"), cuerpo.get("canales"),
                                         **_contexto_de_origenes())
         else:
+            # Una pantalla de antes de actualizar no manda los campos de las órdenes: no pueden apagarse en silencio.
+            puede = cuerpo.get("puede_comandar", actual.get("puede_comandar", False) if actual else False)
+            vence = cuerpo.get("vencimiento_orden_s", actual.get("vencimiento_orden_s") if actual else None)
             iot_origenes.guardar_origen(origen_id, cuerpo.get("nombre"), cuerpo.get("formato"),
-                                        cuerpo.get("ventana_lectura_min"), cuerpo.get("canales"), **_contexto_de_origenes())
+                                        cuerpo.get("ventana_lectura_min"), cuerpo.get("canales"), puede_comandar=puede,
+                                        vencimiento_orden_s=vence, **_contexto_de_origenes())
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
+    try:
+        _actualizar_ordenes_tras_guardar(actual, iot_origenes.obtener(origen_id))
+    except sqlite3.OperationalError:
+        # El equipo YA se guardó. Lo que ya no corresponde igual no se entrega: `iot_ordenes.entregar` compara con lo guardado.
+        return jsonify({"error": "Se guardó el equipo, pero la base de datos estaba ocupada y no se pudieron actualizar sus órdenes en "
+                                 "espera. Las que ya no corresponden a una salida no se entregan; revisá la tabla de órdenes y volvé a "
+                                 "guardar."}), 503
     return jsonify({"ok": True})
 
 
@@ -3648,6 +3752,56 @@ def api_iot_origenes_token(origen_id):
         return jsonify({"error": str(exc)}), 400
 
 
+@app.post("/api/iot/origenes/<origen_id>/ordenes")
+@auth.requiere_rol("admin")
+def api_iot_origenes_ordenar(origen_id):
+    """Deja una orden para una salida de un equipo. ACTIVA un equipo real: solo el administrador con sesión (ni el token del equipo)."""
+    cuerpo = _cuerpo_objeto()
+    if cuerpo is None:
+        return jsonify({"error": "Formato inválido."}), 400
+    origen = iot_origenes.obtener(origen_id)
+    if origen is None:
+        return jsonify({"error": "No existe ese equipo."}), 404
+    try:
+        orden = iot_ordenes.crear(origen, cuerpo.get("canal"), cuerpo.get("accion"), session.get("usuario"))
+    except iot_ordenes.OrdenError as exc:
+        return jsonify({"error": str(exc)}), exc.codigo
+    except sqlite3.OperationalError:
+        return jsonify({"error": "La base de datos está ocupada. Reintentá en unos segundos."}), 503
+    # 200 y no 202: la pantalla trata un 202 como «el servidor está calentando» (ver `pedirJSON`) y lo reintenta como un error.
+    return jsonify({"orden": orden}), 200
+
+
+@app.get("/api/iot/origenes/<origen_id>/ordenes")
+@auth.requiere_rol("admin")
+def api_iot_origenes_ordenes(origen_id):
+    if iot_origenes.obtener(origen_id) is None:
+        return jsonify({"error": "No existe ese equipo."}), 404
+    try:
+        return jsonify({"ordenes": iot_ordenes.listar(origen_id, limite=20)})
+    except sqlite3.OperationalError:
+        return jsonify({"error": "La base de datos está ocupada. Reintentá en unos segundos."}), 503
+
+
+@app.delete("/api/iot/origenes/<origen_id>/ordenes/<orden>")
+@auth.requiere_rol("admin")
+def api_iot_origenes_cancelar_orden(origen_id, orden):
+    """El administrador retira una orden viva (ver `iot_ordenes.cancelar_orden`)."""
+    try:
+        numero = int(orden)
+    except ValueError:
+        return jsonify({"error": "El número de orden tiene que ser un entero."}), 400
+    if iot_origenes.obtener(origen_id) is None:
+        return jsonify({"error": "No existe ese equipo."}), 404
+    try:
+        r = iot_ordenes.cancelar_orden(origen_id, numero, f"la canceló {session.get('usuario') or 'el administrador'}")
+    except iot_ordenes.OrdenError as exc:
+        return jsonify({"error": str(exc)}), exc.codigo
+    except sqlite3.OperationalError:
+        return jsonify({"error": "La base de datos está ocupada. Reintentá en unos segundos."}), 503
+    return jsonify({"ok": True, "estado": r["estado"]})
+
+
 @app.delete("/api/iot/origenes/<origen_id>")
 @auth.requiere_rol("admin")
 def api_iot_origenes_eliminar(origen_id):
@@ -3655,7 +3809,13 @@ def api_iot_origenes_eliminar(origen_id):
         iot_origenes.eliminar(origen_id, _contexto_de_origenes()["entradas_en_uso"])
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
-    iot_ingreso.olvidar(origen_id)      # que otro equipo con el mismo nombre no herede la «última recepción» de este
+    try:
+        iot_ordenes.cancelar(origen_id, None, "se eliminó el equipo")
+        iot_ordenes.olvidar(origen_id)     # el historial se aparta (no se borra): otro equipo con el mismo nombre no lo hereda
+        iot_ingreso.olvidar(origen_id)     # ni la «última recepción» de este
+    except sqlite3.OperationalError:
+        return jsonify({"error": "El equipo se eliminó, pero la base de datos estaba ocupada y no se pudo limpiar su historial: "
+                                 "creá otro con otro nombre o reintentá en unos segundos."}), 503
     return jsonify({"ok": True})
 
 

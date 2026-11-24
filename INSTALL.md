@@ -610,3 +610,12 @@ la dirección, el tipo de dato y (si es analógico) el sensor que alimenta. Es s
 - La PC tiene que poder llegar al equipo por la red (misma red o ruta, y el puerto abierto en su firewall). Un equipo apagado o sin respuesta no frena al gateway principal: se reintenta cada
   30 segundos y la tarjeta muestra el último error con su fecha; sus sensores pasan a «Sin datos» cuando se cumple la ventana que cargaste.
 - Un equipo Modbus no usa token: no tiene dirección de ingreso por HTTP.
+
+### Comandar un ESP32 (salidas por órdenes)
+
+En **⚙ Configuración → 🔌 Entradas/Salidas → «Otros equipos»**, un equipo de formato genérico se puede marcar «Puede recibir órdenes» (con el «Vence a los (segundos)», que tiene que ser mayor
+que cada cuánto consulta tu ESP32) y agregarle salidas de pulso o sostenidas. Protocolo y firmware mínimo en `docs/iot-ingreso-http.md`.
+
+- **Hay que reiniciar el servidor web** después de actualizar (cambios en `.py`). **`iot_lavado.py` no hace falta**: las órdenes de un ESP32 no pasan por el gateway.
+- Un ESP32 dentro de la red del tambo usa la IP de la PC del servidor (no el nombre público), como para mandar lecturas. Su firmware tiene que **apagar todas sus salidas al arrancar**.
+- Una orden que el equipo no levanta a tiempo **vence y no se ejecuta nunca**; una que se entregó y no se confirmó **no se reenvía**. Las salidas sostenidas no tienen tope de tiempo encendidas.

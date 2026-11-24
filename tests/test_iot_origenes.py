@@ -161,7 +161,8 @@ class TestGuardarOrigen(Base):
         self.assertRechaza([{"clave": "a", "grupo": "entrada_digital"}, {"clave": "a", "grupo": "entrada_analogica"}])
 
     def test_una_salida_no_se_acepta(self):
-        self.assertRechaza([{"clave": "rele", "grupo": "salida"}], "todavía no manejan salidas")
+        # desde la etapa 4 una salida se acepta en un origen que puede recibir órdenes; en uno que no, el error lo dice
+        self.assertRechaza([{"clave": "rele", "grupo": "salida"}], "Puede recibir órdenes")
 
     def test_grupo_desconocido(self):
         self.assertRechaza([{"clave": "a", "grupo": "otra_cosa"}])

@@ -47,6 +47,9 @@ FUNCIONES_ANALOGICA = ("input_register", "holding_register")
 TIPOS_DATO = ("uint16", "int16", "float32_ab_cd")
 PUERTO_DEFECTO = iot_conexion.PUERTO_DEFECTO      # los dos defectos de PROTOCOLO que el código ya usa; todo lo demás es obligatorio
 UNIT_ID_DEFECTO = iot_mapa.UNIT_ID_DEFECTO
+# Salidas de un equipo que manda por HTTP (un relé en un ESP32): se comandan con órdenes que el equipo consulta (`iot_ordenes`).
+MODOS_SALIDA = ("pulso", "sostenida")
+PULSO_MAX_ORIGEN_S = 60       # tope TÉCNICO, no del tambo: un error de tipeo no puede dejar una bomba prendida una hora
 VERSION = 1
 
 # Topes técnicos (no del tambo).
@@ -112,7 +115,51 @@ def canal_global(origen_id: str, clave: str) -> str:
     return f"{origen_id}.{clave}"
 
 
-def _canal(c, estricto, sensores_analogicos=None, ocupados=None, usados=None):
+def _vencimiento(valor) -> int:
+    """Segundos que una orden puede esperar a que el equipo la levante (y a que la confirme). Entero ≥ 1, sin defecto: depende de
+    cada cuánto consulta el equipo, y lo sabe el tambo."""
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        raise ValueError("Falta el vencimiento de las órdenes: cuántos segundos puede esperar una orden a que el equipo la levante "
+                         "(un número entero, desde 1; tiene que ser mayor que cada cuánto consulta tu equipo).")
+    if isinstance(valor, float) and (not math.isfinite(valor) or not valor.is_integer()):
+        raise ValueError("El vencimiento de las órdenes tiene que ser un número entero de segundos, desde 1.")
+    if int(valor) < 1:
+        raise ValueError("El vencimiento de las órdenes tiene que ser de 1 segundo o más.")
+    return int(valor)
+
+
+def _pulso_origen(valor, clave) -> float:
+    if isinstance(valor, bool):
+        raise ValueError(f"{clave}: el pulso tiene que ser un número de segundos.")
+    try:
+        n = float(valor.strip().replace(",", ".")) if isinstance(valor, str) else float(valor)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{clave}: una salida de pulso necesita su duración en segundos (llegó {valor!r}).") from None
+    if not math.isfinite(n) or not 0 < n <= PULSO_MAX_ORIGEN_S:
+        raise ValueError(f"{clave}: el pulso tiene que ser mayor que 0 y de {PULSO_MAX_ORIGEN_S} segundos como máximo "
+                         "(para dejarla prendida más tiempo, usá una salida «sostenida»).")
+    return int(n) if n.is_integer() else n
+
+
+def _salida(c, clave, nombre) -> dict:
+    """Un canal de salida (un relé del equipo que LactIA comanda con órdenes). Sin sensor, sin factor."""
+    if c.get("sensor") not in (None, "") or c.get("factor") not in (None, "", 1) or c.get("offset") not in (None, "", 0):
+        raise ValueError(f"{clave}: una salida no se asigna a un sensor ni tiene factor.")
+    modo = c.get("modo")
+    if modo not in MODOS_SALIDA:
+        raise ValueError(f"{clave}: falta el modo de la salida («pulso»: se activa un rato y se suelta sola; «sostenida»: queda "
+                         "prendida hasta que se la apaga).")
+    if modo == "pulso":
+        pulso = _pulso_origen(c.get("pulso_s"), clave)
+    else:
+        if c.get("pulso_s") not in (None, ""):
+            raise ValueError(f"{clave}: una salida sostenida no tiene duración de pulso.")
+        pulso = None
+    return {"clave": clave, "grupo": "salida", "nombre": nombre, "factor": 1, "offset": 0, "sensor": None,
+            "modo": modo, "pulso_s": pulso}
+
+
+def _canal(c, estricto, sensores_analogicos=None, ocupados=None, usados=None, puede_comandar=False):
     """Valida UN canal. `estricto=False` (al leer el archivo) salta lo que depende del catálogo."""
     if not isinstance(c, dict):
         raise ValueError("Cada canal tiene que ser un objeto.")
@@ -121,14 +168,16 @@ def _canal(c, estricto, sensores_analogicos=None, ocupados=None, usados=None):
         raise ValueError(f"La clave de un canal tiene que tener de 1 a 40 letras, números, «_» o «-» (llegó {clave!r}): "
                          "sin puntos ni espacios.")
     grupo = c.get("grupo")
-    if grupo == "salida":
-        raise ValueError(f"{clave}: los orígenes HTTP todavía no manejan salidas.")
-    if grupo not in GRUPOS:
-        raise ValueError(f"{clave}: el tipo de canal tiene que ser «entrada_digital» o «entrada_analogica».")
     nombre = c.get("nombre")
     nombre = "" if nombre is None else str(nombre).strip()
     if len(nombre) > MAX_NOMBRE:
         raise ValueError(f"{clave}: el nombre no puede tener más de {MAX_NOMBRE} letras.")
+    if grupo == "salida":
+        if not puede_comandar:
+            raise ValueError(f"{clave}: para agregar salidas tildá «Puede recibir órdenes» en este equipo.")
+        return _salida(c, clave, nombre)
+    if grupo not in GRUPOS:
+        raise ValueError(f"{clave}: el tipo de canal tiene que ser «entrada_digital», «entrada_analogica» o «salida».")
     sensor = c.get("sensor")
     sensor = sensor.strip() if isinstance(sensor, str) else sensor
     sensor = sensor or None
@@ -244,14 +293,21 @@ def _origen_del_archivo(crudo):
             formato = _formato(crudo.get("formato"))
     except ValueError:
         return None
+    puede_comandar, vencimiento = False, None
     if not modbus:
         token_hash = crudo.get("token_hash")
         if not isinstance(token_hash, str) or not token_hash:
             return None
+        if crudo.get("puede_comandar") is True and formato == "generico":
+            try:
+                vencimiento = _vencimiento(crudo.get("vencimiento_orden_s"))
+                puede_comandar = True
+            except ValueError:
+                pass           # sin un vencimiento válido no se puede garantizar que una orden venza: no se comanda
     canales, claves = [], set()
     for c in crudo.get("canales") if isinstance(crudo.get("canales"), list) else []:
         try:
-            n = _canal_modbus(c, estricto=False) if modbus else _canal(c, estricto=False)
+            n = _canal_modbus(c, estricto=False) if modbus else _canal(c, estricto=False, puede_comandar=puede_comandar)
         except ValueError:
             continue
         if n["clave"] not in claves:
@@ -263,6 +319,7 @@ def _origen_del_archivo(crudo):
         return {"id": id_, "nombre": nombre, "tipo": "modbus_tcp", "host": host, "port": puerto, "unit_id": unit_id,
                 "ventana_lectura_min": ventana, "creado": creado, "canales": canales}
     return {"id": id_, "nombre": nombre, "tipo": "http", "formato": formato, "ventana_lectura_min": ventana,
+            "puede_comandar": puede_comandar, "vencimiento_orden_s": vencimiento,
             "token_hash": token_hash, "creado": creado, "canales": canales}
 
 
@@ -355,7 +412,8 @@ def crear(nombre, formato, ventana_lectura_min):
         _chequear_cupo(existentes)
         token = secrets.token_urlsafe(32)
         origen = {"id": _id_libre(nombre, {o["id"] for o in existentes}), "nombre": nombre, "tipo": "http",
-                  "formato": formato, "ventana_lectura_min": ventana, "token_hash": _hash(token),
+                  "formato": formato, "ventana_lectura_min": ventana, "puede_comandar": False,
+                  "vencimiento_orden_s": None, "token_hash": _hash(token),
                   "creado": datetime.now().isoformat(timespec="seconds"), "canales": []}
         _escribir(existentes + [origen])
     return origen, token
@@ -460,11 +518,13 @@ def _sin_entradas_en_uso_perdidas(origen_id, actual, nuevos, entradas_en_uso) ->
 
 
 def guardar_origen(origen_id, nombre, formato, ventana_lectura_min, canales, *, sensores_analogicos: dict,
-                   sensores_ocupados: set, entradas_en_uso: set) -> None:
+                   sensores_ocupados: set, entradas_en_uso: set, puede_comandar=False, vencimiento_orden_s=None) -> None:
     """Valida TODO antes de escribir: un guardado que falla deja el archivo como estaba.
 
     `sensores_analogicos`: clave -> (min, max) del catálogo; `sensores_ocupados`: los ya asignados a una entrada del
-    equipo principal; `entradas_en_uso`: claves globales de este módulo que un sensor digital tiene asignadas."""
+    equipo principal; `entradas_en_uso`: claves globales de este módulo que un sensor digital tiene asignadas.
+    `puede_comandar` (solo formato `generico`): el equipo consulta órdenes para sus canales `salida`; entonces
+    `vencimiento_orden_s` es obligatorio (se guarda solo en ese caso). Ver `iot_ordenes`."""
     with _lock:
         todos = cargar()
         actual = next((o for o in todos if o["id"] == origen_id), None)
@@ -475,6 +535,14 @@ def guardar_origen(origen_id, nombre, formato, ventana_lectura_min, canales, *, 
         nombre = _texto(nombre, "Nombre")
         formato = _formato(formato)
         ventana = _ventana(ventana_lectura_min)
+        if not isinstance(puede_comandar, bool):
+            raise ValueError("«Puede recibir órdenes» tiene que ser sí o no.")
+        vencimiento = None
+        if puede_comandar:
+            if formato != "generico":
+                raise ValueError("Un origen ChirpStack no se puede comandar (los mensajes hacia un nodo LoRaWAN esperan a que el "
+                                 "nodo hable): solo los equipos de formato genérico, como un ESP32.")
+            vencimiento = _vencimiento(vencimiento_orden_s)
         if not isinstance(canales, list):
             raise ValueError("Los canales tienen que ser una lista.")
         if len(canales) > MAX_CANALES:
@@ -484,13 +552,14 @@ def guardar_origen(origen_id, nombre, formato, ventana_lectura_min, canales, *, 
                   for c in o["canales"] if c["sensor"]}
         nuevos, claves = [], set()
         for c in canales:
-            n = _canal(c, True, sensores_analogicos or {}, sensores_ocupados or set(), usados)
+            n = _canal(c, True, sensores_analogicos or {}, sensores_ocupados or set(), usados, puede_comandar=puede_comandar)
             if n["clave"] in claves:
                 raise ValueError(f"La clave {n['clave']!r} está repetida: cada canal necesita una distinta.")
             claves.add(n["clave"])
             nuevos.append(n)
         _sin_entradas_en_uso_perdidas(origen_id, actual, nuevos, entradas_en_uso)
-        _escribir([{**actual, "nombre": nombre, "formato": formato, "ventana_lectura_min": ventana, "canales": nuevos}
+        _escribir([{**actual, "nombre": nombre, "formato": formato, "ventana_lectura_min": ventana, "canales": nuevos,
+                    "puede_comandar": puede_comandar, "vencimiento_orden_s": vencimiento}
                    if o["id"] == origen_id else o for o in todos])
 
 
@@ -536,6 +605,11 @@ def token_valido(origen_id, candidato) -> bool:
 def entradas_digitales() -> tuple:
     """Claves globales de los canales digitales de todos los orígenes."""
     return tuple(canal_global(o["id"], c["clave"]) for o in cargar() for c in o["canales"] if c["grupo"] == "entrada_digital")
+
+
+def salidas() -> tuple:
+    """Claves globales de los canales de salida (relés que se comandan con órdenes) de todos los orígenes HTTP."""
+    return tuple(canal_global(o["id"], c["clave"]) for o in cargar() for c in o["canales"] if c["grupo"] == "salida")
 
 
 def sensores_asignados() -> set:

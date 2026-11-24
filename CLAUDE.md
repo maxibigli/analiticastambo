@@ -2342,6 +2342,41 @@ llamadas de siempre al M300 (lo fija `tests.test_iot_lavado_mapa`). **Solo entra
   * **Verificado contra un servidor Modbus de verdad** (`pymodbus`, valores que cambian, equipo apagado y de vuelta, punto inexistente), y la pantalla en el navegador; **NO contra un equipo físico**.
   * **Pruebas**: `tests.test_iot_origenes_modbus`, `tests.test_iot_modbus_poller`, `tests.test_iot_origenes_modbus_api` (cada una en su comando) más las de la etapa 3 y las IoT de siempre.
 
+## Comandar un ESP32: órdenes para las salidas de un origen HTTP (23/11/2026)
+
+Etapa 4 de 4 de `docs/superpowers/specs/2026-11-23-iot-origenes-design.md` (plan: `docs/superpowers/plans/2026-11-23-iot-origenes-etapa-4.md`). Un equipo HTTP de formato
+`generico` con «Puede recibir órdenes» tiene **salidas** (relés) que el administrador activa desde la tarjeta de ⚙ Configuración › 🔌 Entradas/Salidas. El equipo NO recibe conexiones:
+CONSULTA sus órdenes (`GET /api/iot/ingreso/<id>/ordenes`), las ejecuta y CONFIRMA (`POST …/ordenes/<n>/ok`). Protocolo y firmware mínimo: `docs/iot-ingreso-http.md`.
+
+  * **`iot_ordenes.py` y la tabla `ordenes_origen`, APARTE de `comandos_actuador`.** La spec decía sumarle columnas a la del M300; no se hizo porque `iot_lavado.ejecutar_comandos_pendientes`
+    marca «error: canal desconocido» todo lo que no es suyo: con las órdenes de un ESP32 ahí, un `iot_lavado.py` viejo (la web se actualiza con `git pull`, el proceso del gateway solo al
+    reiniciarlo) se las comería a todas. Lo fija un test. El camino del M300 no se tocó.
+  * **Ciclo de vida** (siempre termina): `pendiente` → `entregada` → `ejecutada` | `error`; `vencida` (nadie la levantó antes de `vence`); `sin_confirmar` (se entregó y no hubo confirmación en
+    `vencimiento_orden_s`). **Se entrega UNA sola vez y nunca vencida**; una entrega cuya respuesta se perdió NO se reenvía (el error seguro es no disparar dos veces). Una confirmación tardía de una
+    `sin_confirmar` dice lo que realmente pasó. Una orden de otro origen contesta igual que una inexistente (404). Todo bajo un lock; dos consultas a la vez no entregan la misma.
+  * **`vencimiento_orden_s` es obligatorio al tildar «puede comandar», sin defecto** (cada cuánto consulta el ESP32 lo sabe el tambo). A lo sumo UNA orden viva por salida (409 al segundo clic).
+    ChirpStack NO se comanda (sus downlinks esperan al próximo uplink). Apagar la casilla, sacar una salida o cambiarle el modo cancela lo vivo; eliminar el equipo cancela y borra su historial.
+  * **Modos**: `pulso` (duración en segundos, `0 < s ≤ PULSO_MAX_ORIGEN_S` = **60, tope técnico**: un error de tipeo no puede dejar una bomba una hora) y `sostenida` (prender/apagar con órdenes separadas,
+    **sin tope de tiempo encendida**, como las sostenidas por voz). **LactIA no ve el estado real de un relé sostenido**: la pantalla dice «última orden: prender, ejecutada el …», nunca «prendido».
+    El firmware tiene que apagar sus salidas al arrancar.
+  * **Quién puede**: encolar es solo del administrador con sesión (`POST /api/iot/origenes/<id>/ordenes`); ni el token del equipo puede crear una orden. La autenticación del ingreso (bloqueo por IP y
+    balde, token, el mismo 403) es el helper `_autenticar_ingreso`, compartido con el envío de lecturas. Esa ruta contesta **200 y no 202**: `pedirJSON` toma un 202 como «el servidor está calentando».
+  * **La pantalla ESP32 no cambia**: sigue mostrando las 8 salidas del M300 (su firmware tiene 16 tarjetas fijas); las salidas de un ESP32 se comandan desde la web. El lavado automático y la voz siguen siendo del principal.
+  * **No hace falta reiniciar `iot_lavado.py`**: las órdenes viven en la web. **Hay que reiniciar el servidor web** (cambios en `.py`).
+  * **Verificado** con un «ESP32» simulado (un script que consulta cada 2 s, ejecuta y confirma) contra el servidor de desarrollo, en el navegador: pendiente → enviada → ejecutada, equipo sin red (vencida), equipo que
+    ejecuta y no avisa (sin confirmar), confirmación con error y doble clic rechazado. **NO se probó con un ESP32 ni un relé reales.**
+  * **Revisión final (aplicada)**: (1) **`entregar` y `crear` comparan con lo guardado AHORA, dentro del lock** (`_coincide`: misma salida, mismo modo, misma duración de pulso): una orden para una salida que se sacó o
+    cambió entre que se creó y la consulta pasa a `vencida` y NO sale, aunque la cancelación de la app no haya corrido o haya fallado (carrera entre dos administradores, base ocupada). (2) Una salida **sostenida** acepta
+    una orden DISTINTA a la viva y la reemplaza (`apagar` sobre un `prender` sin confirmar): un relé que pudo quedar prendido no se puede quedar sin poder apagarse; repetir la misma acción sigue siendo 409. (3) El
+    administrador puede **cancelar una orden** (`DELETE /api/iot/origenes/<id>/ordenes/<n>`; una `entregada` ya salió: queda `sin_confirmar`). (4) Un número de orden fuera de lo que SQLite guarda es 404, no 500.
+    (5) Las rutas del administrador contestan **503** con la base ocupada (y si falla lo posterior al guardado, el mensaje dice que el equipo SÍ se guardó). (6) **Bajar** el vencimiento acorta las órdenes que ya esperaban
+    (`reajustar_vencimiento`; subirlo no alarga nada). (7) Eliminar un equipo **aparta** su historial de órdenes (`<id>~eliminado-<fecha>`), no lo borra: queda el registro de qué relé se activó y quién lo pidió.
+    (8) La pantalla vigila las órdenes vivas también al abrirse y no redibuja mientras se escribe en la tarjeta.
+  * **Límites conocidos (menores sin resolver)**: el reloj es el del servidor (hora local naíve, texto ISO): si alguien lo ATRASA, una orden vieja vuelve a estar vigente (Argentina no tiene horario de verano; el reloj del ESP32
+    nunca se usa); un `error` de solo espacios en la confirmación se toma como éxito; el lock es por proceso (depende del candado de instancia única de `servidor.py`); la tabla de órdenes de la pantalla muestra «vencida (nadie la
+    levantó a tiempo)» también para una cancelada, con el detalle «la canceló …».
+  * **Pruebas**: `tests.test_iot_origenes_comando`, `tests.test_iot_ordenes`, `tests.test_iot_ordenes_api` (cada una en su comando) más las de las etapas anteriores.
+
 ## Lavado Automático: secuenciador de etapas real (29/08/2026)
 
 Aclaración importante del usuario sobre lo que "Lavado Automático" tenía

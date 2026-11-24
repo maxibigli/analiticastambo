@@ -76,3 +76,41 @@ La documentación oficial de ChirpStack no confirma estos dos puntos (cabecera p
 
 Por equipo: la última recepción (con día de la semana), cuántas lecturas se recibieron e ignoraron en total, el último error con su fecha, y por canal el
 último valor recibido. Si el equipo manda pero un sensor no se mueve, mirar acá si las claves coinciden (un canal mal escrito aparece como «ignorada»).
+
+## Recibir órdenes (salidas del equipo)
+
+Solo para equipos de formato **genérico** (ESP32) con «Puede recibir órdenes» tildado en LactIA. El equipo **no recibe conexiones**: *consulta* sus órdenes, las
+ejecuta y *avisa*. En la tarjeta se agregan **salidas** (un relé) de dos modos: **pulso** (se activa unos segundos y se suelta sola; la duración la carga el tambo, hasta 60 s)
+y **sostenida** (queda prendida hasta que llega otra orden «apagar»).
+
+```
+GET  <dirección de envío>/ordenes                       (cabecera X-Token)
+  → 200 {"ordenes": [{"id": 7, "canal": "bomba", "accion": "pulso", "duracion_s": 1.5}]}     (acciones: pulso, prender, apagar)
+
+POST <dirección de envío>/ordenes/7/ok                  (cabecera X-Token)
+  cuerpo vacío                                 → la ejecutó
+  cuerpo {"error": "el relé no responde"}      → no pudo
+  → 200 {"ok": true, "estado": "ejecutada"}    (o "error")
+```
+
+- `canal` es la clave de la salida **tal como la cargaste en la tarjeta** (la misma que usa el equipo para sus lecturas).
+- **Cada orden se entrega UNA sola vez.** Si la respuesta se pierde en el camino, LactIA NO la reenvía (el error seguro es no disparar dos veces): queda «sin confirmar».
+- **Vence.** «Vence a los (segundos)» es lo que una orden puede esperar a que el equipo la levante, y de nuevo lo que tiene para confirmar. Tiene que ser **mayor que cada cuánto
+  consulta tu equipo**. Una orden que venció no se ejecuta nunca, aunque el equipo vuelva a los 20 minutos.
+- Estados que se ven en la tarjeta: *pendiente* (todavía no la levantó), *enviada* (la levantó, esperando su confirmación), *ejecutada*, *con error*, *vencida* (nadie la levantó
+  a tiempo) y *sin confirmar* (la levantó y no avisó). Ninguna queda «enviada» para siempre.
+- A lo sumo **una orden viva por salida**: apretar el botón dos veces no apila pulsos.
+- Respuestas: `200`; `404` orden que no existe o es de otro equipo (no se distinguen); `409` orden que todavía no se te entregó, ya vencida o ya confirmada al revés
+  (y también en la consulta si el equipo ya no puede recibir órdenes); `403`, `413`, `429`, `503` como en el envío de lecturas.
+- **Tu firmware tiene que apagar todas sus salidas al arrancar.** LactIA no ve el estado real de un relé sostenido (solo cuál fue la última orden): si el equipo se reinicia o se
+  cae la red, solo él sabe cómo quedó. Las sostenidas **no tienen tope de tiempo encendidas**.
+
+Bucle mínimo del firmware (pseudocódigo):
+
+```
+cada N segundos (N menor que el vencimiento):
+    ordenes = GET .../ordenes
+    para cada orden:
+        ejecutar(orden.canal, orden.accion, orden.duracion_s)      # pulso: prender, esperar, apagar
+        POST .../ordenes/<id>/ok   (con {"error": "..."} si falló)
+```

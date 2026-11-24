@@ -4520,7 +4520,12 @@
         Un equipo que está dentro de la red del tambo tiene que usar la IP de esta PC en la dirección, no el nombre
         público. <b>ChirpStack</b>: la dirección es de toda una <i>Application</i>, así que dos nodos con las mismas claves
         en la misma Application se pisarían: usá una Application por nodo, o claves distintas en cada uno.
-        Solo se reciben lecturas: por ahora no se comanda nada de estos equipos.
+        <b>Órdenes</b> (solo formato genérico): tildando «Puede recibir órdenes» el equipo tiene salidas (un relé) que se activan desde acá.
+        LactIA deja una orden, el equipo la <b>consulta</b> cada tanto, la ejecuta y avisa. <b>Vence a los (segundos)</b> es cuánto
+        puede esperar una orden a que el equipo la levante: tiene que ser mayor que cada cuánto consulta tu equipo (la sabés vos);
+        una orden vencida no se ejecuta nunca. Una salida de <b>pulso</b> se activa unos segundos y se suelta sola; una
+        <b>sostenida</b> queda prendida hasta que la apagás, y LactIA no ve el estado real del relé (solo cuál fue la última orden):
+        tu equipo tiene que apagar sus salidas al arrancar. Una orden que se entregó y no se confirmó NO se reenvía.
       </p>
       <div class="aviso" id="config-iot-origenes-estado" style="margin:8px 0"></div>
       <div id="config-iot-origenes-token"></div>
@@ -17197,7 +17202,9 @@ function orgCopia(o) {
       canales: o.canales.map(c => ({ ...comunes(c), funcion: c.funcion, direccion: String(c.direccion),
         unit_id: c.unit_id == null ? '' : String(c.unit_id), tipo_dato: c.tipo_dato || '', invertido: !!c.invertido })) };
   }
-  return { tipo: 'http', nombre: o.nombre, formato: o.formato, ventana: String(o.ventana_lectura_min), canales: o.canales.map(comunes) };
+  return { tipo: 'http', nombre: o.nombre, formato: o.formato, ventana: String(o.ventana_lectura_min),
+    puede_comandar: !!o.puede_comandar, vencimiento: o.vencimiento_orden_s == null ? '' : String(o.vencimiento_orden_s),
+    canales: o.canales.map(c => ({ ...comunes(c), modo: c.modo || '', pulso: c.pulso_s == null ? '' : String(c.pulso_s) })) };
 }
 
 function orgCambiado(id) { return JSON.stringify(orgEdit[id]) !== orgOriginal[id]; }
@@ -17216,6 +17223,7 @@ async function cargarOrigenes() {
     orgDatos = d; orgEdit = nuevos; orgOriginal = originales;
     pintarOrigenes();
     estado.textContent = '';
+    orgVigilarOrdenes();
   } catch (e) {
     estado.textContent = 'Error: ' + e.message;
   }
@@ -17313,8 +17321,71 @@ function orgBloqueModbus(o) {
     + '<button class="secundario" type="button" data-org-accion="eliminar" data-org="' + id + '">Eliminar equipo</button></div></div>';
 }
 
+const ESTADO_ORDEN = {
+  pendiente: 'pendiente (el equipo todavía no la levantó)', entregada: 'enviada, esperando que el equipo confirme',
+  ejecutada: 'ejecutada', error: 'con error', vencida: 'vencida (nadie la levantó a tiempo)',
+  sin_confirmar: 'sin confirmar (el equipo no avisó)' };
+
+// «pulso, ejecutada · lun, 23/11/2026, 10:15»: lo que se SABE de la última orden. Nunca el estado real de un relé: LactIA no lo ve.
+function orgTextoOrden(o) {
+  const cuando = orgFecha(o.resuelta || o.entregada || o.creada);
+  return o.accion + ', ' + (ESTADO_ORDEN[o.estado] || o.estado) + ' · ' + cuando + (o.estado === 'error' && o.resultado ? ': ' + o.resultado : '');
+}
+
+function orgFilaSalida(id, c, i) {
+  const o = orgDatos.origenes.find(x => x.id === id) || { canales: [] };
+  const guardado = o.canales.find(x => x.clave === c.clave && x.grupo === 'salida');
+  const attrs = 'data-org="' + escHtml(id) + '" data-i="' + i + '"';
+  const campo = (k, valor, ancho, extra) => '<input ' + attrs + ' data-campo="' + k + '" value="' + escHtml(valor) + '" style="width:'
+    + ancho + 'px;padding:3px 6px" ' + (extra || '') + '>';
+  const modo = '<select ' + attrs + ' data-campo="modo" style="padding:3px 6px"><option value="">(elegir)</option>'
+    + '<option value="pulso"' + (c.modo === 'pulso' ? ' selected' : '') + '>Pulso</option>'
+    + '<option value="sostenida"' + (c.modo === 'sostenida' ? ' selected' : '') + '>Sostenida</option></select>';
+  const pulso = c.modo === 'pulso' ? campo('pulso', c.pulso, 56, 'inputmode="decimal" placeholder="segundos"') : '<span class="aviso" style="margin:0">—</span>';
+  // Los botones valen para lo GUARDADO: con cambios sin guardar (otra salida, otro modo) se pediría algo distinto de lo que se ve.
+  const listo = guardado && o.puede_comandar && !orgCambiado(id) && guardado.modo === c.modo;
+  const deshab = listo ? '' : ' disabled title="Guardá el equipo primero"';
+  const boton = (que, texto) => '<button type="button" class="secundario" data-org-accion="orden" data-org="' + escHtml(id) + '" data-canal="'
+    + escHtml(c.clave) + '" data-orden="' + que + '"' + deshab + '>' + texto + '</button>';
+  const botones = c.modo === 'pulso' ? boton('pulso', '⚡ Pulso') : (c.modo === 'sostenida' ? boton('prender', 'Prender') + ' ' + boton('apagar', 'Apagar') : '');
+  const ultima = guardado && guardado.ultima_orden ? orgTextoOrden(guardado.ultima_orden) : 'sin órdenes todavía';
+  return '<tr><td>' + campo('clave', c.clave, 96, 'maxlength="40"') + '</td><td>Salida</td><td>' + campo('nombre', c.nombre, 120, 'maxlength="40"')
+    + '</td><td>' + modo + '</td><td>' + pulso + '</td><td><span class="aviso" style="margin:0">—</span></td><td>' + botones
+    + '<div class="aviso" style="margin:2px 0 0">última orden: ' + escHtml(ultima) + '</div></td><td><button class="secundario" type="button" '
+    + 'data-org-accion="borrar-canal" ' + attrs + ' title="Sacar este canal">✕</button></td></tr>';
+}
+
+function orgTablaOrdenes(o) {
+  const ordenes = o.ordenes || [];
+  if (!ordenes.length) return '';
+  return '<details open style="margin:8px 0"><summary class="aviso" style="cursor:pointer">Últimas órdenes</summary><div style="overflow:auto">'
+    + '<table class="tabla" style="width:100%"><thead><tr><th>N.º</th><th>Salida</th><th>Acción</th><th>Estado</th><th>Cuándo</th><th>Quién</th>'
+    + '<th>Detalle</th><th></th></tr></thead><tbody>' + ordenes.map(x => '<tr><td>' + x.id + '</td><td>' + escHtml(x.canal) + '</td><td>' + escHtml(x.accion)
+      + '</td><td>' + escHtml(ESTADO_ORDEN[x.estado] || x.estado) + '</td><td>' + escHtml(orgFecha(x.creada)) + '</td><td>' + escHtml(x.usuario || '')
+      + '</td><td>' + escHtml(x.resultado || '') + '</td><td>'
+      + (x.estado === 'pendiente' || x.estado === 'entregada'
+        ? '<button type="button" class="secundario" data-org-accion="cancelar-orden" data-org="' + escHtml(o.id) + '" data-orden-id="' + x.id
+          + '" title="Retirar esta orden">Cancelar</button>' : '') + '</td></tr>').join('') + '</tbody></table></div></details>';
+}
+
+// Una orden cambia de estado cuando el equipo la consulta y la confirma: mientras haya una viva se vuelve a leer cada 3 s (hasta 2 minutos).
+let orgVigilando = null;
+function orgVigilarOrdenes() {
+  if (orgVigilando) return;                                 // ya hay una cadena: nunca dos
+  const vivas = orgDatos.origenes.some(o => (o.ordenes || []).some(x => x.estado === 'pendiente' || x.estado === 'entregada'));
+  if (!vivas) return;                                       // toda orden viva termina sola (vence): la cadena también
+  orgVigilando = setTimeout(async () => {
+    orgVigilando = null;
+    const a = document.activeElement;
+    // Si se está escribiendo en la tarjeta no se vuelve a dibujar (se perdería el foco): se espera al próximo turno.
+    if (a && ORG_LISTA.contains(a) && ['INPUT', 'SELECT'].includes(a.tagName)) return orgVigilarOrdenes();
+    await cargarOrigenes();                                 // al terminar vuelve a llamar a orgVigilarOrdenes
+  }, 3000);
+}
+
 function orgFilaCanal(id, c, i) {
   if (orgEdit[id].tipo === 'modbus_tcp') return orgFilaModbus(id, c, i);
+  if (c.grupo === 'salida') return orgFilaSalida(id, c, i);
   const guardado = (orgDatos.origenes.find(o => o.id === id) || { canales: [] }).canales.find(x => x.clave === c.clave);
   const ultimo = guardado && guardado.ultimo;
   const dig = c.grupo === 'entrada_digital';
@@ -17351,8 +17422,8 @@ function pintarOrigenes() {
     const error = st.ultimo_error ? '<div class="aviso" style="margin:4px 0;color:var(--lac-danger,#e5534b)">Último error ('
       + escHtml(orgFecha(st.error_fecha, true)) + '): ' + escHtml(st.ultimo_error) + '</div>' : '';
     const canales = e.canales.length
-      ? '<div style="overflow:auto"><table class="tabla" style="width:100%"><thead><tr><th>Clave</th><th>Tipo</th><th>Nombre</th><th>Factor</th><th>Offset</th>'
-        + '<th>Sensor</th><th>Último valor recibido</th><th></th></tr></thead><tbody>' + e.canales.map((c, i) => orgFilaCanal(o.id, c, i)).join('')
+      ? '<div style="overflow:auto"><table class="tabla" style="width:100%"><thead><tr><th>Clave</th><th>Tipo</th><th>Nombre</th><th>Factor · Modo</th><th>Offset · Pulso (s)</th>'
+        + '<th>Sensor</th><th>Último valor recibido · Órdenes</th><th></th></tr></thead><tbody>' + e.canales.map((c, i) => orgFilaCanal(o.id, c, i)).join('')
         + '</tbody></table></div>'
       : '<div class="aviso">Sin canales todavía: agregá los que manda el equipo (la clave es la que usa el equipo en su envío).</div>';
     return '<div style="border:1px solid var(--border);border-radius:8px;padding:10px"><div ' + fila + '>'
@@ -17363,7 +17434,13 @@ function pintarOrigenes() {
       + '<option value="chirpstack"' + (e.formato === 'chirpstack' ? ' selected' : '') + '>ChirpStack (LoRaWAN)</option></select></label>'
       + '<label class="aviso" style="margin:0" title="Si no llega nada de este equipo en este tiempo, sus sensores figuran «Sin datos»">Ventana (minutos) '
       + '<input type="number" min="1" step="1" data-org="' + id + '" data-campo-origen="ventana" value="' + escHtml(e.ventana)
-      + '" style="width:90px;padding:6px"></label></div>'
+      + '" style="width:90px;padding:6px"></label>'
+      + '<label class="aviso" style="margin:0"' + (e.formato === 'generico' ? '' : ' title="Un nodo LoRaWAN no se comanda: sus mensajes esperan a que el nodo hable"') + '>'
+      + '<input type="checkbox" data-org="' + id + '" data-campo-origen="puede_comandar"' + (e.puede_comandar ? ' checked' : '')
+      + (e.formato === 'generico' ? '' : ' disabled') + '> Puede recibir órdenes</label>'
+      + (e.puede_comandar ? '<label class="aviso" style="margin:0" title="Cuánto puede esperar una orden a que el equipo la levante: mayor que cada cuánto consulta tu equipo">'
+        + 'Vence a los (segundos) <input data-org="' + id + '" data-campo-origen="vencimiento" inputmode="numeric" placeholder="obligatorio" value="'
+        + escHtml(e.vencimiento) + '" style="width:90px;padding:6px"></label>' : '') + '</div>'
       + '<div class="aviso" style="margin:8px 0 2px">Dirección de envío: <code style="user-select:all;word-break:break-all">' + escHtml(orgUrl(o))
       + '</code> <button class="secundario" type="button" data-org-accion="copiar-url" data-org="' + id + '">Copiar</button>'
       + (orgNombrePublico() ? '<div style="margin-top:4px">⚠ Esta dirección usa el nombre con el que abriste LactIA. Un equipo dentro de la red del tambo tiene que usar la IP de esta PC en su lugar (y, en ChirpStack, el token no debería viajar por internet).</div>' : '')
@@ -17371,10 +17448,11 @@ function pintarOrigenes() {
       + '<details style="margin:4px 0"><summary class="aviso" style="cursor:pointer">Ejemplo para probar con curl</summary>'
       + '<pre style="white-space:pre-wrap;word-break:break-all;margin:6px 0">' + escHtml(orgCurl(o)) + '</pre>'
       + '<button class="secundario" type="button" data-org-accion="copiar-curl" data-org="' + id + '">Copiar ejemplo</button></details>'
-      + '<div class="aviso" style="margin:6px 0 2px">' + escHtml(estado) + '</div>' + error + canales
+      + '<div class="aviso" style="margin:6px 0 2px">' + escHtml(estado) + '</div>' + error + canales + orgTablaOrdenes(o)
       + '<div style="margin-top:10px;display:flex;gap:10px;flex-wrap:wrap">'
       + '<button class="secundario" type="button" data-org-accion="canal-an" data-org="' + id + '">➕ Canal analógico</button>'
       + '<button class="secundario" type="button" data-org-accion="canal-dig" data-org="' + id + '">➕ Canal digital</button>'
+      + (e.puede_comandar ? '<button class="secundario" type="button" data-org-accion="canal-sal" data-org="' + id + '">➕ Salida</button>' : '')
       + '<button type="button" data-org-accion="guardar" data-org="' + id + '"' + (orgCambiado(o.id) ? '' : ' disabled') + '>Guardar equipo</button>'
       + '<button class="secundario" type="button" data-org-accion="token" data-org="' + id + '">Nuevo token</button>'
       + '<button class="secundario" type="button" data-org-accion="eliminar" data-org="' + id + '">Eliminar equipo</button></div></div>';
@@ -17428,13 +17506,17 @@ function orgActualizarBoton(id) {
   const t = ev.target, id = t.dataset.org;
   if (!id || !orgEdit[id]) return;
   if (t.dataset.campoOrigen) {
-    orgEdit[id][t.dataset.campoOrigen] = t.value;
-    if (evento === 'change' && t.dataset.campoOrigen === 'formato') { pintarOrigenes(); return; }   // cambia la dirección y el ejemplo
+    orgEdit[id][t.dataset.campoOrigen] = t.type === 'checkbox' ? t.checked : t.value;
+    if (evento === 'change' && t.dataset.campoOrigen === 'formato') {                    // cambia la dirección y el ejemplo
+      if (t.value !== 'generico') orgEdit[id].puede_comandar = false;                    // un nodo LoRaWAN no se comanda
+      pintarOrigenes(); return;
+    }
+    if (evento === 'change' && t.dataset.campoOrigen === 'puede_comandar') { pintarOrigenes(); return; }   // aparece (o se va) el vencimiento
   } else if (t.dataset.campo && t.dataset.i != null) {
     const c = orgEdit[id].canales[Number(t.dataset.i)];
     if (!c) return;
     c[t.dataset.campo] = t.type === 'checkbox' ? t.checked : t.value;
-    if (evento === 'change' && t.dataset.campo === 'sensor') { pintarOrigenes(); return; }   // los demás desplegables marcan «(ya asignado)»
+    if (evento === 'change' && (t.dataset.campo === 'sensor' || t.dataset.campo === 'modo')) { pintarOrigenes(); return; }   // «(ya asignado)»; el pulso solo va con el modo pulso
   } else return;
   orgActualizarBoton(id);
 }));
@@ -17457,6 +17539,10 @@ ORG_LISTA.addEventListener('click', async ev => {
     orgEdit[id].canales.push(nuevo);
     return pintarOrigenes();
   }
+  if (accion === 'canal-sal') {
+    orgEdit[id].canales.push({ clave: '', grupo: 'salida', nombre: '', factor: '', offset: '', sensor: '', modo: '', pulso: '' });
+    return pintarOrigenes();
+  }
   if (accion === 'borrar-canal') {
     orgEdit[id].canales.splice(Number(b.dataset.i), 1);
     return pintarOrigenes();
@@ -17473,7 +17559,12 @@ ORG_LISTA.addEventListener('click', async ev => {
         ? { nombre: e.nombre, host: e.host.trim(), port: e.port.trim(), unit_id: e.unit_id.trim(), ventana_lectura_min: ventana,
             canales: e.canales.map(c => ({ ...comunes(c), funcion: c.funcion, direccion: c.direccion.trim(), unit_id: c.unit_id.trim(),
               tipo_dato: c.tipo_dato || null, invertido: !!c.invertido })) }
-        : { nombre: e.nombre, formato: e.formato, ventana_lectura_min: ventana, canales: e.canales.map(comunes) };
+        : { nombre: e.nombre, formato: e.formato, ventana_lectura_min: ventana, puede_comandar: !!e.puede_comandar,
+            vencimiento_orden_s: !e.puede_comandar || e.vencimiento.trim() === '' ? null : Number(e.vencimiento),
+            canales: e.canales.map(c => c.grupo === 'salida'
+              ? { clave: c.clave.trim(), grupo: 'salida', nombre: c.nombre, modo: c.modo || null,
+                  pulso_s: c.modo === 'pulso' ? c.pulso.trim().replace(',', '.') : null }
+              : comunes(c)) };
       await pedirJSON('/api/iot/origenes/' + encodeURIComponent(id), {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo),
       });
@@ -17481,6 +17572,22 @@ ORG_LISTA.addEventListener('click', async ev => {
       await cargarOrigenes();
       await orgRefrescarSensores();
       estado.textContent = '✔ Guardado.';
+    } else if (accion === 'orden') {
+      const canal = b.dataset.canal, que = b.dataset.orden;
+      const texto = { pulso: 'un PULSO en', prender: 'PRENDER', apagar: 'APAGAR' }[que] || que;
+      if (!confirm('Esto activa un equipo real: ' + texto + ' «' + canal + '» de «' + o.nombre + '». El equipo lo hace cuando consulta sus órdenes. ¿Seguir?')) return;
+      await pedirJSON('/api/iot/origenes/' + encodeURIComponent(id) + '/ordenes', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ canal: canal, accion: que }),
+      });
+      await cargarOrigenes();
+      estado.textContent = '✔ Orden enviada: queda pendiente hasta que el equipo la consulte.';
+      orgVigilarOrdenes();
+    } else if (accion === 'cancelar-orden') {
+      const n = b.dataset.ordenId;
+      if (!confirm('¿Cancelar la orden n.º ' + n + '? Si el equipo ya la levantó, puede haberla ejecutado igual (queda «sin confirmar»).')) return;
+      await pedirJSON('/api/iot/origenes/' + encodeURIComponent(id) + '/ordenes/' + encodeURIComponent(n), { method: 'DELETE' });
+      await cargarOrigenes();
+      estado.textContent = '✔ Orden cancelada.';
     } else if (accion === 'token') {
       if (!confirm('El token anterior deja de servir YA: el equipo no va a poder mandar datos hasta que le cargues el nuevo. ¿Seguir?')) return;
       const r = await pedirJSON('/api/iot/origenes/' + encodeURIComponent(id) + '/token', { method: 'POST' });

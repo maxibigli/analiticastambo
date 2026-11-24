@@ -189,7 +189,7 @@ def recibir(origen_id: str, cuerpo, evento: str = None, ahora: datetime = None) 
         try:
             if lecturas:
                 hora = _hora(hora_cruda, ahora, _creado_de(origen))
-                canales = {c["clave"]: c for c in origen["canales"]}
+                canales = {c["clave"]: c for c in origen["canales"] if c["grupo"] != "salida"}   # una salida no es una lectura
                 invertidas = iot_lavado.entradas_invertidas()
                 for clave, valor in lecturas.items():
                     canal = canales.get(clave)
