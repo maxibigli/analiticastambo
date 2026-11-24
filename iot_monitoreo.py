@@ -232,23 +232,82 @@ def panel_analogicas() -> dict:
     return {"canales": canales, "sensores": sensores}
 
 
+def _encolar_pulso(canal: str):
+    """Inserta el pedido en `comandos_actuador` y devuelve su id (None si el canal no es una salida del M300)."""
+    if canal not in ACTUADORES:
+        return None
+    con = _conectar_db()
+    try:
+        cur = con.execute(
+            "INSERT INTO comandos_actuador (canal, fecha_hora, ejecutado) VALUES (?, ?, 0)",
+            (canal, datetime.datetime.now().isoformat(timespec="seconds"))
+        )
+        con.commit()
+        return cur.lastrowid
+    finally:
+        con.close()
+
+
 def solicitar_pulso(canal: str) -> bool:
     """Encola un pulso de actuador -- lo EJECUTA iot_lavado.py en su propio
     ciclo (dueño único de la conexión Modbus al M300; si esta función abriera
     su propia conexión se arriesgaría a pisarse con el polling continuo de
     DI que ya corre ahí). True si el canal es válido y quedó encolado."""
+    return _encolar_pulso(canal) is not None
+
+
+class SalidaOcupada(Exception):
+    """La salida está prendida por el lavado automático o por un comando de voz: un pulso la APAGARÍA al terminar."""
+
+
+def motivo_salida_ocupada(canal: str):
+    """Por qué NO conviene pulsar esta salida ahora (texto para la pantalla), o None si está libre. Un pulso es
+    «prender, esperar, apagar»: si la salida ya estaba prendida de forma sostenida, el apagado final la cortaría."""
+    if voz_comandos._en_uso_por_lavado(canal):
+        return "Está en uso por la etapa del lavado automático que está corriendo."
+    if canal in voz_comandos.estado():
+        return "Está prendida de forma sostenida por un comando de voz."
+    if canal in voz_comandos.apagados_pendientes():
+        return "Tiene un apagado por voz pendiente."
+    return None
+
+
+def probar_salida(canal: str) -> int:
+    """Pulso de PRUEBA de una salida del M300, para ⚙ Configuración › 🔌 Entradas/Salidas. Usa el mapa YA GUARDADO
+    (dirección, unit ID y largo del pulso): lo que se está tipeando sin guardar no cuenta. Devuelve el id del pedido, para
+    preguntar después cómo salió (`resultado_pulso`). Levanta ValueError si no es una salida y SalidaOcupada si está en uso."""
     if canal not in ACTUADORES:
-        return False
+        raise ValueError(f"No es una salida del equipo: {canal}")
+    motivo = motivo_salida_ocupada(canal)
+    if motivo:
+        raise SalidaOcupada(motivo)
+    return _encolar_pulso(canal)
+
+
+def resultado_pulso(pedido_id: int):
+    """{"ejecutado": bool, "resultado": str|None} de un pedido de pulso, o None si ese pedido no existe.
+    `resultado` es «ok» o «error: …» (lo escribe iot_lavado.py cuando lo ejecuta)."""
     con = _conectar_db()
     try:
-        con.execute(
-            "INSERT INTO comandos_actuador (canal, fecha_hora, ejecutado) VALUES (?, ?, 0)",
-            (canal, datetime.datetime.now().isoformat(timespec="seconds"))
-        )
-        con.commit()
+        fila = con.execute("SELECT ejecutado, resultado FROM comandos_actuador WHERE id = ?", (pedido_id,)).fetchone()
     finally:
         con.close()
-    return True
+    if fila is None:
+        return None
+    return {"ejecutado": bool(fila[0]), "resultado": fila[1]}
+
+
+def cancelar_pulso(pedido_id: int) -> bool:
+    """Retira un pulso que iot_lavado.py todavía no tomó (para que un pedido de prueba no se dispare minutos después, cuando
+    el gateway vuelva). True si se retiró; False si ya lo había tomado (o no existe): ahí ya no hay nada que cancelar."""
+    con = _conectar_db()
+    try:
+        cur = con.execute("UPDATE comandos_actuador SET ejecutado = 1, resultado = 'cancelado' "
+                          "WHERE id = ? AND ejecutado = 0", (pedido_id,))
+        con.commit()
+        return cur.rowcount == 1
+    finally:
+        con.close()
 
 
 def ciclos_lavado(limite: int = 20) -> list:

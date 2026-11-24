@@ -3402,6 +3402,42 @@ def api_iot_mapa_guardar():
 
 
 @app.get("/api/iot/analogicas")
+@app.post("/api/iot/mapa/probar")
+@auth.requiere_rol("admin")
+def api_iot_mapa_probar():
+    """Pulso de prueba de una salida del M300 (botón «Probar» de ⚙ Configuración › 🔌 Entradas/Salidas). Activa un equipo
+    real, así que vale la misma regla que el botón de la pantalla ESP32: nada que llegue por el túnel de Cloudflare. Solo
+    ENCOLA el pulso (lo ejecuta iot_lavado.py); el resultado se consulta con GET /api/iot/mapa/probar/<id>."""
+    if _pedido_via_tunel():
+        return jsonify({"error": "Por seguridad, las salidas solo se prueban desde la red del tambo (http://192.168.1.200:5310), "
+                                 "no por www.analiticastambo.com."}), 403
+    canal = (request.get_json(silent=True) or {}).get("canal", "")
+    try:
+        pedido = iot_monitoreo.probar_salida(canal)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except iot_monitoreo.SalidaOcupada as exc:
+        return jsonify({"error": str(exc)}), 409
+    return jsonify({"ok": True, "pedido": pedido, "pulso_s": iot_mapa.salida(canal)["pulso_s"]})
+
+
+@app.get("/api/iot/mapa/probar/<int:pedido>")
+@auth.requiere_rol("admin")
+def api_iot_mapa_probar_resultado(pedido):
+    """Cómo salió un pulso de prueba: `ejecutado` False hasta que iot_lavado.py lo toma (ciclo de ~3 s)."""
+    resultado = iot_monitoreo.resultado_pulso(pedido)
+    if resultado is None:
+        return jsonify({"error": "No existe ese pedido."}), 404
+    return jsonify(resultado)
+
+
+@app.delete("/api/iot/mapa/probar/<int:pedido>")
+@auth.requiere_rol("admin")
+def api_iot_mapa_probar_cancelar(pedido):
+    """Retira un pulso de prueba que el gateway todavía no tomó (no se dispara después, cuando vuelva)."""
+    return jsonify({"cancelado": iot_monitoreo.cancelar_pulso(pedido)})
+
+
 @auth.requiere_rol("admin")
 def api_iot_analogicas_listar():
     """Entradas analógicas (4-20 mA) del M300: asignación a un sensor del panel, escala y lectura en vivo, para

@@ -17104,6 +17104,15 @@ function mapaActualizarGuardar() {
   document.getElementById('config-iot-mapa-guardar').disabled = JSON.stringify(mapaActual) === mapaOriginal;
 }
 
+// El pulso de prueba usa el mapa YA GUARDADO (es lo que lee el gateway): una fila con cambios sin guardar no se prueba.
+function mapaSinGuardar(clave, guardado) {
+  return JSON.stringify(mapaActual[clave]) !== JSON.stringify((guardado || JSON.parse(mapaOriginal || '{}'))[clave]);
+}
+function mapaTituloProbar(sinGuardar) {
+  return sinGuardar ? 'Guardá el mapa primero: la prueba usa lo que está guardado.'
+                    : 'Manda un pulso a esta salida (prende, espera y apaga). Si hay algo conectado, se mueve.';
+}
+
 function pintarMapaModbus() {
   const ent = mapaFilas.entradas.map(f => {
     const a = mapaActual[f.clave];
@@ -17124,6 +17133,7 @@ function pintarMapaModbus() {
   document.getElementById('config-iot-mapa-entradas').innerHTML =
     '<thead><tr><th style="width:34px;text-align:right">N°</th><th>Canal</th><th>Función</th><th>Dirección</th>'
     + '<th>Unit ID</th><th>Contacto NC</th></tr></thead><tbody>' + ent + '</tbody>';
+  const guardado = JSON.parse(mapaOriginal || '{}');
   const sal = mapaFilas.salidas.map(f => {
     const a = mapaActual[f.clave];
     return `<tr class="${mapaFilaCambiada(a) ? 'pm-modificado' : ''}">
@@ -17135,11 +17145,13 @@ function pintarMapaModbus() {
           value="${escHtml(a.unit_id)}" placeholder="${f.defecto.unit_id}" style="width:70px;padding:3px 6px"></td>
       <td><input type="number" min="0" step="0.1" data-mapa-clave="${escHtml(f.clave)}" data-mapa-campo="pulso_s"
           value="${escHtml(a.pulso_s)}" placeholder="${f.defecto.pulso_s}" style="width:80px;padding:3px 6px"></td>
+      <td><button type="button" class="secundario" data-mapa-probar="${escHtml(f.clave)}"
+          ${mapaSinGuardar(f.clave, guardado) ? 'disabled' : ''} title="${escHtml(mapaTituloProbar(mapaSinGuardar(f.clave, guardado)))}">Probar</button></td>
     </tr>`;
   }).join('');
   document.getElementById('config-iot-mapa-salidas').innerHTML =
     '<thead><tr><th style="width:34px;text-align:right">N°</th><th>Canal</th><th>Bobina</th><th>Unit ID</th>'
-    + '<th>Pulso (s)</th></tr></thead><tbody>' + sal + '</tbody>';
+    + '<th>Pulso (s)</th><th>Prueba</th></tr></thead><tbody>' + sal + '</tbody>';
   mapaActualizarGuardar();
 }
 
@@ -17150,8 +17162,52 @@ function pintarMapaModbus() {
     if (!clave || !campo || !mapaActual[clave]) return;
     mapaActual[clave][campo] = ev.target.type === 'checkbox' ? ev.target.checked : ev.target.value;
     ev.target.closest('tr').classList.toggle('pm-modificado', mapaFilaCambiada(mapaActual[clave]));
+    const probar = ev.target.closest('tr').querySelector('[data-mapa-probar]');   // solo las filas de salidas lo tienen
+    if (probar) { const sin = mapaSinGuardar(clave); probar.disabled = sin; probar.title = mapaTituloProbar(sin); }
     mapaActualizarGuardar();
   });
+});
+
+// «Probar»: un pulso a esa salida, y se espera a que el gateway diga cómo salió.
+let mapaProbando = false;
+document.getElementById('config-iot-mapa-salidas').addEventListener('click', async ev => {
+  const boton = ev.target.closest('[data-mapa-probar]');
+  if (!boton || boton.disabled || mapaProbando) return;
+  const clave = boton.dataset.mapaProbar;
+  const f = mapaFilas.salidas.find(x => x.clave === clave), a = mapaActual[clave];
+  const valor = campo => (a[campo] === '' ? f.defecto[campo] : a[campo]);
+  const estado = document.getElementById('config-iot-mapa-estado');
+  if (!confirm('Se va a mandar un pulso de ' + valor('pulso_s') + ' s a «' + f.nombre + '» (bobina ' + valor('direccion')
+      + ', unit ID ' + valor('unit_id') + ').\n\nSi hay un equipo conectado a esa salida, se va a mover. ¿Seguir?')) return;
+  mapaProbando = true;
+  document.querySelectorAll('[data-mapa-probar]').forEach(b => { b.dataset.estabaActivo = b.disabled ? '' : '1'; b.disabled = true; });
+  const nombre = f.nombre;
+  let pedido = null;
+  try {
+    const r = await pedirJSON('/api/iot/mapa/probar', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ canal: clave }) });
+    pedido = r.pedido;
+    estado.textContent = '⏳ Pulso a «' + nombre + '» en cola, esperando al gateway…';
+    let res = null;
+    for (let i = 0; i < 20; i++) {                       // el gateway revisa los pedidos cada ~3 s
+      await new Promise(ok => setTimeout(ok, 1000));
+      res = await pedirJSON('/api/iot/mapa/probar/' + pedido);
+      if (res.ejecutado) break;
+    }
+    if (res && res.ejecutado) {
+      estado.textContent = res.resultado === 'ok' ? '✔ Pulso enviado a «' + nombre + '».'
+        : '✖ «' + nombre + '»: ' + (res.resultado || 'sin detalle');
+    } else {
+      const c = await pedirJSON('/api/iot/mapa/probar/' + pedido, { method: 'DELETE' });
+      estado.textContent = c.cancelado
+        ? '✖ El gateway no tomó el pedido en 20 s (¿está corriendo iot_lavado.py?). Se canceló: no se va a disparar después.'
+        : '⏳ El gateway justo lo tomó: mirá el relé y volvé a tocar «Probar» si hace falta.';
+    }
+  } catch (e) {
+    estado.textContent = '✖ ' + e.message;
+  } finally {
+    mapaProbando = false;
+    document.querySelectorAll('[data-mapa-probar]').forEach(b => { b.disabled = !b.dataset.estabaActivo; });
+  }
 });
 
 document.getElementById('config-iot-mapa-fabrica').addEventListener('click', () => {

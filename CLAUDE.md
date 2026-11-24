@@ -2240,6 +2240,21 @@ número inválido en un campo de la pantalla se guarda como «fábrica» sin avi
 pantalla se verificó en el navegador (guardar, rechazo por dirección repetida, volver a fábrica). Etapas siguientes: más de un
 equipo Modbus, origen HTTP de solo lectura (ESP32 / ChirpStack) y comandar un ESP32.
 
+**Botón «Probar» de cada salida (24/11/2026).** En la tabla «Salidas» del mapa hay un botón por fila que manda UN pulso a esa salida
+(`POST /api/iot/mapa/probar`, admin). Es lo que se usa al cablear, para ver que la bobina y el unit ID cargados mueven el relé que
+corresponde. Reglas, todas con test (`tests/test_iot_probar_salida.py`):
+  * **Usa el mapa YA GUARDADO** (es lo que lee `iot_lavado.py`): una fila con cambios sin guardar tiene el botón apagado, con el motivo en el
+    texto flotante. Pide confirmación con bobina, unit ID y largo del pulso.
+  * **Solo desde la red del tambo**, igual que el botón de la pantalla ESP32: lo que llega por el túnel (`CF-Connecting-IP`) se rechaza con 403.
+    Por `www.analiticastambo.com` no anda; hay que entrar por `http://192.168.1.200:5310`.
+  * **No pulsa una salida que está en uso**: un pulso es «prender, esperar, apagar», y el apagado final cortaría una etapa del lavado
+    automático o una salida sostenida por voz (o con un apagado de voz pendiente). Contesta 409 con el motivo. **El botón de la pantalla
+    ESP32 (`/api/iot/pantalla/actuador`) no tiene esta guarda**: sigue como antes.
+  * Solo ENCOLA (lo ejecuta `iot_lavado.py`, ciclo de ~3 s). La pantalla espera hasta 20 s mirando `GET /api/iot/mapa/probar/<id>` y muestra
+    «ok» o el error del equipo. Si el gateway no lo toma, `DELETE` del mismo pedido lo retira (queda `resultado = 'cancelado'`): un pedido de
+    prueba no se dispara minutos después, cuando el gateway vuelva.
+  * Probado en el navegador con un servidor aislado y el gateway simulado; **no contra el M300 real**.
+
 **Para correr toda la suite**: `python -m unittest discover -s tests -t .` NO funciona (`tests` no es un paquete). Con `-s tests` suelto,
 la corrida combinada termina con un error de `tkinter` («main thread is not in main loop») en las pruebas del panel de despliegue
 antes de imprimir el resumen; corriendo cada módulo por separado (`python -m unittest tests.test_xxx`) los 44 pasan.
