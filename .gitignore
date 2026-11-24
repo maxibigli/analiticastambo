@@ -98,6 +98,11 @@ checklist.db-wal
 checklist.db-shm
 checklist_fotos/
 
+# Informes personalizables guardados con nombre (ver informes_guardados.py).
+informes.db
+informes.db-wal
+informes.db-shm
+
 # Bitácora de incidentes y reparaciones (ver bitacora.py). Mismo criterio
 # que checklist.db/checklist_fotos: estado propio de cada instalación.
 bitacora.db

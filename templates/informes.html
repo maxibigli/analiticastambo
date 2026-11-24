@@ -1,0 +1,488 @@
+<!doctype html>
+<html lang="es" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Informes · LactIA</title>
+<link rel="stylesheet" href="/static/css/lactia-tokens.css">
+<style>
+/* Informes personalizables (Fase 1). Mismo mundo oscuro de LactIA: los colores salen de lactia-tokens.css; la forma de trabajo
+   es la de DelPro (lista de informes, cada informe en su pestaña, árbol de campos a la derecha). */
+:root{
+  color-scheme:dark;
+  --bg:var(--lac-bg); --surface:var(--lac-surface); --raised:#16232E; --sunken:#0D1720;
+  --line:var(--lac-border); --line-2:var(--lac-border-strong);
+  --fg:var(--lac-fg); --muted:var(--lac-fg-muted); --subtle:var(--lac-fg-subtle);
+  --accent:var(--lac-accent); --accent-hi:var(--lac-accent-hover); --accent-soft:var(--lac-accent-soft); --accent-fg:var(--lac-accent-fg);
+  --ok:#2FBF8F; --warn:#F2A900; --warn-soft:var(--lac-warn-soft); --bad:#F07B8A; --bad-soft:var(--lac-danger-soft);
+  --display:var(--lac-font-display); --body:var(--lac-font-body);
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html{background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:14px;line-height:1.45;-webkit-text-size-adjust:100%}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--accent-hi);outline-offset:2px}
+h1,h2,h3{font-family:var(--display);margin:0;font-weight:600}
+.shell{max-width:1560px;margin:0 auto;padding-block:14px 48px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.emb .top{display:none}
+.eyebrow{font:600 11px/1 var(--display);letter-spacing:.09em;text-transform:uppercase;color:var(--subtle)}
+.muted{color:var(--muted)}
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.top h1{font-size:18px;letter-spacing:-.02em}
+.btn{height:34px;padding:0 13px;border-radius:8px;border:1px solid var(--line-2);background:var(--raised);font-weight:500;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+.btn:hover:not(:disabled){border-color:var(--accent);background:#1A2B38}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn.pri{background:var(--accent);border-color:var(--accent);color:var(--accent-fg);font-weight:600}
+.btn.pri:hover:not(:disabled){background:var(--accent-hi);border-color:var(--accent-hi)}
+.btn.ghost{background:transparent}
+.btn.sm{height:28px;padding:0 10px;font-size:12.5px}
+.in{height:34px;background:var(--sunken);border:1px solid var(--line-2);border-radius:8px;padding:0 10px;min-width:0}
+.in:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px rgba(46,150,224,.28)}
+
+.doctabs{display:flex;gap:3px;border-bottom:1px solid var(--line);overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;align-items:flex-end}
+.dt{flex:none;display:inline-flex;align-items:center;height:38px;border:1px solid transparent;border-bottom:0;border-radius:9px 9px 0 0;color:var(--muted)}
+.dt:hover{color:var(--fg);background:var(--sunken)}
+.dt.on{background:var(--surface);border-color:var(--line);color:var(--fg);box-shadow:inset 0 2px 0 var(--accent)}
+.dt .go{height:100%;display:inline-flex;align-items:center;gap:8px;padding:0 6px 0 14px;background:none;border:0;font-weight:500;max-width:260px}
+.dt .go .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dt .x{width:24px;height:24px;margin-right:6px;border:0;background:none;border-radius:6px;color:var(--subtle);line-height:1}
+.dt .x:hover{background:var(--bad-soft);color:var(--bad)}
+.dt.solo .go{padding-right:14px}
+.dt .dot{width:7px;height:7px;border-radius:50%;background:var(--warn);flex:none}
+
+.lhead{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.lhead .in{flex:1 1 220px}
+.star{border:0;background:none;font-size:17px;line-height:1;color:var(--subtle);width:30px;height:30px;border-radius:6px}
+.star:hover{background:var(--raised)}
+.star[aria-pressed="true"]{color:var(--warn)}
+.cursor{cursor:pointer}
+
+.work{display:grid;grid-template-columns:minmax(0,1fr) 288px;gap:14px;align-items:start}
+.work.nodock{grid-template-columns:minmax(0,1fr)}
+.work.nodock .fields{display:none}
+.fields{background:var(--surface);border:1px solid var(--line);border-radius:12px;position:sticky;top:12px;max-height:calc(100vh - 24px);display:flex;flex-direction:column;min-height:0}
+.fields header{padding:14px 14px 10px;display:grid;gap:10px}
+.fields .in{width:100%}
+.ftree{overflow:auto;padding:0 8px 12px;scrollbar-width:thin}
+.cat-h{width:100%;display:flex;align-items:center;gap:8px;background:none;border:0;padding:9px 6px;text-align:left;font:600 11px/1 var(--display);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+.cat-h:hover{color:var(--fg)}
+.cat-h .ch{width:10px;transition:transform .15s}
+.cat-h[aria-expanded="true"] .ch{transform:rotate(90deg)}
+.cat-h .n{margin-left:auto;color:var(--subtle);font-weight:500}
+.ftree ul{list-style:none;margin:0 0 6px;padding:0}
+.fld{width:100%;display:flex;align-items:center;gap:9px;border:0;background:none;border-radius:7px;padding:7px 8px;text-align:left;color:var(--fg)}
+.fld:hover{background:var(--raised)}
+.fld .ty{flex:none;width:20px;height:20px;border-radius:5px;background:var(--sunken);border:1px solid var(--line);display:grid;place-items:center;font:600 10.5px/1 var(--display);color:var(--muted)}
+.fld .tx{flex:1;min-width:0;overflow-wrap:anywhere}
+.fld .add{flex:none;width:20px;text-align:center;color:var(--accent);font-weight:700}
+.fld.used .tx{color:var(--accent-hi)}
+.fld.used .add{color:var(--ok)}
+.fld .u{color:var(--subtle);font-size:11.5px}
+.fld .sv{color:var(--warn);font-size:12px}
+
+.main{display:grid;gap:10px;min-width:0;grid-template-columns:minmax(0,1fr)}
+.head{display:flex;gap:10px;flex-wrap:wrap;align-items:end;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+.head .fgrp{display:grid;gap:5px;min-width:0}
+.head .fgrp.grow{flex:1 1 260px}
+.head .acts{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto;align-items:center}
+.head .name{width:100%;font:600 17px/1 var(--display);height:38px;letter-spacing:-.01em}
+.unsaved{color:#F5CE84;font-size:12px;display:inline-flex;align-items:center;gap:6px}
+.unsaved i{width:7px;height:7px;border-radius:50%;background:var(--warn)}
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center;background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.filters .lbl{font-size:12px;color:var(--muted)}
+.cond{display:inline-flex;gap:4px;align-items:center;background:var(--sunken);border:1px solid var(--line-2);border-radius:8px;padding:2px}
+.cond .in{height:28px;border:0;background:transparent}
+.cond .in.v{width:96px}
+.cond button{border:0;background:none;color:var(--subtle);width:24px;height:24px;border-radius:6px}
+.cond button:hover{background:var(--bad-soft);color:var(--bad)}
+.opt{display:inline-flex;align-items:center;gap:8px;font-size:12.5px;color:var(--muted)}
+.opt input[type=checkbox]{accent-color:var(--accent);width:16px;height:16px}
+
+.strip{display:flex;gap:6px 22px;flex-wrap:wrap;align-items:center;padding:2px 4px;font-size:13px;color:var(--muted);min-height:26px}
+.strip b{color:var(--fg);font:600 15px var(--display);font-variant-numeric:tabular-nums;margin-right:4px}
+.strip .stale{color:#F5CE84}
+.msg{padding:10px 14px;border-radius:10px;font-size:13px}
+.msg.err{background:var(--bad-soft);color:#F5A9A9;border:1px solid #6B2A33}
+.msg.warn{background:var(--warn-soft);color:#F5CE84;border:1px solid #6B5521}
+.cols{display:flex;gap:8px 14px;flex-wrap:wrap;align-items:center}
+.chips{display:flex;gap:6px;flex-wrap:wrap;list-style:none;margin:0;padding:0;flex:1 1 300px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 4px 0 10px;border-radius:7px;background:var(--raised);border:1px solid var(--line-2);font-size:12.5px;cursor:grab;user-select:none}
+.chip.over{border-color:var(--accent-hi);background:var(--accent-soft)}
+.chip button{border:0;background:none;color:var(--subtle);width:20px;height:20px;border-radius:5px;line-height:1}
+.chip button:hover{background:var(--bad-soft);color:var(--bad)}
+
+.tablewrap{overflow:auto;max-height:min(70vh,700px);border:1px solid var(--line);border-radius:12px;background:var(--surface);scrollbar-width:thin}
+table{border-collapse:separate;border-spacing:0;width:100%;font-variant-numeric:tabular-nums}
+th,td{padding:7px 12px;white-space:nowrap;border-bottom:1px solid var(--line)}
+thead th{position:sticky;top:0;z-index:3;background:var(--raised);text-align:left;font-weight:600;font-size:12px;vertical-align:bottom;white-space:normal;min-width:92px;max-width:170px;line-height:1.25}
+thead th.num,td.num{text-align:right}
+.sortb{background:none;border:0;padding:0;font:inherit;font-weight:600;color:var(--muted);text-align:inherit;display:inline-flex;gap:5px;align-items:flex-start}
+.sortb:hover{color:var(--fg)}
+.sortb .ar{color:var(--accent-hi);font-size:10px;margin-top:2px}
+.sortb .sv{color:var(--warn)}
+tbody tr:hover td{background:#14222D}
+td.nul{color:var(--subtle)}
+.rp{font-weight:600;color:var(--accent-hi)}
+.st{display:inline-flex;align-items:center;gap:6px;height:20px;padding:0 8px;border-radius:999px;font-size:11.5px;font-weight:500}
+.st::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.st-Preñada{background:#0C3226;color:#7FD9B8}
+.st-Abierta{background:var(--warn-soft);color:#F5CE84}
+.st-Inseminada{background:var(--accent-soft);color:var(--accent-hi)}
+.st-Seca{background:#232B33;color:var(--muted)}
+.empty{padding:36px 16px;text-align:center;color:var(--muted)}
+.note{font-size:12px;color:var(--subtle);padding:2px 2px 0}
+.toast{position:fixed;left:50%;bottom:max(18px,env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:#16232E;border:1px solid var(--accent);border-radius:10px;padding:10px 16px;font-weight:500;z-index:50;box-shadow:0 12px 30px rgba(0,0,0,.55);max-width:min(92vw,520px);text-align:center}
+.only-s{display:none}
+@media (max-width:980px){
+  .work{grid-template-columns:minmax(0,1fr)}
+  .fields{position:static;max-height:none;display:none}
+  .work.nodock .fields{display:none}
+  .shell.showf .fields{display:flex}
+  .fields .ftree{max-height:48vh}
+  .head .acts{margin-left:0}
+}
+@media (prefers-reduced-motion:reduce){.cat-h .ch{transition:none}}
+</style>
+</head>
+<body>
+<div class="shell" id="shell">
+  <header class="top">
+    <h1>Informes</h1>
+    <a class="btn ghost sm" href="/">← Volver a LactIA</a>
+  </header>
+  <nav class="doctabs" id="doctabs" aria-label="Pestañas abiertas"></nav>
+
+  <!-- Pestaña «Informes»: la lista de los guardados -->
+  <section id="pg-list">
+    <div class="lhead">
+      <input class="in" id="lq" type="search" placeholder="Buscar informe…" aria-label="Buscar informe" autocomplete="off">
+      <button class="btn pri" id="btn-nuevo">+ Informe nuevo</button>
+    </div>
+    <div class="tablewrap" id="ltable"></div>
+    <div class="note" style="margin-top:8px">Cada informe guarda sus columnas, condiciones y orden. Los resultados se calculan siempre con los datos de ahora.</div>
+  </section>
+
+  <!-- Pestaña de un informe -->
+  <section id="pg-rep" hidden>
+    <div class="work" id="work">
+      <main class="main">
+        <section class="head" aria-label="Datos del informe">
+          <div class="fgrp grow"><label class="eyebrow" for="rname">Nombre del informe</label><input class="in name" id="rname" autocomplete="off" maxlength="60"></div>
+          <div class="acts">
+            <span class="unsaved" id="unsaved" hidden><i></i>Sin guardar</span>
+            <button class="btn" id="btn-dock">Árbol de campos</button>
+            <button class="btn" id="btn-xls">Exportar a Excel</button>
+            <button class="btn" id="btn-copia">Guardar como…</button>
+            <button class="btn" id="btn-guardar">Guardar</button>
+            <button class="btn pri" id="btn-run">Actualizar</button>
+          </div>
+        </section>
+        <section class="filters" id="filters" aria-label="Condiciones"></section>
+        <div id="aviso"></div>
+        <div class="strip" id="strip"></div>
+        <div class="cols"><ul class="chips" id="chips" aria-label="Columnas del informe (arrastrá para ordenar)"></ul></div>
+        <div class="tablewrap" id="twrap"></div>
+      </main>
+      <aside class="fields" id="fields" aria-label="Árbol de elementos del informe">
+        <header>
+          <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px"><h2 style="font-size:14px">Árbol de elementos del informe</h2><span class="muted" style="font-size:12px;white-space:nowrap" id="fcount"></span></div>
+          <input class="in" id="fq" type="search" placeholder="Buscar elemento del informe" aria-label="Buscar campo" autocomplete="off">
+        </header>
+        <div class="ftree" id="ftree"></div>
+      </aside>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script>
+(function(){
+'use strict';
+const TAMBO = {{ tambo|tojson }};
+const EMBEBIDO = {{ embebido|tojson }};
+if (EMBEBIDO) document.documentElement.classList.add('emb');
+const $ = (s, el) => (el || document).querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad = n => String(n).padStart(2, '0');
+const DOW = ['dom','lun','mar','mié','jue','vie','sáb'];
+const fmtNum = (v, d) => (v == null || !isFinite(v)) ? '—' : Number(v).toLocaleString('es-AR', {minimumFractionDigits: d || 0, maximumFractionDigits: d || 0});
+function fmtFecha(iso, conDia) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m) return '—';
+  const s = m[3] + '/' + m[2] + '/' + m[1];
+  return conDia ? DOW[new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], 12)).getUTCDay()] + ' ' + s : s;
+}
+const url = (ruta) => ruta + (ruta.indexOf('?') < 0 ? '?' : '&') + 'tambo=' + encodeURIComponent(TAMBO);
+async function api(ruta, opciones) {
+  const r = await fetch(url(ruta), opciones);
+  let j = null;
+  try { j = await r.json(); } catch (e) { /* no era JSON */ }
+  if (!r.ok) throw new Error((j && j.error) || ('Error ' + r.status));
+  return j;
+}
+const post = (ruta, cuerpo, metodo) => api(ruta, {method: metodo || 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(cuerpo)});
+
+let CAMPOS = {}, CATS = [], LISTA = [], docs = [], activeId = 'list', docSeq = 1, fq = '', listQ = '', armed = {};
+const openCats = {};
+const OPS = {
+  num: [['>=', '≥'], ['<=', '≤'], ['>', '>'], ['<', '<'], ['=', '='], ['<>', '≠']],
+  fecha: [['>=', '≥'], ['<=', '≤'], ['>', '>'], ['<', '<'], ['=', '=']],
+  txt: [['contiene', 'contiene'], ['es', 'es']],
+};
+const TIPO_LETRA = {num: '#', txt: 'A', fecha: 'F'};
+
+/* ---------- documentos abiertos ---------- */
+function defVacia() { return {columnas: [{campo: 'Number'}], condiciones: [], orden: null, incluir_descartados: false}; }
+function limpiaDef(d) {
+  const out = {columnas: d.columnas.map(c => ({campo: c.campo})), incluir_descartados: !!d.incluir_descartados};
+  out.condiciones = d.condiciones.filter(c => c.campo && c.valor !== '' && c.valor != null).map(c => ({campo: c.campo, op: c.op, valor: c.valor}));
+  if (d.orden && d.columnas.some(c => c.campo === d.orden.campo)) out.orden = {campo: d.orden.campo, dir: d.orden.dir};
+  return out;
+}
+const foto = d => JSON.stringify([d.nombre, d.def]);
+function nuevoDoc(base) {
+  const d = Object.assign({id: 'd' + (docSeq++), sid: null, nombre: 'Informe nuevo', def: defVacia(), hoy: '', res: null, estado: 'sin', error: '', stale: true, base: ''}, base || {});
+  d.base = base && base.guardado ? foto(d) : '';
+  delete d.guardado;
+  docs.push(d);
+  return d;
+}
+const docAct = () => docs.filter(d => d.id === activeId)[0];
+const sucio = d => foto(d) !== d.base;
+
+async function abrirInforme(id) {
+  const ex = docs.filter(d => d.sid === id)[0];
+  if (ex) { activar(ex.id); return; }
+  try {
+    const j = await api('/api/informes/' + id);
+    const def = Object.assign(defVacia(), j.definicion);
+    def.condiciones = (def.condiciones || []).map(c => Object.assign({}, c));
+    const d = nuevoDoc({sid: j.id, nombre: j.nombre, def, guardado: true});
+    activar(d.id);
+    ejecutar(d);
+  } catch (e) { toast(e.message); }
+}
+function activar(id) { activeId = id; armed = {}; render(); }
+function cerrar(id) {
+  const d = docs.filter(x => x.id === id)[0];
+  if (!d) return;
+  if (sucio(d) && !armed[id]) { armed[id] = 1; toast('Este informe tiene cambios sin guardar. Tocá la × otra vez para cerrarlo igual.'); renderTabs(); return; }
+  docs = docs.filter(x => x.id !== id);
+  if (activeId === id || !docAct() && activeId !== 'list') activar(docs.length ? docs[docs.length - 1].id : 'list'); else renderTabs();
+}
+
+/* ---------- pintar ---------- */
+function render() {
+  renderTabs();
+  $('#pg-list').hidden = activeId !== 'list';
+  $('#pg-rep').hidden = activeId === 'list';
+  if (activeId === 'list') renderList(); else { renderHead(); renderFields(); renderFilters(); renderChips(); renderResultado(); }
+}
+function renderTabs() {
+  let h = '<span class="dt solo' + (activeId === 'list' ? ' on' : '') + '"><button class="go" data-act="tab" data-id="list"><span class="t">Informes</span></button></span>';
+  docs.forEach(d => {
+    h += '<span class="dt' + (activeId === d.id ? ' on' : '') + '"><button class="go" data-act="tab" data-id="' + d.id + '"><span class="t">' + esc(d.nombre || 'Sin nombre') + '</span>' +
+      (sucio(d) ? '<i class="dot" title="Cambios sin guardar"></i>' : '') + '</button><button class="x" data-act="cerrar" data-id="' + d.id + '" aria-label="Cerrar pestaña">×</button></span>';
+  });
+  $('#doctabs').innerHTML = h;
+}
+function renderList() {
+  const q = listQ.trim().toLowerCase(), abiertos = {};
+  docs.forEach(d => { if (d.sid) abiertos[d.sid] = 1; });
+  const filas = LISTA.filter(i => !q || i.nombre.toLowerCase().indexOf(q) >= 0);
+  $('#ltable').innerHTML = filas.length
+    ? '<table><thead><tr><th style="width:44px"></th><th>Nombre del informe</th><th class="num">Columnas</th><th>Última modificación</th><th></th></tr></thead><tbody>' +
+      filas.map(i => '<tr class="cursor" data-act="abrir" data-id="' + i.id + '"><td><button class="star" data-act="fav" data-id="' + i.id + '" aria-pressed="' + i.favorito + '" aria-label="Favorito">' + (i.favorito ? '★' : '☆') + '</button></td>' +
+        '<td class="rp">' + esc(i.nombre) + (abiertos[i.id] ? ' <span class="muted" style="font-weight:400">· abierto</span>' : '') + '</td><td class="num">' + i.n_columnas + '</td><td>' + fmtFecha(i.modificado, true) + '</td>' +
+        '<td><button class="btn sm" data-act="abrir" data-id="' + i.id + '">Abrir</button></td></tr>').join('') + '</tbody></table>'
+    : '<div class="empty">' + (LISTA.length ? 'Ningún informe coincide con la búsqueda.' : 'Todavía no hay informes guardados. Armá el primero con «+ Informe nuevo».') + '</div>';
+}
+function renderHead() {
+  const d = docAct(), n = $('#rname');
+  if (document.activeElement !== n) n.value = d.nombre;
+  $('#unsaved').hidden = !sucio(d);
+  $('#btn-run').disabled = d.estado === 'cargando';
+  $('#btn-run').textContent = d.estado === 'cargando' ? 'Calculando…' : 'Actualizar';
+  $('#btn-xls').disabled = d.estado === 'cargando';
+}
+function renderFields() {
+  const d = docAct(), usados = {};
+  d.def.columnas.forEach(c => { usados[c.campo] = 1; });
+  const q = fq.trim().toLowerCase();
+  const cats = CATS.map(c => ({nombre: c.nombre, campos: c.campos.filter(f => !q || f.etiqueta.toLowerCase().indexOf(q) >= 0)})).filter(c => c.campos.length);
+  $('#ftree').innerHTML = cats.map(c => {
+    const abierta = q ? true : openCats[c.nombre] !== false;
+    return '<section><button class="cat-h" data-act="cat" data-c="' + esc(c.nombre) + '" aria-expanded="' + abierta + '"><svg class="ch" viewBox="0 0 10 10" width="10" height="10"><path d="M3 1l5 4-5 4" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>' + esc(c.nombre) + '<span class="n">' + c.campos.length + '</span></button>' +
+      (abierta ? '<ul>' + c.campos.map(f => '<li><button class="fld ' + (usados[f.id] ? 'used' : '') + '" data-act="campo" data-id="' + f.id + '" aria-pressed="' + !!usados[f.id] + '" title="' + esc(f.aviso || '') + '"><span class="ty">' + TIPO_LETRA[f.tipo] + '</span><span class="tx">' + esc(f.etiqueta) + (f.unidad ? ' <span class="u">(' + esc(f.unidad) + ')</span>' : '') + (f.verificado ? '' : ' <span class="sv" title="Todavía no se comparó con DelPro">⚠</span>') + '</span><span class="add">' + (usados[f.id] ? '✓' : '+') + '</span></button></li>').join('') + '</ul>' : '') + '</section>';
+  }).join('') || '<div class="empty">Ningún elemento coincide.</div>';
+  $('#fcount').textContent = d.def.columnas.length + ' en el informe';
+}
+function opt(v, l, sel) { return '<option value="' + esc(v) + '"' + (sel ? ' selected' : '') + '>' + esc(l) + '</option>'; }
+function renderFilters() {
+  const d = docAct();
+  const campos = Object.keys(CAMPOS).map(k => CAMPOS[k]);
+  let h = d.def.condiciones.map((c, i) => {
+    const f = CAMPOS[c.campo] || campos[0], ops = OPS[f.tipo];
+    const entrada = f.tipo === 'fecha' ? '<input class="in v" type="date" data-chg="cv" data-i="' + i + '" value="' + esc(c.valor || '') + '" aria-label="Valor">'
+                                       : '<input class="in v" data-chg="cv" data-i="' + i + '" value="' + esc(c.valor == null ? '' : c.valor) + '" aria-label="Valor" autocomplete="off">';
+    return '<span class="cond"><select class="in" data-chg="ck" data-i="' + i + '" aria-label="Campo">' + campos.map(x => opt(x.id, x.etiqueta, x.id === c.campo)).join('') + '</select>' +
+      '<select class="in" data-chg="co" data-i="' + i + '" aria-label="Operador">' + ops.map(o => opt(o[0], o[1], c.op === o[0])).join('') + '</select>' + entrada +
+      '<button data-act="quitarcond" data-i="' + i + '" aria-label="Quitar condición">×</button></span>';
+  }).join('');
+  h += '<button class="btn sm ghost" data-act="agregarcond">+ Condición</button>' +
+       '<label class="opt" style="margin-left:auto"><input type="checkbox" id="desc" data-chg="desc"' + (d.def.incluir_descartados ? ' checked' : '') + '> Incluir animales descartados</label>' +
+       '<label class="opt">Calcular al <input class="in" type="date" id="hoy" data-chg="hoy" value="' + esc(d.hoy) + '" style="height:30px" title="Vacío = hoy"></label>';
+  $('#filters').innerHTML = h;
+}
+function renderChips() {
+  const d = docAct();
+  $('#chips').innerHTML = d.def.columnas.map((c, i) => {
+    const f = CAMPOS[c.campo];
+    const et = f ? f.etiqueta : c.campo;
+    return '<li class="chip" draggable="true" data-i="' + i + '">' + esc(et.length > 30 ? et.slice(0, 29) + '…' : et) + '<button data-act="quitarcol" data-i="' + i + '" aria-label="Quitar ' + esc(et) + '">×</button></li>';
+  }).join('') || '<li class="muted">Elegí elementos en el árbol de la derecha para armar el informe.</li>';
+}
+function celda(f, v) {
+  if (v == null) return '<td class="nul' + (f.tipo === 'num' ? ' num' : '') + '">—</td>';
+  if (f.tipo === 'num') return '<td class="num">' + fmtNum(v, f.decimales) + '</td>';
+  if (f.tipo === 'fecha') return '<td>' + fmtFecha(v) + '</td>';
+  if (f.id === 'CurrentReproductionStatus') return '<td><span class="st st-' + esc(v) + '">' + esc(v) + '</span></td>';
+  if (f.id === 'Number') return '<td class="rp">' + esc(v) + '</td>';
+  return '<td>' + esc(v) + '</td>';
+}
+function renderResultado() {
+  const d = docAct(), r = d.res;
+  $('#aviso').innerHTML = d.error ? '<div class="msg err">' + esc(d.error) + '</div>' : '';
+  let s = '';
+  if (d.estado === 'cargando') s = '<span>Calculando…</span>';
+  else if (r) s = '<span><b>' + fmtNum(r.filas.length) + '</b>animales' + (r.truncado ? ' (hay más)' : '') + '</span><span>' + fmtNum(r.segundos, 1) + ' s</span>' +
+    (d.stale ? '<span class="stale">Cambiaste el informe: tocá «Actualizar» para ver los datos nuevos.</span>' : '');
+  else if (!d.error) s = '<span class="stale">Tocá «Actualizar» para ver los datos.</span>';
+  $('#strip').innerHTML = s;
+  const w = $('#twrap');
+  if (!r) { w.innerHTML = d.estado === 'cargando' ? '<div class="empty">Calculando…</div>' : ''; return; }
+  const extra = r.truncado ? '<div class="msg warn" style="margin-bottom:8px">La lista se cortó en ' + fmtNum(r.filas.length) + ' filas: hay más animales. Agregá una condición para acotarla.</div>' : '';
+  const cols = r.columnas;
+  const th = cols.map(c => {
+    const on = d.def.orden && d.def.orden.campo === c.id;
+    return '<th class="' + (c.tipo === 'num' ? 'num' : '') + '" aria-sort="' + (on ? (d.def.orden.dir > 0 ? 'ascending' : 'descending') : 'none') + '"><button class="sortb" data-act="orden" data-id="' + c.id + '">' + esc(c.etiqueta) + (c.unidad ? ' (' + esc(c.unidad) + ')' : '') + (c.verificado ? '' : ' <span class="sv" title="Todavía no se comparó con un informe de DelPro: los valores pueden diferir.">⚠</span>') + (on ? '<span class="ar">' + (d.def.orden.dir > 0 ? '▲' : '▼') + '</span>' : '') + '</button></th>';
+  }).join('');
+  const cuerpo = r.filas.length ? r.filas.map(f => '<tr>' + cols.map((c, j) => celda(CAMPOS[c.id] || c, f[j])).join('') + '</tr>').join('')
+                               : '<tr><td colspan="' + cols.length + '" class="empty">Ningún animal cumple las condiciones.</td></tr>';
+  w.innerHTML = extra + '<table><thead><tr>' + th + '</tr></thead><tbody>' + cuerpo + '</tbody></table>';
+}
+let tt;
+function toast(m) { const t = $('#toast'); t.textContent = m; t.hidden = false; clearTimeout(tt); tt = setTimeout(() => { t.hidden = true; }, 3200); }
+
+/* ---------- acciones ---------- */
+function cuerpoEjecutar(d) { const c = limpiaDef(d.def); if (d.hoy) c.hoy = d.hoy; return c; }
+async function ejecutar(d) {
+  if (d.estado === 'cargando') return;
+  d.estado = 'cargando'; d.error = '';
+  if (activeId === d.id) { renderHead(); renderResultado(); }
+  try {
+    d.res = await post('/api/informes/ejecutar', cuerpoEjecutar(d));
+    d.stale = false;
+  } catch (e) { d.error = e.message; }
+  d.estado = 'ok';
+  if (activeId === d.id) { renderHead(); renderResultado(); }
+}
+async function refrescarLista() { try { LISTA = (await api('/api/informes')).informes; } catch (e) { toast(e.message); } }
+async function guardar(d, comoNuevo) {
+  const nombre = (d.nombre || '').trim();
+  try {
+    let j;
+    if (d.sid && !comoNuevo) j = await post('/api/informes/' + d.sid, {nombre, definicion: limpiaDef(d.def)}, 'PUT');
+    else j = await post('/api/informes', {nombre: comoNuevo ? nombre + ' (copia)' : nombre, definicion: limpiaDef(d.def)});
+    if (comoNuevo || !d.sid) { d.sid = j.id; }
+    d.nombre = j.nombre; d.error = '';
+    d.base = foto(d);
+    await refrescarLista();
+    toast('Guardado: «' + j.nombre + '»');
+  } catch (e) { d.error = e.message; }
+  render();
+}
+async function exportar(d) {
+  try {
+    const cuerpo = Object.assign(cuerpoEjecutar(d), {nombre: d.nombre});
+    const r = await fetch(url('/api/informes/exportar'), {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(cuerpo)});
+    if (!r.ok) { let j = null; try { j = await r.json(); } catch (e) { /* */ } throw new Error((j && j.error) || ('Error ' + r.status)); }
+    const blob = await r.blob();
+    const m = (r.headers.get('Content-Disposition') || '').match(/filename="?([^";]+)"?/);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = m ? m[1] : 'Informe.xlsx';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  } catch (e) { toast('No se pudo exportar: ' + e.message); }
+}
+function marcarCambio(d) { d.stale = true; renderTabs(); renderHead(); renderResultado(); }
+function alternarCampo(id) {
+  const d = docAct(), i = d.def.columnas.findIndex(c => c.campo === id);
+  if (i >= 0) { d.def.columnas.splice(i, 1); if (d.def.orden && d.def.orden.campo === id) d.def.orden = null; }
+  else d.def.columnas.push({campo: id});
+  renderFields(); renderChips(); marcarCambio(d);
+}
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]');
+  if (!b) return;
+  const a = b.dataset.act, d = docAct();
+  if (a === 'tab') activar(b.dataset.id);
+  else if (a === 'cerrar') cerrar(b.dataset.id);
+  else if (a === 'abrir') abrirInforme(+b.dataset.id);
+  else if (a === 'fav') {
+    e.stopPropagation();
+    const id = +b.dataset.id, i = LISTA.find(x => x.id === id);
+    post('/api/informes/' + id, {favorito: !i.favorito}, 'PUT').then(refrescarLista).then(renderList).catch(er => toast(er.message));
+  }
+  else if (a === 'cat') { const c = b.dataset.c; openCats[c] = openCats[c] === false; renderFields(); }
+  else if (a === 'campo') alternarCampo(b.dataset.id);
+  else if (a === 'quitarcol') { d.def.columnas.splice(+b.dataset.i, 1); renderFields(); renderChips(); marcarCambio(d); }
+  else if (a === 'agregarcond') { d.def.condiciones.push({campo: 'CurrentDIM', op: '>=', valor: ''}); renderFilters(); renderTabs(); renderHead(); }
+  else if (a === 'quitarcond') { d.def.condiciones.splice(+b.dataset.i, 1); renderFilters(); marcarCambio(d); }
+  else if (a === 'orden') {
+    const o = d.def.orden;
+    d.def.orden = (o && o.campo === b.dataset.id) ? (o.dir === 1 ? {campo: o.campo, dir: -1} : null) : {campo: b.dataset.id, dir: CAMPOS[b.dataset.id] && CAMPOS[b.dataset.id].tipo === 'txt' ? 1 : -1};
+    renderTabs(); ejecutar(d);
+  }
+});
+document.addEventListener('change', e => {
+  const el = e.target.closest('[data-chg]');
+  if (!el) return;
+  const d = docAct(), a = el.dataset.chg, i = +el.dataset.i;
+  if (a === 'ck') { const c = d.def.condiciones[i]; c.campo = el.value; c.op = OPS[CAMPOS[c.campo].tipo][0][0]; c.valor = ''; renderFilters(); }
+  else if (a === 'co') d.def.condiciones[i].op = el.value;
+  else if (a === 'cv') d.def.condiciones[i].valor = el.value;
+  else if (a === 'desc') d.def.incluir_descartados = el.checked;
+  else if (a === 'hoy') d.hoy = el.value;
+  marcarCambio(d);
+});
+$('#rname').addEventListener('input', e => { const d = docAct(); d.nombre = e.target.value; renderTabs(); $('#unsaved').hidden = !sucio(d); });
+$('#fq').addEventListener('input', e => { fq = e.target.value; renderFields(); });
+$('#lq').addEventListener('input', e => { listQ = e.target.value; renderList(); });
+$('#btn-nuevo').addEventListener('click', () => { const d = nuevoDoc(); activar(d.id); });
+$('#btn-run').addEventListener('click', () => ejecutar(docAct()));
+$('#btn-xls').addEventListener('click', () => exportar(docAct()));
+$('#btn-guardar').addEventListener('click', () => guardar(docAct(), false));
+$('#btn-copia').addEventListener('click', () => guardar(docAct(), true));
+$('#btn-dock').addEventListener('click', () => { $('#work').classList.toggle('nodock'); $('#shell').classList.toggle('showf'); });
+let dragI = null;
+document.addEventListener('dragstart', e => { const c = e.target.closest && e.target.closest('.chip'); if (c) { dragI = +c.dataset.i; e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', String(dragI)); } catch (x) { /* */ } } });
+document.addEventListener('dragover', e => { const c = e.target.closest && e.target.closest('.chip'); if (c && dragI != null) { e.preventDefault(); document.querySelectorAll('.chip.over').forEach(x => x.classList.remove('over')); c.classList.add('over'); } });
+document.addEventListener('drop', e => { const c = e.target.closest && e.target.closest('.chip'); if (c && dragI != null) { e.preventDefault(); const d = docAct(), it = d.def.columnas.splice(dragI, 1)[0]; d.def.columnas.splice(+c.dataset.i, 0, it); dragI = null; renderChips(); marcarCambio(d); } });
+document.addEventListener('dragend', () => { dragI = null; document.querySelectorAll('.chip.over').forEach(x => x.classList.remove('over')); });
+
+(async function iniciar() {
+  try {
+    const [campos] = await Promise.all([api('/api/informes/campos'), refrescarLista()]);
+    CATS = campos.categorias;
+    CATS.forEach(c => c.campos.forEach(f => { f.categoria = c.nombre; CAMPOS[f.id] = f; }));
+  } catch (e) { toast('No se pudo cargar el catálogo de campos: ' + e.message); }
+  render();
+})();
+})();
+</script>
+</body>
+</html>

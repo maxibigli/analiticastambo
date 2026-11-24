@@ -205,7 +205,29 @@ class TestOrden(unittest.TestCase):
         self.assertIn("ORDER BY CASE WHEN b.Number IS NULL", comp()["sql"])
 
 
+class TestDescribir(unittest.TestCase):
+    def test_las_condiciones_en_palabras_para_el_excel_y_la_pantalla(self):
+        d = {"columnas": [{"campo": "Number"}], "incluir_descartados": True,
+             "condiciones": [{"campo": "P24", "op": "<", "valor": 30}, {"campo": "GroupName", "op": "contiene", "valor": "Rodeo"},
+                             {"campo": "Parto", "op": ">=", "valor": "2025-09-16"}]}
+        self.assertEqual(im.describir_condiciones(d, CAT),
+                         ["Producción 24 h < 30", "Nombre del grupo contiene «Rodeo»", "Fecha del último parto ≥ 16/09/2025",
+                          "Incluye animales descartados"])
+
+    def test_sin_condiciones(self):
+        self.assertEqual(im.describir_condiciones({"columnas": [{"campo": "Number"}]}, CAT), [])
+
+    def test_ignora_lo_que_no_entiende_sin_romper(self):
+        self.assertEqual(im.describir_condiciones({"condiciones": [{"campo": "NoExiste", "op": "=", "valor": 1}, 5]}, CAT), [])
+
+
 class TestEjecutar(unittest.TestCase):
+    def test_mide_cuanto_tardo(self):
+        falso = lambda sql, validate=True, tambo=None, max_rows=None: {"columns": ["c0"], "rows": [], "truncated": False}
+        r = im.ejecutar({"columnas": [{"campo": "Number"}]}, "ponderosa", CAT, BLOQUES, run=falso, herd=1)
+        self.assertIsInstance(r["segundos"], float)
+        self.assertGreaterEqual(r["segundos"], 0)
+
     def test_devuelve_columnas_y_filas(self):
         visto = {}
 

@@ -40,7 +40,7 @@ PAGINAS_POR_ROL = {
     # El orden sigue al del menú lateral (ver templates/index.html): cosmético
     # para esta lista (solo se usa para membresía, "x in ..."), pero mantenerlo
     # igual evita que alguien lea un orden que ya no es el real.
-    "admin": ["dashboard", "consultas", "tablero", "ordeno", "sala_cms", "rutina", "rendimiento", "flujos",
+    "admin": ["dashboard", "consultas", "informes", "tablero", "ordeno", "sala_cms", "rutina", "rendimiento", "flujos",
               "produccion", "evolucion", "proyeccion", "repro", "alimentacion", "entregas", "salud", "ficha", "iot",
               "tareas", "checklist", "sensehub", "configuracion"],
     # "rendimiento" (Rendimiento Sala) estaba dentro de la página "rutina", así

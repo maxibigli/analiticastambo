@@ -16,6 +16,7 @@ Definición:
 import datetime
 import math
 import re
+import time
 
 import informes_catalogo as cat
 
@@ -190,12 +191,37 @@ def compilar(defn, campos=None, bloques=None, herd=_AUTO, hoy=None) -> dict:
     return {"sql": sql, "columnas": metas, "limite": limite}
 
 
+_SIMBOLO = {">=": "≥", "<=": "≤"}
+
+
+def describir_condiciones(defn, campos=None) -> list:
+    """Las condiciones de un informe en palabras («Producción 24 h < 30»), para el Excel y la pantalla. Lo que no entiende lo
+    omite: es solo texto de ayuda, no valida (para eso está `compilar`)."""
+    campos = cat.CATALOGO if campos is None else campos
+    if not isinstance(defn, dict):
+        return []
+    out = []
+    for cd in defn.get("condiciones") or []:
+        if not isinstance(cd, dict) or cd.get("campo") not in campos:
+            continue
+        f, op, v = campos[cd["campo"]], cd.get("op"), cd.get("valor")
+        if f.tipo == "fecha" and isinstance(v, str) and _FECHA.match(v):
+            v = f"{v[8:10]}/{v[5:7]}/{v[:4]}"
+        v = f"«{v}»" if f.tipo == "txt" else v
+        out.append(f"{f.etiqueta} {_SIMBOLO.get(op, op)} {v}")
+    if defn.get("incluir_descartados") is True:
+        out.append("Incluye animales descartados")
+    return out
+
+
 def ejecutar(defn, tambo, campos=None, bloques=None, run=None, herd=_AUTO, hoy=None) -> dict:
-    """Compila y corre el informe contra el tambo. {"columnas": [...], "filas": [[...]], "truncado": bool, "sql": str}."""
+    """Compila y corre el informe contra el tambo. {"columnas": [...], "filas": [[...]], "truncado": bool, "sql": str,
+    "segundos": float}."""
     if herd is _AUTO:
         import rebano
         herd = rebano.por_defecto(tambo)
     c = compilar(defn, campos, bloques, herd, hoy)
+    t0 = time.perf_counter()
     if run is None:
         import db
         run = db.run_query
@@ -209,4 +235,5 @@ def ejecutar(defn, tambo, campos=None, bloques=None, run=None, herd=_AUTO, hoy=N
         raise
     filas = r["rows"]
     return {"columnas": c["columnas"], "filas": filas[:c["limite"]],
-            "truncado": len(filas) > c["limite"] or bool(r.get("truncated")), "sql": c["sql"]}
+            "truncado": len(filas) > c["limite"] or bool(r.get("truncated")), "sql": c["sql"],
+            "segundos": round(time.perf_counter() - t0, 2)}

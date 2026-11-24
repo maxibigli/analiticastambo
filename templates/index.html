@@ -1069,6 +1069,7 @@
     <div class="sidebar-brand"><img src="/static/img/logo.svg" alt="">LactIA</div>
     {% if 'dashboard' in paginas_visibles %}<button class="nav-item" data-pagina="dashboard">📊 <span>Dashboard</span></button>{% endif %}
     {% if 'consultas' in paginas_visibles %}<button class="nav-item" data-pagina="consultas">🔍 <span>Consultas e IA</span></button>{% endif %}
+    {% if 'informes' in paginas_visibles %}<button class="nav-item" data-pagina="informes">📑 <span>Informes</span></button>{% endif %}
     {% if 'tablero' in paginas_visibles %}<button class="nav-item" data-pagina="tablero">🚦 <span>Tablero de Diagnóstico</span></button>{% endif %}
     {% if 'ordeno' in paginas_visibles %}<button class="nav-item" data-pagina="ordeno">🔄 <span>Ordeño en vivo</span></button>{% endif %}
     {% if 'sala_cms' in paginas_visibles %}<button class="nav-item" data-pagina="sala_cms">🐟 <span>Ordeño en Vivo Sala CMS</span></button>{% endif %}
@@ -3747,6 +3748,11 @@
     <div id="tareas-grid" class="tareas-grid"></div>
     <div id="tareas-detalle"></div>
   </section>
+  </div>
+
+  <!-- Informes personalizables: pantalla propia (/informes/) mostrada en un marco, para no sumarle otra pantalla a este archivo. -->
+  <div class="page" id="page-informes" hidden>
+    <iframe id="informes-marco" title="Informes" style="width:100%;border:0;height:calc(100vh - 110px);min-height:520px;background:transparent"></iframe>
   </div>
 
   <div class="page" id="page-checklist" hidden>
@@ -15719,7 +15725,7 @@ const PAGINAS_VISIBLES = {{ paginas_visibles | tojson }};
 // dentro de otra: 'rendimiento'/'flujos'/'evolucion' en 'rutina', y
 // 'proyeccion' en 'repro'. Siguen existiendo como PERMISOS en
 // auth.PAGINAS_POR_ROL, que es lo que decide si cada pestaña se dibuja.
-const PAGINAS = ['dashboard', 'consultas', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'produccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
+const PAGINAS = ['dashboard', 'consultas', 'informes', 'tablero', 'ordeno', 'sala_cms', 'rutina', 'produccion', 'repro', 'alimentacion', 'entregas', 'salud', 'ficha', 'iot', 'tareas', 'checklist', 'sensehub', 'configuracion']
   .filter(p => PAGINAS_VISIBLES.includes(p));
 
 // Id viejo -> dónde vive ahora. `irAPagina` lo traduce para que un favorito,
@@ -16029,6 +16035,7 @@ function cargarDatosDePagina(id) {
   else if (id === 'checklist') cargarChecklist();
   else if (id === 'sensehub') cargarSenseHub();
   else if (id === 'consultas') cargarPredefinidas();
+  else if (id === 'informes') cargarInformes();
   else if (id === 'tablero') cargarTablero();
   else if (id === 'configuracion') cargarConfiguracion();
   // La pestaña "Evolución" (dentro de 'rutina') NO se autocarga: sigue
@@ -16102,6 +16109,14 @@ function cerrarMenuMovil() {
 function abrirTabMudada({ pagina, tab }) {
   if (pagina === 'rutina') { activarTabRutina(tab); return; }
   document.querySelector(`#${pagina}-tabs [data-tab="${tab}"]`)?.click();
+}
+
+// Informes: la pantalla vive en /informes/ y se muestra en un marco. Se carga la primera vez que se entra, y de nuevo si
+// cambió el tambo (el marco no ve el selector de esta página, así que el tambo viaja en la dirección).
+function cargarInformes() {
+  const marco = document.getElementById('informes-marco');
+  const destino = '/informes/?embebido=1&tambo=' + encodeURIComponent(tamboActual);
+  if (marco.getAttribute('src') !== destino) marco.setAttribute('src', destino);
 }
 
 function irAPagina(id) {
@@ -18439,7 +18454,7 @@ document.querySelectorAll('.nav-item').forEach(el =>
 // pestañas reales, y una pestaña que el usuario no tiene permiso de ver tampoco aparece en el árbol.
 (function armarMenuArbol() {
   const GRUPOS = [
-    ['', ['dashboard', 'tablero', 'consultas']],
+    ['', ['dashboard', 'tablero', 'consultas', 'informes']],
     ['Ordeño', ['ordeno', 'sala_cms', 'rutina']],
     ['Leche', ['produccion', 'entregas']],
     ['Rodeo', ['salud', 'repro', 'alimentacion', 'ficha']],

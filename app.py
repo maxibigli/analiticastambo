@@ -11,10 +11,11 @@ import threading
 import time
 
 from flask import (Flask, Response, jsonify, make_response, redirect,
-                   render_template, request, send_from_directory, session, url_for)
+                   render_template, request, send_file, send_from_directory, session, url_for)
 
 import datetime
 import hmac
+import io
 import sqlite3
 import zlib
 
@@ -94,6 +95,8 @@ import tablero
 import tambos
 import ups_registro
 import informes_catalogo
+import informes_excel
+import informes_guardados
 import informes_motor
 import telegram_bot
 import whatsapp
@@ -6659,7 +6662,15 @@ def api_agente_preguntar():
     return jsonify(resultado)
 
 
-# ---------------------------------------------------------------- informes personalizables (Fase 0)
+# ---------------------------------------------------------------- informes personalizables
+
+@app.get("/informes/")
+@auth.requiere_rol("admin")
+def informes_pagina():
+    """La pantalla de informes. Plantilla propia (como /checklist/); el menú principal la muestra dentro de un marco con
+    `?embebido=1`, que oculta su encabezado."""
+    return render_template("informes.html", tambo=_tambo_del_request(), embebido=request.args.get("embebido") == "1")
+
 
 @app.get("/api/informes/campos")
 @auth.requiere_rol("admin")
@@ -6695,6 +6706,80 @@ def api_informes_ejecutar():
         return jsonify({"error": "No se pudo leer la base de datos para este informe."}), 502
     r.pop("sql", None)
     return jsonify(r)
+
+
+def _cuerpo_json_o_400():
+    """El cuerpo JSON como dict, o None si no lo es (el llamador contesta 400)."""
+    if not request.is_json:
+        return None
+    cuerpo = request.get_json(silent=True)
+    return cuerpo if isinstance(cuerpo, dict) else None
+
+
+@app.get("/api/informes")
+@auth.requiere_rol("admin")
+def api_informes_listar():
+    return jsonify({"informes": informes_guardados.listar(_tambo_del_request())})
+
+
+@app.get("/api/informes/<int:informe_id>")
+@auth.requiere_rol("admin")
+def api_informes_obtener(informe_id):
+    r = informes_guardados.obtener(_tambo_del_request(), informe_id)
+    return (jsonify(r), 200) if r else (jsonify({"error": "Ese informe no existe."}), 404)
+
+
+@app.post("/api/informes")
+@auth.requiere_rol("admin")
+def api_informes_crear():
+    cuerpo = _cuerpo_json_o_400()
+    if cuerpo is None:
+        return jsonify({"error": "El informe tiene que enviarse como JSON."}), 400
+    try:
+        r = informes_guardados.crear(_tambo_del_request(), cuerpo.get("nombre"), cuerpo.get("definicion"),
+                                     auth.usuario_actual(), favorito=bool(cuerpo.get("favorito")))
+    except informes_guardados.InformeGuardadoError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(r), 201
+
+
+@app.put("/api/informes/<int:informe_id>")
+@auth.requiere_rol("admin")
+def api_informes_actualizar(informe_id):
+    cuerpo = _cuerpo_json_o_400()
+    if cuerpo is None:
+        return jsonify({"error": "El informe tiene que enviarse como JSON."}), 400
+    tambo = _tambo_del_request()
+    if informes_guardados.obtener(tambo, informe_id) is None:
+        return jsonify({"error": "Ese informe no existe."}), 404
+    try:
+        r = informes_guardados.actualizar(tambo, informe_id, nombre=cuerpo.get("nombre"),
+                                          definicion=cuerpo.get("definicion"),
+                                          favorito=cuerpo.get("favorito") if "favorito" in cuerpo else None)
+    except informes_guardados.InformeGuardadoError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return jsonify(r)
+
+
+@app.post("/api/informes/exportar")
+@auth.requiere_rol("admin")
+def api_informes_exportar():
+    """El informe como archivo Excel. Se vuelve a ejecutar acá (no se confía en lo que muestre el navegador)."""
+    cuerpo = _cuerpo_json_o_400()
+    if cuerpo is None:
+        return jsonify({"error": "El informe tiene que enviarse como JSON."}), 400
+    nombre = str(cuerpo.get("nombre") or "")[:informes_guardados.NOMBRE_MAX]
+    defn = {k: v for k, v in cuerpo.items() if k not in ("hoy", "nombre", "tambo")}
+    try:
+        r = informes_motor.ejecutar(defn, _tambo_del_request(), hoy=cuerpo.get("hoy"))
+    except informes_motor.InformeError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception:  # noqa: BLE001
+        return jsonify({"error": "No se pudo leer la base de datos para este informe."}), 502
+    ahora = datetime.datetime.now()
+    datos = informes_excel.a_xlsx(r, nombre or "Informe", condiciones=informes_motor.describir_condiciones(defn), generado=ahora)
+    return send_file(io.BytesIO(datos), as_attachment=True, download_name=informes_excel.nombre_de_archivo(nombre, ahora.date()),
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
 # ---------------------------------------------------------------------------

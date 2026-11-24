@@ -112,6 +112,25 @@ necesitando la exportación del mismo momento.
 * El informe de DelPro trae solo vacas en lactancia; el motor trae todos los animales del rebaño. Se filtra con condiciones
   (Fase 1); todavía no hay un filtro «en ordeño».
 
+## Fase 1: estado al 23/11/2026
+
+Pantalla `/informes/` (plantilla `templates/informes.html`, solo administrador) mostrada en el menú principal como **📑 Informes**,
+en el primer grupo, después de «Consultas e IA» (dentro de un marco con `?embebido=1`; el tambo viaja en la dirección).
+
+* **Lista de informes** con favoritos y búsqueda; cada informe y cada resultado en su propia pestaña, como DelPro; árbol de campos
+  a la derecha (los campos sin verificar llevan ⚠).
+* **Armar:** elegir y reordenar columnas (arrastrando), condiciones por campo (número, texto o fecha), incluir descartados,
+  «Calcular al» (el «hoy» de los datos; vacío = hoy), orden por columna, **Actualizar** a pedido (la base es lenta: no se
+  recalcula en cada cambio).
+* **Guardar con nombre** (`informes.db`, por tambo, nombre único sin importar mayúsculas), «Guardar como…», favorito.
+* **Exportar a Excel** (`informes_excel.py`): números y fechas reales, hoja «Condiciones», sin fórmulas, aviso si se cortó.
+* API (administrador): `GET/POST /api/informes`, `GET/PUT /api/informes/<id>`, `POST /api/informes/exportar`.
+* Pruebas: 95 de informes en total (motor 38, catálogo 7, API 19, guardado 16, Excel 9, página y menú 6); suite completa 1638 OK. La pantalla se revisó en el navegador con datos de ejemplo (la base local se
+  quedó sin memoria en ese momento); falta probarla contra la base real y desde el menú de un servidor.
+
+**Fuera de la Fase 1, a propósito:** agrupar, resúmenes por columna y campos calculados (Fase 2); gráficos (Fase 3); eliminar
+informes (por la regla de no borrar: se resolverá archivando).
+
 ## Riesgos
 
 * Muchos campos tienen definiciones sutiles (¿qué cuenta como «lactancia actual» para una vaca seca?, ¿los DEL de una vaca que
