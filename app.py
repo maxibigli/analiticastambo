@@ -1584,12 +1584,21 @@ def _tablero_dias_abiertos(tambo: str, herd) -> dict:
     `reproduccion.py`. Se acota a 0 < OpenDays < 400 con el mismo criterio: un 0
     o un NULL es "todavía no concibió", no cero días, y meterlo al promedio lo
     hunde; arriba de 400 son cargas viejas o erróneas.
+
+    EL ANIMAL DE CADA LACTANCIA SE BUSCA POR EL HISTORIAL (corregido el
+    25/11/2026): `HistoryAnimalLactationInfo.Animal` apunta a
+    `HistoryAnimal.OID`, y el animal es `HistoryAnimal.ReferenceId`. Unir
+    `h.Animal` con `BasicAnimal.OID` miraba el rebaño de OTRO animal para
+    decidir si la lactancia entraba al promedio (los días abiertos eran los de
+    la lactancia correcta; ver `reproduccion.sql_prenez_por_del`). Ahora el
+    rebaño se filtra sobre el animal real.
     """
     d = db.run_query(f"""
         SELECT CAST(AVG(CAST(h.OpenDays AS float)) AS decimal(6,1)) AS dias,
                COUNT(*) AS lactancias
         FROM HistoryAnimalLactationInfo h
-        JOIN BasicAnimal b ON b.OID = h.Animal
+        JOIN HistoryAnimal ha ON ha.OID = h.Animal
+        JOIN BasicAnimal b ON b.OID = ha.ReferenceId
         WHERE h.OpenDays > 0 AND h.OpenDays < 400
           AND {rebano.filtro('b', herd)}
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)

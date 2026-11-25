@@ -1536,6 +1536,21 @@ NULL: si no, la leyenda anuncia una medida que la sala no registra.
   ordeñe — pero no hay que confiarse en eso.
 - Los informes de DelPro que sirvieron de referencia estaban en "Todos los
   rebaños": por eso sus números son ~2x los de La Ponderosa sola.
+- **El historial de lactancias se une por `HistoryAnimal.ReferenceId`, NUNCA por el OID del animal** (corregido el 25/11/2026).
+  `HistoryAnimalLactationInfo.Animal` apunta a `HistoryAnimal.OID`; el animal es `HistoryAnimal.ReferenceId` (sin repetidos). Los dos números son distintos en
+  2.344 de los 11.548 históricos de La Ponderosa y en 2.911 de 2.925 de San José (copias del 20/11/2026): `JOIN BasicAnimal b ON b.OID = h.Animal` mira OTRO animal.
+  La forma correcta, que es la de DelPro (`dbo.GetTotalYieldInLactation`): `JOIN HistoryAnimal ha ON ha.OID = h.Animal`, y el animal es `ha.ReferenceId` (en los
+  informes, el bloque `historia`). Estaba mal en el **Tablero «Días abiertos promedio»** (`app._tablero_dias_abiertos`) y en el **«% de preñez por días en leche»**
+  del Análisis reproductivo (`reproduccion.sql_prenez_por_del`): los días abiertos eran los de la lactancia correcta, pero el rebaño se miraba en otro animal.
+  Antes → después: La Ponderosa **casi igual** (días abiertos 136,5 → 136,5; preñez por DEL, 0,3 puntos a lo sumo: los históricos con OID distinto son animales recientes y solo
+  38 de sus lactancias tienen días abiertos); San José **cambia** (días abiertos 124,1 → 137,0, de 596 a 858 lactancias; la preñez de 2025 de 1ª lactancia pasó de 12 a 133
+  lactancias). Prueba: `tests/test_historia_lactancia.py` (corre el SQL real contra una base SQLite con el caso que rompía).
+- **SIN RESOLVER (y no es el error de unión): el filtro de rebaño solo ve a los animales que siguen en un grupo**, porque al darse de baja pierden el `[Group]` (ver
+  `rebano.filtro_historico`). Por eso el «% de preñez por días en leche» y los «Días abiertos» cuentan casi solo a las vacas que SIGUEN en el tambo, y las que se
+  fueron son, en buena parte, las que no quedaron preñadas. Preñez a 300 días de las lactancias iniciadas en 2025 (copias del 20/11/2026): La Ponderosa 1ª lactancia,
+  87,4 % las que siguen (374) contra 40,6 % las dadas de baja (224, de los tres tambos); San José, que tiene un solo rebaño, 2da y más: 90,3 % (175) contra 37,0 % (146).
+  Sin filtro (los tres tambos de la base juntos) da 52,7 % (1ª) y 51,1 % (2da y más). No hay una forma directa de saber de qué rebaño era un animal que ya se fue
+  (`HistoryAnimal.LastGroup` está cargado en solo 681 de los 3.093 dados de baja de La Ponderosa). Esas dos cifras sobreestiman: leerlas como un techo, no como la preñez real del rodeo.
 - Proyección de rebaños: la ecuación es
   `lactantes[m] = lactantes[m-1] + partos - secados - salidas` y la producción
   `lactantes × kg/vaca/día del año pasado × días del mes` (ambas verificadas
@@ -4485,8 +4500,8 @@ no son de estos campos). **La tanda 1 se hizo sin leerla** («a ojo» contra las
     2. **`CurrentDIM` no seguía la fórmula de DelPro** (`ReproductionInfo.DIM`): contaba SIEMPRE hasta hoy. DelPro cuenta hasta el secado en una vaca seca y hasta la salida en un animal que salió (y da 0 sin lactancia: **acá queda vacío a propósito**, porque los informes guardados acotan a las vacas con «Días en ordeño ≥ 0» y con 0 entrarían las terneras y la recría). Corregido: **60 de 60 vacas secas coinciden con `HistoryAnimalLactationInfo.DriedDay`** (lo que DelPro guarda); los animales que salieron siguen la fórmula
        y no se pudieron comparar con un dato suyo. Queda `verificado=True` (las vacas en ordeño no cambiaron: 1664 de 1665 contra `AnimalDaily.DIM`). `ExitType` 6, 7 y 8 son las tres salidas de la base (6 = descarte: todas con motivo «DESC. X…», 1.014 con decisión de descarte).
     3. **ERROR de la tanda 3b/4 encontrado y corregido: tres bloques unían `HistoryAnimalLactationInfo` con el OID del animal.** Esa tabla cuelga del `HistoryAnimal`, y su OID **no es el del animal en 2.344 de los 11.548 históricos** (71 de las 3.708 vacas con lactancia): `insem_lact` (`NumberOfInseminations`), `lact_ant` (`PrevCalvingDate`) y `lact_1` (`AgeAtFirstCalving`)
-       leían la lactancia de OTRO animal (en esas 71 vacas el inicio de la lactancia en curso coincidía en 0 de 71; ahora 71 de 71). Nuevo bloque `historia` (`HistoryAnimal.ReferenceId` = el animal, sin repetidos) y esos tres pasan por él, como la función `dbo.GetTotalYieldInLactation` de DelPro. **El mismo error está FUERA de los informes**, sin tocar:
-       `app.py::_tablero_dias_abiertos` y `reproduccion.py` (`JOIN BasicAnimal b ON b.OID = h.Animal`): pendiente de decidir.
+       leían la lactancia de OTRO animal (en esas 71 vacas el inicio de la lactancia en curso coincidía en 0 de 71; ahora 71 de 71). Nuevo bloque `historia` (`HistoryAnimal.ReferenceId` = el animal, sin repetidos) y esos tres pasan por él, como la función `dbo.GetTotalYieldInLactation` de DelPro. **El mismo error estaba FUERA de los informes y se corrigió el 25/11/2026 (nota en «Trampas del esquema DDM»):**
+       `app.py::_tablero_dias_abiertos` y `reproduccion.sql_prenez_por_del` (`JOIN BasicAnimal b ON b.OID = h.Animal`): ahora pasan por `HistoryAnimal`.
     4. Otros datos de la base: `LowYield` de DelPro = la columna `LowYieldAlarm`; el `DateAndTime` de un ordeño es su `BeginTime` (el historial no lo trae); `EventInsemination.Breeder` es el `Oid` de `User` y de ahí al `PermissionPolicyUser.UserName` (el `DDMUserName`); **el índice de último celo se REINICIA con cada parto**, como el de la inseminación; cada animal tiene SIEMPRE **dos reglas** de separación manual
        (la 1.ª y la 2.ª por número: `dbo.CowsToBeSortedToday`) y **todas las de la copia del 20/11/2026 están vencidas** (se probaron con un «hoy» anterior); `dbo.GetAnimalSelectionsNames` corta **cada nombre a 30 letras** (usa `NVARCHAR` sin largo): acá van completos; `MilkTest.FatProt` no está cargado en ningún control de La Ponderosa (0 de 17.829).
     * **Los 93 campos nuevos** (todos ⚠): **finca y rebaño (6)** `HerdIdentifier`, `HerdLocation`, `HerdOwnerID`, `FarmLocation`, `FarmIdentifier` (se asume `AnimalFarm.GUID`: no es columna), `FarmName`; **reproducción (10)** `CurrentDSLC`, `DaysSinceLastAbortion`, `DaysSinceLastPregnCheck`, `LastHeatDate`, `DaysSinceLastHeat`, `LastInseminationNumber`,
