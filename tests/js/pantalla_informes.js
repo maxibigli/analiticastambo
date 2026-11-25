@@ -21,7 +21,7 @@ const HOY = Date.UTC(2026, 10, 24, 12, 0, 0);                    // mar 24/11/20
    Lo que no exista se deja pasar como undefined (así una prueba falla por su comportamiento y no por un nombre). */
 const EXPORTAR = ['PG', 'DP', 'IA', 'CAMPOS', 'ENVIOS', 'LISTA', 'nuevoDoc', 'activar', 'docAct', 'abrirProg', 'guardarProg', 'probarProg', 'cargarRegistroProg',
   'traerDeDelpro', 'abrirDelpro', 'renderHead', 'renderFilters', 'renderImportado', 'renderProg', 'renderEnvio', 'limpiaDef', 'listaDe', 'condLimpia', 'tipoDe',
-  'defVacia', 'foto', 'sucio', 'toast', 'ejecutar', 'abrirInforme', 'guardar', 'avisoAlGuardar', 'renderList', 'abrirComoNuevo', 'origenParaGuardar', 'refrescarLista', 'refrescarEnvios', 'cargarDelpro', 'renderDelpro', 'cerrar'];
+  'defVacia', 'foto', 'sucio', 'toast', 'ejecutar', 'abrirInforme', 'guardar', 'avisoAlGuardar', 'renderList', 'abrirComoNuevo', 'origenParaGuardar', 'refrescarLista', 'refrescarEnvios', 'cargarDelpro', 'renderDelpro', 'cerrar', 'aplicarTema', 'temaActual', 'imprimir', 'prepararImpresion'];
 
 const CAMPOS_DE_EJEMPLO = {
   categorias: [
@@ -78,7 +78,7 @@ async function cargar(opciones) {
   const cuerpo = html.slice(html.indexOf('<body>') + 6, html.indexOf('<script src='));
   const ini = html.indexOf('<script>\n(function(){') + '<script>\n'.length;
   let codigo = html.slice(ini, html.indexOf('</script>', ini))
-    .replace('{{ tambo|tojson }}', '"ponderosa"').replace('{{ embebido|tojson }}', 'false');
+    .replace('{{ tambo|tojson }}', '"ponderosa"').replace('{{ nombre_tambo|tojson }}', '"La Ponderosa"').replace('{{ embebido|tojson }}', 'false');
   if (/\{\{|\{%/.test(codigo)) throw new Error('Quedó una marca de Jinja en el script de la plantilla');
   const exportar = '\nwindow.__t = {' + EXPORTAR.map(n => n + ': typeof ' + n + " === 'undefined' ? undefined : " + n).join(', ') +
     ", get docs() { return docs; }, get activeId() { return activeId; }};\n";
@@ -129,9 +129,22 @@ async function cargar(opciones) {
     });
   }
 
+  /* Lo que la ventana guarda: sus oyentes (para dispararlos a mano, como `beforeprint`), las impresiones pedidas y el almacenamiento local. */
+  const oyentesVentana = {}, impresiones = [], datosAlmacen = Object.assign({}, opciones.almacen || {});
+  const disparar = tipo => (oyentesVentana[tipo] || []).slice().forEach(fn => fn({type: tipo}));
+  const almacen = opciones.almacenRoto
+    ? {getItem() { throw new Error('sin almacenamiento'); }, setItem() { throw new Error('sin almacenamiento'); }}
+    : {getItem: k => (k in datosAlmacen ? datosAlmacen[k] : null), setItem: (k, v) => { datosAlmacen[k] = String(v); }};
   const ventana = {
     document: doc, console, fetch: fetchFalso, Date: FechaFalsa, URL, setTimeout: setTimeoutFalso, clearTimeout: clearTimeoutFalso,
-    addEventListener() {}, removeEventListener() {},
+    addEventListener(tipo, fn) { (oyentesVentana[tipo] = oyentesVentana[tipo] || []).push(fn); }, removeEventListener() {},
+    localStorage: almacen,
+    /* Como el navegador: avisa `beforeprint`, imprime con lo que haya en pantalla en ese momento y avisa `afterprint`. */
+    print() {
+      disparar('beforeprint');
+      impresiones.push({tema: doc.documentElement.getAttribute('data-theme'), encabezado: (doc.querySelector('#phead') || {textContent: ''}).textContent});
+      disparar('afterprint');
+    },
   };
   ventana.window = ventana; ventana.self = ventana;
   vm.createContext(ventana);
@@ -140,7 +153,7 @@ async function cargar(opciones) {
 
   const sel = x => typeof x === 'string' ? doc.querySelector(x) : x;
   const P = {
-    doc, api, ventana, reloj, avanzar, diferido, ok, error, CANALES, CAMPOS_DE_EJEMPLO, RESULTADO_VACIO,
+    doc, api, ventana, reloj, avanzar, diferido, ok, error, CANALES, CAMPOS_DE_EJEMPLO, RESULTADO_VACIO, disparar, impresiones, almacen: datosAlmacen,
     t: ventana.__t,
     $: s => doc.querySelector(s),
     $$: s => doc.querySelectorAll(s),

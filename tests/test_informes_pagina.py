@@ -52,7 +52,7 @@ class TestPagina(unittest.TestCase):
             fuente = f.read()
         import re
         marcas = re.findall(r"\{\{.*?\}\}|\{%.*?%\}", fuente)
-        self.assertEqual(sorted(set(marcas)), sorted({"{{ tambo|tojson }}", "{{ embebido|tojson }}"}))
+        self.assertEqual(sorted(set(marcas)), sorted({"{{ tambo|tojson }}", "{{ nombre_tambo|tojson }}", "{{ embebido|tojson }}"}))
 
 
 def sin_manejador(fuente: str) -> list:

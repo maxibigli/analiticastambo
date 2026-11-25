@@ -6712,7 +6712,8 @@ def api_agente_preguntar():
 def informes_pagina():
     """La pantalla de informes. Plantilla propia (como /checklist/); el menú principal la muestra dentro de un marco con
     `?embebido=1`, que oculta su encabezado."""
-    return render_template("informes.html", tambo=_tambo_del_request(), embebido=request.args.get("embebido") == "1")
+    tambo = _tambo_del_request()
+    return render_template("informes.html", tambo=tambo, nombre_tambo=tambos.nombre_de(tambo), embebido=request.args.get("embebido") == "1")
 
 
 def _campos_sin_su_tabla(tambo: str, entre=None) -> set:

@@ -481,6 +481,23 @@ tiene costo (o el sandbox gratuito, con las limitaciones ya conocidas).
 3. Reiniciá la app, tildá "Email" en la tarjeta "🔔 Alertas" y probá con
    "Probar envío".
 
+**El certificado del servidor de correo se verifica** (desde el 24/11/2026): antes de mandar la contraseña y el mensaje, LactIA comprueba que el servidor tiene un
+certificado válido y que es del servidor al que llamó (`SMTP_HOST`). Con Gmail no tenés que hacer nada. Si "Probar envío" contesta *«El certificado del servidor de correo
+(…) no es de confianza»*, el mensaje NO salió y lo que dice el motivo es lo que hay que arreglar:
+
+- **Un servidor de correo propio, o un proxy de la red que cambia los certificados**: instalá el certificado de su autoridad en Windows (Administrador de certificados →
+  *Entidades de certificación raíz de confianza*), o guardalo en un archivo `.pem` y decile a LactIA dónde está:
+  ```powershell
+  setx SSL_CERT_FILE "C:\ruta\a\mi_autoridad.pem"
+  ```
+- **El motivo es *certificate has expired* o *Hostname mismatch***: el servidor tiene mal puesto su certificado, o `SMTP_HOST` no es el nombre que figura en él.
+  Corregí el nombre en `SMTP_HOST`.
+- **Último recurso**, si no hay otra forma: `setx SMTP_VERIFICAR_CERTIFICADO "0"` apaga la verificación. Con eso la contraseña y los mensajes viajan **sin comprobar con quién
+  se habla** (cualquiera en el camino podría hacerse pasar por el servidor), y LactIA deja un AVISO en la ventana del servidor la primera vez que manda un correo después de
+  arrancar. No lo dejes así más de lo necesario.
+
+Después de cambiar una variable, reiniciá la app (ver "Reinicié y sigue igual" en `CLAUDE.md`).
+
 ### Alertas por WhatsApp (Twilio)
 
 1. Creá una cuenta gratis en [twilio.com](https://www.twilio.com) (el trial

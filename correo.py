@@ -8,10 +8,13 @@ Credenciales SOLO por variable de entorno (nunca en el código):
   SMTP_PASSWORD  -- con Gmail: una "contraseña de aplicación" (no la contraseña
                     normal de la cuenta; se genera en myaccount.google.com)
   SMTP_DESTINO   -- dirección que recibe las alertas
+  SMTP_VERIFICAR_CERTIFICADO -- opcional. Por defecto el certificado del servidor SE VERIFICA (la cadena y que sea del servidor al que se llamó). Poner 0 solo como último
+                    recurso (ver INSTALL.md): sin verificar, la contraseña y cada mensaje viajan sin comprobar con quién se habla.
 """
 import os
 import re
 import smtplib
+import ssl
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -76,6 +79,39 @@ def _credenciales():
     return host, port, usuario, password, destino
 
 
+_NO_VERIFICAR = ("0", "no", "false", "falso", "off")
+_avisado_sin_verificar = False
+
+
+def verifica_certificado() -> bool:
+    """Por defecto SÍ. Solo un «no» explícito en `SMTP_VERIFICAR_CERTIFICADO` lo apaga: una errata («si», «quizás») deja la verificación puesta."""
+    return os.environ.get("SMTP_VERIFICAR_CERTIFICADO", "1").strip().lower() not in _NO_VERIFICAR
+
+
+def _contexto_tls() -> ssl.SSLContext:
+    """El contexto de la conexión segura con el servidor de correo.
+
+    `smtplib` sin contexto NO verifica el certificado (usa `ssl._create_stdlib_context`, que no valida nada): hasta el 24/11/2026 la contraseña de la cuenta y cada mensaje, con el Excel de un
+    informe programado incluido, viajaban sin comprobar con quién se hablaba. Con `ssl.create_default_context()` se exige una cadena válida y que el certificado sea del servidor al que
+    se llamó. Confía en el almacén de certificados de Windows (donde se instala un certificado propio) y también en el paquete de `certifi` que ya trae `requests`: un servidor que casi
+    no navega puede no haber bajado todavía una raíz, y no por eso tiene que dejar de mandar correo. Un certificado propio también se puede indicar con `SSL_CERT_FILE`."""
+    ctx = ssl.create_default_context()
+    if not verifica_certificado():
+        global _avisado_sin_verificar
+        if not _avisado_sin_verificar:
+            _avisado_sin_verificar = True
+            print("AVISO: el correo se manda sin verificar el certificado del servidor (SMTP_VERIFICAR_CERTIFICADO=0): la contraseña y los mensajes viajan sin comprobar con quién se habla.", flush=True)
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+    try:
+        import certifi
+        ctx.load_verify_locations(cafile=certifi.where())
+    except Exception:  # noqa: BLE001  -- sin certifi (o sin poder leerlo) se sigue con los del sistema
+        pass
+    return ctx
+
+
 # Lo que el servidor contestó diciendo que NO: el mensaje no salió, y volver a probar da lo mismo.
 _RECHAZOS = (smtplib.SMTPRecipientsRefused, smtplib.SMTPSenderRefused, smtplib.SMTPDataError, smtplib.SMTPAuthenticationError, smtplib.SMTPConnectError,
              smtplib.SMTPHeloError, smtplib.SMTPNotSupportedError)
@@ -87,11 +123,16 @@ def _mandar(msg, host, port, usuario, password, destino, timeout=TIMEOUT_S):
     antes, aceptado = True, False
     try:
         with smtplib.SMTP(host, port, timeout=timeout) as s:
-            s.starttls()
+            s.starttls(context=_contexto_tls())
             s.login(usuario, password)
             antes = False
             s.sendmail(usuario, [destino], msg.as_string())
             aceptado = True
+    except ssl.SSLCertVerificationError as exc:
+        # Falló ANTES de mandar la contraseña: no salió nada. Y reintentar da lo mismo hasta que se arregle el certificado, así que no es reintentable.
+        motivo = getattr(exc, "verify_message", "") or str(exc)
+        raise CorreoError(f"El certificado del servidor de correo ({host}) no es de confianza: {motivo}. El mensaje no salió. Si es un servidor propio o hay un proxy en el medio, "
+                          "ver «Email» en INSTALL.md.", no_salio=True, reintentable=False) from exc
     except Exception as exc:  # noqa: BLE001
         if aceptado:
             return

@@ -341,7 +341,7 @@ refutados.** Los 53 se arreglaron, cada uno con una prueba que primero falló. L
 [importador #4], [importador #6] y [completitud #7] leer `Group`/`Selection`/`DateFilter` del informe de DelPro y si una fecha trae hora: nadie midió lo que significan `-1` y `2` (en el volcado, `Group` vale 0 y `DateFilter` es NULL en los 58 informes de animales) y SQL Server no se
 puede arrancar acá; [completitud #9] «`pausar()` no se usa en producción»: la suite igual falla si `guardar` deja de pausar.
 
-**Lo que NO se hizo, a propósito:** (1) la pantalla es **solo oscura** (el marco `/informes/?embebido=1` fija `data-theme="dark"`): en la app con tema claro queda una isla oscura. Era anterior a la Fase 4; llevarlo a los tokens claros es un trabajo aparte. (2) `backup_config.bat` copia los
+**Lo que NO se hizo, a propósito:** (1) ~~la pantalla es solo oscura~~ (resuelto el 24/11/2026: tiene tema claro y se imprime, ver «Tema claro e impresión» abajo). (2) `backup_config.bat` copia los
 archivos sueltos (como con `checklist.db`): con el hilo de envíos escribiendo no es una instantánea perfecta; la API de respaldo de SQLite lo sería. (3) En el importador, la regla del «menor que» depende del orden en que se leen las fuentes: dos columnas del mismo campo con filtro propio
 se ven una a la otra solo en un sentido. (4) `UN-C<oid>` se traduce igual que `C<oid>` (no se sabe qué significa «UN-»). (5) Los avisos de fechas de la IA avisan de menos, nunca de más: «15 ago» (mes abreviado) y «quincena» no se leen como fecha.
 
@@ -377,7 +377,7 @@ y traerlos juntos (se guardan con su nota de origen, sin ejecutar nada) y recalc
 **Tanda 3a (50 campos en total, 24/11/2026).** Pedido del usuario: traer todos los campos que se pueden definir de una vez, porque la consulta solo se hace al pedir el listado (un campo que el informe no usa no se une). Entran 15 campos baratos, todos ⚠: el último valor de **cada parámetro del
 control lechero** con su propia fecha (recuento, grasa, proteína, rendimiento: «el último control que lo trae», porque un control puede traer solo el rendimiento), edad en días, **sexo** (texto cerrado Hembra/Macho), **cambio de rodeo** (días desde el último y rodeo anterior, del índice de DelPro), **fecha del parto anterior**
 (inicio de la lactancia anterior) y **condición corporal de la cámara** (último valor, al secado, al parto y a los 190 días de preñez). La cámara solo existe en algunos tambos: esos campos llevan `Campo.tabla = "BcsDailyData"`, no se ofrecen donde la tabla no está y un informe que ya los usa recibe un error claro en vez de un fallo de la base.
-Un informe admite hasta 40 columnas y el catálogo tiene 50 campos. **Tanda 3b, pendiente:** los campos pesados (último corte de la puerta de separación, diagnósticos y tratamientos, leche por sesión) necesitan una copia diaria en `informes.db`, y los de significado desconocido necesitan una exportación de DelPro con esos campos.
+Un informe admite hasta 40 columnas y el catálogo tiene 50 campos. Lo que había quedado pendiente en esta tanda (los campos pesados y los de significado desconocido) se resolvió en la tanda 3b, abajo, y por otro camino que el que se había pensado: ni copia diaria ni exportación de DelPro.
 
 **Tanda 3b (78 campos en total, 24/11/2026).** Dos hallazgos: **(1)** DelPro SÍ guarda la fórmula de cada campo (`DDMReportItem.Expression`, lenguaje de criterios de DevExpress); con ella se definieron los campos «de significado desconocido» (inseminada y no preñada, número del transponder, edad al primer parto,
 resultado del último diagnóstico de gestación, ordeños de ayer) y se **corrigieron campos de las tandas anteriores** que se habían definido sin leerla: el secado esperado solo vale para una vaca que ya parió y no se secó, el parto esperado pide un animal que no salió, el último diagnóstico de gestación queda vacío si hay un
@@ -385,6 +385,9 @@ aborto posterior, la edad en meses es la edad en días sobre 30,5 con un decimal
 los ~630.000 de buscar el último de cada una. Entran la puerta de separación (3 campos), el último diagnóstico y tratamiento (10), la última vacunación y el último protocolo de IA a tiempo fijo (3 y 3, sin probar con datos: La Ponderosa no tiene esos eventos), el último evento de salud y los ordeños de ayer. Los campos con parámetro de sesión
 (`YieldYesterdayForAllMilkingInSession`, `CMSTakeOffFlowYesterday`) no se traen: el informe no guarda el parámetro. **Costo de memoria:** el SQL de la PC de desarrollo tiene 7 MB de espacio de trabajo y una consulta que pide más de ~1,75 MB de mínimo espera minutos; por eso los bloques se escriben sin funciones de ventana, sin agregados de texto y
 con búsqueda por clave (ver `CLAUDE.md`). Nuevo `Campo.equivale` para que el importador entienda `Sex = '2'` y `LatestPregCheckResult In ('Uncertain', 'Negative')`.
+
+**Tema claro e impresión (24/11/2026).** La pantalla sigue arrancando oscura como el resto de LactIA; un botón en la barra de pestañas pasa a claro y se recuerda en el navegador. Todo color sale de variables definidas para los dos temas. **Imprimir** (botón o Ctrl+P): hoja A4 apaisada con número de página, sin controles, con un
+encabezado (nombre, tambo, cuándo se calculó, condiciones, agrupación, orden y los avisos que importan en papel), el título de la tabla repetido en cada página y los totales una sola vez; siempre en claro, y vuelve al tema que había. Se comprobó imprimiendo a PDF con Edge; esa prueba encontró que un botón dentro del título repetido sale sin texto desde la página 2 (se resolvió).
 
 ## Pendientes de la Fase 4: lo que decide el tambo o falta probar
 
@@ -397,10 +400,9 @@ con búsqueda por clave (ver `CLAUDE.md`). Nuevo `Campo.equivale` para que el im
    ventana de 24 horas, sandbox o «no entregado»). Correo y Telegram llevan el Excel.
 4. **Ampliar el catálogo de campos.** Es lo que más hace crecer el valor del importador y de la IA. Los más pedidos por los informes reales: `InMilk`, `IsDryingOff`, `ToBeCulled`, `PossiblyInWrongGroup`, `Sex`, `IsExited`, `NumberOfInseminations`, `IsPregnant`
    (cada uno con su verificación contra DelPro, como los diez que hay).
-5. **Fechas relativas en el motor** («hoy menos N días»): sin eso un informe de «últimos 30 días» no sirve para programar. Hoy el aviso solo lo dice.
+5. **Fechas relativas en el motor** («hoy menos N días»): sin eso un informe de «últimos 30 días» no sirve para programar. Hoy el aviso solo lo dice. **Decisión del tambo (24/11/2026): se deja así por ahora.**
 6. **Aceptar la Fase 0**: falta comparar contra una exportación de DelPro del MISMO momento (los campos con ⚠ siguen sin compararse).
-7. **Validar el certificado del correo.** `correo._mandar` hace `starttls()` sin contexto: en Python 3.14 eso NO verifica el certificado del servidor (la clave SMTP y los Excel viajan sin autenticar al servidor). Es de antes de la Fase 4 y afecta a todas las alertas
-   por correo; se dejó sin tocar porque, si el servidor tiene inspección de TLS, pasar a `ssl.create_default_context()` cortaría el correo de las alertas. Decisión del tambo.
+7. ~~**Validar el certificado del correo.**~~ **Hecho el 24/11/2026** (decisión del tambo: «hagámoslo»): `correo._mandar` verifica la cadena y el nombre del servidor, y un error de certificado es un mensaje claro que no sale y no se reintenta. La salida para un servidor propio o un proxy con inspección de TLS es el almacén de Windows o `SSL_CERT_FILE`; apagarlo (`SMTP_VERIFICAR_CERTIFICADO=0`) es el último recurso y deja un aviso. Ver `INSTALL.md` y `CLAUDE.md`.
 8. **Versiones de Python y del SDK de Anthropic.** Las pruebas de la Fase 4 pasan con Python 3.14 + `anthropic` 1.0.0 y con Python 3.12.10 + `anthropic` 0.117.0 (el Python y el mínimo de `requirements.txt` que usa `iniciar.bat`);
    `output_config` (salida estructurada) y `anthropic.Timeout` existen en las dos. Igual conviene un `python --version` y un `pip show anthropic` en SERVER-DELPRO antes del primer uso.
 9. **`_maqueta_tmp/`** (tres maquetas HTML de la Fase 0) sigue sin seguimiento en el repositorio: no se commitea, y un `git add -A` la sumaría. Mover a `porlasdudas/` o ignorarla, a elección.

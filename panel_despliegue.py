@@ -187,6 +187,9 @@ CATALOGO: tuple[Var, ...] = (
     Var("SMTP_USUARIO", "Correo", False, "Cuenta desde la que se envía."),
     Var("SMTP_PASSWORD", "Correo", True, "Contraseña de aplicación de esa cuenta."),
     Var("SMTP_DESTINO", "Correo", False, "Dirección que recibe los avisos."),
+    Var("SMTP_VERIFICAR_CERTIFICADO", "Correo", False,
+        "Último recurso: con 0 (o no, false, off) el correo se manda SIN verificar el certificado del servidor. "
+        "Sin valor se verifica. Antes conviene instalar el certificado del firewall en Windows (ver «Email» en INSTALL.md)."),
     Var("TWILIO_ACCOUNT_SID", "WhatsApp (Twilio)", False, "Account SID de Twilio."),
     Var("TWILIO_AUTH_TOKEN", "WhatsApp (Twilio)", True, "Auth token de Twilio."),
     Var("TWILIO_WHATSAPP_FROM", "WhatsApp (Twilio)", False, "Número de origen, ej. whatsapp:+14155238886."),
