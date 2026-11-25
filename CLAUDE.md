@@ -1536,6 +1536,21 @@ NULL: si no, la leyenda anuncia una medida que la sala no registra.
   ordeñe — pero no hay que confiarse en eso.
 - Los informes de DelPro que sirvieron de referencia estaban en "Todos los
   rebaños": por eso sus números son ~2x los de La Ponderosa sola.
+- **El historial de lactancias se une por `HistoryAnimal.ReferenceId`, NUNCA por el OID del animal** (corregido el 25/11/2026).
+  `HistoryAnimalLactationInfo.Animal` apunta a `HistoryAnimal.OID`; el animal es `HistoryAnimal.ReferenceId` (sin repetidos). Los dos números son distintos en
+  2.344 de los 11.548 históricos de La Ponderosa y en 2.911 de 2.925 de San José (copias del 20/11/2026): `JOIN BasicAnimal b ON b.OID = h.Animal` mira OTRO animal.
+  La forma correcta, que es la de DelPro (`dbo.GetTotalYieldInLactation`): `JOIN HistoryAnimal ha ON ha.OID = h.Animal`, y el animal es `ha.ReferenceId` (en los
+  informes, el bloque `historia`). Estaba mal en el **Tablero «Días abiertos promedio»** (`app._tablero_dias_abiertos`) y en el **«% de preñez por días en leche»**
+  del Análisis reproductivo (`reproduccion.sql_prenez_por_del`): los días abiertos eran los de la lactancia correcta, pero el rebaño se miraba en otro animal.
+  Antes → después: La Ponderosa **casi igual** (días abiertos 136,5 → 136,5; preñez por DEL, 0,3 puntos a lo sumo: los históricos con OID distinto son animales recientes y solo
+  38 de sus lactancias tienen días abiertos); San José **cambia** (días abiertos 124,1 → 137,0, de 596 a 858 lactancias; la preñez de 2025 de 1ª lactancia pasó de 12 a 133
+  lactancias). Prueba: `tests/test_historia_lactancia.py` (corre el SQL real contra una base SQLite con el caso que rompía).
+- **SIN RESOLVER (y no es el error de unión): el filtro de rebaño solo ve a los animales que siguen en un grupo**, porque al darse de baja pierden el `[Group]` (ver
+  `rebano.filtro_historico`). Por eso el «% de preñez por días en leche» y los «Días abiertos» cuentan casi solo a las vacas que SIGUEN en el tambo, y las que se
+  fueron son, en buena parte, las que no quedaron preñadas. Preñez a 300 días de las lactancias iniciadas en 2025 (copias del 20/11/2026): La Ponderosa 1ª lactancia,
+  87,4 % las que siguen (374) contra 40,6 % las dadas de baja (224, de los tres tambos); San José, que tiene un solo rebaño, 2da y más: 90,3 % (175) contra 37,0 % (146).
+  Sin filtro (los tres tambos de la base juntos) da 52,7 % (1ª) y 51,1 % (2da y más). No hay una forma directa de saber de qué rebaño era un animal que ya se fue
+  (`HistoryAnimal.LastGroup` está cargado en solo 681 de los 3.093 dados de baja de La Ponderosa). Esas dos cifras sobreestiman: leerlas como un techo, no como la preñez real del rodeo.
 - Proyección de rebaños: la ecuación es
   `lactantes[m] = lactantes[m-1] + partos - secados - salidas` y la producción
   `lactantes × kg/vaca/día del año pasado × días del mes` (ambas verificadas
