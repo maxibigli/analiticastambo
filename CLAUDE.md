@@ -2283,6 +2283,31 @@ corresponde. Reglas, todas con test (`tests/test_iot_probar_salida.py`):
     prueba no se dispara minutos después, cuando el gateway vuelva.
   * Probado en el navegador con un servidor aislado y el gateway simulado; **no contra el M300 real**.
 
+## Vueltas por hora (rotativa) y mangadas por hora (convencional) (25/11/2026)
+
+Pedido del tambo: medir cuántas veces por hora se renueva la sala. Dos tarjetas del Tablero de Diagnóstico (grupo Ordeño) —`vueltas_hora`
+y `mangadas_hora`— y, en Rendimiento Sala, una tarjeta («Vueltas/Mangadas por hora (promedio)») y el gráfico `#rend-vueltas` (línea del
+ritmo por sesión sobre las barras de cuántas fueron). Cada indicador declara `sala` en `tablero.INDICADORES` y **cada tambo ve solo la
+suya** (`tablero.aplica`; `armar(..., sala=)` y `catalogo(sala)`; sin decir la sala se ven todas). Ambas llevan al gráfico con `ancla`.
+
+  * **Cuenta**: `rotaciones_por_hora` de cada sesión (`rutina._resumen_sesion_rendimiento`) = `n_rotaciones` ÷ las MISMAS horas que ordeños/hora
+    (primera vaca colocada a última retirada). El promedio entre sesiones es simple, igual que ordeños/hora y litros/hora, y lo comparten
+    la tarjeta del tablero y la de la pantalla (`rutina.promedio_rotaciones_por_hora`).
+  * **Rotativa: exacto.** `n_rotaciones` es `CMSDeviceVisit.BatchOrRotation` (ya era así). Medido en la copia local de La Ponderosa, 22 al
+    29/07/2026: 21 a 25 vueltas por ordeño, **4,4 a 5,5 vueltas/h**, ~68 vacas por vuelta.
+  * **Convencional: se cambió cómo se cuenta una mangada.** Antes `salas.convencional._rotaciones_tandas` contaba los (`SideNo`, `BatchNo`) distintos y
+    ese bloque se fragmenta: el 11/08/2026 daba 35, 30 y 27 en tres ordeños parecidos. Ahora **una mangada es cada vez que un lado se llena**: se unen
+    los tramos con al menos una vaca puesta y se corta cuando el lado queda vacío `rutina.UMBRAL_HUECO_MIN_S` (20 s) o más (el mismo criterio de
+    `_vacios_por_lado`). Da 30, 30 y 27 (26 a 30 vacas por mangada, los 30 puestos de un lado) = **~5,5 mangadas/h**. Sin horas de colocación y fin
+    cae a contar tandas, como antes. **Esto también cambia la columna «Rotaciones» de Rendimiento Sala en la convencional.**
+  * **Umbrales de partida, no metas del tambo**: vueltas verde 5 / rojo 4; mangadas verde 6 / rojo 4,5 (ajustables en ⚙ Configuración como los demás).
+    La rotativa promedia ~4,9, o sea que arranca en verde justo en el límite.
+  * **Sin verificar**: la convencional se midió en UNA fecha de La Martina (11/08/2026, la copia local no llega más lejos); mirar otros días y
+    San José en SERVER-DELPRO antes de dar la cifra por buena. Las pantallas se probaron en el navegador con respuestas simuladas con esos valores
+    (la copia local de La Martina rechaza al usuario `delpro_lectura` y la de La Ponderosa tarda más que el timeout en frío).
+    Pruebas: `tests/test_vueltas_mangadas.py`.
+  * Cambio aparte, mismo commit: la tarjeta «Recuento de UFC» pasó del grupo Sanidad a **Calidad** (las de RCS siguen en Sanidad).
+
 **Para correr toda la suite**: `python -m unittest discover -s tests -t .` NO funciona (`tests` no es un paquete). Con `-s tests` suelto,
 la corrida combinada termina con un error de `tkinter` («main thread is not in main loop») en las pruebas del panel de despliegue
 antes de imprimir el resumen; corriendo cada módulo por separado (`python -m unittest tests.test_xxx`) los 44 pasan.

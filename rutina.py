@@ -535,6 +535,11 @@ def _resumen_sesion_rendimiento(visitas: list, rotaciones_fn=None) -> dict:
         # sesión de 16.795,66 s; redondeando daría 04:39:56).
         "duracion_seg": int(duracion_seg),
         "n_rotaciones": n_rotaciones,
+        # Vueltas de la plataforma por hora en la rotativa; mangadas por hora en
+        # la sala convencional (cada sala dice qué es una «rotación», ver
+        # `rotaciones_fn`). Mismas horas que los demás «por hora» de la sesión.
+        "rotaciones_por_hora": (round(n_rotaciones / duracion_h, 1)
+                                if n_rotaciones and duracion_h else None),
         "n_visitas": n_visitas, "n_ordenios": n_ordenios,
         "n_desconocidos": n_desconocidos,
         "kg_desconocidos": round(kg_desconocidos, 1),
@@ -927,6 +932,18 @@ def analizar_rendimiento(columns, rows, desde: str, hasta: str, max_sesiones: in
             resumen["retiradas_grupo_actual"] = _retiradas_grupo_actual(vs, nombres, grupos_ordene)
             sesiones.append(resumen)
     return sesiones
+
+
+def promedio_rotaciones_por_hora(sesiones: list) -> tuple:
+    """(promedio, cantidad de sesiones) de las vueltas (o mangadas) por hora.
+
+    Promedio SIMPLE entre sesiones, igual que ordeños/hora y litros/hora: son
+    tasas, y la tarjeta de Rendimiento Sala y la del tablero tienen que dar el
+    mismo número. (None, 0) si ninguna sesión trae el dato."""
+    tasas = [s["rotaciones_por_hora"] for s in sesiones if s.get("rotaciones_por_hora") is not None]
+    if not tasas:
+        return None, 0
+    return round(sum(tasas) / len(tasas), 1), len(tasas)
 
 
 def resumen_grupos_dia(columns, rows, fecha: str, grupos_ordene=None,

@@ -190,6 +190,44 @@ INDICADORES = [
                   "Cuenta ordeños con leche ÷ horas de la sesión, de la primera "
                   "vaca en ordeñarse a la última en terminar."),
     },
+    # Las dos que siguen miden lo mismo —cuántas veces por hora se renueva lo que
+    # hay en la sala— y cada tambo ve la de SU tipo de sala (`sala`): una rotativa
+    # no tiene mangadas ni una convencional tiene vueltas. Los verdes y rojos son
+    # un punto de partida medido en las copias locales (La Ponderosa 4,4 a 5,5
+    # vueltas/h; La Martina ~5,5 mangadas/h), no una meta del tambo: se ajustan en
+    # ⚙ Configuración como todos los demás.
+    {
+        "clave": "vueltas_hora",
+        "nombre": "Vueltas por hora de la rotativa",
+        "unidad": "vueltas/h", "decimales": 1,
+        "direccion": "alto_mejor", "verde": 5, "rojo": 4,
+        "sala": "rotativa",
+        "fuente": "rendimiento", "pagina": "rendimiento",
+        "destino": "Rendimiento Sala › vueltas por hora",
+        # Al hacer clic la pantalla baja sola hasta el gráfico de vueltas por hora.
+        "ancla": "rend-vueltas",
+        "grupo": "Ordeño",
+        "ayuda": ("Promedio simple entre las sesiones del período: cuántas vueltas "
+                  "completas da la plataforma por hora de funcionamiento. El número de "
+                  "vuelta lo graba la propia máquina (es exacto, no una estimación). "
+                  "Si baja, la rotativa está girando más lenta o parando más."),
+    },
+    {
+        "clave": "mangadas_hora",
+        "nombre": "Mangadas por hora",
+        "unidad": "mangadas/h", "decimales": 1,
+        "direccion": "alto_mejor", "verde": 6, "rojo": 4.5,
+        "sala": "convencional",
+        "fuente": "rendimiento", "pagina": "rendimiento",
+        "destino": "Rendimiento Sala › mangadas por hora",
+        "ancla": "rend-vueltas",
+        "grupo": "Ordeño",
+        "ayuda": ("Promedio simple entre las sesiones del período: cuántas mangadas "
+                  "ordeña la sala por hora de funcionamiento. Una mangada es cada vez que "
+                  "un lado se llena de vacas (sumando los dos lados). Se cuenta por "
+                  "ocupación y no por el número de bloque de la máquina, que se "
+                  "fragmenta y daba cifras distintas para ordeños parecidos."),
+    },
     {
         "clave": "litros_hora",
         "nombre": "Litros/hora promedio",
@@ -284,7 +322,7 @@ INDICADORES = [
         "direccion": "bajo_mejor", "verde": 20, "rojo": 50,
         "fuente": "laserenisima", "pagina": "entregas",
         "destino": "Entregas a la usina",
-        "grupo": "Sanidad",
+        "grupo": "Calidad",
         "ayuda": ("La ENTREGA MÁS RECIENTE con resultado de laboratorio (no un "
                   "promedio de la ventana: para actuar hoy importa el último dato, "
                   "no el historial). NO sale de DelPro: lo publica la usina con "
@@ -370,8 +408,14 @@ def rango_historico(hasta: datetime.date = None) -> dict:
             "hasta": hasta.isoformat(), "dias": DIAS_HISTORICO}
 
 
+def aplica(ind: dict, sala: str = None) -> bool:
+    """¿Este indicador es de este tipo de sala? Los que no declaran `sala` sirven
+    para cualquiera; sin decir la sala (`None`) se ven todos."""
+    return sala is None or ind.get("sala") in (None, sala)
+
+
 def armar(valores: dict, config: dict = None, lecturas: dict = None,
-          base_caida: str = None) -> dict:
+          base_caida: str = None, sala: str = None) -> dict:
     """Las tarjetas del tablero, listas para pintar.
 
     `valores`: {clave: {"valor": x} | {"falta": "por qué"}} — lo resuelve app.py
@@ -380,6 +424,8 @@ def armar(valores: dict, config: dict = None, lecturas: dict = None,
     `lecturas`: la última lectura buena de cada indicador (ver `lecturas_de`).
     `base_caida`: si la base no responde, el motivo — para explicar de una vez
         por qué todo el tablero está mostrando datos viejos.
+    `sala`: "rotativa" | "convencional" — deja afuera los indicadores de la otra
+        sala (ver `aplica`). None = todos.
 
     SI NO HAY VALOR FRESCO SE MUESTRA EL ÚLTIMO CONOCIDO, rotulado con cuándo se
     leyó. Un número de ayer con su fecha sirve para decidir; un guion que no se
@@ -390,6 +436,8 @@ def armar(valores: dict, config: dict = None, lecturas: dict = None,
     lecturas = lecturas or {}
     tarjetas = []
     for ind in INDICADORES:
+        if not aplica(ind, sala):
+            continue
         cfg = config.get(ind["clave"]) or {}
         if cfg.get("activo") is False:
             continue
@@ -571,13 +619,14 @@ def html_resumen(armado: dict, nombre_tambo: str = None) -> str | None:
 </div>"""
 
 
-def catalogo() -> list:
-    """Los indicadores con sus defaults, para la pantalla de configuración."""
+def catalogo(sala: str = None) -> list:
+    """Los indicadores con sus defaults, para la pantalla de configuración.
+    `sala`: solo los de ese tipo de sala (ver `aplica`); None = todos."""
     return [{**{k: i[k] for k in ("clave", "nombre", "unidad", "decimales",
                                   "direccion", "verde", "rojo", "grupo", "ayuda",
                                   "destino")},
              "color_propio": bool(i.get("color_propio"))}
-            for i in INDICADORES]
+            for i in INDICADORES if aplica(i, sala)]
 
 
 # --- Última lectura buena de cada indicador ---------------------------------

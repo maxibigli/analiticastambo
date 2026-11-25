@@ -954,7 +954,7 @@ def _calentar_tablero(tambo: str, faltan: set):
                     pass
 
             if {"horas_ordeno", "horas_ordeno_total", "pct_identificacion", "ordenos_hora",
-                "litros_hora", "vacas_puesto", "vacas_persona"} & faltan:
+                "litros_hora", "vacas_puesto", "vacas_persona", "vueltas_hora", "mangadas_hora"} & faltan:
                 try:
                     ancla = _ultimo_dia_datos(tambo, herd)
                     _refresh_rendimiento_async(tambo, ancla - datetime.timedelta(days=6), ancla)
@@ -1120,6 +1120,12 @@ def _iot_alarmas_tablero(ahora: datetime.datetime = None) -> dict:
             "detalle": " · ".join(partes) or None}
 
 
+def _clave_vueltas_tablero(tambo: str) -> str:
+    """El indicador de «veces por hora que se renueva la sala» que le toca a este
+    tambo: vueltas de la plataforma en una rotativa, mangadas en una convencional."""
+    return "vueltas_hora" if tambos.tipo_sala(tambo) == "rotativa" else "mangadas_hora"
+
+
 def _valores_tablero(tambo: str) -> dict:
     """{clave: {"valor"|"falta"|"calculando"}} para cada indicador del tablero.
 
@@ -1209,7 +1215,8 @@ def _valores_tablero(tambo: str) -> dict:
              f":{ancla.isoformat()}")
         data, _ = _cache_get(k, allow_stale=True)
         if data is None:
-            for c in ("horas_ordeno", "horas_ordeno_total", "pct_identificacion"):
+            for c in ("horas_ordeno", "horas_ordeno_total", "pct_identificacion",
+                      _clave_vueltas_tablero(tambo)):
                 poner(c, calculando=True,
                       falta="La pantalla de Rendimiento Sala todavía no se calculó.")
         else:
@@ -1239,8 +1246,11 @@ def _valores_tablero(tambo: str) -> dict:
                     grupos_ordene=_grupos_ordene(tambo)) or []
 
             sin_sesiones = "Sin sesiones en la semana previa al último día con datos."
+            # Vueltas (rotativa) o mangadas (convencional) por hora: solo la de
+            # este tipo de sala, la otra ni se pide (ver `tablero.aplica`).
+            clave_vueltas = _clave_vueltas_tablero(tambo)
             claves_rend = ("horas_ordeno", "horas_ordeno_total", "ordenos_hora",
-                           "litros_hora", "vacas_puesto", "vacas_persona")
+                           "litros_hora", "vacas_puesto", "vacas_persona", clave_vueltas)
             if not sesiones:
                 for c in claves_rend:
                     poner(c, falta=sin_sesiones)
@@ -1253,6 +1263,11 @@ def _valores_tablero(tambo: str) -> dict:
                       falta=sin_sesiones, detalle=f"{len(oh)} sesión(es)" if oh else None)
                 poner("litros_hora", round(sum(kh) / len(kh), 1) if kh else None,
                       falta=sin_sesiones, detalle=f"{len(kh)} sesión(es)" if kh else None)
+                # Misma cuenta que la tarjeta de Rendimiento Sala (promedio simple
+                # entre sesiones, `rutina.promedio_rotaciones_por_hora`).
+                vueltas_h, n_vueltas = rutina.promedio_rotaciones_por_hora(sesiones)
+                poner(clave_vueltas, vueltas_h, falta=sin_sesiones,
+                      detalle=f"{n_vueltas} sesión(es)" if vueltas_h is not None else None)
 
                 # Vacas por puesto / por persona: dotación del tambo. Mismas
                 # constantes que usa la propia pantalla (puestos de la sala,
@@ -1376,7 +1391,8 @@ def _valores_tablero(tambo: str) -> dict:
                                if horas_total is not None else None))
     except Exception as exc:  # noqa: BLE001
         for c in ("horas_ordeno", "horas_ordeno_total", "pct_identificacion",
-                  "ordenos_hora", "litros_hora", "vacas_puesto", "vacas_persona"):
+                  "ordenos_hora", "litros_hora", "vacas_puesto", "vacas_persona",
+                  _clave_vueltas_tablero(tambo)):
             poner(c, falta=f"Error al leer Rendimiento Sala: {exc}")
 
     # --- RCS: vacas altas y crónicas ---------------------------------------
@@ -1640,7 +1656,7 @@ def api_tablero():
 
     return jsonify(tablero.armar(valores, tablero.config_de(tambo),
                                   lecturas=tablero.lecturas_de(tambo),
-                                  base_caida=caida))
+                                  base_caida=caida, sala=tambos.tipo_sala(tambo)))
 
 
 @app.get("/api/tablero/config")
@@ -1648,7 +1664,7 @@ def api_tablero():
 def api_tablero_config():
     tambo = _tambo_del_request()
     return jsonify({"config": tablero.config_de(tambo),
-                    "catalogo": tablero.catalogo()})
+                    "catalogo": tablero.catalogo(tambos.tipo_sala(tambo))})
 
 
 @app.post("/api/tablero/config")
@@ -1663,7 +1679,7 @@ def api_tablero_guardar():
             cfg = tablero.guardar(tambo, datos.get("umbrales") or {})
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
-    return jsonify({"config": cfg, "catalogo": tablero.catalogo()})
+    return jsonify({"config": cfg, "catalogo": tablero.catalogo(tambos.tipo_sala(tambo))})
 
 
 @app.post("/api/tablero/config/probar_resumen")
@@ -1674,7 +1690,8 @@ def api_tablero_probar_resumen():
     (⚙ Configuración › 🔔 Alertas). Mismo criterio que /api/alertas/probar."""
     tambo = _tambo_del_request()
     valores = _valores_tablero(tambo)
-    armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
+    armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo),
+                           sala=tambos.tipo_sala(tambo))
     texto = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
     if not texto:
         return jsonify({"error": "No tildaste ningún indicador en la columna \"📲 Resumen\"."}), 400
@@ -7508,7 +7525,8 @@ def _construir_mensaje_alertas(tambo: str, registrar: bool = False):
 
     try:
         valores = _valores_tablero(tambo)
-        armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo))
+        armado = tablero.armar(valores, tablero.config_de(tambo), lecturas=tablero.lecturas_de(tambo),
+                           sala=tambos.tipo_sala(tambo))
         texto_tablero = tablero.texto_resumen(armado, nombre_tambo=tambos.nombre_de(tambo))
         if texto_tablero:
             partes_texto.append(texto_tablero)

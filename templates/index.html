@@ -2599,6 +2599,11 @@
         <div class="chart-box" style="height:260px"><canvas id="chart-rend-throughput"></canvas></div>
       </div>
     </div>
+    <div style="margin-top:14px" id="rend-vueltas">
+      <div class="aviso" style="margin-bottom:6px" id="rend-vueltas-titulo">Vueltas por hora</div>
+      <p class="explica" style="margin-top:0" id="rend-vueltas-explica"></p>
+      <div class="chart-box" style="height:260px"><canvas id="chart-rend-vueltas"></canvas></div>
+    </div>
     <div style="margin-top:14px">
       <div class="aviso" style="margin-bottom:6px">% de identificación por día</div>
       <p class="explica" style="margin-top:0">
@@ -5705,7 +5710,7 @@ document.getElementById('rend-dia-ant').addEventListener('click', () => moverDia
 document.getElementById('rend-dia-sig').addEventListener('click', () => moverDiaRendimiento(1));
 
 // --- Rendimiento Sala: throughput de la rotativa por sesión, rango elegible -
-let chartRendProd = null, chartRendThroughput = null, chartRendIdent = null,
+let chartRendProd = null, chartRendThroughput = null, chartRendVueltas = null, chartRendIdent = null,
     chartRendVacasPuesto = null, chartRendVacasPersona = null, chartRendPermanencia = null,
     chartRendPermanenciaGrupo = null, chartRendVacasHoraGrupo = null,
     chartRendOrdeniosHoraEvolucion = null, chartRendRetiradasEvolucion = null,
@@ -5794,6 +5799,15 @@ async function cargarRendimiento() {
     // más abajo — esa consulta filtra las visitas sin identificar)
     const rotaciones = sesiones.filter(s => s.n_rotaciones != null).map(s => s.n_rotaciones);
     const rotProm = rotaciones.length ? Math.round(rotaciones.reduce((a, b) => a + b, 0) / rotaciones.length) : null;
+    // «Rotación» es la vuelta de la plataforma en la rotativa y la mangada en la
+    // sala convencional (cada sala la cuenta a su manera, ver
+    // rutina._resumen_sesion_rendimiento). Se rotula según el tipo de sala.
+    const esConv = (tambosInfo[tamboActual] || {}).sala === 'convencional';
+    const nomRot = esConv ? 'Mangadas' : 'Vueltas', nomRotMin = nomRot.toLowerCase();
+    const rotHora = sesiones.filter(s => s.rotaciones_por_hora != null).map(s => s.rotaciones_por_hora);
+    // Promedio simple entre sesiones y 1 decimal: la misma cuenta que la tarjeta
+    // del tablero (rutina.promedio_rotaciones_por_hora).
+    const rotHoraProm = rotHora.length ? Math.round(10 * rotHora.reduce((a, b) => a + b, 0) / rotHora.length) / 10 : null;
     const ordHora = sesiones.filter(s => s.ordenios_por_hora != null).map(s => s.ordenios_por_hora);
     const ordHoraProm = ordHora.length ? Math.round(10 * ordHora.reduce((a, b) => a + b, 0) / ordHora.length) / 10 : null;
     const kgHora = sesiones.filter(s => s.kg_por_hora != null).map(s => s.kg_por_hora);
@@ -5924,7 +5938,8 @@ async function cargarRendimiento() {
       ['Producción total', kgTotal ? Math.round(kgTotal) + ' kg' : '—'],
       ['% de identificación', pctIdent != null ? (Math.round(100 * pctIdent) / 100) + '%' : 'no disponible'],
       ['Ordeños sin identificar', ident ? `${fmt(identDesc)} (${fmt(Math.round(identKg))} kg)` : '—'],
-      ['Rotaciones promedio/sesión', rotProm],
+      [`${nomRot} promedio/sesión`, rotProm],
+      [`${nomRot} por hora (promedio)`, rotHoraProm ?? '—'],
       ['Vacas ordeñadas por hora (promedio)', ordHoraProm ?? '—'],
       ['Litros/hora promedio', kgHoraProm ?? '—'],
       ['Vacas por puesto (promedio)', vacasPorPuestoProm ?? '—'],
@@ -5967,6 +5982,33 @@ async function cargarRendimiento() {
         linea('Litros/hora', sesiones.map(s => s.kg_por_hora), SERIES[3], { yAxisID: 'y1' }),
       ] },
       options: optsThroughput,
+    });
+
+    // Vueltas (rotativa) o mangadas (convencional) por hora, por sesión: ¿la sala
+    // renueva lo que tiene adentro más rápido o más lento que otros días? Las
+    // barras son la cantidad absoluta (cuántas en la sesión) y la línea el ritmo.
+    document.getElementById('rend-vueltas-titulo').textContent = `${nomRot} por hora`;
+    document.getElementById('rend-vueltas-explica').innerHTML = esConv
+      ? '<b>Qué muestra.</b> Cuántas mangadas ordeña la sala por hora de funcionamiento, sesión por sesión. '
+        + '<b>Cómo se cuenta.</b> Una mangada es cada vez que un lado se llena de vacas (se suman los dos lados): '
+        + 'se mira cuándo hay al menos una vaca puesta y se corta cuando el lado se vació por más de unos segundos. '
+        + 'No se usa el número de bloque de la máquina, que se fragmenta y daba cifras distintas para ordeños parecidos.'
+      : '<b>Qué muestra.</b> Cuántas vueltas completas da la plataforma por hora de funcionamiento, sesión por sesión. '
+        + '<b>Cómo se cuenta.</b> El número de vuelta lo graba la propia máquina en cada ordeño: se cuentan las vueltas distintas '
+        + 'de la sesión y se dividen por sus horas (de la primera vaca colocada a la última retirada).';
+    const oVueltas = optsDobleEje(`${nomRotMin}/hora`, `${nomRotMin} en la sesión`);
+    oVueltas.plugins.legend.display = true;
+    chartRendVueltas = dibujar('chart-rend-vueltas', chartRendVueltas, {
+      type: 'bar',
+      data: { labels, datasets: [
+        // Las barras (cuántas) van atenuadas y detrás: lo que se mira es el ritmo.
+        { type: 'bar', label: `${nomRot} en la sesión`, yAxisID: 'y1', order: 1,
+          data: sesiones.map(s => s.n_rotaciones),
+          backgroundColor: SERIES[1] + '66', maxBarThickness: 26, borderRadius: 3 },
+        linea(`${nomRot}/hora`, sesiones.map(s => s.rotaciones_por_hora), SERIES[4],
+              { type: 'line', order: 0, borderWidth: 3, pointRadius: 4 }),
+      ] },
+      options: oVueltas,
     });
 
     // % de identificación en el tiempo: la línea es la tasa (eje izquierdo) y

@@ -398,8 +398,37 @@ def _vacio_entre_mangadas(visitas: list, duracion_seg: float) -> dict:
 
 
 def _rotaciones_tandas(visitas: list, duracion_seg: float) -> int | None:
-    """Análogo de `rutina._rotaciones_rotativa` para "Rendimiento Sala": en vez
-    de vueltas de plataforma, cuenta tandas (lado, bloque) distintas."""
+    """Mangadas de la sesión: análogo de `rutina._rotaciones_rotativa` para
+    "Rendimiento Sala" (en una sala de tandas no hay vueltas de plataforma).
+
+    UNA MANGADA ES CADA VEZ QUE UN LADO SE LLENA: se cuentan, por lado, los
+    tramos seguidos con al menos una vaca puesta. Dos tramos separados por menos
+    de `rutina.UMBRAL_HUECO_MIN_S` son la misma mangada (entre el fin de una vaca
+    y el enganche de la siguiente puede haber un segundo suelto); uno separado por
+    más es un lado que se vació y volvió a llenarse. Es el mismo criterio con el
+    que `_vacios_por_lado` mide el cambio de mangada.
+
+    NO se cuentan los (`SideNo`, `BatchNo`) de la máquina, como se hacía antes: ese
+    número de bloque se fragmenta (reaparece) y en tres ordeños parecidos del
+    11/08/2026 daba 35, 30 y 27 mangadas; por ocupación dan 30, 30 y 27, con 26 a
+    30 vacas por mangada, que es lo que cabe en los 30 puestos de cada lado.
+
+    Si la sesión no trae horas de colocación y de fin (sin ellas no se puede saber
+    cuándo se llenó un lado) cae a contar las tandas (lado, bloque) distintas."""
+    por_lado = {}
+    for v in visitas:
+        if v.get("lado") is not None:
+            por_lado.setdefault(v["lado"], []).append(v)
+    if not por_lado:
+        return None
+    mangadas = 0
+    for del_lado in por_lado.values():
+        tramos = _tramos_ocupados(del_lado)
+        mangadas += (1 if tramos else 0) + sum(
+            1 for a, b in zip(tramos, tramos[1:])
+            if (b[0] - a[1]).total_seconds() >= rutina.UMBRAL_HUECO_MIN_S)
+    if mangadas:
+        return mangadas
     tandas = {(v["lado"], v["bloque"]) for v in visitas if v.get("lado") is not None}
     return len(tandas) or None
 
