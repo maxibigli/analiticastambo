@@ -1545,12 +1545,19 @@ NULL: si no, la leyenda anuncia una medida que la sala no registra.
   Antes → después: La Ponderosa **casi igual** (días abiertos 136,5 → 136,5; preñez por DEL, 0,3 puntos a lo sumo: los históricos con OID distinto son animales recientes y solo
   38 de sus lactancias tienen días abiertos); San José **cambia** (días abiertos 124,1 → 137,0, de 596 a 858 lactancias; la preñez de 2025 de 1ª lactancia pasó de 12 a 133
   lactancias). Prueba: `tests/test_historia_lactancia.py` (corre el SQL real contra una base SQLite con el caso que rompía).
-- **SIN RESOLVER (y no es el error de unión): el filtro de rebaño solo ve a los animales que siguen en un grupo**, porque al darse de baja pierden el `[Group]` (ver
-  `rebano.filtro_historico`). Por eso el «% de preñez por días en leche» y los «Días abiertos» cuentan casi solo a las vacas que SIGUEN en el tambo, y las que se
-  fueron son, en buena parte, las que no quedaron preñadas. Preñez a 300 días de las lactancias iniciadas en 2025 (copias del 20/11/2026): La Ponderosa 1ª lactancia,
-  87,4 % las que siguen (374) contra 40,6 % las dadas de baja (224, de los tres tambos); San José, que tiene un solo rebaño, 2da y más: 90,3 % (175) contra 37,0 % (146).
-  Sin filtro (los tres tambos de la base juntos) da 52,7 % (1ª) y 51,1 % (2da y más). No hay una forma directa de saber de qué rebaño era un animal que ya se fue
-  (`HistoryAnimal.LastGroup` está cargado en solo 681 de los 3.093 dados de baja de La Ponderosa). Esas dos cifras sobreestiman: leerlas como un techo, no como la preñez real del rodeo.
+- **Los animales que ya se fueron TAMBIÉN cuentan para el rebaño** (25/11/2026). Al darse de baja un animal pierde el `[Group]`, y `rebano.filtro_por_animal` (el grupo de HOY) lo dejaba afuera: el «% de preñez por días
+  en leche» y los «Días abiertos» contaban casi solo a las vacas que SIGUEN en el tambo, y las que se van son, en buena parte, las que no quedaron preñadas (preñez a 300 días de las lactancias de 2025 en La Ponderosa:
+  87 % las que siguen contra 41 % las que se fueron, de los tres tambos de la base). Ahora esas dos cuentas usan **`rebano.filtro_del_animal`**: el rebaño del grupo de hoy y, si ya no tiene grupo, el del grupo de su ÚLTIMO registro diario
+  (`AnimalDaily`, índice por animal y fecha). Medido en las copias del 20/11/2026: el último registro diario de un animal que sigue en un grupo da su mismo rebaño en 8.001 de 8.001 (La Ponderosa) y 1.011 de 1.011
+  (San José) y coincide con el último cambio de grupo (`EventGroupChange`) en 2.944 de 2.944; cubre el 95 % de los que se fueron (el resto son salidas sin ningún registro diario, y los 454 históricos cuyo animal se borró
+  de `BasicAnimal` no se pueden ubicar). **NO usar `HistoryAnimal.LastGroup`** (acierta 41,7 % en La Ponderosa) **ni «algún registro en el rebaño»** (1.840 animales se mudaron de rebaño). Costo: 0,3 a 1,4 s, 1 a 2 MB.
+  Preñez por DEL de 2025, antes → después (1ª lactancia y 2ª y más, a ≤100/130/150/200/300 días): La Ponderosa 40,9/58,0/63,1/72,5/87,4 → 38,3/52,7/57,0/65,7/76,9 y 35,2/48,4/56,9/69,1/88,8 → 25,3/36,8/43,0/52,4/63,5; San José
+  55,6/67,7/73,7/86,5/91,0 → 50,6/62,8/68,6/79,5/84,0 y 47,4/63,4/68,0/80,0/90,3 → 32,4/44,2/49,2/58,6/66,0. **«Días abiertos» además deja de contar las filas con `LactationNumber = 0`** (las novillas antes de parir: 207 en La Ponderosa,
+  de 353 a 399 días, y 116 en San José, de ~380 de promedio: sumaban 10 días al promedio de La Ponderosa y 24 al de San José): La Ponderosa 136,5 → 129,8 días (4.060 lactancias) y San José 137,0 → 115,3 (1.731).
+  **Con el mismo sesgo y SIN tocar**: servicios por ciclo (tasa de servicio y de preñez), abortos, partos del período, gestación e «Indicadores de Preñez» (`reproduccion.sql_servicios_por_ciclo`, `sql_abortos`, `sql_partos_periodo`,
+  `gestacion.py`, `preneces.py`...). En los últimos 12 meses de La Ponderosa dejan afuera el 7,5 % de los servicios, el 10,6 % de las preñeces confirmadas, el 12,2 % de los partos y el **30,5 % de los abortos**. Pasarlos a
+  `filtro_del_animal` es una línea por consulta, pero cambia los números de cada pantalla. Y «Días abiertos» promedia TODO el historial, con las lactancias de 2026 «censuradas» (solo cuentan las que ya quedaron preñadas: 87 días de promedio
+  contra ~141 de 2023 a 2025): el número mezcla dos sesgos y conviene acotarlo a un período ya cerrado.
 - Proyección de rebaños: la ecuación es
   `lactantes[m] = lactantes[m-1] + partos - secados - salidas` y la producción
   `lactantes × kg/vaca/día del año pasado × días del mes` (ambas verificadas

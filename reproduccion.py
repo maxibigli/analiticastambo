@@ -22,11 +22,11 @@ y ninguno lo reproduce:
     preñez por DEL en 2025 (31/40/42/48/53 contra 24/33/36/40/48) pero queda
     ~6 puntos alto, y en 2026 se derrumba porque las lactancias en curso
     todavía no tienen el campo cargado. (Esas cifras son de «todos los
-    rebaños», los tres tambos de la base juntos y sin filtrar: con el filtro
-    del tambo da MUCHO más alto —1ª lactancia de 2025 en la copia del
-    20/11/2026: 41/58/63/73/87— porque el filtro deja afuera a los animales
-    dados de baja, que son los que menos preñaron; ver CLAUDE.md, «Trampas del
-    esquema DDM».)
+    rebaños», los tres tambos de la base juntos y sin filtrar. Con el filtro del
+    tambo —que desde el 25/11/2026 incluye a los animales que ya se fueron, ver
+    `rebano.filtro_del_animal`— la 1ª lactancia de 2025 da en la copia del
+    20/11/2026 38/53/57/66/77 y la 2ª y más 25/37/43/52/64; antes, sin las que
+    se fueron, daba 41/58/63/73/87 y 35/48/57/69/89. Ver CLAUDE.md.)
   * `EventPregCheck.DaysFromInsemination` viene en 0 en toda la base, así que
     no se puede ligar cada servicio con su resultado (por eso Tasa de
     Concepción sale vacía, igual que en el informe de DelPro).
@@ -338,6 +338,14 @@ def sql_prenez_por_del(desde: str, hasta: str, herd=None) -> str:
     lactancia en curso y OID distinto: el inicio de la lactancia coincide en
     71 de 71 uniendo por el historial y en 0 de 71 uniendo por el OID del animal.
     DelPro lo hace igual (`dbo.GetTotalYieldInLactation`).
+
+    ENTRAN TAMBIÉN LAS LACTANCIAS DE LOS ANIMALES QUE YA SE FUERON (25/11/2026):
+    el rebaño sale de `rebano.filtro_del_animal` (el grupo de hoy o, si ya no
+    tiene, el de su último registro diario). Con `filtro_por_animal` solo
+    contaban las vacas que SIGUEN en el tambo, y las que se van son, en buena
+    parte, las que no quedaron preñadas: la preñez a 300 días de las
+    lactancias de 2025 daba 87 % (1ª lactancia) y 89 % (2ª y más) en La
+    Ponderosa contra 77 % y 64 % con las que se fueron; ver CLAUDE.md.
     """
     tramos = ", ".join(
         f"100.0 * SUM(CASE WHEN h.OpenDays > 0 AND h.OpenDays <= {n} THEN 1 ELSE 0 END)"
@@ -350,7 +358,7 @@ def sql_prenez_por_del(desde: str, hasta: str, herd=None) -> str:
         JOIN HistoryAnimal ha ON ha.OID = h.Animal
         WHERE h.LactationNumber >= 1
           AND h.StartDate >= '{desde}' AND h.StartDate < DATEADD(day, 1, '{hasta}')
-          AND {rebano.filtro_por_animal('ha.ReferenceId', herd)}
+          AND {rebano.filtro_del_animal('ha.ReferenceId', herd)}
         GROUP BY CASE WHEN h.LactationNumber = 1 THEN 'l1' ELSE 'l2' END
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """

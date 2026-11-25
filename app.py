@@ -1608,15 +1608,25 @@ def _tablero_dias_abiertos(tambo: str, herd) -> dict:
     decidir si la lactancia entraba al promedio (los días abiertos eran los de
     la lactancia correcta; ver `reproduccion.sql_prenez_por_del`). Ahora el
     rebaño se filtra sobre el animal real.
+
+    ENTRAN LAS LACTANCIAS DE LOS ANIMALES QUE YA SE FUERON y NO entran las
+    «lactancias 0» (25/11/2026). El rebaño sale de `rebano.filtro_del_animal`
+    (el grupo de hoy o, si ya no tiene, el de su último registro diario): con el
+    grupo de hoy solo contaban las vacas que SIGUEN en el tambo. Y
+    `HistoryAnimalLactationInfo` trae también filas con `LactationNumber = 0`
+    (las novillas antes de parir: 207 en La Ponderosa y 116 en San José, con
+    unos 380 «días abiertos» que son otra cosa): sin excluirlas sumaban 10 días
+    al promedio de La Ponderosa y 24 al de San José. Medido en las copias del
+    20/11/2026, La Ponderosa daba 136,5 días (2.417 lactancias) y da 129,8
+    (4.060); San José daba 137,0 (858) y da 115,3 (1.731).
     """
     d = db.run_query(f"""
         SELECT CAST(AVG(CAST(h.OpenDays AS float)) AS decimal(6,1)) AS dias,
                COUNT(*) AS lactancias
         FROM HistoryAnimalLactationInfo h
         JOIN HistoryAnimal ha ON ha.OID = h.Animal
-        JOIN BasicAnimal b ON b.OID = ha.ReferenceId
-        WHERE h.OpenDays > 0 AND h.OpenDays < 400
-          AND {rebano.filtro('b', herd)}
+        WHERE h.LactationNumber >= 1 AND h.OpenDays > 0 AND h.OpenDays < 400
+          AND {rebano.filtro_del_animal('ha.ReferenceId', herd)}
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """, tambo=tambo, max_rows=5)
     if not d["rows"] or d["rows"][0][0] is None:

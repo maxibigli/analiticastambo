@@ -102,6 +102,36 @@ def filtro_por_animal(columna_oid: str, herd=None) -> str:
             f" WHERE b_tb.OID = {columna_oid} AND {cond})")
 
 
+def filtro_del_animal(columna_oid: str, herd=None) -> str:
+    """Como `filtro_por_animal`, pero un animal que YA SE FUE también tiene rebaño: el de su último registro diario.
+
+    `filtro_por_animal` mira el grupo de HOY, y al darse de baja un animal pierde el `[Group]`: toda cuenta sobre el PASADO (las lactancias de 2025, los
+    servicios del año...) se quedaba con las vacas que SIGUEN en el tambo y sin las que se fueron, que en buena parte son las que peor andaban. Acá el
+    rebaño de un animal es: (1) el de su grupo de hoy, si tiene; (2) si ya no tiene grupo, el del grupo de su ÚLTIMO registro diario
+    (`AnimalDaily.AnimalGroup`, con un índice por animal y fecha: es una búsqueda por animal, no un recorrido).
+
+    Medido el 25/11/2026 en las copias del 20/11/2026 (`HistoryAnimal`, `AnimalDaily` y `EventGroupChange`):
+      * el último registro diario de un animal que SIGUE en un grupo da el mismo rebaño que su grupo de hoy en 8.001 de 8.001 animales de La Ponderosa y en
+        1.011 de 1.011 de San José; el último cambio de grupo (`EventGroupChange`) también, y entre los que ya se fueron los dos coinciden en 2.944 de 2.944;
+      * cubre 2.944 de los 3.094 animales sin grupo de La Ponderosa (95,2 %) y 1.509 de 1.590 de San José (94,9 %). Los demás son casi todos salidas de tipo 7,
+        sin un solo registro diario; los animales borrados de `BasicAnimal` (454 históricos) tampoco figuran en `AnimalDaily`: no se pueden ubicar;
+      * NO se usa «alguna vez estuvo en el rebaño»: 1.840 animales de La Ponderosa tienen registros en más de un rebaño (se mudaron; casi todos siguen vivos), y
+        contarlos en los dos duplicaría;
+      * NO se usa `HistoryAnimal.LastGroup`: en La Ponderosa coincide con el rebaño de hoy solo en el 41,7 % de los animales vivos (en San José sí, 100 %).
+    Un animal sin grupo y sin registro diario no tiene rebaño: no cuenta para ninguno.
+    """
+    cond = _condicion(herd)
+    if cond is None:
+        return "1 = 1"
+    return (f"(EXISTS (SELECT 1 FROM BasicAnimal b_tb JOIN AnimalGroup g_tb ON g_tb.OID = b_tb.[Group]"
+            f" WHERE b_tb.OID = {columna_oid} AND {cond})"
+            f" OR (NOT EXISTS (SELECT 1 FROM BasicAnimal s_tb WHERE s_tb.OID = {columna_oid} AND s_tb.[Group] IS NOT NULL)"
+            f" AND EXISTS (SELECT 1 FROM AnimalGroup g_tb WHERE {cond} AND g_tb.OID ="
+            f" (SELECT TOP 1 d_tb.AnimalGroup FROM AnimalDaily d_tb"
+            f" WHERE d_tb.BasicAnimal = {columna_oid} AND d_tb.GCRecord IS NULL AND d_tb.AnimalGroup IS NOT NULL"
+            f" ORDER BY d_tb.[Date] DESC, d_tb.OID DESC))))")
+
+
 def filtro_historico(alias_animal: str = "b", herd=None) -> str:
     """Como `filtro`, pero para animales que YA SALIERON del rodeo.
 
@@ -112,6 +142,11 @@ def filtro_historico(alias_animal: str = "b", herd=None) -> str:
     Acá se resuelve mirando el historial: se busca si el animal alguna vez
     tuvo un registro diario en un grupo del rebaño. Es más caro que `filtro()`,
     así que se usa solo donde hace falta —consultas de bajas—, no en general.
+
+    OJO: «alguna vez estuvo» cuenta a un animal en CADA rebaño por el que pasó:
+    1.840 animales de La Ponderosa se mudaron de rebaño (y casi todos siguen
+    vivos en el otro). Para decidir «de qué rebaño es este animal» —lo que
+    necesita cualquier cuenta sobre el pasado— usar `filtro_del_animal`.
     """
     cond = _condicion(herd)
     if cond is None:
