@@ -55,7 +55,20 @@ ALIAS_DE_RUTAS = {"ReproductionInfo.LactationNumber": "CurrentLactationNumber"}
 # reproducción o cuentas sobre ella. `ReproductionInfo.LastCalvingDate`, en cambio, NO es la «Fecha del último parto» de acá (ver `_campo_de`).
 ALIAS_DE_RUTAS.update({"ReproductionInfo." + n: n for n in ("IsPregnant", "IsDryingOff", "DaysToCalving", "DaysToDryOff", "NumberOfInseminations", "DaysSinceLastInsemination",
                                                               "ExpectedCalvingDate", "ExpectedDryOffDate", "LastInseminationDate", "LastAbortionDate",
-                                                              "DaysPregnant", "EffectiveInseminationDate", "LastPregnancyCheckDate", "IsBred")})
+                                                              "DaysPregnant", "EffectiveInseminationDate", "LastPregnancyCheckDate", "IsBred",
+                                                              # tanda 5: las propiedades de la reproducción que ahora tienen su campo, con la fórmula de DelPro
+                                                              "DaysSinceLastHeat", "PregnancyCheckNumber", "LastHeatDate", "DaysSinceLastAbortion", "DaysSinceLastPregnCheck",
+                                                              "LastInseminationNumber", "LastInseminationSemen", "InseminatedByUser")})
+# `CurrentDIM` y `CurrentDSLC` de DelPro SON `ReproductionInfo.DIM` y `ReproductionInfo.DSLC` (sus fórmulas dicen eso): el mismo dato con otro nombre.
+ALIAS_DE_RUTAS.update({"ReproductionInfo.DIM": "CurrentDIM", "ReproductionInfo.DSLC": "CurrentDSLC"})
+# Un campo de DelPro que es EXACTAMENTE otro campo del catálogo pero con OTRO nombre: (nombre del ítem, clase del ítem) -> id del catálogo. La clase hace falta porque el nombre solo no alcanza
+# (`Name` existe en varias clases, `DIM` también: el de un control lechero es otra cosa). Cada uno se comprobó con la fórmula que DelPro guarda en `DDMReportItem.Expression`:
+#   DIM de la reproducción         -> la misma fórmula que `CurrentDIM` (`CurrentDIM = ReproductionInfo.DIM`)
+#   LactationNumber de la reproducción -> `ReproductionInfo.LactationNumber`, el `CurrentLactationNumber`
+#   GroupNumber del rodeo          -> `Number` del rodeo del animal, el `AnimalGroupNumber` (`Group.GroupNumber`)
+#   Name de la finca               -> el nombre de la finca (`FarmName`)
+ALIAS_DE_ITEMS = {("DIM", "AnimalReproductionInfo"): "CurrentDIM", ("LactationNumber", "AnimalReproductionInfo"): "CurrentLactationNumber",
+                  ("GroupNumber", "AnimalGroup"): "AnimalGroupNumber", ("Name", "Farm"): "FarmName"}
 NOMBRES_DE_NIVEL = {"SessionMilkYield": "Ordeño por sesión", "AnimalGroup": "Rodeos", "DiagnosisTreatmentEvent": "Diagnósticos y tratamientos",
                     "BcsDailyData": "Condición corporal diaria", "RationCalculationLog": "Cálculo de ración",
                     "AnimalFeedDailyConsumption": "Consumo diario de alimento", "AnimalFeedConsumed": "Alimento consumido",
@@ -71,7 +84,7 @@ CONSULTAS = {
                  "r.ServerFilter, r.CustomFilter, r.Description, r.Herd, "
                  "CASE WHEN r.FormatRule IS NULL OR DATALENGTH(r.FormatRule) = 0 THEN 0 ELSE 1 END AS ConColores "      # si tiene reglas de color, no el XML de las reglas
                  "FROM DDMReport r LEFT JOIN XPObjectType x ON x.OID = r.ObjectType WHERE r.GCRecord IS NULL"),
-    "columnas": ("SELECT c.OID, c.Report, c.[Index], it.Name AS item, c.GroupIndex, c.SortDirection, c.SortIndex, c.SummaryType, "
+    "columnas": ("SELECT c.OID, c.Report, c.[Index], it.Name AS item, it.ReportClass AS ClaseItem, c.GroupIndex, c.SortDirection, c.SortIndex, c.SummaryType, "
                  "c.GroupSummaryType, c.SummaryTypes, c.FilterString "
                  "FROM DDMReportColumn c JOIN DDMReportItemInstance ii ON ii.OID = c.OID AND ii.GCRecord IS NULL "
                  "JOIN DDMReportItem it ON it.OID = ii.ReportItem AND it.GCRecord IS NULL "
@@ -1013,17 +1026,24 @@ def _variantes(catalogo) -> dict:
 def _columnas_con_su_campo(datos, oid, catalogo) -> list:
     """Las columnas del informe. Una columna de un campo CON PARÁMETRO se vuelve la columna de la variante del catálogo que le corresponde (`item` pasa a ser el id de esa variante), así el resto de la
     traducción (repetidas, agrupación, orden, filtros) trata a «Flujo ayer, ordeño 1» y «ordeño 2» como los dos campos distintos que son. Si el catálogo no tiene ese valor del parámetro, la columna
-    queda con el nombre de DelPro y cuenta entre los campos que faltan."""
+    queda con el nombre de DelPro y cuenta entre los campos que faltan. Una columna de un campo que es otro campo del catálogo con otro nombre (`ALIAS_DE_ITEMS`: el `DIM` de la reproducción es
+    `CurrentDIM`) pasa a ese campo."""
     cols = datos["columnas"].get(oid, [])
     parametros = datos.get("parametros")
     variantes = _variantes(catalogo) if parametros else None
-    if not variantes:
-        return cols
+    clases = datos.get("clases") or {}
     salida = []
     for c in cols:
-        params = parametros.get(c.get("OID"))
-        id_ = variantes.get((c["item"], tuple(sorted(params.items())))) if params else None
-        salida.append(dict(c, item=id_) if id_ else c)
+        # Un campo de DelPro que es otro campo del catálogo con otro nombre (la clase del ítem lo distingue de un homónimo): `ALIAS_DE_ITEMS`.
+        alias = ALIAS_DE_ITEMS.get((c["item"], clases.get(c.get("ClaseItem"))))
+        if alias in catalogo:
+            c = dict(c, item=alias)
+        elif variantes:
+            params = parametros.get(c.get("OID"))
+            id_ = variantes.get((c["item"], tuple(sorted(params.items())))) if params else None
+            if id_:
+                c = dict(c, item=id_)
+        salida.append(c)
     return salida
 
 

@@ -64,12 +64,13 @@ class TestElCatalogo(unittest.TestCase):
         for id_ in TODOS:
             self.assertIn(id_, cat.CATALOGO, id_)
 
-    def test_los_que_pidio_el_cliente_estan_salvo_dos_que_no_se_pudieron_definir(self):
-        """Cada campo de DelPro de la lista del cliente está en el catálogo con su nombre, o es el `item` de sus variantes. Los dos que no: `CMSSort_Iso` y `CMSSortTodayOrLater` dependen de
-        `IsActive` de una regla de separación manual, que DelPro calcula en su programa y no guarda en la base: definirlos sería inventar."""
+    def test_los_que_pidio_el_cliente_estan_todos(self):
+        """Cada campo de DelPro de la lista del cliente está en el catálogo con su nombre, o es el `item` de sus variantes. La tanda 4 dejó afuera `CMSSort_Iso` y `CMSSortTodayOrLater` (dependen de
+        `IsActive` de una regla de separación manual, que no es una columna); la tanda 5 los definió siguiendo la función `dbo.CowsToBeSortedToday` de DelPro, que trata como vigente a una regla
+        con alguna fecha y sin fin vencido (ver `tests/test_informes_tanda5.py`)."""
         items = {c.item for c in cat.CATALOGO.values() if c.item}
         faltan = {n for n in PEDIDOS if n not in cat.CATALOGO and n not in items}
-        self.assertEqual(faltan, {"CMSSort_Iso", "CMSSortTodayOrLater"})
+        self.assertEqual(faltan, set())
 
     def test_ninguno_se_da_por_comparado_y_todos_dicen_de_donde_salen(self):
         for id_ in TODOS:

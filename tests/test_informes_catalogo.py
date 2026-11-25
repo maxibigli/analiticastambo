@@ -11,6 +11,7 @@ import informes_catalogo as cat
 import informes_motor as im
 from tests.test_informes_tanda3b import TODOS as TANDA_3B
 from tests.test_informes_tanda4 import SI_NO as SI_NO_TANDA_4, TODOS as TANDA_4
+from tests.test_informes_tanda5 import FINCA as FINCA_TANDA_5, SI_NO as SI_NO_TANDA_5, TODOS as TANDA_5
 
 TIPOS = {"num", "txt", "fecha"}
 
@@ -70,7 +71,10 @@ class TestCatalogo(unittest.TestCase):
             ok = ("GROUP BY" in b.join.upper() or "OUTER APPLY (SELECT TOP 1" in b.join
                   or b.id in ("repro", "lactprev", "parto", "indice", "ult_insem", "ult_aborto", "insem_efectiva", "insem_lact", "ajustes", "ult_control", "ult_descarte",
                               "leche_ayer", "leche_hoy", "cambio_grupo", "lact_ant", "lact_1", "pregcheck_result",
-                              "ult_visita", "ult_secado", "sesion_actual"))      # tanda 4: se unen por el OID de un puntero del índice o son un `SELECT TOP 1` sin animal
+                              "ult_visita", "ult_secado", "sesion_actual",       # tanda 4: se unen por el OID de un puntero del índice o son un `SELECT TOP 1` sin animal
+                              # tanda 5: `historia` (HistoryAnimal.ReferenceId, sin repetidos), `finca` (rodeo -> rebaño -> finca por clave), `ult_celo` y `ult_insem_det` (por el OID de un evento y sus datos),
+                              # `lact_actual` (una fila por animal y lactancia) y `no_ordenar` (AnimalTreat: una fila por animal)
+                              "historia", "finca", "ult_celo", "ult_insem_det", "lact_actual", "no_ordenar"))
             self.assertTrue(ok, b.id)
 
     def test_lo_que_no_se_comparo_contra_delpro_queda_marcado(self):
@@ -82,7 +86,8 @@ class TestCatalogo(unittest.TestCase):
                                "LastCullDecisionDate", "DaysPregnant", "LatestSCC", "CMSFourteenDayAverage", "CMSTwentyOneDayAverage", "CMSThirtyDayAverage", "YieldYesterday", "YieldToday",
                                # tanda 3a
                                "LatestSCCTestDate", "LatestFat", "LatestFatDate", "LatestProtein", "LatestMilkTestYield", "LatestMilkTestYieldDate", "AgeInDays", "Sex",
-                               "DaysSinceLastGroupChange", "PreviousGroupNumber", "PrevCalvingDate", "LastBcsValue", "LastBcsDryOffValue", "LastBcsCalvingValue", "LastBcsValue190DaysPregnant", "LastPregnancyCheckDate"} | set(TANDA_3B) | set(TANDA_4))   # tanda 3b: los 28 campos de `test_informes_tanda3b`; tanda 4: los 87 de `test_informes_tanda4`
+                               "DaysSinceLastGroupChange", "PreviousGroupNumber", "PrevCalvingDate", "LastBcsValue", "LastBcsDryOffValue", "LastBcsCalvingValue", "LastBcsValue190DaysPregnant", "LastPregnancyCheckDate"}
+                         | set(TANDA_3B) | set(TANDA_4) | set(TANDA_5))   # tanda 3b: los 28 campos de `test_informes_tanda3b`; tanda 4: los 87 de `test_informes_tanda4`; tanda 5: los 93 de `test_informes_tanda5`
         for c in cat.CATALOGO.values():
             if not c.verificado:
                 self.assertTrue(c.nota, f"{c.id} sin verificar y sin nota que diga por qué")
@@ -129,7 +134,8 @@ class TestInformesAgrupadosSobreElCatalogoReal(unittest.TestCase):
                           "InMilk", "ToBeCulled", "IsPregnant", "IsDryingOff",                           # los sí/no: dos valores
                           "Sex",                                                                         # hembra o macho
                           "IsBred", "LatestPregCheckResult", "LatestDiagnosisCategory"}                   # inseminada sin preñez (sí/no), negativo/positivo/dudoso y la categoría del diagnóstico
-                         | set(SI_NO_TANDA_4))                                                           # tanda 4: ya salió, rodeo equivocado, controles por hacer, retirada forzada, separar...
+                         | set(SI_NO_TANDA_4)                                                            # tanda 4: ya salió, rodeo equivocado, controles por hacer, retirada forzada, separar...
+                         | set(SI_NO_TANDA_5) | set(FINCA_TANDA_5) | {"InseminatedByUser", "PregnancyCheckNumber", "LatestHealthCheckEventResult"})    # tanda 5: los sí/no, la finca y el rebaño, quién inseminó...
 
     def test_cada_resumen_de_cada_campo(self):
         for c in cat.CATALOGO.values():
