@@ -1,7 +1,7 @@
 """Traer a LactIA los informes que el tambo ya armó en DelPro (`informes_delpro.py`).
 
 Lo que importa:
-  * NUNCA se escribe nada en DelPro: las cuatro lecturas son SELECT fijos que pasan la validación de solo lectura de la app.
+  * NUNCA se escribe nada en DelPro: las cinco lecturas son SELECT fijos que pasan la validación de solo lectura de la app.
   * Lo que no se puede traer no se adivina: queda dicho, con el motivo, y el informe pasa a «parcial». Un filtro que no se trae
     cambia QUÉ animales aparecen, así que se avisa distinto que una columna que falta.
   * La definición que sale SIEMPRE se puede correr: pasa `informes_motor.compilar`, o la condición/columna que no pasa se descarta.
@@ -252,11 +252,11 @@ class TestCondiciones(unittest.TestCase):
         self.assertEqual(len(pend), 1)
 
     def test_un_campo_que_no_esta_en_el_catalogo_se_cuenta_como_faltante(self):
-        cs, pend = cond("[<AnimalExtended>ReproductionInfo.IsExited] = True And [CurrentDIM] > 5")
+        cs, pend = cond("[<AnimalExtended>ReproductionInfo.IsFirstHeat] = True And [CurrentDIM] > 5")
         self.assertEqual(cs, [{"campo": "CurrentDIM", "op": ">", "valor": 5}])
         self.assertEqual(len(pend), 1)
-        self.assertEqual(pend[0]["campos"], ["IsExited"])
-        self.assertIn("IsExited", pend[0]["texto"])
+        self.assertEqual(pend[0]["campos"], ["IsFirstHeat"])
+        self.assertIn("IsFirstHeat", pend[0]["texto"])
 
     def test_un_campo_del_catalogo_no_figura_como_faltante(self):
         _, pend = cond("[CurrentDIM] = Null")
@@ -548,7 +548,7 @@ class TestTraducirInforme(unittest.TestCase):
 
     def test_un_filtro_que_no_se_puede_traer_deja_el_informe_parcial_y_dice_cual(self):
         r = self.tr([informe(1, ServerFilter=7)], columnas_de(1, ["Number"]),
-                    [filtro(7, "Preñadas a secar", "[<AnimalExtended>ReproductionInfo.IsExited] = True And [<AnimalExtended>DaysDry] = True")])
+                    [filtro(7, "Preñadas a secar", "[<AnimalExtended>ReproductionInfo.IsFirstHeat] = True And [<AnimalExtended>DaysDry] = True")])
         self.assertEqual(r["estado"], "parcial")
         d = [x for x in r["diferencias"] if x["tipo"] == "filtro"]
         self.assertEqual(len(d), 1)
@@ -556,8 +556,8 @@ class TestTraducirInforme(unittest.TestCase):
         self.assertIn("Preñadas a secar", d[0]["texto"])
         self.assertIn("más animales", d[0]["texto"])
         self.assertLess(len(d[0]["texto"]), 220)                         # el texto es corto: cada condición y su motivo van aparte, en `detalle`
-        self.assertIn("IsExited", " ".join(d[0]["detalle"]))
-        self.assertEqual(set(r["faltan"]), {"IsExited", "DaysDry"})
+        self.assertIn("IsFirstHeat", " ".join(d[0]["detalle"]))
+        self.assertEqual(set(r["faltan"]), {"IsFirstHeat", "DaysDry"})
 
     def test_un_filtro_de_la_grilla_con_una_columna_que_no_esta_se_avisa(self):
         cols = [columna(2691, 1, 1, "YieldYesterdayForAllMilkingInSession"), columna(2692, 1, 2, "Number")]
@@ -750,6 +750,8 @@ class FalsoRun:
             return {"columns": ["OID", "TypeName"], "rows": [[10, NS + "BasicAnimal"]], "truncated": False}
         if "FROM FILTER" in s:
             return {"columns": ["OID", "Name", "FilterText"], "rows": [[7, "F", "[CurrentDIM] > 5"]], "truncated": False}
+        if "FROM ABSTRACTSETTING" in s:                                     # el parámetro de cada columna (tanda 4): la 11 es la columna «Número»
+            return {"columns": ["columna", "nombre", "valor"], "rows": [[11, "MilkingNumber", "2"]], "truncated": False}
         cols = ["OID", "Name", "ParentFolder", "IsPredefined", "TypeName", "IncludeCulledAndExitedAnimals", "ReportClass", "ServerFilter",
                 "CustomFilter", "Description", "Herd"]
         return {"columns": cols, "rows": [[1, "Un informe", None, False, TIPO_INFORME, False, 10, 7, None, None, 1]], "truncated": False}
@@ -760,10 +762,10 @@ class TestCargar(unittest.TestCase):
         dl.vaciar_cache()
         self.addCleanup(dl.vaciar_cache)
 
-    def test_son_cuatro_lecturas_fijas_de_solo_lectura(self):
+    def test_son_cinco_lecturas_fijas_de_solo_lectura(self):
         run = FalsoRun()
         d = dl.cargar("ponderosa", run=run)
-        self.assertEqual(len(run.sqls), 4)
+        self.assertEqual(len(run.sqls), 5)                              # las cuatro de siempre y los parámetros de las columnas (tanda 4)
         for sql, tambo, validate, max_rows in run.sqls:
             db.validate_sql(sql)
             self.assertEqual(tambo, "ponderosa")
@@ -784,15 +786,15 @@ class TestCargar(unittest.TestCase):
         run = FalsoRun()
         dl.cargar("ponderosa", run=run)
         dl.cargar("ponderosa", run=run)
-        self.assertEqual(len(run.sqls), 4)
+        self.assertEqual(len(run.sqls), 5)
         dl.cargar("otro", run=run)
-        self.assertEqual(len(run.sqls), 8)
+        self.assertEqual(len(run.sqls), 10)
 
     def test_refrescar_vuelve_a_leer(self):
         run = FalsoRun()
         dl.cargar("ponderosa", run=run)
         dl.cargar("ponderosa", run=run, refrescar=True)
-        self.assertEqual(len(run.sqls), 8)
+        self.assertEqual(len(run.sqls), 10)
 
     def test_si_la_base_falla_no_se_guarda_y_el_error_no_filtra_detalles(self):
         run = FalsoRun(error=RuntimeError("Login failed for user 'delpro_lectura' on server SERVER-DELPRO"))
@@ -802,7 +804,7 @@ class TestCargar(unittest.TestCase):
         self.assertNotIn("SERVER", str(cm.exception))
         ok = FalsoRun()
         dl.cargar("ponderosa", run=ok)                                  # el error no quedó guardado: se vuelve a intentar
-        self.assertEqual(len(ok.sqls), 4)
+        self.assertEqual(len(ok.sqls), 5)
 
     def test_un_tambo_sin_las_tablas_de_informes_dice_que_no_hay(self):
         class SinTabla(Exception):

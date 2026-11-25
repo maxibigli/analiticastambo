@@ -79,6 +79,10 @@ CONSULTAS = {
     "filtros": "SELECT f.OID, f.Name, f.FilterText FROM Filter f WHERE f.GCRecord IS NULL",
     "clases": "SELECT c.OID, x.TypeName FROM DDMReportClass c LEFT JOIN XPObjectType x ON x.OID = c.ClassType",
 }
+# Una quinta lectura, APARTE: el parámetro de cada columna (el número de ordeño, la sesión, los días en ordeño...) que DelPro guarda como un `ReportItemParameter` en `AbstractSetting`. Sin ella el importador
+# sigue andando igual: solo se pierden los campos con parámetro (`informes_catalogo.Campo.item`).
+CONSULTA_PARAMETROS = ("SELECT s.ReportItemInstance AS columna, s.PropertyName AS nombre, s.StoredValue AS valor FROM AbstractSetting s JOIN XPObjectType x ON x.OID = s.ObjectType "
+                       "WHERE s.ReportItemInstance IS NOT NULL AND x.TypeName LIKE '%.ReportItemParameter'")
 
 
 class CriterioError(ValueError):
@@ -841,16 +845,20 @@ _CACHE: dict = {}
 _LOCK = threading.Lock()
 
 
-def armar_datos(informes, columnas, filtros, clases) -> dict:
-    """Las filas de las cuatro tablas (listas de dicts) como un solo bloque de datos para traducir."""
+def armar_datos(informes, columnas, filtros, clases, parametros=()) -> dict:
+    """Las filas de las cuatro tablas (listas de dicts) como un solo bloque de datos para traducir. `parametros`: las filas de `CONSULTA_PARAMETROS` (opcional): {columna: {nombre: valor}}."""
     por_informe: dict = {}
     for c in columnas:
         por_informe.setdefault(c["Report"], []).append(c)
     for lista in por_informe.values():
         lista.sort(key=lambda c: (c["Index"] if c["Index"] is not None else 10 ** 9, c["OID"]))
+    por_columna: dict = {}
+    for p in parametros:
+        if p.get("nombre") is not None and p.get("valor") is not None:
+            por_columna.setdefault(p["columna"], {})[str(p["nombre"])] = str(p["valor"])
     return {"informes": {r["OID"]: r for r in informes}, "columnas": por_informe,
             "filtros": {f["OID"]: {"nombre": f["Name"], "texto": f["FilterText"]} for f in filtros},
-            "clases": {c["OID"]: (c["TypeName"] or "").rsplit(".", 1)[-1] for c in clases}}
+            "clases": {c["OID"]: (c["TypeName"] or "").rsplit(".", 1)[-1] for c in clases}, "parametros": por_columna}
 
 
 FILAS_MAX = 20000
@@ -881,7 +889,12 @@ def cargar(tambo, run=None, refrescar=False) -> dict:
             raise DelProNoDisponible("Este tambo no tiene informes de DelPro para traer.", vacio=True) from e
         raise DelProNoDisponible("No se pudieron leer los informes de DelPro. Tocá «Volver a leer» para intentar de nuevo; "
                                  "si sigue igual, avisale a quien administra LactIA.") from e
-    datos = armar_datos(filas["informes"], filas["columnas"], filas["filtros"], filas["clases"])
+    try:
+        parametros = _leer(run, CONSULTA_PARAMETROS, tambo)
+    except Exception as e:  # noqa: BLE001 -- sin los parámetros se pierden solo los campos que los llevan; el resto del importador sigue igual
+        log.warning("informes de DelPro: no se pudieron leer los parámetros de las columnas (%s)", type(e).__name__)
+        parametros = []
+    datos = armar_datos(filas["informes"], filas["columnas"], filas["filtros"], filas["clases"], parametros)
     with _LOCK:
         _CACHE[tambo] = (time.monotonic(), datos)
     return datos
@@ -992,6 +1005,28 @@ def _aviso_de_filtro(origen, pend) -> dict:
     return _dif("filtro", "contenido", f"{origen} {cuerpo}. Sin {'ella' if n == 1 else 'ellas'} este informe puede mostrar más animales que en DelPro.", detalle)
 
 
+def _variantes(catalogo) -> dict:
+    """{(campo de DelPro, sus parámetros): id del campo de acá} de las variantes del catálogo: un campo de DelPro con parámetro (el 2.º ordeño, la sesión 3...) son varios campos de acá, uno por valor."""
+    return {(c.item, tuple(sorted(c.parametros))): c.id for c in catalogo.values() if getattr(c, "item", "")}
+
+
+def _columnas_con_su_campo(datos, oid, catalogo) -> list:
+    """Las columnas del informe. Una columna de un campo CON PARÁMETRO se vuelve la columna de la variante del catálogo que le corresponde (`item` pasa a ser el id de esa variante), así el resto de la
+    traducción (repetidas, agrupación, orden, filtros) trata a «Flujo ayer, ordeño 1» y «ordeño 2» como los dos campos distintos que son. Si el catálogo no tiene ese valor del parámetro, la columna
+    queda con el nombre de DelPro y cuenta entre los campos que faltan."""
+    cols = datos["columnas"].get(oid, [])
+    parametros = datos.get("parametros")
+    variantes = _variantes(catalogo) if parametros else None
+    if not variantes:
+        return cols
+    salida = []
+    for c in cols:
+        params = parametros.get(c.get("OID"))
+        id_ = variantes.get((c["item"], tuple(sorted(params.items())))) if params else None
+        salida.append(dict(c, item=id_) if id_ else c)
+    return salida
+
+
 def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
     """Un informe de DelPro como definición de LactIA, más todo lo que no se pudo traer.
 
@@ -1017,7 +1052,7 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
         salida.update(estado="no_disponible", motivo="Es un informe de otro tambo de esta base de datos (otro rebaño).")
         return salida
 
-    cols = datos["columnas"].get(oid, [])
+    cols = _columnas_con_su_campo(datos, oid, catalogo)
     faltan, difs = [], []
 
     def falta(nombre_campo):

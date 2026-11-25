@@ -10,6 +10,7 @@ import db
 import informes_catalogo as cat
 import informes_motor as im
 from tests.test_informes_tanda3b import TODOS as TANDA_3B
+from tests.test_informes_tanda4 import SI_NO as SI_NO_TANDA_4, TODOS as TANDA_4
 
 TIPOS = {"num", "txt", "fecha"}
 
@@ -68,7 +69,8 @@ class TestCatalogo(unittest.TestCase):
             # `pregcheck_result` une dos eventos por su OID y `lact_1` es la fila (animal, lactancia 1); los de salud y la separación agrupan por animal.
             ok = ("GROUP BY" in b.join.upper() or "OUTER APPLY (SELECT TOP 1" in b.join
                   or b.id in ("repro", "lactprev", "parto", "indice", "ult_insem", "ult_aborto", "insem_efectiva", "insem_lact", "ajustes", "ult_control", "ult_descarte",
-                              "leche_ayer", "leche_hoy", "cambio_grupo", "lact_ant", "lact_1", "pregcheck_result"))
+                              "leche_ayer", "leche_hoy", "cambio_grupo", "lact_ant", "lact_1", "pregcheck_result",
+                              "ult_visita", "ult_secado", "sesion_actual"))      # tanda 4: se unen por el OID de un puntero del índice o son un `SELECT TOP 1` sin animal
             self.assertTrue(ok, b.id)
 
     def test_lo_que_no_se_comparo_contra_delpro_queda_marcado(self):
@@ -80,7 +82,7 @@ class TestCatalogo(unittest.TestCase):
                                "LastCullDecisionDate", "DaysPregnant", "LatestSCC", "CMSFourteenDayAverage", "CMSTwentyOneDayAverage", "CMSThirtyDayAverage", "YieldYesterday", "YieldToday",
                                # tanda 3a
                                "LatestSCCTestDate", "LatestFat", "LatestFatDate", "LatestProtein", "LatestMilkTestYield", "LatestMilkTestYieldDate", "AgeInDays", "Sex",
-                               "DaysSinceLastGroupChange", "PreviousGroupNumber", "PrevCalvingDate", "LastBcsValue", "LastBcsDryOffValue", "LastBcsCalvingValue", "LastBcsValue190DaysPregnant", "LastPregnancyCheckDate"} | set(TANDA_3B))   # tanda 3b: los 28 campos de `test_informes_tanda3b`
+                               "DaysSinceLastGroupChange", "PreviousGroupNumber", "PrevCalvingDate", "LastBcsValue", "LastBcsDryOffValue", "LastBcsCalvingValue", "LastBcsValue190DaysPregnant", "LastPregnancyCheckDate"} | set(TANDA_3B) | set(TANDA_4))   # tanda 3b: los 28 campos de `test_informes_tanda3b`; tanda 4: los 87 de `test_informes_tanda4`
         for c in cat.CATALOGO.values():
             if not c.verificado:
                 self.assertTrue(c.nota, f"{c.id} sin verificar y sin nota que diga por qué")
@@ -126,7 +128,8 @@ class TestInformesAgrupadosSobreElCatalogoReal(unittest.TestCase):
                          {"AnimalGroupName", "AnimalGroupNumber", "CurrentLactationNumber", "CurrentReproductionStatus",
                           "InMilk", "ToBeCulled", "IsPregnant", "IsDryingOff",                           # los sí/no: dos valores
                           "Sex",                                                                         # hembra o macho
-                          "IsBred", "LatestPregCheckResult", "LatestDiagnosisCategory"})                  # inseminada sin preñez (sí/no), negativo/positivo/dudoso y la categoría del diagnóstico
+                          "IsBred", "LatestPregCheckResult", "LatestDiagnosisCategory"}                   # inseminada sin preñez (sí/no), negativo/positivo/dudoso y la categoría del diagnóstico
+                         | set(SI_NO_TANDA_4))                                                           # tanda 4: ya salió, rodeo equivocado, controles por hacer, retirada forzada, separar...
 
     def test_cada_resumen_de_cada_campo(self):
         for c in cat.CATALOGO.values():

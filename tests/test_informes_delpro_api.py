@@ -23,7 +23,7 @@ def _datos():
                 informe(12, "De otro nivel", nivel="SessionMilkYield"), informe(13, "Predefinido", predefinido=True)]
     cols = (columnas_de(10, ["Number", "AnimalGroupName", "CurrentDIM"], 100) + columnas_de(11, ["Number", "DaysDry"], 200) +
             columnas_de(12, ["Number"], 300) + columnas_de(13, ["Number"], 400))
-    return datos(informes, cols, [filtro(7, "Preñadas", "[<AnimalExtended>ReproductionInfo.IsExited] = True")])
+    return datos(informes, cols, [filtro(7, "Preñadas", "[<AnimalExtended>ReproductionInfo.IsFirstHeat] = True")])
 
 
 class Base(unittest.TestCase):
@@ -133,7 +133,7 @@ class TestTraer(Base):
         self.assertEqual(j["estado"], "parcial")
         self.assertEqual(j["definicion"]["columnas"], [{"campo": "Number"}])
         self.assertEqual({d["tipo"] for d in j["diferencias"]}, {"columna", "filtro"})
-        self.assertEqual(j["faltan"], ["DaysDry", "IsExited"])
+        self.assertEqual(j["faltan"], ["DaysDry", "IsFirstHeat"])
 
     def test_un_informe_que_no_se_puede_traer_igual_se_explica(self):
         j = self.admin.get("/api/informes/delpro/12").get_json()

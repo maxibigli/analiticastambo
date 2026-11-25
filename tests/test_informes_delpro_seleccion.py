@@ -28,13 +28,13 @@ class TestLaListaDiceQueLeFalta(unittest.TestCase):
 
     def test_cada_informe_trae_los_campos_de_delpro_que_le_faltan(self):
         self.assertEqual(self.por[10]["faltan"], [])
-        self.assertEqual(sorted(self.por[11]["faltan"]), ["DaysDry", "IsExited"])         # una columna y un campo de su filtro
+        self.assertEqual(sorted(self.por[11]["faltan"]), ["DaysDry", "IsFirstHeat"])         # una columna y un campo de su filtro
 
     def test_un_informe_de_otro_nivel_no_cuenta_lo_que_le_falta(self):
         self.assertEqual(self.por[12]["faltan"], [])                                      # no se puede traer: no hay nada que sumar al catálogo para él
 
     def test_el_ranking_de_siempre_sigue_igual(self):
-        self.assertEqual({f["campo"]: f["informes"] for f in self.r["faltantes"]}, {"DaysDry": 1, "IsExited": 1})
+        self.assertEqual({f["campo"]: f["informes"] for f in self.r["faltantes"]}, {"DaysDry": 1, "IsFirstHeat": 1})
 
 
 class TestLaNotaDeOrigen(unittest.TestCase):

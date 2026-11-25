@@ -86,7 +86,8 @@ class TestSeCompilan(unittest.TestCase):
         recorre `BcsDailyData` una vez y se queda con las ~480 filas marcadas (de 335.000) lee 2.264 páginas y tarda 0,3 s."""
         for id_ in MARCADOS:
             sql = compilar([id_])
-            self.assertIn("WHERE x.IsValueForLastBcsDryOff = 1 OR x.IsValueForLastCalving = 1 OR x.IsValueForLastBcs190DaysPregnant = 1 GROUP BY x.Animal", sql, id_)
+            self.assertIn("WHERE x.IsValueForLastBcsDryOff = 1 OR x.IsValueForLastCalving = 1 OR x.IsValueForLastBcs190DaysPregnant = 1 OR x.IsValueForLastBcsVWP = 1 "
+                          "OR x.IsValueForLastBcsDryOffPrevLact = 1 OR x.IsValueForFirstInseminationCurrentLactation = 1 GROUP BY x.Animal", sql, id_)       # tanda 4: suma tres marcas más
             self.assertNotIn("OUTER APPLY", sql, id_)
 
     def test_cada_parametro_del_control_lechero_busca_el_ultimo_control_que_lo_tiene(self):
