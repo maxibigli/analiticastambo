@@ -1018,6 +1018,46 @@ def _aviso_de_filtro(origen, pend) -> dict:
     return _dif("filtro", "contenido", f"{origen} {cuerpo}. Sin {'ella' if n == 1 else 'ellas'} este informe puede mostrar más animales que en DelPro.", detalle)
 
 
+# El reloj del tambo en los filtros de DelPro: `Farm.HourOfDay` es `GetHour(Now())` y `Farm.DayOfWeek` es `GetDayOfWeek(DDMToday())` (su fórmula en `DDMReportItem`).
+_RELOJ = re.compile(r"(?:^|\.)Farm\.(?:HourOfDay|DayOfWeek)$")
+
+
+def _terminos_si_mira_el_reloj(texto, resolver) -> list:
+    """Si un filtro de SERVIDOR pide, unido por «y» a lo demás, un día de la semana o una hora (un término que solo mira el reloj del tambo), devuelve TODOS sus términos escritos en palabras; si no, [].
+
+    Un filtro así es el de una tarea programada, no el contenido del informe: «Separación de Vacas Mezcladas» (la separación automática) pide además una vaca posiblemente en rodeo equivocado, rodeo < 6,
+    hembra y que no haya salido, y está puesto en informes de otra cosa (Producción, Velocidad de ordeño...). Se ignora ENTERO (decisión del usuario, 25/11/2026): dejar las otras condiciones y sacar solo
+    las del reloj dejaba a «Producción» con 6 vacas en vez de 1.459 (copia del 20/11/2026). Un reloj metido en un «o» o en un «no» junto con un dato del animal no cuenta: queda como cualquier condición."""
+    texto = str(texto)
+    nodos = []
+    try:
+        nodos = [(n, texto) for n in _aplanar_y(analizar(texto))]
+    except CriterioError:
+        for parte in _partir_en_y(texto):                                   # un término ilegible no esconde a los demás (con un «o» de primer nivel no se parte)
+            try:
+                nodos += [(n, parte) for n in _aplanar_y(analizar(parte))]
+            except CriterioError:
+                nodos.append((None, parte))
+
+    def solo_reloj(nodo) -> bool:
+        props = []
+        _props(nodo, props)
+        return bool(props) and all(_RELOJ.search(_sin_calificador(p["path"])) for p in props)
+
+    if not any(n is not None and solo_reloj(n) for n, _ in nodos):
+        return []
+    nombre_de = lambda p: _para_mostrar(resolver(p)[0])
+    return [_corto(fuente) if n is None else _texto_de_termino(n, fuente, nombre_de) for n, fuente in nodos]
+
+
+def _aviso_de_filtro_del_reloj(nombre, terminos) -> dict:
+    """El aviso de un filtro del reloj que se ignoró entero. Es «contenido» (cambia qué animales aparecen: queda en la nota del informe y en sus mensajes programados) pero `aceptada`: no lo deja «parcial»."""
+    detalle = terminos[:12] + ([f"…y {len(terminos) - 12} más."] if len(terminos) > 12 else [])
+    texto = (f"Se ignoró el filtro «{nombre}» de DelPro, que depende del día y la hora: acá no se aplica ninguna de sus condiciones, "
+             "así que pueden salir muchos más animales que en DelPro.")
+    return dict(_dif("filtro", "contenido", texto, detalle), aceptada=True)
+
+
 def _variantes(catalogo) -> dict:
     """{(campo de DelPro, sus parámetros): id del campo de acá} de las variantes del catálogo: un campo de DelPro con parámetro (el 2.º ordeño, la sesión 3...) son varios campos de acá, uno por valor."""
     return {(c.item, tuple(sorted(c.parametros))): c.id for c in catalogo.values() if getattr(c, "item", "")}
@@ -1053,7 +1093,8 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
     {"oid", "nombre", "carpeta", "nivel", "del_tambo", "descripcion", "estado" (completo | parcial | no_disponible), "motivo" (si no_disponible),
      "definicion" (None si no_disponible), "columnas": {"traidas", "total"}, "diferencias": [{"tipo", "gravedad", "texto", "detalle"?}],
      "faltan": [campos de DelPro que el catálogo no tiene]}. Gravedad: «contenido» (cambia qué animales o qué totales), «columnas» (falta algo del diseño),
-    «presentacion» (orden, colores) o «info». `rebanos`: los rebaños de este tambo (un informe de otro rebaño de la base no se trae). `KeyError` si no es un informe."""
+    «presentacion» (orden, colores) o «info». Una diferencia «contenido» o «columnas» deja el informe «parcial», salvo la `aceptada` (el filtro del reloj, que se
+    ignora a propósito). `rebanos`: los rebaños de este tambo (un informe de otro rebaño de la base no se trae). `KeyError` si no es un informe."""
     catalogo = informes_catalogo.CATALOGO if catalogo is None else catalogo
     fila = datos["informes"].get(oid)
     if fila is None or _tipo(fila) != "informe":
@@ -1173,9 +1214,14 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
         for c in cols:
             if str(c.get("FilterString") or "").strip():
                 fuentes.append((f"El filtro de la columna «{_nombre_de_campo(c['item'])}» de DelPro", str(c["FilterString"]).replace("[{0}]", f"[C{c['OID']}]"), resolver_grilla, True))
-    sf = datos["filtros"].get(fila.get("ServerFilter"))
+    sf, del_reloj = datos["filtros"].get(fila.get("ServerFilter")), []
     if sf and sf.get("texto"):
-        fuentes.append((f"El filtro «{_limpio(sf.get('nombre'), 60) or 'sin nombre'}» de DelPro", sf["texto"], resolver_por_nombre(catalogo), False))
+        nombre_filtro = _limpio(sf.get("nombre"), 60) or "sin nombre"
+        # Un informe que se llama como su filtro es el de esa tarea (el de la separación misma): ahí las condiciones son el contenido y no se ignoran.
+        if _sin_tildes(nombre) != _sin_tildes(nombre_filtro):
+            del_reloj = _terminos_si_mira_el_reloj(sf["texto"], resolver_por_nombre(catalogo))
+        if not del_reloj:                                                       # uno que mira el reloj se ignora entero (y se avisa, abajo)
+            fuentes.append((f"El filtro «{nombre_filtro}» de DelPro", sf["texto"], resolver_por_nombre(catalogo), False))
     for origen, texto, resolver, en_memoria in fuentes:
         cs, pend = condiciones_de(texto, resolver, catalogo, maximo, previas=condiciones, en_memoria=en_memoria)
         condiciones += cs
@@ -1184,6 +1230,8 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
             for p in pend:
                 for f in p["campos"]:
                     falta(f)
+    if del_reloj:
+        difs.append(_aviso_de_filtro_del_reloj(nombre_filtro, del_reloj))
 
     # --- alcance: DelPro puede mirar TODOS los rebaños de la base; acá siempre es el de este tambo. Es lo que el tambo quiere (no ver los animales de los otros tambos
     # de la base) y el caso habitual (26 de 58 informes de animales del tambo), así que es un dato («info») y no vuelve «parcial» al informe.
@@ -1214,7 +1262,7 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
     if sin_verificar:
         difs.append(_dif("verificacion", "info", "Incluye campos que todavía no se compararon con DelPro (⚠): " + ", ".join(sin_verificar) + ". Sus valores pueden diferir."))
     salida.update(definicion=definicion, diferencias=difs, faltan=faltan,
-                  estado="parcial" if any(d["gravedad"] in ("contenido", "columnas") for d in difs) else "completo")
+                  estado="parcial" if any(d["gravedad"] in ("contenido", "columnas") and not d.get("aceptada") for d in difs) else "completo")
     return salida
 
 
