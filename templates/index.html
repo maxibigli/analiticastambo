@@ -1299,19 +1299,18 @@
         <br>· <b>con celo → inseminada</b> es disponibilidad de inseminador, semen o una decisión;
         <br>· <b>inseminada → preñada</b> es calidad de semen, momento del servicio o sanidad.
         <br><b>Cómo se calcula.</b> Una vaca es <b>apta</b> en un ciclo si al terminar el ciclo ya
-        parió, pasó el período de espera voluntario, sigue en el rodeo y no estaba preñada al
-        empezar. El período de espera y la duración del ciclo <b>no están fijos en el código</b>:
-        salen de los parámetros que tiene configurados el tambo en DelPro.
-        <br><b>Verificación.</b> Contra el informe de DelPro, las aptas del primer ciclo dan 1.112
-        exacto, y el % de concepción queda a 1-3 puntos (40,7 contra 42; 41,9 contra 45). Celo e
-        inseminación quedan unos 4 puntos abajo por el faltante de eventos de esta base.
+        parió, pasó el período de espera voluntario, estaba en el rodeo al empezar el ciclo (aunque
+        se haya dado de baja después) y no estaba preñada al empezar. El período de espera y la
+        duración del ciclo <b>no están fijos en el código</b>: salen de los parámetros que tiene
+        configurados el tambo en DelPro. Los <b>abortos</b> son los de las preñeces logradas en el
+        ciclo por esas aptas; en los ciclos recientes dan pocos o ninguno porque esas gestaciones
+        todavía están en curso.
+        <br><b>Verificación.</b> Contra el informe de DelPro del ciclo del 10/06/2025 (todos los
+        rebaños, con los datos al 20/11/2026): aptas 1.119 contra 1.112 y abortos 31 contra 33. El
+        % de concepción queda a 1-3 puntos (40,7 contra 42; 41,9 contra 45) y celo e inseminación
+        unos 4 puntos abajo por el faltante de eventos de esta base.
       </p>
       <div class="aviso" id="tp-info" style="margin-top:8px"></div>
-      <div class="aviso" style="margin-top:6px;color:var(--warning)">
-        ⚠ La columna <b>% Aborto</b> no cierra contra DelPro: da alrededor del triple (38% contra
-        14%). No se encontró qué criterio adicional aplica DelPro para contarlos. Se muestra igual,
-        pero <b>no la tomes como número firme</b> — el resto del embudo sí es confiable.
-      </div>
       <div class="kpis" id="tp-kpis" style="margin-top:10px"></div>
       <div class="chart-box" style="height:330px;margin-top:12px"><canvas id="chart-tasa-prenez"></canvas></div>
       <div style="overflow-x:auto;margin-top:14px" id="tp-tabla"></div>

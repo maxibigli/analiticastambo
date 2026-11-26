@@ -39,6 +39,14 @@ El período de espera NO está hardcodeado: sale de `ReproductionSetting` vía
 `parametros.py` (este tambo lo tiene en 53 días, no en los 50 por defecto).
 Lo mismo la duración del ciclo de celo (21 días).
 
+ABORTOS: son los de las preñeces logradas en el ciclo POR LAS APTAS (igual que
+las preñadas), y dentro de la gestación de esa preñez (con eso los ciclos
+recientes dan cero, como en DelPro). Hasta el 26/11/2026 no se miraban las
+aptas ni el rebaño y se contaban abortos de cualquier animal de la base,
+incluidos los de otros tambos: en el ciclo de referencia daba 77 (38 %) contra
+los 33 (14 %) del informe. Con las aptas da 31 (15,4 %; copia del
+20/11/2026).
+
 LO QUE NO CIERRA:
 
   * Con celo e inseminadas quedan ~4 puntos por debajo del informe (522 vs
@@ -46,19 +54,6 @@ LO QUE NO CIERRA:
     análisis reproductivo de esta base. El % de concepción, que es el
     indicador que de verdad importa, queda a 1-3 puntos (40,7 vs 42; 41,9 vs
     45), y las tendencias entre ciclos son fieles.
-
-  * % ABORTO NO CIERRA y se muestra marcado como tal. Da ~38% donde el
-    informe da 14%: se cuentan unos 77 abortos donde DelPro cuenta 33. Se
-    probó acotar el aborto a la ventana de gestación de la preñez lograda en
-    el ciclo (que es la definición que mejor explica la forma de la serie de
-    DelPro, con ceros en los ciclos recientes) y casi no movió el número. No
-    se encontró qué criterio adicional aplica DelPro. Mejor mostrarlo con la
-    advertencia que dar por bueno un número que se sabe inflado.
-
-    PISTA del 26/11/2026, todavía SIN corregir: contando solo los abortos de
-    las vacas APTAS, ese mismo ciclo del 10/06/2025 da 31 contra los 33 de
-    DelPro. La consulta de hoy no limita los abortos ni a las aptas ni al
-    rebaño (en ese ciclo cuenta 77).
 """
 import datetime
 
@@ -222,13 +217,17 @@ def sql_embudo(ventanas_lista: list, tipo: str, pev: int,
            WHERE pz.concep >= v.desde AND pz.concep < DATEADD(day, 1, v.hasta)
              AND EXISTS (SELECT 1 FROM aptas a WHERE a.n = v.n
                          AND a.animal = pz.animal)) AS prenadas,
-          -- Abortos DE las preñeces logradas en la ventana. El aborto tiene que
-          -- caer después de esa concepción y antes de que la gestación llegara
-          -- a término; sin esa ventana se cuentan abortos de otras preñeces del
-          -- mismo animal y el porcentaje se va al triple.
+          -- Abortos DE las preñeces logradas en la ventana por las APTAS, como
+          -- las preñadas: sin las aptas se contaban abortos de cualquier animal
+          -- de la base, incluidos los de otros tambos (el triple de lo que da
+          -- DelPro). El aborto tiene que caer después de esa concepción y antes
+          -- de que la gestación llegara a término: si no, se cuentan abortos de
+          -- otras preñeces del mismo animal.
           (SELECT COUNT(DISTINCT ae.BasicAnimal) FROM EventAbortion ab
             JOIN AbstractAnimalEvent ae ON ae.OID = ab.OID AND ae.GCRecord IS NULL
-           WHERE EXISTS (SELECT 1 FROM prenez pz
+           WHERE EXISTS (SELECT 1 FROM aptas a WHERE a.n = v.n
+                         AND a.animal = ae.BasicAnimal)
+             AND EXISTS (SELECT 1 FROM prenez pz
                          WHERE pz.animal = ae.BasicAnimal
                            AND pz.concep >= v.desde
                            AND pz.concep < DATEADD(day, 1, v.hasta)

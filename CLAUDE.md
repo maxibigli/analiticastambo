@@ -1569,8 +1569,9 @@ NULL: si no, la leyenda anuncia una medida que la sala no registra.
   Antes → después en La Ponderosa (copia del 20/11/2026): Bajas de terneros (nacidos del 22/02 al 21/08/2026) 24 de 1.239 partos (1,9 %) → 116 de 1.452 (8,0 %, 92 nacidas muertas); Tasa de preñez de vacas (18 ciclos desde el 26/11/2025) aptas 6.916 → 8.037,
   % preñadas 15,8 → 14,1 y % concepción 38,2 → 36,7 (novillas casi igual); Calor y servicios (24 meses) servicios 4.720 → 6.240 y concepción 40,3 → 38,0 %; Gestación 1.712 → 1.948 partos (277,2 → 276,9 días); Indicadores de preñez 2.078 → 2.147 concepciones;
   Resultados, vacas del año 2025: 687 → 1.230 (en ordeño 640 → 1.133); Proyección, diciembre de 2025: lactantes medidas 756 → 1.045 y kg/vaca/día 35,2 → 34,1.
-- **Pendiente**: el % de aborto de la Tasa de preñez cuenta abortos sin limitarlos a las aptas ni al rebaño (pista en `tasa_prenez.py`: solo con las aptas da 31 contra 33 de DelPro); la tasa de NOVILLAS deja afuera de los ciclos viejos a las que ya parieron
-  (usa la lactancia de HOY).
+- **% de aborto de la Tasa de preñez, corregido el 26/11/2026**: contaba abortos de cualquier animal de la base (otros tambos incluidos); ahora solo los de las preñeces logradas por las aptas, como las preñadas. Ciclo de referencia (10/06/2025,
+  todos los rebaños): 77 abortos → 31 (el informe de DelPro, 33). La Ponderosa, 18 ciclos desde el 26/11/2025: vacas 10,1 → 6,6 %, novillas 21,2 → 4,6 %. Se quitó el aviso «no cierra» de la pantalla. Prueba: `tests/test_tasa_prenez_abortos.py`.
+- **Pendiente**: la tasa de NOVILLAS deja afuera de los ciclos viejos a las que ya parieron (usa la lactancia de HOY).
 - Proyección de rebaños: la ecuación es
   `lactantes[m] = lactantes[m-1] + partos - secados - salidas` y la producción
   `lactantes × kg/vaca/día del año pasado × días del mes` (ambas verificadas
