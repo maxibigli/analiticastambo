@@ -41,6 +41,10 @@ Toda la producción sale de `AnimalDaily`, que es la tabla que guarda el kg del
 día por vaca. Está poblada solo para los animales que pasan por la rotativa,
 así que sirve para promedios y proporciones —el kg/vaca/día coincidió exacto
 contra DelPro— pero no para contar cabezas del rodeo entero.
+
+Cuentan también las vacas que se dieron de baja después del período (su leche
+se produjo): el rebaño sale de `rebano.filtro_del_animal` y, en el corte por
+grupo, van aparte como «Dadas de baja» (desde el 26/11/2026).
 """
 import rebano
 
@@ -91,7 +95,7 @@ def sql_curva(desde: str, hasta: str, herd=None) -> str:
         WHERE {_VALIDA}
           AND d.Date >= '{desde}' AND d.Date <= '{hasta}'
           AND d.LactationNumber >= 1
-          AND {rebano.filtro('b', herd)}
+          AND {rebano.filtro_del_animal('b.OID', herd)}
         GROUP BY {_caso_deo()}, {_LACT}
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
     """
@@ -114,7 +118,7 @@ def sql_peak(desde: str, hasta: str, herd=None) -> str:
               AND d.Date >= '{desde}' AND d.Date <= '{hasta}'
               AND d.DIM BETWEEN {ARRANQUE_DESDE} AND {ARRANQUE_HASTA}
               AND d.LactationNumber >= 1
-              AND {rebano.filtro('b', herd)}
+              AND {rebano.filtro_del_animal('b.OID', herd)}
             GROUP BY d.BasicAnimal, d.LactationNumber
         ), pico AS (
             SELECT s.Animal AS animal, s.LactationNumber AS lact,
@@ -124,7 +128,7 @@ def sql_peak(desde: str, hasta: str, herd=None) -> str:
             WHERE s.GCRecord IS NULL AND s.PeakYield > 0 AND s.DaysToPeak > 0
               AND s.StartDate >= DATEADD(day, -400, '{desde}')
               AND s.StartDate <= '{hasta}'
-              AND {rebano.filtro('b2', herd)}
+              AND {rebano.filtro_del_animal('b2.OID', herd)}
             GROUP BY s.Animal, s.LactationNumber
         )
         SELECT CASE WHEN a.lact = 1 THEN 'l1' WHEN a.lact = 2 THEN 'l2' ELSE 'l3' END AS lact,
@@ -153,7 +157,9 @@ def sql_distribucion(desde: str, hasta: str, dimension: str, herd=None) -> str:
                     "ELSE '4ta y más' END")
         extra_join = ""
     elif dimension == "grupo":
-        segmento = "ISNULL(ag.Name, 'Sin grupo')"
+        # El rodeo de HOY; las que ya se fueron no tienen, y van aparte.
+        segmento = ("CASE WHEN b.[Group] IS NULL AND b.ExitDate IS NOT NULL THEN 'Dadas de baja' "
+                    "ELSE ISNULL(ag.Name, 'Sin grupo') END")
         extra_join = ("LEFT JOIN AnimalGroup g ON g.OID = b.[Group] "
                       "LEFT JOIN AbstractGroup ag ON ag.OID = g.OID AND ag.GCRecord IS NULL")
     else:
@@ -171,7 +177,7 @@ def sql_distribucion(desde: str, hasta: str, dimension: str, herd=None) -> str:
         WHERE {_VALIDA}
           AND d.Date >= '{desde}' AND d.Date <= '{hasta}'
           AND d.LactationNumber >= 1
-          AND {rebano.filtro('b', herd)}
+          AND {rebano.filtro_del_animal('b.OID', herd)}
         GROUP BY {segmento}
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
     """
@@ -188,7 +194,7 @@ def sql_concentracion(desde: str, hasta: str, herd=None) -> str:
             WHERE {_VALIDA}
               AND d.Date >= '{desde}' AND d.Date <= '{hasta}'
               AND d.LactationNumber >= 1
-              AND {rebano.filtro('b', herd)}
+              AND {rebano.filtro_del_animal('b.OID', herd)}
             GROUP BY d.BasicAnimal
             HAVING COUNT(*) >= 5      -- vacas con al menos 5 días medidos
         ), rank AS (

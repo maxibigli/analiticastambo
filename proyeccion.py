@@ -122,6 +122,7 @@ def sql_partos_reales(desde: str, hasta: str, herd=None) -> str:
 
     `AbstractAnimalEvent.LactationNumber` en un parto es la lactancia que
     ARRANCA, así que un 1 es una novilla que acaba de parir por primera vez.
+    Cuentan también los de las vacas que ya se fueron (`rebano.filtro_del_animal`).
     """
     return f"""
         SELECT FORMAT(ae.DateAndTime, 'yyyy-MM') AS mes,
@@ -131,7 +132,7 @@ def sql_partos_reales(desde: str, hasta: str, herd=None) -> str:
         JOIN AbstractAnimalEvent ae ON ae.OID = c.OID AND ae.GCRecord IS NULL
         WHERE ae.DateAndTime >= '{desde}-01'
           AND ae.DateAndTime < DATEADD(month, 1, '{hasta}-01')
-          AND {rebano.filtro_por_animal('ae.BasicAnimal', herd)}
+          AND {rebano.filtro_del_animal('ae.BasicAnimal', herd)}
         GROUP BY FORMAT(ae.DateAndTime, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
@@ -236,7 +237,7 @@ def sql_lactantes_historico(desde: str, hasta: str, herd=None) -> str:
                      AND p.fecha >= DATEADD(day, -{LACTANCIA_DIAS}, DATEADD(month, 1, m.m))
         JOIN BasicAnimal b ON b.OID = p.animal AND b.GCRecord IS NULL AND b.Number > 0
         WHERE (b.ExitDate IS NULL OR b.ExitDate >= DATEADD(month, 1, m.m))
-          AND {rebano.filtro('b', herd)}
+          AND {rebano.filtro_del_animal('b.OID', herd)}
         GROUP BY FORMAT(m.m, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
     """
@@ -258,7 +259,7 @@ def sql_kg_por_vaca(desde: str, hasta: str, herd=None) -> str:
         WHERE d.GCRecord IS NULL
           AND d.Date >= '{desde}-01'
           AND d.Date < DATEADD(month, 1, '{hasta}-01')
-          AND {rebano.filtro_por_animal('d.BasicAnimal', herd)}
+          AND {rebano.filtro_del_animal('d.BasicAnimal', herd)}
         GROUP BY FORMAT(d.Date, 'yyyy-MM')
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 25)
     """

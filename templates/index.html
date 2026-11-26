@@ -1420,12 +1420,11 @@
       <p class="explica" style="margin-top:10px">
         <b>Qué muestra.</b> Terneros nacidos en el período elegido que se dieron de baja antes de
         los 90 días de vida, con el motivo real de la salida.
-        <br><b>Este tambo NO usa un motivo específico de «muerte» para terneros.</b> DelPro tiene un
-        código de sistema para eso ("Death") y no tiene ni un caso cargado acá — se usa para las
-        salidas de los otros tambos que comparten esta base. Así que la tabla trae
-        <b>cualquier salida temprana</b>, sea cual sea el motivo cargado: puede incluir traslados o
-        ventas de terneros, además de mortandad real. Es lo más cerca que se puede llegar con lo que
-        carga hoy el tambo — mirá el motivo de cada fila antes de sacar una conclusión.
+        <br><b>Incluye las nacidas muertas</b>: DelPro las carga sin número y con el motivo
+        «Death», y como nunca entran a un rodeo se cuentan en el tambo de la madre.
+        <br>La tabla trae <b>cualquier salida temprana</b>, sea cual sea el motivo cargado: puede
+        incluir traslados o ventas de terneros, además de mortandad real — mirá el motivo de cada
+        fila antes de sacar una conclusión.
         <br><b>Se filtra por NACIMIENTO, no por la fecha de la baja</b>: contesta "de los que
         nacieron en este período, cuáles se perdieron". Por eso los últimos 90 días de nacimientos
         quedan afuera del <i>porcentaje</i> — todavía no cumplieron la ventana de riesgo, no se sabe
@@ -7847,6 +7846,7 @@ function pintarBajasTerneros() {
   document.getElementById('bj-kpis').innerHTML = [
     ['Partos en el período', fmt(r.partos), ''],
     ['Bajas tempranas', fmt(r.bajas), `antes de los ${r.riesgo_dias} días de vida`],
+    ['De ellas, nacidas muertas', fmt(r.nacidas_muertas), 'motivo «Death», sin número'],
     ['% sobre los partos', r.pct != null ? r.pct + '%' : '—',
       'cualquier motivo — puede incluir ventas o traslados'],
   ].map(([l, v, sub]) => `<div class="tile"><div class="label">${l}</div>` +

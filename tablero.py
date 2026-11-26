@@ -278,8 +278,8 @@ INDICADORES = [
         "ayuda": ("Salidas registradas antes de los 90 días de vida, sobre los partos "
                   "del mismo período (6 meses, excluyendo los últimos 90 días para no "
                   "contar crías que todavía no completaron la ventana de riesgo). "
-                  "OJO: DelPro no tiene acá un motivo específico de «muerte» para "
-                  "terneros — se cuenta cualquier salida temprana, que puede incluir "
+                  "Incluye las nacidas muertas (cargadas como «Death», sin número). "
+                  "OJO: se cuenta cualquier salida temprana, que puede incluir "
                   "traslados o ventas además de mortandad real."),
     },
     {

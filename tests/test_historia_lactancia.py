@@ -254,7 +254,7 @@ class TestPrenezPorDel(ConBase):
     def test_el_sql_pasa_por_el_historial_y_el_rebano_se_mira_en_el_animal_real(self):
         sql = " ".join(reproduccion.sql_prenez_por_del("2025-01-01", "2025-12-31", [TAMBO]).split())
         self.assertIn("JOIN HistoryAnimal ha ON ha.OID = h.Animal", sql)
-        self.assertIn("b_tb.OID = ha.ReferenceId", sql)                                 # el filtro de rebaño mira al animal de verdad
+        self.assertIn("ha.ReferenceId IN (SELECT a_tb.OID FROM BasicAnimal a_tb", sql)  # el filtro de rebaño mira al animal de verdad
         self.assertIn("FROM AnimalDaily d_tb", sql)                                     # y a los que ya se fueron los ubica su registro diario
         self.assertEqual(sql.count("h.Animal"), 1, "h.Animal solo sirve para llegar al historial (ha.OID), no para filtrar el rebaño")
 

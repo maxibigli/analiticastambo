@@ -162,8 +162,10 @@ def sql_bocas(d0, d1, tambo):
 
 
 def sql_eventos(d0, d1, tambo):
-    """Cantidad de eventos por día y tipo, del rebaño. Tratamientos con el nombre del diagnóstico."""
-    f = rebano.filtro_por_animal("a.BasicAnimal", rebano.por_defecto(tambo))
+    """Cantidad de eventos por día y tipo, del rebaño (también los de las vacas que se fueron después:
+    `rebano.filtro_del_animal`). Tratamientos con el nombre del diagnóstico. Un cambio «a ningún rodeo» es
+    la salida del animal (ya cuenta como baja), no una mudanza."""
+    f = rebano.filtro_del_animal("a.BasicAnimal", rebano.por_defecto(tambo))
     return f"""
     SELECT CAST(a.DateAndTime AS date) AS fecha, 'parto' AS tipo, CAST(NULL AS nvarchar(80)) AS detalle, COUNT(*) AS n
       FROM EventCalving e JOIN AbstractAnimalEvent a ON a.OID = e.OID
@@ -172,7 +174,7 @@ def sql_eventos(d0, d1, tambo):
     UNION ALL
     SELECT CAST(a.DateAndTime AS date), 'cambio de grupo', NULL, COUNT(*)
       FROM EventGroupChange e JOIN AbstractAnimalEvent a ON a.OID = e.OID
-      WHERE a.GCRecord IS NULL AND a.DateAndTime >= '{d0}' AND a.DateAndTime < DATEADD(day, 1, '{d1}') AND {f}
+      WHERE a.GCRecord IS NULL AND e.NewGroup IS NOT NULL AND a.DateAndTime >= '{d0}' AND a.DateAndTime < DATEADD(day, 1, '{d1}') AND {f}
       GROUP BY CAST(a.DateAndTime AS date)
     UNION ALL
     SELECT CAST(a.DateAndTime AS date), 'tratamiento', LEFT(tn.ItemValue, 80), COUNT(*)
@@ -188,7 +190,7 @@ def sql_eventos(d0, d1, tambo):
 def sql_tratadas(dia, tambo):
     """Una fila por tratamiento registrado ESE día (el día anterior al analizado): vaca y diagnóstico. Sirve para
     cruzar quién fue tratada contra cuánto rindió al día siguiente."""
-    f = rebano.filtro_por_animal("a.BasicAnimal", rebano.por_defecto(tambo))
+    f = rebano.filtro_del_animal("a.BasicAnimal", rebano.por_defecto(tambo))
     return f"""
     SELECT a.BasicAnimal AS animal, LEFT(tn.ItemValue, 80) AS detalle
       FROM DiagnosisTreatmentEvent e JOIN AbstractAnimalEvent a ON a.OID = e.OID
@@ -213,7 +215,7 @@ def sql_bajas(d0, d1, tambo):
 
 def sql_retiro(d0, d1, tambo):
     """Vacas con leche de descarte/retiro VIGENTE ese día (la leche no va al tanque): por día."""
-    f = rebano.filtro_por_animal("a.BasicAnimal", rebano.por_defecto(tambo))
+    f = rebano.filtro_del_animal("a.BasicAnimal", rebano.por_defecto(tambo))
     return f"""
     SELECT CAST(a.DateAndTime AS date) AS fecha, COUNT(DISTINCT a.BasicAnimal) AS vacas
       FROM DiagnosisTreatmentEvent e JOIN AbstractAnimalEvent a ON a.OID = e.OID

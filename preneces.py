@@ -94,7 +94,7 @@ def sql_concepciones(desde: str, hasta: str, tipo: str, dimension: str, herd=Non
             WHERE p.Result = 1
               AND ins.DateAndTime >= '{desde}'
               AND ins.DateAndTime < DATEADD(day, 1, '{hasta}')
-              AND {rebano.filtro_por_animal('pc.BasicAnimal', herd)}
+              AND {rebano.filtro_del_animal('pc.BasicAnimal', herd)}
         ), det AS (
             SELECT c.animal, c.f_conc, c.lact,
                    -- Días de ordeñe a la concepción. Se busca el parto que

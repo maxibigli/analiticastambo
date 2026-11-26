@@ -80,7 +80,8 @@ def sql_solidos_por_control(desde, hasta, herd=None) -> str:
     """Grasa y proteína promedio de cada fecha de control lechero.
 
     El control es mensual y se hace en un solo día, así que cada fila de esto
-    es un punto real medido — no hay interpolación en el medio.
+    es un punto real medido — no hay interpolación en el medio. Cuentan también
+    las vacas que se fueron después (`rebano.filtro_del_animal`).
     """
     return f"""
         SELECT CAST(h.DateAndTime AS date) AS fecha,
@@ -93,7 +94,7 @@ def sql_solidos_por_control(desde, hasta, herd=None) -> str:
         WHERE mt.Fat > 0 AND mt.Protein > 0
           AND CAST(h.DateAndTime AS date) BETWEEN '{desde}' AND '{hasta}'
           AND b.GCRecord IS NULL AND b.Number > 0
-          AND {rebano.filtro("b", herd)}
+          AND {rebano.filtro_del_animal("b.OID", herd)}
         GROUP BY CAST(h.DateAndTime AS date)
         HAVING COUNT(*) >= 50          -- un puñado de controles sueltos no es un control
         ORDER BY fecha

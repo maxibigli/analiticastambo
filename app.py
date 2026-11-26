@@ -1560,14 +1560,11 @@ def _tablero_mortandad_terneros(tambo: str, herd) -> dict:
     """Bajas tempranas de terneros: salidas con menos de 90 días de vida sobre
     los partos del mismo período.
 
-    ESTE TAMBO NO REGISTRA UN MOTIVO DE «MUERTE» PARA TERNEROS. Medido el
-    30/07/2026: el código `ExitReason = 50` ("Death") existe en la base y tiene
-    95 casos, pero NINGUNO es de La Ponderosa — son de los otros dos tambos que
-    comparten la instancia. Las 22 salidas de terneros de los últimos meses de
-    este tambo están TODAS bajo el motivo genérico "OTRAS CAUSAS". Por eso se
-    cuenta cualquier salida temprana, no solo la marcada como muerte: puede
-    incluir traslados o ventas de terneros, además de mortandad real. Es lo más
-    cerca que se puede llegar con lo que carga hoy el tambo.
+    SE CUENTA CUALQUIER SALIDA TEMPRANA, no solo la marcada como muerte: puede
+    incluir traslados o ventas de terneros. Las nacidas muertas (número -1,
+    motivo «Death») cuentan en el rebaño de la madre. Hasta el 26/11/2026 no
+    entraba ninguna: sin grupo ni registro diario parecían de otro tambo, y de
+    ahí la vieja nota de que La Ponderosa no cargaba muertes (ver CLAUDE.md).
 
     VENTANA CENSURADA: un ternero nacido en los últimos 90 días todavía no
     completó su ventana de riesgo — no se sabe si va a tener una salida
@@ -1584,14 +1581,15 @@ def _tablero_mortandad_terneros(tambo: str, herd) -> dict:
                       tambo=tambo, max_rows=5)
     db_ = db.run_query(reproduccion.sql_bajas_terneros(str(desde), str(hasta),
                                                        MORTANDAD_RIESGO_DIAS, herd),
-                       tambo=tambo, max_rows=500)
+                       tambo=tambo, max_rows=5000)
     if not dp["rows"]:
         return {"falta": "No se pudo consultar partos ni salidas tempranas."}
     partos, bajas = int(dp["rows"][0][0] or 0), len(db_["rows"])
     if not partos:
         return {"falta": f"Sin partos registrados entre {desde} y {hasta}."}
+    muertas = reproduccion.armar_bajas_terneros(db_["columns"], db_["rows"], partos, str(desde), str(hasta))["resumen"]["nacidas_muertas"]
     return {"mortandad": round(100 * bajas / partos, 1),
-            "detalle": f"{bajas} de {partos} partos · {desde} a {hasta}"}
+            "detalle": f"{bajas} de {partos} partos · {muertas} nacidas muertas · {desde} a {hasta}"}
 
 
 def _tablero_dias_abiertos(tambo: str, herd) -> dict:
@@ -5758,9 +5756,9 @@ def api_reproduccion_performance():
 @auth.requiere_rol("admin")
 def api_bajas_terneros():
     """Terneros nacidos en el período que se dieron de baja antes de los 90
-    días de vida, con el motivo real. Ver `reproduccion.sql_bajas_terneros` —
-    ESTE TAMBO NO USA UN MOTIVO ESPECÍFICO DE MUERTE PARA TERNEROS, así que la
-    lista trae cualquier salida temprana (puede incluir ventas/traslados)."""
+    días de vida, con el motivo real. Ver `reproduccion.sql_bajas_terneros`:
+    la lista trae cualquier salida temprana (puede incluir ventas/traslados) y
+    las nacidas muertas."""
     tambo = _tambo_del_request()
     hoy = datetime.date.today()
     try:
@@ -5794,7 +5792,7 @@ def api_bajas_terneros():
                           tambo=tambo, max_rows=5)
         db_ = db.run_query(reproduccion.sql_bajas_terneros(str(desde), str(hasta),
                                                            riesgo_dias, herd),
-                           tambo=tambo, max_rows=500)
+                           tambo=tambo, max_rows=5000)
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": str(exc)}), 502
 
@@ -6059,7 +6057,8 @@ def api_reproduccion_gestacion():
 
 def sql_servicios_mensuales(desde, hasta, herd):
     """Servicios y concepciones por mes. Una concepción es un servicio que
-    después tuvo un chequeo de preñez positivo apuntándole."""
+    después tuvo un chequeo de preñez positivo apuntándole. Cuentan también los
+    de los animales que ya se fueron (`rebano.filtro_del_animal`)."""
     return f"""
         WITH serv AS (
             SELECT FORMAT(ae.DateAndTime, 'yyyy-MM') AS mes,
@@ -6070,7 +6069,7 @@ def sql_servicios_mensuales(desde, hasta, herd):
             JOIN AbstractAnimalEvent ae ON ae.OID = i.OID AND ae.GCRecord IS NULL
             WHERE ae.DateAndTime >= '{desde}' AND ae.DateAndTime <= '{hasta}'
               AND ae.LactationNumber >= 1
-              AND {rebano.filtro_por_animal('ae.BasicAnimal', herd)}
+              AND {rebano.filtro_del_animal('ae.BasicAnimal', herd)}
         )
         SELECT mes, COUNT(*) AS servicios, SUM(quedo) AS concepciones
         FROM serv GROUP BY mes

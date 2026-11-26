@@ -110,6 +110,10 @@ def filtro_del_animal(columna_oid: str, herd=None) -> str:
     rebaño de un animal es: (1) el de su grupo de hoy, si tiene; (2) si ya no tiene grupo, el del grupo de su ÚLTIMO registro diario
     (`AnimalDaily.AnimalGroup`, con un índice por animal y fecha: es una búsqueda por animal, no un recorrido).
 
+    ESCRITO COMO CONJUNTO (`columna IN (animales del rebaño)`), no como condición que se evalúa fila por fila: el conjunto se arma una sola vez. La primera versión (con `EXISTS ... OR ...`
+    sobre cada fila) hacía repetir la búsqueda por cada registro diario o evento: el 26/11/2026 el plan de «Bajas de terneros» la repetía unos 191 millones de veces (la consulta no
+    terminaba) y «kg por vaca» de Proyección ordenaba las 697 mil filas de `AnimalDaily`. Escribirlo de nuevo como condición por fila vuelve a romper eso.
+
     Medido el 25/11/2026 en las copias del 20/11/2026 (`HistoryAnimal`, `AnimalDaily` y `EventGroupChange`):
       * el último registro diario de un animal que SIGUE en un grupo da el mismo rebaño que su grupo de hoy en 8.001 de 8.001 animales de La Ponderosa y en
         1.011 de 1.011 de San José; el último cambio de grupo (`EventGroupChange`) también, y entre los que ya se fueron los dos coinciden en 2.944 de 2.944;
@@ -123,13 +127,36 @@ def filtro_del_animal(columna_oid: str, herd=None) -> str:
     cond = _condicion(herd)
     if cond is None:
         return "1 = 1"
-    return (f"(EXISTS (SELECT 1 FROM BasicAnimal b_tb JOIN AnimalGroup g_tb ON g_tb.OID = b_tb.[Group]"
-            f" WHERE b_tb.OID = {columna_oid} AND {cond})"
-            f" OR (NOT EXISTS (SELECT 1 FROM BasicAnimal s_tb WHERE s_tb.OID = {columna_oid} AND s_tb.[Group] IS NOT NULL)"
+    return f"{columna_oid} IN ({_animales_del_rebano(cond)})"
+
+
+def _animales_del_rebano(cond: str) -> str:
+    """Subconsulta con los OID de los animales del rebaño: los de un rodeo suyo HOY y los que ya no tienen rodeo pero cuyo último registro diario fue en uno suyo."""
+    return (f"SELECT a_tb.OID FROM BasicAnimal a_tb JOIN AnimalGroup g_tb ON g_tb.OID = a_tb.[Group] WHERE {cond}"
+            f" UNION ALL"
+            f" SELECT a_tb.OID FROM BasicAnimal a_tb WHERE a_tb.[Group] IS NULL"
             f" AND EXISTS (SELECT 1 FROM AnimalGroup g_tb WHERE {cond} AND g_tb.OID ="
             f" (SELECT TOP 1 d_tb.AnimalGroup FROM AnimalDaily d_tb"
-            f" WHERE d_tb.BasicAnimal = {columna_oid} AND d_tb.GCRecord IS NULL AND d_tb.AnimalGroup IS NOT NULL"
-            f" ORDER BY d_tb.[Date] DESC, d_tb.OID DESC))))")
+            f" WHERE d_tb.BasicAnimal = a_tb.OID AND d_tb.GCRecord IS NULL AND d_tb.AnimalGroup IS NOT NULL"
+            f" ORDER BY d_tb.[Date] DESC, d_tb.OID DESC))")
+
+
+def filtro_del_ternero(columna_oid: str, herd=None) -> str:
+    """Como `filtro_del_animal`, y un ternero que no tiene ni grupo ni registro diario es del rebaño de su MADRE (la vaca del parto en el que nació, `BasicAnimal.BirthEvent`).
+
+    Es el caso de las nacidas muertas (DelPro les pone número -1 y motivo «Death») y de algunos terneros que se van a los pocos días: nunca entran a un grupo. Sin esto la mortandad no contaba NINGUNA
+    nacida muerta. Medido el 25/11/2026 en la copia de La Ponderosa del 20/11/2026: de las 142 salidas «Death» ninguna tiene rebaño propio; por la madre, 122 son de La Ponderosa, 7 de SB, 2 de Don
+    Germán y 11 no se pueden ubicar. En San José, 79 nacidas muertas, 77 con la madre en el rebaño.
+    """
+    cond = _condicion(herd)
+    if cond is None:
+        return "1 = 1"
+    return (f"{columna_oid} IN ({_animales_del_rebano(cond)}"
+            f" UNION ALL"
+            f" SELECT c_tb.OID FROM BasicAnimal c_tb JOIN AbstractAnimalEvent p_tb ON p_tb.OID = c_tb.BirthEvent"
+            f" WHERE c_tb.[Group] IS NULL"
+            f" AND NOT EXISTS (SELECT 1 FROM AnimalDaily u_tb WHERE u_tb.BasicAnimal = c_tb.OID AND u_tb.GCRecord IS NULL AND u_tb.AnimalGroup IS NOT NULL)"
+            f" AND {filtro_del_animal('p_tb.BasicAnimal', herd)})")
 
 
 def filtro_historico(alias_animal: str = "b", herd=None) -> str:

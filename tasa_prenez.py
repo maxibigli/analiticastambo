@@ -21,10 +21,19 @@ celo 563, inseminadas 545, preñadas 229, abortos 33):
 
 APTAS es la parte que hubo que reconstruir, porque DDM no guarda una lista de
 elegibles por fecha. Una vaca es apta en un ciclo si, al TERMINAR el ciclo:
-ya parió, pasó el período de espera voluntario, sigue en el rodeo y no estaba
-preñada al empezar el ciclo. Se probó también "apta al inicio" y da 940 contra
+ya parió, pasó el período de espera voluntario, estaba en el rodeo al empezar
+el ciclo (aunque se haya ido después: el rebaño sale de
+`rebano.filtro_del_animal`, desde el 26/11/2026) y no estaba preñada al
+empezar el ciclo. Se probó también "apta al inicio" y da 940 contra
 las 1.112 del informe; al fin da 1.112 exacto, o sea que DelPro cuenta las
 vacas que cruzan la espera voluntaria durante el ciclo.
+
+DelPro TAMBIÉN cuenta a las vacas que después se fueron. El informe de
+referencia es el de TODOS los rebaños del ciclo del 10/06/2025 al
+30/06/2025 (se identificó el 26/11/2026 porque da exactamente las 522 con
+celo y 494 inseminadas que daba la app): contándolas, ese ciclo da 1.119
+aptas (el informe, 1.112; copia del 20/11/2026) y con solo las que siguen en
+un rodeo daría 742.
 
 El período de espera NO está hardcodeado: sale de `ReproductionSetting` vía
 `parametros.py` (este tambo lo tiene en 53 días, no en los 50 por defecto).
@@ -45,6 +54,11 @@ LO QUE NO CIERRA:
     DelPro, con ceros en los ciclos recientes) y casi no movió el número. No
     se encontró qué criterio adicional aplica DelPro. Mejor mostrarlo con la
     advertencia que dar por bueno un número que se sabe inflado.
+
+    PISTA del 26/11/2026, todavía SIN corregir: contando solo los abortos de
+    las vacas APTAS, ese mismo ciclo del 10/06/2025 da 31 contra los 33 de
+    DelPro. La consulta de hoy no limita los abortos ni a las aptas ni al
+    rebaño (en ese ciclo cuenta 77).
 """
 import datetime
 
@@ -143,7 +157,7 @@ def sql_embudo(ventanas_lista: list, tipo: str, pev: int,
         WHERE up.f IS NOT NULL
           AND DATEDIFF(day, up.f, {ref}) >= {pev}
           AND {libre.format(col='b.OID')}
-          AND {rebano.filtro('b', herd)}
+          AND {rebano.filtro_del_animal('b.OID', herd)}
     """
     # Novilla: no parió nunca, así que es apta por EDAD.
     aptas_novilla = f"""
@@ -156,7 +170,7 @@ def sql_embudo(ventanas_lista: list, tipo: str, pev: int,
         WHERE b.BirthDate IS NOT NULL
           AND DATEDIFF(day, b.BirthDate, {ref}) >= {edad_novilla}
           AND {libre.format(col='b.OID')}
-          AND {rebano.filtro('b', herd)}
+          AND {rebano.filtro_del_animal('b.OID', herd)}
     """
     if tipo == TIPO_VACA:
         aptas = aptas_vaca

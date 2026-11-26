@@ -68,7 +68,7 @@ _BASE = f"""
 def sql_por_mes(desde: str, hasta: str, herd=None) -> str:
     """Partos y duración promedio de gestación, por mes de parto y grupo."""
     base = _BASE.format(desde=desde, hasta=hasta,
-                        filtro=rebano.filtro_por_animal('cal.BasicAnimal', herd))
+                        filtro=rebano.filtro_del_animal('cal.BasicAnimal', herd))
     return f"""
         SELECT FORMAT(cal.DateAndTime, 'yyyy-MM') AS mes,
                {_GRUPO} AS grupo,
@@ -91,7 +91,7 @@ def sql_distribucion(desde: str, hasta: str, herd=None) -> str:
     prematuros, que es un problema sanitario.
     """
     base = _BASE.format(desde=desde, hasta=hasta,
-                        filtro=rebano.filtro_por_animal('cal.BasicAnimal', herd))
+                        filtro=rebano.filtro_del_animal('cal.BasicAnimal', herd))
     dias = "DATEDIFF(day, ins.DateAndTime, cal.DateAndTime)"
     return f"""
         SELECT {dias} AS dias, {_GRUPO} AS grupo, COUNT(*) AS partos

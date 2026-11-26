@@ -1554,10 +1554,23 @@ NULL: si no, la leyenda anuncia una medida que la sala no registra.
   Preñez por DEL de 2025, antes → después (1ª lactancia y 2ª y más, a ≤100/130/150/200/300 días): La Ponderosa 40,9/58,0/63,1/72,5/87,4 → 38,3/52,7/57,0/65,7/76,9 y 35,2/48,4/56,9/69,1/88,8 → 25,3/36,8/43,0/52,4/63,5; San José
   55,6/67,7/73,7/86,5/91,0 → 50,6/62,8/68,6/79,5/84,0 y 47,4/63,4/68,0/80,0/90,3 → 32,4/44,2/49,2/58,6/66,0. **«Días abiertos» además deja de contar las filas con `LactationNumber = 0`** (las novillas antes de parir: 207 en La Ponderosa,
   de 353 a 399 días, y 116 en San José, de ~380 de promedio: sumaban 10 días al promedio de La Ponderosa y 24 al de San José): La Ponderosa 136,5 → 129,8 días (4.060 lactancias) y San José 137,0 → 115,3 (1.731).
-  **Con el mismo sesgo y SIN tocar**: servicios por ciclo (tasa de servicio y de preñez), abortos, partos del período, gestación e «Indicadores de Preñez» (`reproduccion.sql_servicios_por_ciclo`, `sql_abortos`, `sql_partos_periodo`,
-  `gestacion.py`, `preneces.py`...). En los últimos 12 meses de La Ponderosa dejan afuera el 7,5 % de los servicios, el 10,6 % de las preñeces confirmadas, el 12,2 % de los partos y el **30,5 % de los abortos**. Pasarlos a
-  `filtro_del_animal` es una línea por consulta, pero cambia los números de cada pantalla. Y «Días abiertos» promedia TODO el historial, con las lactancias de 2026 «censuradas» (solo cuentan las que ya quedaron preñadas: 87 días de promedio
-  contra ~141 de 2023 a 2025): el número mezcla dos sesgos y conviene acotarlo a un período ya cerrado.
+  «Días abiertos» promedia además TODO el historial, con las lactancias de 2026 «censuradas» (solo cuentan las que ya quedaron preñadas: 87 días de promedio contra ~141 de 2023 a 2025): el número mezcla dos sesgos y conviene acotarlo a un período ya cerrado.
+- **Desde el 26/11/2026 las demás cuentas sobre el PASADO también cuentan a los que se fueron** (pedido del tambo: «deberíamos contarlos aunque hayan sido dados de baja»). Todas usan `rebano.filtro_del_animal`: Resultados (inventario histórico,
+  tasa de servicio y de preñez, abortos), Tasa de preñez, Indicadores de preñez, Análisis de gestación, Bajas de terneros y la tarjeta «Bajas tempranas de terneros», Calor y servicios, Proyección (partos reales, lactantes medidos y kg/vaca),
+  Performance (curva, pico, distribución y concentración; en el corte por rodeo van como «Dadas de baja»), Conversión histórica (sólidos por control) y Diagnóstico de baja (eventos y retiro; un cambio de rodeo «a ningún rodeo» es la salida, no una mudanza).
+  Cuentan hasta su fecha de salida (`ExitDate`; en las dos copias solo un animal de sistema sin datos, el 999999, no la tiene).
+  **DelPro hace lo mismo**: el informe de Tasa de preñez de referencia (ciclo del 10/06/2025, todos los rebaños) da 1.112 aptas; contándolas salen 1.119 y sin ellas 742.
+  **El filtro es un CONJUNTO (`columna IN (...)`), no una condición por fila**: la forma anterior hacía repetir la búsqueda por cada evento o registro (unos 191 millones de veces en «Bajas de terneros», que no terminaba; «kg por vaca» ordenaba las 697 mil filas de
+  `AnimalDaily`). Comprobado el 26/11/2026: la forma nueva devuelve exactamente las mismas filas que la anterior en 23 consultas contra la copia de La Ponderosa.
+- **Las nacidas muertas cuentan en el rebaño de la MADRE** (`rebano.filtro_del_ternero`, 26/11/2026): DelPro las carga con número -1 y motivo «Death», y como nunca entran a un rodeo antes no contaba NINGUNA. La vieja nota de que La Ponderosa no cargaba
+  muertes («Death» no tenía casos acá) era FALSA. La tarjeta «Bajas tempranas de terneros» sube mucho (La Ponderosa, nacidos del 22/02 al 21/08/2026: 8,0 %, 92 nacidas muertas); sus límites (verde 5 %, rojo 12 %) quedaron como estaban y se ajustan en ⚙ Configuración.
+- **Sin tocar, a propósito**: las listas del estado de HOY (preñadas, no inseminar, partos y secados, conciliación); las salidas de Proyección y las bajas del Diagnóstico (ya usaban `filtro_historico`); mérito, rentabilidad y sólidos por vaca (muchos
+  números de RP se repiten entre los que se fueron); los flujos (agrupan por el rodeo de hoy como DelPro).
+  Antes → después en La Ponderosa (copia del 20/11/2026): Bajas de terneros (nacidos del 22/02 al 21/08/2026) 24 de 1.239 partos (1,9 %) → 116 de 1.452 (8,0 %, 92 nacidas muertas); Tasa de preñez de vacas (18 ciclos desde el 26/11/2025) aptas 6.916 → 8.037,
+  % preñadas 15,8 → 14,1 y % concepción 38,2 → 36,7 (novillas casi igual); Calor y servicios (24 meses) servicios 4.720 → 6.240 y concepción 40,3 → 38,0 %; Gestación 1.712 → 1.948 partos (277,2 → 276,9 días); Indicadores de preñez 2.078 → 2.147 concepciones;
+  Resultados, vacas del año 2025: 687 → 1.230 (en ordeño 640 → 1.133); Proyección, diciembre de 2025: lactantes medidas 756 → 1.045 y kg/vaca/día 35,2 → 34,1.
+- **Pendiente**: el % de aborto de la Tasa de preñez cuenta abortos sin limitarlos a las aptas ni al rebaño (pista en `tasa_prenez.py`: solo con las aptas da 31 contra 33 de DelPro); la tasa de NOVILLAS deja afuera de los ciclos viejos a las que ya parieron
+  (usa la lactancia de HOY).
 - Proyección de rebaños: la ecuación es
   `lactantes[m] = lactantes[m-1] + partos - secados - salidas` y la producción
   `lactantes × kg/vaca/día del año pasado × días del mes` (ambas verificadas

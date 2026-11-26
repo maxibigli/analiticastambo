@@ -237,6 +237,10 @@ def sql_inventario_historico(fechas: list, herd=None, periodo_seco: int = None) 
     los animales. Hereda el problema de fondo de esta base —hay partos que no
     quedaron registrados— así que subestima el plantel; por eso estos ítems
     viajan con confianza "media" cuando el rango no termina hoy.
+
+    Las que se fueron DESPUÉS de cada fecha cuentan en esa fecha: el rebaño sale
+    de `rebano.filtro_del_animal` (con el filtro del grupo de hoy quedaban
+    afuera todas, aunque `ExitDate > f.d` las pedía; corregido el 26/11/2026).
     """
     lista = " UNION ALL ".join(f"SELECT CAST('{f}' AS date) AS d" for f in fechas)
     # Una vaca está seca solo si tiene un parto siguiente REGISTRADO dentro del
@@ -268,7 +272,7 @@ def sql_inventario_historico(fechas: list, herd=None, periodo_seco: int = None) 
             JOIN BasicAnimal b ON b.OID = l.animal AND b.GCRecord IS NULL AND b.Number > 0
             WHERE (b.ExitDate IS NULL OR b.ExitDate > f.d)
               AND DATEDIFF(day, l.inicio, f.d) BETWEEN 0 AND {LACTANCIA_MAX_DIAS}
-              AND {rebano.filtro('b', herd)}
+              AND {rebano.filtro_del_animal('b.OID', herd)}
         )
         SELECT d,
                SUM(CASE WHEN seca = 0 THEN 1 ELSE 0 END) AS vacas_ordeno,
@@ -370,7 +374,8 @@ def sql_servicios_por_ciclo(hasta: str, ciclos: int, herd=None, ciclo_dias: int 
 
     El ciclo 0 es el más reciente. Sirve para las tres ventanas del informe:
     último ciclo (0), promedio de los últimos 3 (0-2) y de los últimos 12
-    meses (todos los ciclos que entren en 365 días).
+    meses (todos los ciclos que entren en 365 días). Cuentan también los
+    animales que ya se fueron (`rebano.filtro_del_animal`).
     """
     ciclo_dias = ciclo_dias or CICLO_DIAS
     dias = ciclos * ciclo_dias
@@ -388,7 +393,7 @@ def sql_servicios_por_ciclo(hasta: str, ciclos: int, herd=None, ciclo_dias: int 
               AND ae.DateAndTime > DATEADD(day, -{dias}, '{hasta}')
               AND ae.DateAndTime <= '{hasta}'
               AND (i.OID IS NOT NULL OR p.OID IS NOT NULL)
-              AND {rebano.filtro_por_animal('ae.BasicAnimal', herd)}
+              AND {rebano.filtro_del_animal('ae.BasicAnimal', herd)}
         )
         SELECT ciclo,
                CASE WHEN lact <= 1 THEN 'l1' ELSE 'l2' END AS grupo,
@@ -413,7 +418,7 @@ def sql_abortos(desde: str, hasta: str, herd=None) -> str:
         WHERE ae.GCRecord IS NULL
           AND ae.DateAndTime >= '{desde}' AND ae.DateAndTime < DATEADD(day, 1, '{hasta}')
           AND (a.OID IS NOT NULL OR c.OID IS NOT NULL)
-          AND {rebano.filtro_por_animal('ae.BasicAnimal', herd)}
+          AND {rebano.filtro_del_animal('ae.BasicAnimal', herd)}
         GROUP BY CASE WHEN ae.LactationNumber <= 1 THEN 'l1' ELSE 'l2' END
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
@@ -432,15 +437,16 @@ def sql_bajas_terneros(desde: str, hasta: str, riesgo_dias: int = RIESGO_TERNERO
     después del rango pedido, de un ternero nacido DENTRO de él, entra igual
     (si no, un ternero de fin de mes quedaría afuera de las dos consultas).
 
-    ESTE TAMBO NO USA UN MOTIVO ESPECÍFICO DE "MUERTE" PARA TERNEROS (ver
-    `app._tablero_mortandad_terneros`): el código de sistema `ExitReason = 50`
-    ("Death") no tiene ni un caso de La Ponderosa en toda la base. Por eso se
-    trae CUALQUIER motivo de salida temprana — puede incluir traslados o
-    ventas, además de mortandad real — y se muestra el texto tal cual para que
-    quien mira la tabla lo vea y lo pueda descartar caso por caso.
+    SE TRAE CUALQUIER SALIDA TEMPRANA, no solo la marcada como muerte (puede
+    incluir traslados o ventas), y se muestra el motivo tal cual para que quien
+    mira la tabla lo pueda descartar caso por caso. Las NACIDAS MUERTAS vienen
+    con número -1 y motivo «Death» (`ExitReason = 50`).
 
-    Usa `filtro_historico`: un animal dado de baja pierde su `[Group]`
-    (queda NULL), así que `rebano.filtro()` no lo encontraría — ver rebano.py.
+    Usa `filtro_del_ternero`: una nacida muerta no tiene grupo ni registro
+    diario y su rebaño es el de la madre. Hasta el 26/11/2026 usaba
+    `filtro_historico` (algún registro diario) y no contaba ninguna; por eso
+    se creyó que La Ponderosa no cargaba muertes («Death» parecía ser solo de
+    los otros tambos).
     """
     return f"""
         SELECT b.Number AS rp,
@@ -452,7 +458,7 @@ def sql_bajas_terneros(desde: str, hasta: str, riesgo_dias: int = RIESGO_TERNERO
         JOIN AbstractAnimalEvent a ON a.OID = e.OID
         JOIN BasicAnimal b ON b.OID = a.BasicAnimal
         LEFT JOIN TextLookupItem tn ON tn.OID = e.ExitReason
-        WHERE a.GCRecord IS NULL AND {rebano.filtro_historico('b', herd)}
+        WHERE a.GCRecord IS NULL AND {rebano.filtro_del_ternero('b.OID', herd)}
           AND b.BirthDate >= '{desde}' AND b.BirthDate < '{hasta}'
           AND DATEDIFF(day, b.BirthDate, a.DateAndTime) BETWEEN 0 AND {riesgo_dias}
         ORDER BY a.DateAndTime DESC
@@ -467,21 +473,31 @@ def sql_partos_periodo(desde: str, hasta: str, herd=None) -> str:
         FROM EventCalving e JOIN AbstractAnimalEvent a ON a.OID = e.OID
         WHERE a.GCRecord IS NULL
           AND a.DateAndTime >= '{desde}' AND a.DateAndTime < '{hasta}'
-          AND {rebano.filtro_por_animal('a.BasicAnimal', herd)}
+          AND {rebano.filtro_del_animal('a.BasicAnimal', herd)}
         OPTION (MAXDOP 1, MAX_GRANT_PERCENT = 20)
     """
 
 
 def armar_bajas_terneros(columns, rows, partos: int, desde: str, hasta: str,
                          riesgo_dias: int = RIESGO_TERNEROS_DIAS) -> dict:
-    """Tabla de bajas + el resumen (%), listo para la pantalla."""
+    """Tabla de bajas + el resumen (%), listo para la pantalla.
+
+    Una nacida muerta (número -1 en DelPro) no tiene RP: se muestra sin número y
+    con «(nacida muerta)» al lado del motivo, y el resumen las cuenta aparte.
+    """
     idx = {c: i for i, c in enumerate(columns)}
     filas = [{c: f[idx[c]] for c in idx} for f in rows]
+    nacidas_muertas = 0
+    for f in filas:
+        if f.get("rp") == -1:
+            nacidas_muertas += 1
+            f["rp"] = None
+            f["motivo"] = f"{f.get('motivo')} (nacida muerta)"
     bajas = len(filas)
     return {
         "filas": filas,
         "resumen": {
-            "partos": partos, "bajas": bajas,
+            "partos": partos, "bajas": bajas, "nacidas_muertas": nacidas_muertas,
             "pct": round(100 * bajas / partos, 1) if partos else None,
             "desde": desde, "hasta": hasta, "riesgo_dias": riesgo_dias,
         },
