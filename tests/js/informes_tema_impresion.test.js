@@ -13,8 +13,13 @@ const casos = [];
 const caso = (nombre, fn) => casos.push([nombre, fn]);
 const plano = x => JSON.parse(JSON.stringify(x));
 
-const CLAVE = 'lactia.informes.tema';
+const CLAVE = 'lactia-tema';                                    // la de toda la aplicación: la escribe el botón del encabezado (templates/index.html)
 const TEMA = P => P.doc.documentElement.getAttribute('data-theme');
+/* Lo que pasa cuando se toca el botón del tema en la app: ella lo guarda y el navegador avisa con `storage` a las demás pantallas (también a la del marco). */
+function elegirEnLaApp(P, valor) {
+  P.almacen[CLAVE] = valor;
+  P.disparar('storage', {key: CLAVE, newValue: valor});
+}
 const RES = {
   columnas: [{id: 'Number', alias: 'c0', etiqueta: 'Número del animal', tipo: 'txt', unidad: '', decimales: 0, verificado: true, resumen: 'none'},
              {id: 'CurrentDIM', alias: 'c1', etiqueta: 'Días en ordeño', tipo: 'num', unidad: '', decimales: 0, verificado: true, resumen: 'none'}],
@@ -31,28 +36,42 @@ function informeCalculado(P, extra) {
 /* ---------------------------------------------------------------------------------------------------------------------------------------- */
 /* El tema                                                                                                                                  */
 /* ---------------------------------------------------------------------------------------------------------------------------------------- */
-caso('tema: arranca oscuro, como el resto de LactIA, y el botón lo dice', async () => {
+caso('tema: sin nada elegido arranca oscuro, como la app, y la pantalla no tiene botón propio', async () => {
   const P = await cargar();
   assert.strictEqual(TEMA(P), 'dark');
-  assert.ok(/claro/i.test(P.texto('#btn-tema')), P.texto('#btn-tema'));               // ofrece pasar al claro
+  assert.ok(P.$('#btn-tema') === null, 'quedó un botón de tema en la pantalla');     // el tema se elige en un solo lugar: el encabezado de la app
 });
 
-caso('tema: el botón alterna claro y oscuro, lo recuerda y el texto cambia', async () => {
-  const P = await cargar();
-  P.click('#btn-tema');
-  assert.strictEqual(TEMA(P), 'light');
-  assert.strictEqual(P.almacen[CLAVE], 'light');
-  assert.ok(/oscuro/i.test(P.texto('#btn-tema')), P.texto('#btn-tema'));
-  assert.strictEqual(P.$('#btn-tema').getAttribute('aria-pressed'), null);                 // el texto ya dice a qué tema pasa: sin un segundo estado que diga otra cosa
-  P.click('#btn-tema');
-  assert.strictEqual(TEMA(P), 'dark');
-  assert.strictEqual(P.almacen[CLAVE], 'dark');
-});
-
-caso('tema: lo que quedó guardado se aplica al abrir', async () => {
+caso('tema: se toma el que eligió la app', async () => {
   const P = await cargar({almacen: {[CLAVE]: 'light'}});
   assert.strictEqual(TEMA(P), 'light');
-  assert.ok(/oscuro/i.test(P.texto('#btn-tema')));
+});
+
+caso('tema: la elección vieja que guardaba esta pantalla ya no cuenta', async () => {
+  const P = await cargar({almacen: {'lactia.informes.tema': 'light'}});
+  assert.strictEqual(TEMA(P), 'dark');
+});
+
+caso('tema: cambiarlo en la app se ve acá sin recargar', async () => {
+  const P = await cargar();
+  elegirEnLaApp(P, 'light');
+  assert.strictEqual(TEMA(P), 'light');
+  elegirEnLaApp(P, 'dark');
+  assert.strictEqual(TEMA(P), 'dark');
+});
+
+caso('tema: si se borra lo guardado, vuelve al oscuro', async () => {
+  const P = await cargar({almacen: {[CLAVE]: 'light'}});
+  delete P.almacen[CLAVE];
+  P.disparar('storage', {key: null, newValue: null});                                  // `localStorage.clear()`
+  assert.strictEqual(TEMA(P), 'dark');
+});
+
+caso('tema: un cambio de otra cosa guardada no lo toca', async () => {
+  const P = await cargar();
+  P.almacen[CLAVE] = 'light';
+  P.disparar('storage', {key: 'otra-cosa', newValue: 'x'});
+  assert.strictEqual(TEMA(P), 'dark');
 });
 
 caso('tema: un valor guardado que no es un tema se ignora', async () => {
@@ -62,11 +81,11 @@ caso('tema: un valor guardado que no es un tema se ignora', async () => {
   }
 });
 
-caso('tema: sin almacenamiento (navegación privada) el botón igual cambia el tema, sin errores', async () => {
+caso('tema: sin almacenamiento (navegación privada) queda oscuro, sin errores', async () => {
   const P = await cargar({almacenRoto: true});
   assert.strictEqual(TEMA(P), 'dark');
-  P.click('#btn-tema');
-  assert.strictEqual(TEMA(P), 'light');
+  P.disparar('storage', {key: CLAVE, newValue: 'light'});
+  assert.strictEqual(TEMA(P), 'dark');
 });
 
 caso('tema: cambiarlo no marca el informe como «sin guardar» ni lo vuelve a calcular', async () => {
@@ -74,7 +93,7 @@ caso('tema: cambiarlo no marca el informe como «sin guardar» ni lo vuelve a ca
   const d = informeCalculado(P);
   d.base = P.t.foto(d);
   const antes = P.api.llamadas.length;
-  P.click('#btn-tema');
+  elegirEnLaApp(P, 'light');
   await P.flush();
   assert.strictEqual(P.t.sucio(d), false);
   assert.strictEqual(P.api.llamadas.length, antes);
@@ -177,13 +196,23 @@ caso('imprimir: Ctrl+P (sin el botón) también imprime en claro y con el encabe
   assert.strictEqual(TEMA(P), 'dark');
 });
 
-caso('imprimir: un afterprint que llega dos veces no cambia el tema que el usuario eligió', async () => {
+caso('imprimir: un afterprint que llega dos veces no pisa el tema que se eligió en la app', async () => {
   const P = await cargar();
   informeCalculado(P);
   P.disparar('beforeprint'); P.disparar('afterprint');
-  P.click('#btn-tema');                                                                // el usuario elige claro
+  elegirEnLaApp(P, 'light');
   P.disparar('afterprint');
   assert.strictEqual(TEMA(P), 'light');
+});
+
+caso('imprimir: un cambio de tema que llega mientras se imprime no oscurece la hoja y queda al terminar', async () => {
+  const P = await cargar({almacen: {[CLAVE]: 'light'}});
+  informeCalculado(P);
+  P.disparar('beforeprint');
+  elegirEnLaApp(P, 'dark');                                                            // otra pestaña de la app cambia el tema
+  assert.strictEqual(TEMA(P), 'light');                                                // la hoja sigue en claro
+  P.disparar('afterprint');
+  assert.strictEqual(TEMA(P), 'dark');
 });
 
 caso('imprimir: desde la lista de informes (Ctrl+P) no inventa un informe', async () => {

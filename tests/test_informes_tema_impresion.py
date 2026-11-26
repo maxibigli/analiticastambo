@@ -4,7 +4,9 @@ Hasta acá la pantalla era SOLO oscura y no tenía reglas de impresión. Estas p
   * que todo color de una regla salga de una variable (si no, un color escrito a mano se ve bien en un tema y ilegible en el otro);
   * que el tema claro redefina todos los colores propios del oscuro y no deje ninguna variable sin definir;
   * que la hoja impresa tenga lo suyo (apaisada, sin controles, con encabezado, el título de la tabla en cada página).
-Lo que se ve en pantalla se mira en el navegador; el comportamiento (el botón, `beforeprint`/`afterprint`, el encabezado) se ejecuta en Node: `tests/js/informes_tema_impresion.test.js`.
+El tema NO se elige acá (25/11/2026): se elige en un solo lugar, el botón del encabezado de la app (`templates/index.html`), y esta pantalla lo toma de ahí.
+
+Lo que se ve en pantalla se mira en el navegador; el comportamiento (tomar el tema de la app, `beforeprint`/`afterprint`, el encabezado) se ejecuta en Node: `tests/js/informes_tema_impresion.test.js`.
 
     C:\\Python314\\python.exe -X utf8 -m unittest tests.test_informes_tema_impresion -v
 """
@@ -78,18 +80,25 @@ class TestTemaClaro(unittest.TestCase):
 
     def test_el_tema_elegido_se_aplica_antes_de_pintar(self):
         f = fuente()
-        i = f.index('localStorage.getItem("lactia.informes.tema")')
+        i = f.index('localStorage.getItem("lactia-tema")')
         self.assertLess(i, f.index("lactia-tokens.css"))
         self.assertLess(i, f.index("<style>"))
         self.assertIn("try{", f[i - 20:i])                                             # sin almacenamiento (navegación privada) no se rompe
-        self.assertIn("const TEMA_CLAVE = 'lactia.informes.tema';", f)
+        self.assertIn("const TEMA_CLAVE = 'lactia-tema';", f)
 
-    def test_el_boton_del_tema_no_esta_en_el_encabezado_que_el_menu_oculta(self):
-        """Embebida en el menú la pantalla esconde su encabezado (`.emb .top`): el botón vive en la barra de pestañas, que siempre se ve."""
+    def test_la_clave_es_la_misma_que_escribe_la_aplicacion(self):
+        """Si la app cambia el nombre de la clave y esta pantalla no, quedarían otra vez dos temas separados."""
+        with open(os.path.join(RAIZ, "templates", "index.html"), encoding="utf-8") as g:
+            aplicacion = g.read()
+        self.assertIn("localStorage.getItem('lactia-tema')", aplicacion)
+        self.assertIn("localStorage.setItem('lactia-tema', nuevo)", aplicacion)
+        self.assertNotIn("lactia.informes.tema", fuente())
+
+    def test_la_pantalla_no_elige_ni_guarda_el_tema(self):
+        """Un solo lugar para elegirlo: sin botón propio y sin escribir la preferencia."""
         f = fuente()
-        self.assertIn('id="btn-tema"', f)
-        self.assertNotIn("btn-tema", f[f.index('<header class="top">'):f.index("</header>")])
-        self.assertLess(f.index('id="doctabs"'), f.index('id="btn-tema"'))
+        self.assertNotIn("btn-tema", f)
+        self.assertNotIn("localStorage.setItem", f)
 
     def test_cambiar_de_tema_no_se_guarda_con_el_informe(self):
         """El tema es de quien mira, no del informe: no entra en `foto` (lo que decide si hay cambios sin guardar)."""
@@ -163,16 +172,16 @@ class TestImpresion(unittest.TestCase):
         self.assertIn('const TAMBO = "ponderosa";', html)
 
     def test_imprimir_no_toca_lo_que_el_usuario_dejo_guardado(self):
-        """`beforeprint` y `afterprint` cambian el tema sin recordarlo (`aplicarTema(..., false)`): la preferencia guardada es la del botón."""
+        """`beforeprint` y `afterprint` cambian lo que se ve y nada más: la preferencia guardada es la de la aplicación."""
         f = fuente()
         cuerpo = f[f.index("let temaAntesDeImprimir"):f.index("document.addEventListener('click'")]
-        self.assertIn("aplicarTema('light', false)", cuerpo)
-        self.assertIn("aplicarTema(temaAntesDeImprimir, false)", cuerpo)
-        self.assertNotIn("true)", cuerpo)
+        self.assertIn("aplicarTema('light')", cuerpo)
+        self.assertIn("aplicarTema(temaAntesDeImprimir)", cuerpo)
+        self.assertNotIn("setItem", cuerpo)
 
 
 class TestEjecutada(unittest.TestCase):
-    """El JavaScript REAL de la pantalla en Node (`tests/js/informes_tema_impresion.test.js`): el botón del tema, lo que recuerda, lo que arma `beforeprint` y lo que vuelve `afterprint`."""
+    """El JavaScript REAL de la pantalla en Node (`tests/js/informes_tema_impresion.test.js`): el tema que toma de la app, lo que arma `beforeprint` y lo que vuelve `afterprint`."""
     resultados = {}
 
     @classmethod
@@ -190,14 +199,15 @@ class TestEjecutada(unittest.TestCase):
         fallan = ["%s\n%s" % (n, r.get("error", "")) for n, r in self.resultados.items() if not r["ok"]]
         self.assertEqual(fallan, [])
 
-    def test_el_tema_se_recuerda_y_un_valor_raro_se_ignora(self):
-        for n in ("tema: el botón alterna claro y oscuro, lo recuerda y el texto cambia", "tema: lo que quedó guardado se aplica al abrir",
-                  "tema: un valor guardado que no es un tema se ignora", "tema: sin almacenamiento (navegación privada) el botón igual cambia el tema, sin errores"):
+    def test_el_tema_sale_de_la_aplicacion_y_un_valor_raro_se_ignora(self):
+        for n in ("tema: se toma el que eligió la app", "tema: cambiarlo en la app se ve acá sin recargar",
+                  "tema: un valor guardado que no es un tema se ignora", "tema: sin almacenamiento (navegación privada) queda oscuro, sin errores"):
             self.assertTrue(self.resultados[n]["ok"], n)
 
     def test_se_imprime_siempre_en_claro_y_se_devuelve_el_tema(self):
         for n in ("imprimir: se imprime siempre en claro y después vuelve al tema de la pantalla", "imprimir: Ctrl+P (sin el botón) también imprime en claro y con el encabezado",
-                  "imprimir: un afterprint que llega dos veces no cambia el tema que el usuario eligió"):
+                  "imprimir: un afterprint que llega dos veces no pisa el tema que se eligió en la app",
+                  "imprimir: un cambio de tema que llega mientras se imprime no oscurece la hoja y queda al terminar"):
             self.assertTrue(self.resultados[n]["ok"], n)
 
 

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Informes · LactIA</title>
-<script>try{var t=localStorage.getItem("lactia.informes.tema");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
+<script>try{var t=localStorage.getItem("lactia-tema");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 <link rel="stylesheet" href="/static/css/lactia-tokens.css">
 <style>
 /* Informes personalizables (Fase 1). Mismo mundo oscuro de LactIA: los colores salen de lactia-tokens.css; la forma de trabajo
@@ -22,7 +22,7 @@
   --s1:#2E96E0; --s2:#4FC3E8; --s3:#F2A900; --s4:#2FBF8F; --s5:#F07B8A; --s6:#B79CF2; --s7:#E58A5B; --s8:#8AA1B1;
   --display:var(--lac-font-display); --body:var(--lac-font-body);
 }
-/* El tema claro (botón «Tema claro» de la barra de pestañas, y siempre al imprimir): los grises, bordes y textos vienen de los tokens claros de lactia-tokens.css (sin `data-theme="dark"`
+/* El tema claro (cuando se elige en la app, y siempre al imprimir): los grises, bordes y textos vienen de los tokens claros de lactia-tokens.css (sin `data-theme="dark"`
    valen los claros); acá van solo los colores propios de la pantalla. Todo color de una regla sale de una variable de estos dos bloques: `tests/test_informes_tema_impresion.py` lo cuida. */
 :root[data-theme="light"]{
   color-scheme:light;
@@ -62,7 +62,6 @@ h1,h2,h3{font-family:var(--display);margin:0;font-weight:600}
 .in:focus{border-color:var(--accent);outline:none;box-shadow:0 0 0 3px var(--focus-ring)}
 
 .tabsrow{display:flex;align-items:flex-end;gap:10px;border-bottom:1px solid var(--line)}
-.tabsrow .tema{flex:none;margin-bottom:5px}
 .doctabs{display:flex;flex:1;min-width:0;gap:3px;overflow-x:auto;overflow-y:hidden;scrollbar-width:thin;align-items:flex-end}
 .dt{flex:none;display:inline-flex;align-items:center;height:38px;border:1px solid transparent;border-bottom:0;border-radius:9px 9px 0 0;color:var(--muted)}
 .dt:hover{color:var(--fg);background:var(--sunken)}
@@ -365,7 +364,7 @@ dialog::backdrop{background:var(--backdrop)}
     <h1>Informes</h1>
     <a class="btn ghost sm" href="/">← Volver a LactIA</a>
   </header>
-  <div class="tabsrow"><nav class="doctabs" id="doctabs" aria-label="Pestañas abiertas"></nav><button type="button" class="btn ghost sm tema" id="btn-tema" title="Cambiar entre el tema oscuro y el claro (se recuerda en este equipo)">Tema claro</button></div>
+  <div class="tabsrow"><nav class="doctabs" id="doctabs" aria-label="Pestañas abiertas"></nav></div>
 
   <!-- Pestaña «Informes»: la lista de los guardados -->
   <section id="pg-list">
@@ -1647,21 +1646,17 @@ function hoverGrafico(e) {
 }
 
 /* ---------- tema claro / oscuro ---------- */
-/* La pantalla arranca oscura como el resto de LactIA. El botón de la barra de pestañas pasa a claro y se recuerda en este navegador (`localStorage`; si no hay, vale hasta cerrarla).
+/* El tema es de la APLICACIÓN: se elige en un solo lugar (el botón del encabezado de LactIA, `templates/index.html`) y esta pantalla lo toma de ahí, de la clave `lactia-tema` de `localStorage`.
+   Cuando cambia, el evento `storage` avisa (en el marco del menú o en otra pestaña) y se ve sin recargar. Sin nada guardado, o sin almacenamiento, oscuro como la app. Acá nunca se escribe la preferencia.
    El `<script>` del encabezado lo aplica antes de pintar para que no parpadee. */
-const TEMA_CLAVE = 'lactia.informes.tema';
+const TEMA_CLAVE = 'lactia-tema';
 const temaActual = () => document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
-function temaGuardado() { try { const t = window.localStorage.getItem(TEMA_CLAVE); return t === 'light' || t === 'dark' ? t : null; } catch (e) { return null; } }
-function aplicarTema(t, recordar) {
-  document.documentElement.setAttribute('data-theme', t);
-  if (recordar) { try { window.localStorage.setItem(TEMA_CLAVE, t); } catch (e) { /* sin almacenamiento: el tema vale hasta cerrar la pantalla */ } }
-  const b = $('#btn-tema');
-  if (b) b.textContent = t === 'light' ? 'Tema oscuro' : 'Tema claro';           // el botón dice a qué tema se pasa
-}
+function temaDeLaApp() { try { return window.localStorage.getItem(TEMA_CLAVE) === 'light' ? 'light' : 'dark'; } catch (e) { return 'dark'; } }
+const aplicarTema = t => document.documentElement.setAttribute('data-theme', t);
 
 /* ---------- imprimir ---------- */
 /* El navegador imprime lo que hay en pantalla con las reglas de `@media print`. `beforeprint` (el botón, Ctrl+P o el menú del navegador) pasa a tema claro y arma el encabezado de la hoja;
-   `afterprint` devuelve el tema que el usuario tenía, sin tocar lo que dejó guardado. */
+   `afterprint` devuelve el tema de la aplicación. */
 const fmtFechaHora = x => pad(x.getDate()) + '/' + pad(x.getMonth() + 1) + '/' + x.getFullYear() + ' ' + pad(x.getHours()) + ':' + pad(x.getMinutes());
 function textoCondicion(d, c) {
   const f = campoDe(d, c.campo), tipo = f ? f.tipo : 'num', o = (OPS[tipo] || []).filter(x => x[0] === c.op)[0];
@@ -1705,11 +1700,16 @@ function imprimir() {
 }
 let temaAntesDeImprimir = null;
 window.addEventListener('beforeprint', () => {
-  if (temaAntesDeImprimir === null) { temaAntesDeImprimir = temaActual(); aplicarTema('light', false); }
+  if (temaAntesDeImprimir === null) { temaAntesDeImprimir = temaActual(); aplicarTema('light'); }
   prepararImpresion();
 });
 window.addEventListener('afterprint', () => {
-  if (temaAntesDeImprimir !== null) { aplicarTema(temaAntesDeImprimir, false); temaAntesDeImprimir = null; }
+  if (temaAntesDeImprimir !== null) { aplicarTema(temaAntesDeImprimir); temaAntesDeImprimir = null; }
+});
+window.addEventListener('storage', e => {
+  if (e.key !== TEMA_CLAVE && e.key !== null) return;                              // `null`: se borró todo lo guardado
+  if (temaAntesDeImprimir !== null) temaAntesDeImprimir = temaDeLaApp();           // a mitad de una impresión la hoja sigue en claro: se aplica al terminar
+  else aplicarTema(temaDeLaApp());
 });
 
 document.addEventListener('click', e => {
@@ -1851,7 +1851,6 @@ $('#dp-tambo').addEventListener('change', e => { DP.solo = e.target.checked; car
 $('#dp-refrescar').addEventListener('click', () => cargarDelpro(true));
 $('#btn-run').addEventListener('click', () => ejecutar(docAct()));
 $('#btn-xls').addEventListener('click', () => exportar(docAct()));
-$('#btn-tema').addEventListener('click', () => aplicarTema(temaActual() === 'light' ? 'dark' : 'light', true));
 $('#btn-guardar').addEventListener('click', () => una('guardar', () => guardar(docAct(), false)));
 $('#btn-copia').addEventListener('click', () => una('guardar', () => guardar(docAct(), true)));
 $('#btn-dock').addEventListener('click', () => { $('#work').classList.toggle('nodock'); $('#shell').classList.toggle('showf'); });
@@ -1886,7 +1885,7 @@ document.addEventListener('dragover', e => { const c = e.target.closest && e.tar
 document.addEventListener('drop', e => { const c = e.target.closest && e.target.closest('.chip'); if (c && dragI != null) { e.preventDefault(); const d = docAct(), it = d.def.columnas.splice(dragI, 1)[0]; d.def.columnas.splice(+c.dataset.i, 0, it); dragI = null; renderChips(); marcarCambio(d); } });
 document.addEventListener('dragend', () => { dragI = null; document.querySelectorAll('.chip.over').forEach(x => x.classList.remove('over')); });
 
-aplicarTema(temaGuardado() || 'dark', false);
+aplicarTema(temaDeLaApp());
 (async function iniciar() {
   let campos = null;                                                    // el catálogo, o null si no se pudo leer: la lista y los envíos se esperan igual (si no, la lista salía vacía)
   await Promise.all([api('/api/informes/campos').then(j => { campos = j; }).catch(e => { IA.sinCatalogo = true; toast('No se pudo cargar el catálogo de campos: ' + e.message); }), refrescarLista(), refrescarEnvios()]);

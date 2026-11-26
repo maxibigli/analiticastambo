@@ -21,7 +21,7 @@ const HOY = Date.UTC(2026, 10, 24, 12, 0, 0);                    // mar 24/11/20
    Lo que no exista se deja pasar como undefined (así una prueba falla por su comportamiento y no por un nombre). */
 const EXPORTAR = ['PG', 'DP', 'IA', 'CAMPOS', 'ENVIOS', 'LISTA', 'nuevoDoc', 'activar', 'docAct', 'abrirProg', 'guardarProg', 'probarProg', 'cargarRegistroProg',
   'traerDeDelpro', 'abrirDelpro', 'renderHead', 'renderFilters', 'renderImportado', 'renderProg', 'renderEnvio', 'limpiaDef', 'listaDe', 'condLimpia', 'tipoDe',
-  'defVacia', 'foto', 'sucio', 'toast', 'ejecutar', 'abrirInforme', 'guardar', 'avisoAlGuardar', 'renderList', 'abrirComoNuevo', 'origenParaGuardar', 'refrescarLista', 'refrescarEnvios', 'cargarDelpro', 'renderDelpro', 'cerrar', 'aplicarTema', 'temaActual', 'imprimir', 'prepararImpresion'];
+  'defVacia', 'foto', 'sucio', 'toast', 'ejecutar', 'abrirInforme', 'guardar', 'avisoAlGuardar', 'renderList', 'abrirComoNuevo', 'origenParaGuardar', 'refrescarLista', 'refrescarEnvios', 'cargarDelpro', 'renderDelpro', 'cerrar', 'aplicarTema', 'temaActual', 'temaDeLaApp', 'imprimir', 'prepararImpresion'];
 
 const CAMPOS_DE_EJEMPLO = {
   categorias: [
@@ -131,7 +131,7 @@ async function cargar(opciones) {
 
   /* Lo que la ventana guarda: sus oyentes (para dispararlos a mano, como `beforeprint`), las impresiones pedidas y el almacenamiento local. */
   const oyentesVentana = {}, impresiones = [], datosAlmacen = Object.assign({}, opciones.almacen || {});
-  const disparar = tipo => (oyentesVentana[tipo] || []).slice().forEach(fn => fn({type: tipo}));
+  const disparar = (tipo, datos) => (oyentesVentana[tipo] || []).slice().forEach(fn => fn(Object.assign({type: tipo}, datos)));
   const almacen = opciones.almacenRoto
     ? {getItem() { throw new Error('sin almacenamiento'); }, setItem() { throw new Error('sin almacenamiento'); }}
     : {getItem: k => (k in datosAlmacen ? datosAlmacen[k] : null), setItem: (k, v) => { datosAlmacen[k] = String(v); }};
