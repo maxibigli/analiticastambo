@@ -60,6 +60,7 @@ import iot_mapa
 import iot_monitoreo
 import iot_ordenes
 import iot_origenes
+import iot_pantalla
 import iot_sensores
 import iot_vumetros
 import lavado_programa
@@ -138,7 +139,7 @@ app.permanent_session_lifetime = datetime.timedelta(days=30)
 _RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla", "/api/iot/pantalla/historico",
                     "/api/iot/pantalla/io", "/api/iot/pantalla/actuador", "/api/iot/pantalla/lavado",
                     "/api/iot/pantalla/lavado/iniciar", "/api/iot/pantalla/lavado/cancelar",
-                    "/api/iot/pantalla/voz",
+                    "/api/iot/pantalla/voz", "/api/iot/pantalla/tarjetas",
                     # La UPS del tambo: el agente de la PC del tambo EMPUJA las lecturas. Sin sesión, pero NO abierta:
                     # exige el token de UPS_INGESTA_TOKEN (ver `api_ups_ingesta`).
                     "/api/ups/ingesta",
@@ -3076,6 +3077,14 @@ def api_iot_pantalla_io():
     return jsonify(iot_monitoreo.panel_io(maximo=iot_monitoreo.MAXIMO_PANTALLA_ESP32))
 
 
+@app.get("/api/iot/pantalla/tarjetas")
+def api_iot_pantalla_tarjetas():
+    """Lo que dibuja la pantalla ESP32: las mismas tarjetas de «Monitoreo IoT» (ver `iot_pantalla`) y las salidas configuradas.
+    Mismo criterio público que /api/iot/pantalla: de solo lectura y sin nada sensible."""
+    sistema = iot_monitoreo.estado_sistema(_tambo_del_request())
+    return jsonify({"estado": sistema["estado"], "desde": iot_pantalla.fecha_hora(sistema["desde"]), **iot_pantalla.tarjetas()})
+
+
 @app.post("/api/iot/pantalla/actuador")
 def api_iot_pantalla_actuador():
     """Pulso manual de un actuador (salida del M300) pedido desde la
@@ -3083,14 +3092,20 @@ def api_iot_pantalla_actuador():
     lectura, público a propósito), esto ACTIVA un equipo real -- se bloquea
     todo pedido que llegue por el túnel de Cloudflare (internet) y solo se
     acepta el que entra directo por la red del tambo, donde vive la
-    pantalla. Ver iot_monitoreo.solicitar_pulso: esto solo ENCOLA el pulso,
-    lo ejecuta iot_lavado.py (dueño único de la conexión Modbus al M300)."""
+    pantalla. Ver iot_monitoreo.probar_salida: esto solo ENCOLA el pulso,
+    lo ejecuta iot_lavado.py (dueño único de la conexión Modbus al M300).
+    Una salida que el lavado o la voz tienen prendida no se pulsa (409): el
+    apagado del final del pulso la cortaría."""
     if _pedido_via_tunel():
         return jsonify({"error": "No se puede activar un actuador desde fuera de la red del tambo"}), 403
     datos = request.get_json(silent=True) or {}
     canal = datos.get("canal", "")
-    if not iot_monitoreo.solicitar_pulso(canal):
+    try:
+        iot_monitoreo.probar_salida(canal)
+    except ValueError:
         return jsonify({"error": f"Canal inválido: {canal}"}), 400
+    except iot_monitoreo.SalidaOcupada as e:
+        return jsonify({"error": str(e)}), 409
     return jsonify({"encolado": True, "canal": canal}), 202
 
 

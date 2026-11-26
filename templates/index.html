@@ -11535,6 +11535,8 @@ function ultimaLecturaIot(s) {
   return 'último dato: ' + cuando + ultimo;
 }
 
+// OJO: la pantalla ESP32 muestra estas mismas tarjetas con los textos armados en `iot_pantalla.py` (valor, zona, detalle y
+// dial). Si cambia una tarjeta acá, cambiar también allá.
 // Un sensor digital muestra el texto de su estado (el que le puso el tambo) en el color de ese estado. No tiene dial ni
 // historial: es un contacto de dos estados.
 function iotTarjetaDigitalHTML(s) {

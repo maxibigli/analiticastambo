@@ -2609,6 +2609,17 @@ admin-gateado (`@auth.requiere_rol("admin")`) que el resto de
 Configuración. `cargarCanalesGateway()` se agregó a la lista de loaders de
 `cargarConfiguracion()`, junto a `cargarWhatsappIa()` y el resto.
 
+## La pantalla ESP32 muestra las mismas tarjetas que «Monitoreo IoT» (26/11/2026)
+
+Pedido del usuario: la pantalla decía «sin instalar» en 12 tarjetas fijas que no eran las del tambo. Ahora **qué se ve lo decide el servidor**: `GET /api/iot/pantalla/tarjetas?tambo=` (público, solo lectura) devuelve `{estado, desde, sensores, salidas}` armado por `iot_pantalla.py`, y el firmware (`esp32-pantalla-lactia/main/tarjetas.c`) solo dibuja.
+
+  * **Sensores** (decisión del usuario: «los mismos que la web»): todo el catálogo en su orden, analógicos y digitales, y el ITH, **también los «sin instalar»**. Para sacar uno de la pantalla se saca de la lista en ⚙ Configuración › 🔌 Entradas/Salidas. Cada tarjeta viaja con `valor`, `zona`, `chip`, `detalle` y `dial` (tramos y aguja en fracciones 0-1) ya calculados, **con las mismas reglas y textos que `index.html`**
+    (`iotTarjetaHTML`, `iotTarjetaDigitalHTML`, `dialIotSVG`): **si se cambia una tarjeta en la web, cambiar `iot_pantalla.py`**. Tocar una analógica abre su historial (el de siempre, `/historico`); las digitales no tienen historial en la pantalla.
+  * **Salidas** (decisión del usuario: «con nombre o en el lavado»): las que tienen nombre y las que usa una etapa del lavado; además cualquiera prendida o con apagado pendiente por voz (un relé encendido no puede quedar escondido). Las entradas ya no están en la solapa Actuadores: las digitales se ven como sensores.
+  * **Una salida que el lavado o la voz tienen prendida ya no se puede pulsar desde la pantalla**: `/api/iot/pantalla/actuador` usa `iot_monitoreo.probar_salida` y contesta 409 (como «Probar» de la web). Antes encolaba el pulso y el apagado del final la cortaba. La tarjeta muestra el motivo.
+  * Las rutas viejas (`/api/iot/pantalla`, `/io`) siguen igual: una placa con el firmware anterior no se entera. **El firmware nuevo necesita el servidor actualizado** (si no, dice «Falta actualizar LactIA en el servidor»).
+  * La respuesta tiene que entrar en 64 KB (buffer del firmware en PSRAM); `tests/test_iot_pantalla_tarjetas.py` lo cuida con el catálogo lleno.
+
 ## Comandos de voz "Jarvis" desde la pantalla ESP32 (29/08/2026)
 
 Pedido del tambo: manejar el Lavado Automático y los actuadores con las
