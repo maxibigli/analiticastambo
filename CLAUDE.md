@@ -1571,7 +1571,12 @@ NULL: si no, la leyenda anuncia una medida que la sala no registra.
   Resultados, vacas del año 2025: 687 → 1.230 (en ordeño 640 → 1.133); Proyección, diciembre de 2025: lactantes medidas 756 → 1.045 y kg/vaca/día 35,2 → 34,1.
 - **% de aborto de la Tasa de preñez, corregido el 26/11/2026**: contaba abortos de cualquier animal de la base (otros tambos incluidos); ahora solo los de las preñeces logradas por las aptas, como las preñadas. Ciclo de referencia (10/06/2025,
   todos los rebaños): 77 abortos → 31 (el informe de DelPro, 33). La Ponderosa, 18 ciclos desde el 26/11/2025: vacas 10,1 → 6,6 %, novillas 21,2 → 4,6 %. Se quitó el aviso «no cierra» de la pantalla. Prueba: `tests/test_tasa_prenez_abortos.py`.
-- **Pendiente**: la tasa de NOVILLAS deja afuera de los ciclos viejos a las que ya parieron (usa la lactancia de HOY).
+- **Tasa de preñez de NOVILLAS, corregida el 27/11/2026**: pedía lactancia 0 HOY, así que toda novilla que después parió (las que se preñaron) desaparecía de los ciclos viejos. Ahora es novilla en un ciclo la que al terminarlo no
+  tenía ningún parto cargado ni había empezado su lactancia 1 (`HistoryAnimalLactationInfo`, unida por `HistoryAnimal.ReferenceId`). A la que hoy figura en lactancia 0 se le cree: 4 animales de La Ponderosa tienen una lactancia 1 vieja en el
+  historial y nunca dieron leche. Quedan afuera las paridas sin esa fecha (llegaron paridas). La Ponderosa, 18 ciclos desde el 26/11/2025: aptas 12.468 → 13.034, preñadas 543 → 763, % preñadas 4,4 → 5,9, % concepción 37,9 → 46,1
+  (vacas sin cambio; vacas y novillas, concepción 37,1 → 40,0). Cambian los ciclos de 11/2025 a 02/2026. **Esos ciclos dan concepción altísima (73 a 100 % en novillas) porque el dato está incompleto**: de 365 inseminaciones de novillas de
+  12/2025 a 02/2026, 322 se cargaron en mayo de 2026 (281 el 14/05) y el 81 % dio preñez (en otros meses, cerca del 50 %): faltarían las que fallaron. No hay informe de DelPro de novillas para comparar. Prueba:
+  `tests/test_tasa_prenez_novillas.py`.
 - Proyección de rebaños: la ecuación es
   `lactantes[m] = lactantes[m-1] + partos - secados - salidas` y la producción
   `lactantes × kg/vaca/día del año pasado × días del mes` (ambas verificadas

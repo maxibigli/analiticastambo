@@ -28,6 +28,17 @@ empezar el ciclo. Se probó también "apta al inicio" y da 940 contra
 las 1.112 del informe; al fin da 1.112 exacto, o sea que DelPro cuenta las
 vacas que cruzan la espera voluntaria durante el ciclo.
 
+NOVILLAS: es apta la que al terminar el ciclo ya tenía la edad de primera
+inseminación y todavía no había empezado su primera lactancia, aunque haya
+parido después (con las mismas condiciones de rodeo y preñez que las vacas). La
+fecha de la primera lactancia sale del historial de DelPro
+(`HistoryAnimalLactationInfo`, unido por `HistoryAnimal.ReferenceId`), y un
+parto cargado antes del final del ciclo la descarta. A la que HOY figura en
+lactancia 0 se la cuenta (hay casos con una lactancia 1 vieja en el historial
+que nunca dieron leche). Quedan afuera las que ya parieron y no tienen esa
+fecha (llegaron paridas). Hasta el 27/11/2026 se pedía lactancia 0 HOY, y las
+que después parieron —las que se preñaron— desaparecían de los ciclos viejos.
+
 DelPro TAMBIÉN cuenta a las vacas que después se fueron. El informe de
 referencia es el de TODOS los rebaños del ciclo del 10/06/2025 al
 30/06/2025 (se identificó el 26/11/2026 porque da exactamente las 522 con
@@ -154,16 +165,22 @@ def sql_embudo(ventanas_lista: list, tipo: str, pev: int,
           AND {libre.format(col='b.OID')}
           AND {rebano.filtro_del_animal('b.OID', herd)}
     """
-    # Novilla: no parió nunca, así que es apta por EDAD.
+    # Novilla: al terminar la ventana todavía no había empezado su primera
+    # lactancia (aunque haya parido después), así que es apta por EDAD. Ver
+    # «NOVILLAS» en el encabezado del módulo.
     aptas_novilla = f"""
         SELECT v.n, b.OID AS animal
         FROM ventanas v
         JOIN BasicAnimal b ON b.GCRecord IS NULL AND b.Number > 0
                           AND (b.ExitDate IS NULL OR b.ExitDate >= v.desde)
         JOIN AnimalReproductionInfo r ON r.Animal = b.OID AND r.GCRecord IS NULL
-                                     AND r.LactationNumber = 0
         WHERE b.BirthDate IS NOT NULL
           AND DATEDIFF(day, b.BirthDate, {ref}) >= {edad_novilla}
+          AND (r.LactationNumber = 0
+               OR EXISTS (SELECT 1 FROM primera_lactancia pl
+                          WHERE pl.animal = b.OID AND pl.inicio >= {ref}))
+          AND NOT EXISTS (SELECT 1 FROM partos pa
+                          WHERE pa.animal = b.OID AND pa.fecha < {ref})
           AND {libre.format(col='b.OID')}
           AND {rebano.filtro_del_animal('b.OID', herd)}
     """
@@ -200,6 +217,14 @@ def sql_embudo(ventanas_lista: list, tipo: str, pev: int,
             JOIN AbstractAnimalEvent ins ON ins.OID = p.EffectiveInsemination
                                         AND ins.GCRecord IS NULL
             WHERE p.Result = 1
+        ), primera_lactancia AS (
+            -- Cuándo empezó la lactancia 1 según el historial de DelPro. Se une
+            -- por HistoryAnimal.ReferenceId: el OID del historial NO es el del
+            -- animal. Solo la usan las novillas.
+            SELECT ha.ReferenceId AS animal, h.StartDate AS inicio
+            FROM HistoryAnimalLactationInfo h
+            JOIN HistoryAnimal ha ON ha.OID = h.Animal
+            WHERE h.LactationNumber = 1
         ), aptas AS ({aptas})
         SELECT v.n,
           (SELECT COUNT(*) FROM aptas a WHERE a.n = v.n) AS aptas,
