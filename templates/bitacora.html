@@ -42,6 +42,9 @@
   .abierto .sector { font-weight: 700; margin: 2px 0 4px; }
   .abierto .desc { font-size: 14px; color: var(--texto); }
   .abierto .hace { font-size: 12px; color: var(--suave); white-space: nowrap; }
+  #vigilat-avisos .desc { white-space: pre-wrap; overflow-wrap: anywhere; }
+  #vigilat-avisos .estado { font-size: 12px; color: var(--suave); margin-top: 6px; }
+  #vigilat-avisos .cerrado { border-left-color: var(--borde); }
   .abierto button { margin-top: 10px; min-height: 42px; padding: 8px 14px; border-radius: 10px;
     background: var(--panel2); border: 1px solid var(--borde); color: var(--texto); font: inherit; font-weight: 600; }
 
@@ -99,6 +102,11 @@
 <main>
   <div id="pendientes-aviso" class="aviso pend" hidden></div>
   <div id="mensaje"></div>
+
+  <section id="vigilat" hidden>
+    <h2 class="seccion">👁 Avisos de Vigilat</h2>
+    <div id="vigilat-avisos"></div>
+  </section>
 
   <h2 class="seccion">Abiertos</h2>
   <div id="abiertos"><div class="vacio">Cargando…</div></div>
@@ -362,6 +370,58 @@ $('#guardar').addEventListener('click', async () => {
   window.scrollTo({ top: 0, behavior: 'smooth' });
   await cargarAbiertos();
 });
+
+// --- Avisos de Vigilat (ayer, hoy y los que sigan sin confirmar) -------------
+const VIG_ESTADO = {
+  pendiente: 'Esperando que alguien confirme', sin_confirmar: 'Nadie confirmó todavía',
+  confirmado: 'Confirmado', resuelto: 'Se arregló solo', avisado: 'Avisado',
+};
+const VIG_DIAS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+
+function vigCuando(iso) {
+  const d = new Date(iso);
+  const dos = n => String(n).padStart(2, '0');
+  return `${VIG_DIAS[d.getDay()]} ${dos(d.getDate())}/${dos(d.getMonth() + 1)} ${dos(d.getHours())}:${dos(d.getMinutes())}`;
+}
+
+async function cargarVigilat() {
+  try {
+    const r = await fetch('/api/vigilat/avisos/recientes?tambo=' + encodeURIComponent(TAMBO));
+    if (!r.ok) return;
+    const { avisos } = await r.json();
+    $('#vigilat').hidden = !avisos.length;
+    $('#vigilat-avisos').innerHTML = avisos.map(a => {
+      const abierto = a.estado === 'pendiente' || a.estado === 'sin_confirmar';
+      const quien = a.estado === 'confirmado' ? ' por ' + esc(a.confirmado_por) : '';
+      return `<div class="abierto${abierto ? '' : ' cerrado'}">
+        <div class="cab">
+          <div class="tipo">#${a.id} · ${esc(a.regla_nombre)}</div>
+          <div class="hace">${vigCuando(a.creado)}</div>
+        </div>
+        <div class="desc">${esc(a.texto)}</div>
+        <div class="estado">${VIG_ESTADO[a.estado] || esc(a.estado)}${quien}</div>
+        ${abierto ? `<button data-confirmar="${a.id}">Confirmo que lo vi</button>` : ''}
+      </div>`;
+    }).join('');
+  } catch (e) { /* sin señal: la sección queda como estaba */ }
+}
+
+$('#vigilat-avisos').addEventListener('click', async ev => {
+  const b = ev.target.closest('[data-confirmar]');
+  if (!b) return;
+  b.disabled = true;
+  try {
+    const r = await fetch('/api/vigilat/avisos/' + b.dataset.confirmar + '/confirmar', { method: 'POST' });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Error ' + r.status);
+  } catch (e) {
+    alert('No se pudo confirmar: ' + e.message);
+    b.disabled = false;
+  }
+  await cargarVigilat();
+});
+
+cargarVigilat();
+setInterval(cargarVigilat, 60000);
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/bitacora/sw.js', { scope: '/bitacora/' }).catch(() => {});

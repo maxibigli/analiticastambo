@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Vigilat — Confirmar aviso</title>
+<style>
+  :root { color-scheme: light dark; --fondo:#f1f5f9; --tarjeta:#fff; --texto:#17212b; --suave:#5b6b7b; --borde:#d9e1e8; --marca:#0072CE; --bien:#1c7c4a; }
+  @media (prefers-color-scheme: dark) { :root { --fondo:#0f161d; --tarjeta:#18222c; --texto:#e8eef4; --suave:#9fb0c0; --borde:#2b3a48; --marca:#2e90e0; --bien:#5cc98b; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--fondo); color:var(--texto); font-family:system-ui, "Segoe UI", Arial, sans-serif; }
+  main { max-width:520px; margin:0 auto; background:var(--tarjeta); border:1px solid var(--borde); border-radius:12px; padding:20px; }
+  h1 { margin:0 0 4px; font-size:19px; color:var(--marca); }
+  .suave { color:var(--suave); font-size:14px; }
+  .texto { white-space:pre-wrap; overflow-wrap:anywhere; margin:16px 0; padding:12px; border:1px solid var(--borde); border-radius:8px; line-height:1.5; }
+  button { width:100%; padding:15px; font-size:18px; font-weight:700; border:0; border-radius:10px; background:var(--marca); color:#fff; cursor:pointer; }
+  button:focus-visible { outline:3px solid var(--texto); outline-offset:2px; }
+  .listo { color:var(--bien); font-weight:700; font-size:17px; }
+</style>
+</head>
+<body>
+<main>
+{% if not aviso %}
+  <h1>👁 Vigilat</h1>
+  {% if vencido %}
+    <p>Este enlace ya venció. Mirá el aviso en LactIA, en la Bitácora.</p>
+  {% else %}
+    <p>Este enlace no es válido. Revisá que esté completo.</p>
+  {% endif %}
+{% else %}
+  <h1>👁 {{ aviso.regla_nombre }}</h1>
+  <div class="suave">Aviso #{{ aviso.id }} · {{ cuando }}</div>
+  <div class="texto">{{ aviso.texto }}</div>
+  {% if aviso.estado in ('pendiente', 'sin_confirmar') %}
+    <form method="post">
+      <button type="submit">Confirmo que lo vi</button>
+    </form>
+    <p class="suave">Entra como <b>{{ persona }}</b>. Al confirmar se deja de avisar a las demás personas.</p>
+  {% elif aviso.estado == 'confirmado' %}
+    <p class="listo">✅ Confirmado por {{ aviso.confirmado_por }}{% if confirmado_en %} a las {{ confirmado_en }}{% endif %}.</p>
+  {% elif aviso.estado == 'resuelto' %}
+    <p class="listo">✅ Se arregló solo: no hace falta confirmar.</p>
+  {% else %}
+    <p class="suave">Este aviso no pide confirmación.</p>
+  {% endif %}
+{% endif %}
+</main>
+</body>
+</html>

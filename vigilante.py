@@ -205,14 +205,14 @@ def _ventanas_de_ordeno(aperturas: list, cfg: dict) -> list:
 
 
 # --------------------------------------------------------------------------- las condiciones de producción
-def _faltantes(tambo, o, base, leer_vacas_fn):
+def _faltantes(tambo, o, base, leer_vacas_fn, pct_min=None):
     """`reglas.vacas_faltantes` para este ordeño, o `None`. Solo se consulta por vaca si el ordeño ya salió al menos
     1 % por debajo de la base: las ausentes pesan >= 1 % de los kg de la base, y con el ordeño por encima de eso lo
     que faltó lo cubrieron otras vacas (no «salió peor»). Si la lectura no trae a las vacas del ordeño, no se opina."""
     if len(base) < reglas.MIN_BASE:
         return None
     kg_base = st.mean(b.kg for b in base)
-    if kg_base <= 0 or (o.kg - kg_base) / kg_base > -reglas.PCT_VACAS_AUSENTES:
+    if kg_base <= 0 or (o.kg - kg_base) / kg_base > -(reglas.PCT_VACAS_AUSENTES if pct_min is None else pct_min):
         return None
     d0 = min(b.fecha for b in base)
     filas = leer_vacas_fn(tambo, d0, o.fecha)
@@ -226,7 +226,7 @@ def _faltantes(tambo, o, base, leer_vacas_fn):
             kgs[n].append(kg)
     minimo = max(1, int(HABITUAL_PCT * len(base) + 0.999))
     habituales = {n: st.mean(v) for n, v in kgs.items() if len(v) >= minimo}
-    return reglas.vacas_faltantes(presentes, habituales, kg_base)
+    return reglas.vacas_faltantes(presentes, habituales, kg_base, pct_min)
 
 
 def _evaluar_ordeno(tambo, o, historial, leer_vacas_fn, ya_avisado=None) -> list:

@@ -65,7 +65,8 @@ def configurado() -> bool:
     )
 
 
-def _credenciales():
+def _credenciales(destino: str | None = None):
+    """`destino` opcional: la dirección de una persona (Vigilat). Sin él, la de siempre, SMTP_DESTINO."""
     host = os.environ.get("SMTP_HOST")
     try:
         port = int(os.environ.get("SMTP_PORT") or DEFAULT_PORT)
@@ -73,7 +74,7 @@ def _credenciales():
         raise CorreoError("SMTP_PORT tiene que ser un número (ver INSTALL.md).", no_salio=True) from None
     usuario = os.environ.get("SMTP_USUARIO")
     password = os.environ.get("SMTP_PASSWORD")
-    destino = os.environ.get("SMTP_DESTINO")
+    destino = destino or os.environ.get("SMTP_DESTINO")
     if not (host and usuario and password and destino):
         raise CorreoError("Faltan SMTP_HOST / SMTP_USUARIO / SMTP_PASSWORD / SMTP_DESTINO (ver INSTALL.md).", no_salio=True)
     return host, port, usuario, password, destino
@@ -140,9 +141,9 @@ def _mandar(msg, host, port, usuario, password, destino, timeout=TIMEOUT_S):
         raise CorreoError(str(exc), no_salio=no_salio, reintentable=antes and not isinstance(exc, smtplib.SMTPAuthenticationError)) from exc
 
 
-def enviar(mensaje: str, asunto: str | None = None) -> None:
+def enviar(mensaje: str, asunto: str | None = None, destino: str | None = None) -> None:
     """Un mensaje de texto. El asunto es el de una alerta salvo que se pase otro (el envío programado de un informe usa el del informe)."""
-    host, port, usuario, password, destino = _credenciales()
+    host, port, usuario, password, destino = _credenciales(destino)
     msg = MIMEText(_texto_plano(mensaje), "plain", "utf-8")
     msg["Subject"] = asunto or "LactIA — Alerta"
     msg["From"] = usuario

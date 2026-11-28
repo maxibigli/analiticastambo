@@ -19,6 +19,7 @@ nuevo cada vez que se dispara.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime
 import os
 import sqlite3
@@ -32,6 +33,10 @@ DIR_FOTOS = os.path.join(_DIR, "bitacora_fotos")
 _db_lock = threading.Lock()
 
 TIPOS = ("incidente", "reparacion", "mantenimiento")
+
+# Los avisos que anota Vigilat (ver `registrar_aviso`). No está en TIPOS a propósito: nadie lo carga a mano, y no es
+# un incidente abierto que alguien tenga que resolver (no aparece en `abiertos` ni cuenta como «ya reportado»).
+TIPO_AVISO = "aviso"
 
 # Mismo tope que checklist.py: la foto ya viene redimensionada del celular
 # (ver bitacora.html), esto es la red de contención del servidor.
@@ -159,9 +164,29 @@ def abiertos(tambo: str) -> list:
     bitácora arriba de todo y lo que consulta el resumen de alertas."""
     with _db_lock, _conectar() as con:
         filas = con.execute(
-            "SELECT * FROM registro WHERE tambo = ? AND resuelto_en IS NULL "
-            "ORDER BY fecha DESC, creado_en DESC", (tambo,)).fetchall()
+            "SELECT * FROM registro WHERE tambo = ? AND resuelto_en IS NULL AND tipo <> ? "
+            "ORDER BY fecha DESC, creado_en DESC", (tambo, TIPO_AVISO)).fetchall()
         return _con_fotos(con, filas)
+
+
+def registrar_aviso(tambo: str, descripcion: str, cuando: datetime.datetime | None = None) -> int:
+    """Anota en la bitácora un aviso de Vigilat y devuelve su id. Lo que pase después (a quién le llegó, quién lo
+    confirmó) se agrega con `anotar`, en el mismo registro: queda toda la historia junta para analizarla."""
+    cuando = cuando or datetime.datetime.now()
+    with _db_lock, contextlib.closing(_conectar()) as con, con:
+        return con.execute(
+            "INSERT INTO registro (tambo, fecha, tipo, sector, puesto, descripcion, usuario, creado_en, offline_id) "
+            "VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+            (tambo, cuando.date().isoformat(), TIPO_AVISO, "Vigilat", descripcion.strip(), "vigilat",
+             cuando.isoformat(timespec="seconds"), f"vigilat-{uuid.uuid4().hex}")).lastrowid
+
+
+def anotar(registro_id: int, linea: str) -> bool:
+    """Agrega un renglón a un aviso ya anotado. `False` si no existe o no es un aviso (lo que cargó una persona no se
+    reescribe nunca)."""
+    with _db_lock, contextlib.closing(_conectar()) as con, con:
+        return con.execute("UPDATE registro SET descripcion = descripcion || ? WHERE id = ? AND tipo = ?",
+                           ("\n" + linea.strip(), registro_id, TIPO_AVISO)).rowcount == 1
 
 
 def abiertos_por_puesto(tambo: str) -> dict:

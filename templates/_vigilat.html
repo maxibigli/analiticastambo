@@ -1,0 +1,631 @@
+{# ⚙ Configuración › 👁 Vigilat. Va incluida en index.html (así los cambios se aplican sin reiniciar y sin caché
+   del navegador). El script va entero dentro de una función para no pisar nombres del script principal; usa su
+   `pedirJSON` recién cuando se abre Configuración. #}
+{% raw %}
+<section class="card" id="config-vigilat-card" hidden>
+  <style>
+    #config-vigilat-card h3 { margin: 22px 0 8px; font-size: 14px; color: var(--accent); }
+    #config-vigilat-card input[type=number], #config-vigilat-card input[type=time],
+    #config-vigilat-card input[type=date], #config-vigilat-card input[type=url] {
+      background: var(--surface-1); color: var(--text-primary); border: 1px solid var(--baseline);
+      border-radius: 6px; padding: 7px 8px; font: inherit; }
+    #config-vigilat-card .vg-fila { display: flex; gap: 14px; flex-wrap: wrap; align-items: flex-end; }
+    #config-vigilat-card .vg-campo { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--text-secondary); }
+    #config-vigilat-card .vg-tilde { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; cursor: pointer; }
+    #config-vigilat-card .vg-grupo { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+    #config-vigilat-card .vg-regla { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; }
+    #config-vigilat-card .vg-regla.abierta { border-color: var(--accent); }
+    #config-vigilat-card .vg-cabeza { display: flex; gap: 10px; align-items: center; padding: 10px 12px; flex-wrap: wrap; }
+    #config-vigilat-card .vg-numero { font-weight: 700; font-size: 17px; min-width: 24px; text-align: center; font-variant-numeric: tabular-nums; }
+    #config-vigilat-card .vg-titulo { flex: 1 1 260px; min-width: 0; }
+    #config-vigilat-card .vg-titulo b { display: block; }
+    #config-vigilat-card .vg-resumen, #config-vigilat-card .vg-ultimo { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
+    #config-vigilat-card .vg-pausa .vg-numero, #config-vigilat-card .vg-pausa .vg-titulo { opacity: .55; }
+    #config-vigilat-card .vg-editor { border-top: 1px solid var(--border); padding: 12px; }
+    #config-vigilat-card .vg-editor h4 { margin: 14px 0 6px; font-size: 13px; }
+    #config-vigilat-card button.vg-chico { padding: 5px 10px; font-size: 13px; }
+    #config-vigilat-card .vg-hora { display: inline-flex; gap: 4px; align-items: center; }
+    #config-vigilat-card .vg-tabla { overflow-x: auto; }
+    #config-vigilat-card .vg-tabla input[type=text] { width: 100%; min-width: 130px; padding: 6px; }
+    #config-vigilat-card .vg-tabla td { vertical-align: top; }
+    #vg-historial details { min-width: 220px; }
+    #config-vigilat-card .vg-mal { color: var(--critical); }
+    #config-vigilat-card .vg-prueba { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-top: 10px; }
+    #config-vigilat-card pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; padding: 10px;
+      border: 1px solid var(--border); border-radius: 6px; font-size: 13px; }
+    #config-vigilat-card .vg-barra { position: sticky; bottom: 0; background: var(--surface-1); padding: 10px 0;
+      border-top: 1px solid var(--border); margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  </style>
+
+  <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <h2 style="margin:0">👁 Vigilat</h2>
+    <span class="aviso">Las reglas que miran el tambo y avisan, en orden de prioridad.</span>
+  </div>
+  <p class="explica" style="margin-top:10px">
+    Cada regla dice qué mira, cuándo, qué hace y a quién avisa. Todo lo que avisa queda anotado en la
+    <a href="/bitacora/" target="_blank" rel="noopener">Bitácora</a>. La <b>regla 1</b> avisa también en el horario de
+    silencio; las demás esperan a que termine. Nunca escribe en DelPro ni en el mixer: solo lee.
+  </p>
+  <div class="aviso" id="vg-estado" role="status" style="margin:8px 0"></div>
+
+  <h3>Ajustes generales</h3>
+  <div class="vg-fila" id="vg-general"></div>
+  <div class="aviso" id="vg-canales" style="margin-top:8px"></div>
+  <div class="aviso" id="vg-sala-estado" role="status" style="margin-top:4px"></div>
+
+  <h3>Reglas, en orden de prioridad</h3>
+  <div id="vg-reglas"></div>
+  <div class="vg-fila" style="margin-top:6px">
+    <label class="vg-campo">Nueva regla
+      <select id="vg-nuevo-tipo" style="padding:7px 8px"></select></label>
+    <button class="secundario" id="vg-agregar-regla">+ Agregar regla</button>
+  </div>
+
+  <h3>Personas</h3>
+  <div class="vg-tabla"><table id="vg-personas"></table></div>
+  <div class="vg-fila" style="margin-top:8px">
+    <button class="secundario" id="vg-agregar-persona">+ Persona</button>
+    <button class="secundario" id="vg-buscar-chats">Buscar chats de Telegram</button>
+  </div>
+  <div class="aviso" id="vg-personas-estado" role="status" style="margin-top:6px"></div>
+  <div id="vg-chats"></div>
+
+  <h3>Rangos</h3>
+  <span class="aviso">El primero de la lista es el del <b>dueño</b>: a quien se avisa si nadie confirma.</span>
+  <div id="vg-rangos" style="margin-top:8px"></div>
+  <button class="secundario vg-chico" id="vg-agregar-rango">+ Rango</button>
+
+  <div class="vg-barra">
+    <button id="vg-guardar" disabled>Guardar</button>
+    <button class="secundario" id="vg-deshacer" disabled>Deshacer</button>
+    <button class="secundario" id="vg-probar-todas">Probar todas sin enviar</button>
+    <span class="aviso" id="vg-guardar-estado" role="status"></span>
+  </div>
+  <div id="vg-prueba"></div>
+
+  <h3>Historial de avisos</h3>
+  <div class="vg-fila">
+    <label class="vg-campo">Desde <input type="date" id="vg-desde"></label>
+    <label class="vg-campo">Hasta <input type="date" id="vg-hasta"></label>
+    <button class="secundario" id="vg-ver-historial">Ver</button>
+    <a id="vg-csv" href="/api/vigilat/avisos.csv" class="aviso">Descargar planilla (CSV)</a>
+  </div>
+  <div class="aviso" id="vg-historial-estado" role="status" style="margin-top:6px"></div>
+  <div class="vg-tabla" id="vg-historial"></div>
+</section>
+
+<script>
+(function () {
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const DIAS = ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá', 'Do'];
+  const DIAS_LARGOS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+  const CANAL = { whatsapp: 'WhatsApp', telegram: 'Telegram', correo: 'Correo', generales: 'Canales generales', '-': '—' };
+  const MODO = { cada: 'Cada tantos minutos', horas: 'A horas fijas', ordeno: 'Apenas termina cada ordeño' };
+  const ESTADO = { pendiente: 'Esperando confirmación', sin_confirmar: 'Sin confirmar', confirmado: 'Confirmado',
+                   resuelto: 'Se arregló solo', avisado: 'Avisado' };
+
+  let datos = null;       // lo que mandó el servidor
+  let cfg = null;         // la copia que se está editando
+  let original = '';      // JSON de lo guardado
+  let abierta = null;     // id de la regla en edición
+
+  const post = (url, cuerpo) => pedirJSON(url, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo || {}),
+  });
+
+  function cuandoTexto(iso) {
+    const d = new Date(iso);
+    const dos = n => String(n).padStart(2, '0');
+    return `${DIAS_LARGOS[d.getDay()]} ${dos(d.getDate())}/${dos(d.getMonth() + 1)} ${dos(d.getHours())}:${dos(d.getMinutes())}`;
+  }
+
+  function marcarCambios() {
+    const cambiado = !!cfg && JSON.stringify(cfg) !== original;
+    $('vg-guardar').disabled = !cambiado;
+    $('vg-deshacer').disabled = !cambiado;
+    if (cambiado) $('vg-guardar-estado').textContent = 'Hay cambios sin guardar.';
+    else if ($('vg-guardar-estado').textContent === 'Hay cambios sin guardar.') $('vg-guardar-estado').textContent = '';
+  }
+
+  // --------------------------------------------------------------------- cargar
+  async function cargar() {
+    $('vg-estado').textContent = 'Cargando…';
+    try {
+      datos = await pedirJSON('/api/vigilat/config');
+    } catch (e) {
+      $('vg-estado').textContent = 'Error: ' + e.message;
+      return;
+    }
+    cfg = datos.config;
+    original = JSON.stringify(cfg);
+    const partes = [cfg.general.activo ? 'Encendido.' : 'Apagado: no revisa ni avisa.',
+                    'Mira el tambo ' + datos.tambo + '.'];
+    if (datos.ultima_pasada) partes.push('Última vuelta: ' + cuandoTexto(datos.ultima_pasada.cuando) + ' (' + datos.ultima_pasada.resultado + ').');
+    if (datos.problema) partes.unshift('⚠ ' + datos.problema);
+    $('vg-estado').textContent = partes.join(' ');
+    $('vg-nuevo-tipo').innerHTML = Object.entries(datos.tipos)
+      .map(([k, t]) => `<option value="${k}">${esc(t.nombre)}</option>`).join('');
+    pintarTodo();
+    if (!$('vg-hasta').value) {
+      const hoy = new Date();
+      const iso = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      $('vg-hasta').value = iso(hoy);
+      $('vg-desde').value = iso(new Date(hoy.getTime() - 6 * 86400000));
+    }
+    historial();
+  }
+
+  function pintarTodo() { pintarGeneral(); pintarReglas(); pintarPersonas(); pintarRangos(); marcarCambios(); }
+
+  // --------------------------------------------------------------------- ajustes generales
+  function pintarGeneral() {
+    const g = cfg.general;
+    const salidas = [{ clave: '', nombre: '— ninguna —' }, ...datos.salidas];
+    if (g.salida_alarma && !salidas.some(s => s.clave === g.salida_alarma)) salidas.push({ clave: g.salida_alarma, nombre: g.salida_alarma });
+    $('vg-general').innerHTML = `
+      <label class="vg-tilde"><input type="checkbox" data-g="activo" ${g.activo ? 'checked' : ''}> <b>Vigilat encendido</b></label>
+      <label class="vg-campo">Silencio desde <input type="time" data-g="silencio_desde" value="${esc(g.silencio_desde)}"></label>
+      <label class="vg-campo">Silencio hasta <input type="time" data-g="silencio_hasta" value="${esc(g.silencio_hasta)}"></label>
+      <label class="vg-campo">Máximo de mensajes por persona por día
+        <input type="number" data-g="max_por_persona_dia" min="1" max="100" value="${g.max_por_persona_dia}" style="width:110px"></label>
+      <label class="vg-campo">Mirar los ordeños cada (minutos)
+        <input type="number" data-g="revisar_min" min="5" max="120" value="${g.revisar_min}" style="width:110px"></label>
+      <label class="vg-campo">Dirección para el enlace de confirmar
+        <input type="url" data-g="direccion_publica" value="${esc(g.direccion_publica)}" style="width:270px" placeholder="https://…"></label>
+      <label class="vg-campo">Salida de la alarma (gateway)
+        <select data-g="salida_alarma" style="padding:7px 8px">${salidas.map(s => `<option value="${s.clave}" ${s.clave === g.salida_alarma ? 'selected' : ''}>${esc(s.nombre)}</option>`).join('')}</select></label>
+      <button class="secundario" data-probar="alarma">Probar alarma</button>
+      <button class="secundario" data-probar="audio">Probar audio en la sala</button>`;
+    const faltan = Object.entries(datos.canales).filter(([, ok]) => !ok).map(([c]) => CANAL[c]);
+    $('vg-canales').textContent =
+      (faltan.length ? `Sin configurar en este servidor para escribirle a personas: ${faltan.join(', ')}. ` : 'WhatsApp, Telegram y Correo están configurados. ')
+      + (datos.generales.length ? `Canales generales activos: ${datos.generales.join(', ')}.` : 'No hay ningún canal general activo.')
+      + ' Los que no piden confirmación y pasan el máximo del día salen resumidos en el mensaje de las 08:00 / 20:00.';
+  }
+
+  // --------------------------------------------------------------------- reglas
+  function nombreDestino(d) {
+    if (d === 'generales') return 'Canales generales';
+    if (d.startsWith('rango:')) return 'todos: ' + d.slice(6);
+    const p = cfg.personas.find(x => 'p:' + x.id === d);
+    return p ? p.nombre : d;
+  }
+
+  function resumen(r) {
+    const c = r.cuando;
+    let cuando = c.modo === 'horas' ? 'a las ' + c.horas.join(', ')
+      : c.modo === 'cada' ? `cada ${c.minutos} min` : 'al terminar cada ordeño';
+    if (c.dias.length < 7) cuando += ' (' + c.dias.map(d => DIAS[d]).join(' ') + ')';
+    const hace = [r.acciones.mensaje && 'mensaje', r.acciones.alarma && 'alarma', r.acciones.audio && 'audio en sala']
+      .filter(Boolean).join(' + ') || 'solo Bitácora';
+    const quien = r.acciones.mensaje ? ' → ' + (r.destinos.map(nombreDestino).join(', ') || 'nadie') : '';
+    return `${cuando} · ${hace}${quien}${r.confirmacion.requiere ? ' · pide confirmación' : ''}`;
+  }
+
+  function pintarReglas() {
+    $('vg-reglas').innerHTML = cfg.reglas.map((r, i) => {
+      const e = datos.reglas[r.id];
+      const ultimo = e && e.ultima ? `Última revisión ${cuandoTexto(e.ultima)}: ${e.resultado || ''}` : (e && e.resultado) || '';
+      return `<div class="vg-regla${r.activa ? '' : ' vg-pausa'}${abierta === r.id ? ' abierta' : ''}" data-regla="${r.id}">
+        <div class="vg-cabeza">
+          <span class="vg-numero" title="Prioridad">${i + 1}</span>
+          <button class="secundario vg-chico" data-mover="-1" title="Subir la prioridad" aria-label="Subir" ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button class="secundario vg-chico" data-mover="1" title="Bajar la prioridad" aria-label="Bajar" ${i === cfg.reglas.length - 1 ? 'disabled' : ''}>↓</button>
+          <div class="vg-titulo"><b>${esc(r.nombre)}</b>
+            <div class="vg-resumen">${esc(resumen(r))}</div>
+            <div class="vg-ultimo">${esc(ultimo)}</div></div>
+          <label class="vg-tilde"><input type="checkbox" data-r="activa" ${r.activa ? 'checked' : ''}> Activa</label>
+          <button class="secundario vg-chico" data-editar>${abierta === r.id ? 'Cerrar' : 'Editar'}</button>
+        </div>
+        ${abierta === r.id ? editor(r) : ''}
+      </div>`;
+    }).join('') || '<span class="aviso">No hay ninguna regla.</span>';
+  }
+
+  function tildesDestinos(lista, campo) {
+    const marca = d => (lista.includes(d) ? 'checked' : '');
+    const una = (d, texto) => `<label class="vg-tilde"><input type="checkbox" data-destino="${campo}" value="${esc(d)}" ${marca(d)}> ${esc(texto)}</label>`;
+    return `<div class="vg-grupo">
+      ${una('generales', 'Canales generales')}
+      ${cfg.rangos.map(x => una('rango:' + x, 'Todos: ' + x)).join('')}
+      ${cfg.personas.map(p => una('p:' + p.id, (p.nombre || '(sin nombre)') + ' · ' + p.rango + (p.activa ? '' : ' (inactiva)'))).join('')}
+    </div>`;
+  }
+
+  function editor(r) {
+    const t = datos.tipos[r.tipo];
+    const c = r.cuando, cf = r.confirmacion;
+    const params = t.parametros.map(p => `<label class="vg-campo">${esc(p.texto)}
+      <input type="number" data-param="${p.clave}" min="${p.min}" max="${p.max}" step="${p.entero ? 1 : 'any'}" value="${r.parametros[p.clave]}" style="width:130px"></label>`).join('');
+    const modos = t.modos.map(m => `<option value="${m}" ${c.modo === m ? 'selected' : ''}>${MODO[m]}</option>`).join('');
+    let detalle = '';
+    if (c.modo === 'cada') {
+      detalle = `<label class="vg-campo">Minutos <input type="number" data-minutos min="5" max="1440" value="${c.minutos}" style="width:110px"></label>`;
+    } else if (c.modo === 'horas') {
+      detalle = `<div class="vg-grupo">${c.horas.map((h, i) => `<span class="vg-hora"><input type="time" data-hora="${i}" value="${esc(h)}">
+        <button class="secundario vg-chico" data-quitar-hora="${i}" aria-label="Quitar el horario">✕</button></span>`).join('')}
+        <button class="secundario vg-chico" data-agregar-hora>+ horario</button></div>`;
+    }
+    const dueno = cfg.personas.filter(p => p.activa && p.rango === cfg.rangos[0]).map(p => p.nombre);
+    return `<div class="vg-editor">
+      <div class="vg-fila">
+        <label class="vg-campo" style="flex:1 1 240px">Nombre de la regla <input type="text" data-r="nombre" maxlength="80" value="${esc(r.nombre)}" style="padding:7px 8px"></label>
+        <label class="vg-campo" style="flex:2 1 320px">Descripción (para ustedes) <input type="text" data-r="nota" maxlength="300" value="${esc(r.nota)}" style="padding:7px 8px"></label>
+      </div>
+      <div class="aviso" style="margin-top:6px">${esc(t.descripcion)}</div>
+      <h4>Cuándo avisa (condición)</h4><div class="vg-fila">${params}</div>
+      <h4>Cuándo revisa</h4>
+      <div class="vg-fila">
+        ${t.modos.length > 1 ? `<label class="vg-campo">Forma <select data-modo style="padding:7px 8px">${modos}</select></label>` : `<span class="aviso">${MODO[c.modo]}</span>`}
+        ${detalle}
+      </div>
+      <div class="vg-grupo" style="margin-top:8px">${DIAS.map((d, i) => `<label class="vg-tilde"><input type="checkbox" data-dia="${i}" ${c.dias.includes(i) ? 'checked' : ''}> ${d}</label>`).join('')}</div>
+      <h4>Qué hace</h4>
+      <div class="vg-grupo">
+        <label class="vg-tilde"><input type="checkbox" data-accion="mensaje" ${r.acciones.mensaje ? 'checked' : ''}> Mandar mensaje</label>
+        <label class="vg-tilde"><input type="checkbox" data-accion="alarma" ${r.acciones.alarma ? 'checked' : ''}> Sonar alarma</label>
+        <label class="vg-tilde"><input type="checkbox" data-accion="audio" ${r.acciones.audio ? 'checked' : ''}> Audio en la sala</label>
+        <span class="aviso">Siempre queda anotado en la Bitácora.</span>
+      </div>
+      ${r.acciones.alarma && !cfg.general.salida_alarma ? '<div class="aviso vg-mal">Falta elegir la salida de la alarma en Ajustes generales.</div>' : ''}
+      ${r.acciones.mensaje ? `<h4>A quién avisa</h4>${tildesDestinos(r.destinos, 'destinos')}
+        <h4>Confirmación</h4>
+        <label class="vg-tilde"><input type="checkbox" data-conf="requiere" ${cf.requiere ? 'checked' : ''}> Requiere que alguien confirme que lo vio</label>
+        ${cf.requiere ? `
+          <div class="vg-fila" style="margin-top:8px"><label class="vg-campo">Esperar en cada paso (minutos)
+            <input type="number" data-conf="espera_min" min="5" max="720" value="${cf.espera_min}" style="width:110px"></label></div>
+          <h4>Si no confirma nadie, avisar a (segunda persona)</h4>${tildesDestinos(cf.nivel2, 'nivel2')}
+          <h4>Si tampoco, avisar a (tercera persona)</h4>${tildesDestinos(cf.nivel3, 'nivel3')}
+          <h4>Y por último</h4>
+          <label class="vg-tilde"><input type="checkbox" data-conf="dueno" ${cf.dueno ? 'checked' : ''}> Al dueño (rango «${esc(cfg.rangos[0])}»: ${dueno.length ? esc(dueno.join(', ')) : 'todavía no hay nadie cargado'})</label>
+        ` : ''}` : ''}
+      <div class="vg-fila" style="margin-top:14px">
+        <button class="secundario" data-probar-regla>Probar esta regla sin enviar</button>
+        <button class="secundario" data-eliminar-regla>Eliminar regla</button>
+      </div>
+    </div>`;
+  }
+
+  function reglaDe(el) {
+    const caja = el.closest('[data-regla]');
+    return caja && cfg.reglas.find(r => r.id === caja.dataset.regla);
+  }
+
+  $('vg-reglas').addEventListener('input', ev => {
+    const el = ev.target, r = reglaDe(el);
+    if (!r) return;
+    const d = el.dataset;
+    let repintar = false;
+    if (d.r === 'activa') { r.activa = el.checked; repintar = true; }
+    else if (d.r) r[d.r] = el.value;
+    else if (d.param) r.parametros[d.param] = el.value === '' ? null : Number(el.value);
+    else if (d.modo !== undefined) {
+      const dias = r.cuando.dias;
+      r.cuando = el.value === 'horas' ? { modo: 'horas', horas: ['07:00'], dias }
+        : el.value === 'cada' ? { modo: 'cada', minutos: 15, dias } : { modo: el.value, dias };
+      repintar = true;
+    } else if (d.minutos !== undefined) r.cuando.minutos = Number(el.value);
+    else if (d.hora !== undefined) r.cuando.horas[Number(d.hora)] = el.value;
+    else if (d.dia !== undefined) {
+      const n = Number(d.dia);
+      r.cuando.dias = el.checked ? [...r.cuando.dias, n].sort((a, b) => a - b) : r.cuando.dias.filter(x => x !== n);
+    } else if (d.accion) {
+      r.acciones[d.accion] = el.checked;
+      if (d.accion === 'mensaje' && !el.checked) r.confirmacion.requiere = false;
+      repintar = true;
+    } else if (d.destino) {
+      const lista = d.destino === 'destinos' ? r.destinos : r.confirmacion[d.destino];
+      const i = lista.indexOf(el.value);
+      if (el.checked && i < 0) lista.push(el.value);
+      if (!el.checked && i >= 0) lista.splice(i, 1);
+    } else if (d.conf) {
+      r.confirmacion[d.conf] = d.conf === 'espera_min' ? Number(el.value) : el.checked;
+      repintar = d.conf === 'requiere';
+    } else return;
+    if (repintar) pintarReglas();
+    marcarCambios();
+  });
+
+  // Al salir de un campo se actualiza el renglón resumen (repintar en cada tecla le sacaría el foco).
+  $('vg-reglas').addEventListener('change', ev => {
+    const r = reglaDe(ev.target);
+    if (!r) return;
+    const linea = ev.target.closest('[data-regla]').querySelector('.vg-cabeza .vg-resumen');
+    const titulo = ev.target.closest('[data-regla]').querySelector('.vg-cabeza .vg-titulo b');
+    if (linea) linea.textContent = resumen(r);
+    if (titulo) titulo.textContent = r.nombre;
+  });
+
+  $('vg-reglas').addEventListener('click', ev => {
+    const b = ev.target.closest('button');
+    if (!b) return;
+    const r = reglaDe(b);
+    if (!r) return;
+    const d = b.dataset;
+    const i = cfg.reglas.indexOf(r);
+    if (d.mover) {
+      const j = i + Number(d.mover);
+      [cfg.reglas[i], cfg.reglas[j]] = [cfg.reglas[j], cfg.reglas[i]];
+    } else if (d.editar !== undefined) abierta = abierta === r.id ? null : r.id;
+    else if (d.agregarHora !== undefined) {
+      if (r.cuando.horas.length >= 12) return;
+      r.cuando.horas.push('12:00');
+    } else if (d.quitarHora !== undefined) r.cuando.horas.splice(Number(d.quitarHora), 1);
+    else if (d.eliminarRegla !== undefined) {
+      if (!confirm(`¿Eliminar la regla «${r.nombre}»? El historial de sus avisos se conserva. Se aplica al guardar.`)) return;
+      cfg.reglas.splice(i, 1);
+      abierta = null;
+    } else if (d.probarRegla !== undefined) { probar(r.id); return; }
+    else return;
+    pintarReglas();
+    marcarCambios();
+  });
+
+  $('vg-agregar-regla').addEventListener('click', () => {
+    if (!cfg) return;
+    const tipo = $('vg-nuevo-tipo').value;
+    let n = 2, id = tipo;
+    while (cfg.reglas.some(r => r.id === id)) id = tipo + '_' + n++;
+    const nueva = JSON.parse(JSON.stringify(datos.tipos[tipo].nueva));
+    Object.assign(nueva, { id, activa: false });
+    cfg.reglas.push(nueva);
+    abierta = id;
+    pintarReglas();
+    marcarCambios();
+    $('vg-guardar-estado').textContent = 'Regla agregada al final, en pausa: elegí a quién avisa, activala y guardá.';
+  });
+
+  // --------------------------------------------------------------------- personas
+  function pintarPersonas() {
+    $('vg-personas').innerHTML = `
+      <thead><tr><th>Nombre</th><th>Rango</th><th>WhatsApp (+54…)</th><th>Telegram (n.º de chat)</th><th>Correo</th>
+        <th>Contactar por</th><th>Activa</th><th></th></tr></thead>
+      <tbody>${cfg.personas.map((p, i) => `<tr data-persona="${i}">
+        <td><input type="text" data-p="nombre" value="${esc(p.nombre)}" aria-label="Nombre"></td>
+        <td><select data-p="rango" aria-label="Rango" style="padding:6px">${cfg.rangos.map(x => `<option ${x === p.rango ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></td>
+        <td><input type="text" data-p="whatsapp" value="${esc(p.whatsapp)}" placeholder="+5492392123456" aria-label="WhatsApp"></td>
+        <td><input type="text" data-p="telegram" value="${esc(p.telegram)}" aria-label="Telegram"></td>
+        <td><input type="text" data-p="correo" value="${esc(p.correo)}" aria-label="Correo"></td>
+        <td style="white-space:nowrap">${['whatsapp', 'telegram', 'correo'].map(c => `<label class="vg-tilde" style="margin-right:8px"><input type="checkbox" data-canal="${c}" ${p.canales.includes(c) ? 'checked' : ''}> ${CANAL[c]}</label>`).join('')}</td>
+        <td><input type="checkbox" data-p="activa" ${p.activa ? 'checked' : ''} aria-label="Activa"></td>
+        <td style="white-space:nowrap"><button class="secundario vg-chico" data-probar-persona>Probar</button>
+          <button class="secundario vg-chico" data-quitar-persona aria-label="Quitar">✕</button></td>
+      </tr>`).join('') || '<tr><td colspan="8" class="aviso">Todavía no hay personas cargadas.</td></tr>'}</tbody>`;
+  }
+
+  const personaDe = el => { const f = el.closest('[data-persona]'); return f && cfg.personas[Number(f.dataset.persona)]; };
+
+  $('vg-personas').addEventListener('input', ev => {
+    const el = ev.target, p = personaDe(el);
+    if (!p) return;
+    if (el.dataset.canal) {
+      p.canales = ['whatsapp', 'telegram', 'correo'].filter(c => (c === el.dataset.canal ? el.checked : p.canales.includes(c)));
+    } else if (el.dataset.p) {
+      const estaba = p[el.dataset.p];
+      p[el.dataset.p] = el.dataset.p === 'activa' ? el.checked : el.value;
+      // al cargar un dato donde no había nada (escrito o pegado) se tilda esa forma de contacto
+      if (['whatsapp', 'telegram', 'correo'].includes(el.dataset.p) && !estaba && el.value && !p.canales.includes(el.dataset.p)) {
+        p.canales.push(el.dataset.p);
+        el.closest('tr').querySelector(`[data-canal="${el.dataset.p}"]`).checked = true;
+      }
+    }
+    marcarCambios();
+  });
+  $('vg-personas').addEventListener('change', () => pintarReglas());
+
+  $('vg-personas').addEventListener('click', async ev => {
+    const b = ev.target.closest('button');
+    const p = b && personaDe(b);
+    if (!p) return;
+    if (b.dataset.quitarPersona !== undefined) {
+      if (!confirm(`¿Quitar a ${p.nombre || 'esta persona'}? Se la saca también de las reglas. Se aplica al guardar.`)) return;
+      const d = 'p:' + p.id;
+      cfg.reglas.forEach(r => {
+        r.destinos = r.destinos.filter(x => x !== d);
+        r.confirmacion.nivel2 = r.confirmacion.nivel2.filter(x => x !== d);
+        r.confirmacion.nivel3 = r.confirmacion.nivel3.filter(x => x !== d);
+      });
+      cfg.personas.splice(cfg.personas.indexOf(p), 1);
+      pintarPersonas(); pintarReglas(); marcarCambios();
+      return;
+    }
+    if (!confirm(`Se va a mandar un mensaje de prueba a ${p.nombre || 'esta persona'} (${p.canales.map(c => CANAL[c]).join(', ') || 'ninguna forma tildada'}). ¿Seguir?`)) return;
+    $('vg-personas-estado').textContent = 'Mandando la prueba…';
+    try {
+      const r = await post('/api/vigilat/probar_contacto', { persona: p });
+      $('vg-personas-estado').textContent = p.nombre + ': ' + r.resultados.map(x => `${CANAL[x.canal]} ${x.ok ? '✔ enviado' : '✘ ' + x.detalle}`).join(' · ');
+    } catch (e) {
+      $('vg-personas-estado').textContent = 'Error: ' + e.message;
+    }
+  });
+
+  $('vg-agregar-persona').addEventListener('click', () => {
+    if (!cfg) return;
+    let n = 1;
+    while (cfg.personas.some(p => p.id === 'p' + n)) n++;
+    cfg.personas.push({ id: 'p' + n, nombre: '', rango: cfg.rangos[1] || cfg.rangos[0], activa: true, canales: [], whatsapp: '', telegram: '', correo: '' });
+    pintarPersonas(); marcarCambios();
+    const campos = $('vg-personas').querySelectorAll('[data-p="nombre"]');
+    campos[campos.length - 1].focus();
+  });
+
+  $('vg-buscar-chats').addEventListener('click', async () => {
+    $('vg-chats').innerHTML = '<div class="aviso">Buscando…</div>';
+    try {
+      const { chats } = await pedirJSON('/api/vigilat/telegram/chats');
+      $('vg-chats').innerHTML = chats.length
+        ? `<div class="aviso" style="margin-top:6px">Copiá el número en la columna Telegram de cada persona:</div>
+           <table><tbody>${chats.map(c => `<tr><td>${esc(c.nombre)}</td><td><code>${esc(c.id)}</code></td></tr>`).join('')}</tbody></table>`
+        : '<div class="aviso">Nadie le escribió al bot últimamente. Que cada persona le mande un mensaje (por ejemplo «hola») y volvé a buscar.</div>';
+    } catch (e) {
+      $('vg-chats').innerHTML = `<div class="aviso vg-mal">Error: ${esc(e.message)}</div>`;
+    }
+  });
+
+  // --------------------------------------------------------------------- rangos
+  function pintarRangos() {
+    $('vg-rangos').innerHTML = cfg.rangos.map((x, i) => `<div class="vg-fila" style="margin-bottom:6px;align-items:center">
+      <input type="text" data-rango="${i}" value="${esc(x)}" maxlength="40" aria-label="Rango" style="padding:6px;width:220px">
+      <button class="secundario vg-chico" data-rango-mover="${i}" data-dir="-1" aria-label="Subir" ${i === 0 ? 'disabled' : ''}>↑</button>
+      <button class="secundario vg-chico" data-rango-mover="${i}" data-dir="1" aria-label="Bajar" ${i === cfg.rangos.length - 1 ? 'disabled' : ''}>↓</button>
+      <button class="secundario vg-chico" data-rango-quitar="${i}" aria-label="Quitar" ${cfg.rangos.length === 1 ? 'disabled' : ''}>✕</button>
+      ${i === 0 ? '<span class="aviso">dueño</span>' : ''}</div>`).join('');
+  }
+
+  // El nombre de un rango se cambia al salir del campo: así se actualiza de una vez en las personas y en las reglas.
+  $('vg-rangos').addEventListener('change', ev => {
+    const i = ev.target.dataset.rango;
+    if (i === undefined) return;
+    const viejo = cfg.rangos[i], nuevo = ev.target.value.trim();
+    if (!nuevo || cfg.rangos.some((x, j) => j !== Number(i) && x.toLowerCase() === nuevo.toLowerCase())) {
+      ev.target.value = viejo;
+      return;
+    }
+    cfg.rangos[i] = nuevo;
+    cfg.personas.forEach(p => { if (p.rango === viejo) p.rango = nuevo; });
+    const cambiar = lista => lista.map(d => (d === 'rango:' + viejo ? 'rango:' + nuevo : d));
+    cfg.reglas.forEach(r => {
+      r.destinos = cambiar(r.destinos);
+      r.confirmacion.nivel2 = cambiar(r.confirmacion.nivel2);
+      r.confirmacion.nivel3 = cambiar(r.confirmacion.nivel3);
+    });
+    pintarPersonas(); pintarReglas(); marcarCambios();
+  });
+
+  $('vg-rangos').addEventListener('click', ev => {
+    const b = ev.target.closest('button');
+    if (!b) return;
+    if (b.dataset.rangoMover !== undefined) {
+      const i = Number(b.dataset.rangoMover), j = i + Number(b.dataset.dir);
+      [cfg.rangos[i], cfg.rangos[j]] = [cfg.rangos[j], cfg.rangos[i]];
+    } else if (b.dataset.rangoQuitar !== undefined) {
+      const x = cfg.rangos[Number(b.dataset.rangoQuitar)];
+      const usan = cfg.personas.filter(p => p.rango === x).map(p => p.nombre || '(sin nombre)');
+      if (usan.length) { alert(`El rango «${x}» lo tiene: ${usan.join(', ')}. Cambiales el rango antes de quitarlo.`); return; }
+      cfg.rangos.splice(Number(b.dataset.rangoQuitar), 1);
+      cfg.reglas.forEach(r => {
+        r.destinos = r.destinos.filter(d => d !== 'rango:' + x);
+        r.confirmacion.nivel2 = r.confirmacion.nivel2.filter(d => d !== 'rango:' + x);
+        r.confirmacion.nivel3 = r.confirmacion.nivel3.filter(d => d !== 'rango:' + x);
+      });
+    } else return;
+    pintarRangos(); pintarPersonas(); pintarReglas(); marcarCambios();
+  });
+
+  $('vg-agregar-rango').addEventListener('click', () => {
+    if (!cfg) return;
+    let n = 1, nombre = 'Nuevo rango';
+    while (cfg.rangos.includes(nombre)) nombre = 'Nuevo rango ' + (++n);
+    cfg.rangos.push(nombre);
+    pintarRangos(); pintarPersonas(); pintarReglas(); marcarCambios();
+  });
+
+  // --------------------------------------------------------------------- generales, guardar, probar
+  $('vg-general').addEventListener('input', ev => {
+    const k = ev.target.dataset.g;
+    if (!k) return;
+    cfg.general[k] = ev.target.type === 'checkbox' ? ev.target.checked
+      : ev.target.type === 'number' ? Number(ev.target.value) : ev.target.value;
+    if (k === 'salida_alarma') pintarReglas();
+    marcarCambios();
+  });
+
+  $('vg-general').addEventListener('click', async ev => {
+    const b = ev.target.closest('[data-probar]');
+    if (!b) return;
+    const alarma = b.dataset.probar === 'alarma';
+    if (alarma && !cfg.general.salida_alarma) { $('vg-sala-estado').textContent = 'Elegí primero la salida de la alarma.'; return; }
+    if (!confirm(alarma ? 'Se va a accionar de verdad la salida elegida del gateway. ¿Seguir?'
+                        : 'Se va a escuchar un aviso de prueba en los parlantes de la PC de LactIA. ¿Seguir?')) return;
+    $('vg-sala-estado').textContent = alarma ? 'Accionando la alarma…' : 'Reproduciendo…';
+    b.disabled = true;
+    try {
+      const r = await post(alarma ? '/api/vigilat/probar_alarma' : '/api/vigilat/probar_audio', { salida: cfg.general.salida_alarma });
+      $('vg-sala-estado').textContent = (alarma ? 'Alarma: ' : 'Audio: ') + (r.ok ? '✔ ' : '✘ ') + r.detalle + '.';
+    } catch (e) {
+      $('vg-sala-estado').textContent = 'Error: ' + e.message;
+    }
+    b.disabled = false;
+  });
+
+  $('vg-guardar').addEventListener('click', async () => {
+    $('vg-guardar-estado').textContent = 'Guardando…';
+    try {
+      await post('/api/vigilat/config', cfg);
+      await cargar();
+      $('vg-guardar-estado').textContent = 'Guardado. Se aplica en la próxima vuelta, sin reiniciar.';
+    } catch (e) {
+      $('vg-guardar-estado').textContent = 'No se guardó: ' + e.message;
+    }
+  });
+
+  $('vg-deshacer').addEventListener('click', () => {
+    cfg = JSON.parse(original);
+    abierta = null;
+    pintarTodo();
+    $('vg-guardar-estado').textContent = '';
+  });
+
+  async function probar(reglaId) {
+    const caja = $('vg-prueba');
+    caja.innerHTML = '<div class="vg-prueba aviso">Revisando los datos… puede tardar un minuto. No se manda ni se anota nada.</div>';
+    caja.scrollIntoView({ block: 'nearest' });
+    try {
+      const { reglas } = await post('/api/vigilat/probar', { config: cfg, regla: reglaId || null });
+      caja.innerHTML = reglas.map(r => {
+        const niveles = r.niveles.map((n, i) => `<div class="aviso">${r.niveles.length > 1 ? ['Primero', 'Si no confirma', 'Después', 'Por último'][i] || 'Después' : 'Le llegaría a'}: ${n.map(p => `${esc(p.nombre)} (${esc(p.canales.join(', ') || '—')})${p.problemas.length ? ` <span class="vg-mal">⚠ ${esc(p.problemas.join('; '))}</span>` : ''}`).join(' · ')}</div>`).join('');
+        const hallazgos = r.hallazgos.map(h => `<pre>${esc(h.texto)}</pre>${h.ya_avisado ? '<div class="aviso">Esto ya se avisó: no se repetiría.</div>' : ''}${r.acciones.audio ? `<div class="aviso">🔊 En la sala: «${esc(h.audio)}»</div>` : ''}`).join('');
+        return `<div class="vg-prueba"><b>${r.numero}. ${esc(r.nombre)}</b>${r.activa ? '' : ' <span class="aviso">(en pausa)</span>'}
+          <div class="aviso">${esc(r.nota)}</div>
+          ${r.hallazgos.length ? hallazgos + niveles : '<div class="aviso">Ahora no avisaría nada.</div>' + niveles}
+          ${r.acciones.alarma ? `<div class="aviso">🚨 Haría sonar la alarma.${r.alarma_sin_salida ? ' <span class="vg-mal">⚠ falta elegir la salida</span>' : ''}</div>` : ''}</div>`;
+      }).join('') || '<div class="vg-prueba aviso">No hay reglas para probar.</div>';
+    } catch (e) {
+      caja.innerHTML = `<div class="vg-prueba aviso vg-mal">Error: ${esc(e.message)}</div>`;
+    }
+  }
+  $('vg-probar-todas').addEventListener('click', () => cfg && probar(null));
+
+  // --------------------------------------------------------------------- historial
+  async function historial() {
+    const q = new URLSearchParams({ desde: $('vg-desde').value, hasta: $('vg-hasta').value }).toString();
+    $('vg-csv').href = '/api/vigilat/avisos.csv?' + q;
+    $('vg-historial-estado').textContent = 'Cargando…';
+    try {
+      const { avisos } = await pedirJSON('/api/vigilat/avisos?' + q);
+      $('vg-historial-estado').textContent = avisos.length ? `${avisos.length} aviso(s).` : 'No hubo avisos en esas fechas.';
+      $('vg-historial').innerHTML = avisos.length ? `<table><thead><tr><th>#</th><th>Cuándo</th><th>Aviso</th><th>Estado</th><th></th></tr></thead><tbody>
+        ${avisos.map(a => {
+          const abierto = a.estado === 'pendiente' || a.estado === 'sin_confirmar';
+          const fallas = a.envios.filter(e => ['fallido', 'incierto', 'retenido', 'vencido'].includes(e.estado)).length;
+          return `<tr><td>${a.id}</td><td style="white-space:nowrap">${cuandoTexto(a.creado)}</td>
+            <td style="width:100%"><details><summary>${esc(a.regla_nombre)}</summary><pre>${esc(a.texto)}</pre>
+              ${a.eventos.map(e => `<div class="aviso">${esc(e.cuando.slice(11, 16))} · ${esc(e.texto)}</div>`).join('')}</details></td>
+            <td style="white-space:nowrap">${ESTADO[a.estado] || esc(a.estado)}${a.confirmado_por ? ' · ' + esc(a.confirmado_por) : ''}
+              ${a.estado === 'pendiente' ? `<div class="aviso">paso ${a.nivel} de ${a.niveles}</div>` : ''}
+              ${fallas ? `<div class="aviso vg-mal">${fallas} envío(s) sin entregar</div>` : ''}</td>
+            <td>${abierto ? `<button class="secundario vg-chico" data-confirmar="${a.id}">Confirmar</button>` : ''}</td></tr>`;
+        }).join('')}</tbody></table>` : '';
+    } catch (e) {
+      $('vg-historial-estado').textContent = 'Error: ' + e.message;
+    }
+  }
+  $('vg-ver-historial').addEventListener('click', historial);
+  $('vg-historial').addEventListener('click', async ev => {
+    const b = ev.target.closest('[data-confirmar]');
+    if (!b) return;
+    b.disabled = true;
+    try {
+      await post('/api/vigilat/avisos/' + b.dataset.confirmar + '/confirmar');
+    } catch (e) {
+      $('vg-historial-estado').textContent = 'Error: ' + e.message;
+    }
+    historial();
+  });
+
+  // Entrar otra vez a Configuración no pisa lo que se estaba editando sin guardar.
+  window.cargarVigilat = () => { if (!cfg || JSON.stringify(cfg) === original) cargar(); };
+})();
+</script>
+{% endraw %}

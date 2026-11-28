@@ -46,7 +46,7 @@ def ordeno_terminado(ordeno: Ordeno, ahora: datetime.datetime, quieto_min: int =
     return ahora - ordeno.fin >= datetime.timedelta(minutes=quieto_min)
 
 
-def baja_ordeno(actual: Ordeno, base: list) -> dict | None:
+def baja_ordeno(actual: Ordeno, base: list, min_pct: float | None = None) -> dict | None:
     """`{"kg", "media", "z", "pct", "dias_base"}` si los kg de este ordeño están a 2 desvíos o más por debajo de
     los mismos ordeños de la base Y a 4 % o más por debajo de su media; si no, `None`. Las dos condiciones a la
     vez: con una sola, una base muy pareja avisaría por 1 % y una muy dispareja nunca avisaría.
@@ -61,20 +61,21 @@ def baja_ordeno(actual: Ordeno, base: list) -> dict | None:
         return None
     z = diagnostico_baja._z(actual.kg, serie)
     pct = (actual.kg - media) / media * 100
-    if z <= -Z_FUERTE and pct <= -BAJA_MIN_PCT:
+    if z <= -Z_FUERTE and pct <= -(BAJA_MIN_PCT if min_pct is None else min_pct):
         return {"kg": round(actual.kg, 1), "media": round(media, 1), "z": round(z, 1), "pct": round(pct, 1),
                 "dias_base": len(base)}
     return None
 
 
-def vacas_faltantes(presentes: set, habituales: dict, kg_base: float) -> dict | None:
+def vacas_faltantes(presentes: set, habituales: dict, kg_base: float, pct_min: float | None = None) -> dict | None:
     """Vacas habituales de ese ordeño que no pasaron hoy. `habituales`: vaca -> kg medio que da en ese ordeño.
-    `None` si lo que pesan las ausentes es menos del 1 % de `kg_base` (o si no hay kg de base)."""
+    `None` si lo que pesan las ausentes es menos de `pct_min` (fracción, 1 % por defecto) de `kg_base`, o si no hay kg
+    de base."""
     if kg_base <= 0:
         return None
     ausentes = sorted(v for v in habituales if v not in presentes)
     kg = sum(habituales[v] for v in ausentes)
-    if not ausentes or kg / kg_base < PCT_VACAS_AUSENTES:
+    if not ausentes or kg / kg_base < (PCT_VACAS_AUSENTES if pct_min is None else pct_min):
         return None
     return {"faltan": len(ausentes), "kg": round(kg, 1), "pct": round(kg / kg_base * 100, 1),
             "numeros": ausentes[:12]}

@@ -142,6 +142,40 @@ que hay UN solo `servidor.py` y es nuevo. No hay variables de entorno nuevas ni 
 de una causa se encola detrás de lo que esté corriendo (warmups, pantallas). Una pasada que se dispara puede tardar uno o dos
 minutos; es una vez por ordeño malo, no por pasada.
 
+## Vigilat: el Vigilante pasa a ser reglas configurables con contactos (28/11/2026, fase 1)
+
+Reemplaza a la pantalla y al hilo del Vigilante (la sección de arriba queda como historia; **sus cuentas se siguen usando**:
+`vigilante.py`, `vigilante_reglas.py`, `vigilante_aviso.py`). Las rutas `/api/vigilante/*` ya no existen. Se configura en
+⚙ Configuración › 👁 Vigilat (`templates/_vigilat.html`, incluida en index.html). Sigue siendo SOLO LECTURA sobre DelPro y
+MixerOne y solo mira `tambos.DEFAULT_TAMBO`.
+
+  * **Piezas**: `vigilat_config.py` (reglas, personas, rangos; `vigilat_config.json`, **datos personales, en `.gitignore`**,
+    con copia `.anterior`), `vigilat_tipos.py` (qué mira cada regla), `vigilat_motor.py` (cuándo corre, envíos, silencio,
+    máximo, escalamiento, confirmación, probar), `vigilat_acciones.py` (canales por persona, alarma, audio),
+    `vigilat_estado.py` (tablas `vt_*` dentro de `vigilante.db`).
+  * **Seis tipos de regla**: sin datos, fallas en las unidades (por puesto, 24 h, mínimo y veces la mediana), ordeño peor,
+    vacas que faltaron, vacas con baja producción (contra sus 7 días previos), comida atrasada. Cada una corre cada N
+    minutos, a horas fijas o al terminar cada ordeño, según el tipo.
+  * **El orden de la lista es la prioridad. Solo la regla 1 avisa en el horario de silencio** (y no tiene máximo diario).
+  * **El primer rango de la lista es el del dueño.** Con «requiere confirmación»: destinatarios → segunda persona →
+    tercera → dueño, esperando N minutos en cada paso desde el primer intento de envío; si no se le pudo mandar a nadie
+    del nivel, se pasa ya. Se confirma con el enlace `/vigilat/c/<llave>` (**público; abrirlo NO confirma**, porque
+    WhatsApp y los antivirus abren los enlaces: confirma el botón), respondiendo «OK 12» por WhatsApp, o desde la
+    Bitácora o el historial.
+  * **Máximo por persona por día**: no frena la regla 1, los avisos que piden confirmación ni las escaladas; lo retenido
+    sale en el mensaje de las 08:00/20:00.
+  * **Todo aviso queda en la Bitácora** como tipo `aviso` (no cuenta como incidente abierto ni como «ya reportado»), con
+    cada envío, falla, alarma y confirmación anotados en el mismo registro; historial y planilla CSV en la pantalla.
+  * **Envíos**: por persona se usan sus canales tildados (no dependen del tilde global de Alertas); «Canales generales»
+    sí. Un envío del que no se sabe si salió NO se reintenta. WhatsApp con el sandbox o fuera de la ventana de 24 h falla.
+  * **Alarma** = un pulso en una salida del M300 (lo ejecuta `iot_lavado.py`; si no lo toma en 15 s se cancela; el largo
+    es el pulso configurado de esa salida, hasta 10 s). **Audio** = voz de Windows en la PC que corre LactIA.
+  * **Al actualizar** (sin `vigilat_config.json`): toma el encendido, silencio, máximo y horas del Vigilante anterior; las
+    cuatro condiciones de antes avisan por los canales generales; fallas y baja producción vienen EN PAUSA.
+  * **Sin probar todavía**: envíos reales a personas, la alarma en el relé, el audio en la sala, y las reglas de ordeño en
+    SERVER-DELPRO (en la PC de desarrollo la consulta por vaca se corta por memoria). Medido en la copia local: fallas
+    0,9 s y baja producción 0,7 s; con 15 % de caída salieron 69 vacas el 18/11/2026 (sobre todo enfermería y baja).
+
 ## Panel de despliegue: actualizar la base de datos desde una carpeta (15/11/2026)
 
 Diseño: `docs/superpowers/specs/2026-11-15-panel-base-de-datos-design.md`. Plan: `docs/superpowers/plans/2026-11-15-panel-base-de-datos.md`.

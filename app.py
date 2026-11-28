@@ -14,6 +14,7 @@ import time
 from flask import (Flask, Response, jsonify, make_response, redirect,
                    render_template, request, send_file, send_from_directory, session, url_for)
 
+import csv
 import datetime
 import hmac
 import io
@@ -67,8 +68,12 @@ import lavado_programa
 import voz_comandos
 import voz_sintesis
 import voz_stt
-import vigilante
+import veredicto_baja
 import vigilante_estado
+import vigilat_acciones
+import vigilat_config
+import vigilat_estado
+import vigilat_motor
 import laserenisima
 import mantenimiento
 import merito
@@ -155,8 +160,10 @@ _RUTAS_PUBLICAS = {"/login", "/webhook/whatsapp", "/api/iot/pantalla", "/api/iot
 def _requerir_login():
     # `/api/iot/ingreso/<origen>`: un ESP32 o ChirpStack EMPUJAN lecturas (ver `api_iot_ingreso`). Sin sesión, pero NO abierta:
     # exige el token del origen. El prefijo lleva la barra final: `/api/iot/ingresoX` no queda público.
+    # `/vigilat/c/<llave>`: el enlace «Confirmá que lo viste» de un aviso de Vigilat. Sin sesión (lo abre cualquiera de
+    # la lista desde su teléfono), pero solo sirve con la llave de ESE envío (ver `vigilat_confirmar`).
     if (request.path in _RUTAS_PUBLICAS or request.path.startswith("/static/")
-            or request.path.startswith("/api/iot/ingreso/")):
+            or request.path.startswith("/api/iot/ingreso/") or request.path.startswith("/vigilat/c/")):
         return None
     if "usuario" not in session:
         if request.path.startswith("/api/"):
@@ -7232,6 +7239,26 @@ def _responder_whatsapp_ia(origen: str, pregunta: str, tambo: str):
         _log_webhook(f"ERROR mandando la respuesta por WhatsApp: {exc}")
 
 
+def _confirmacion_vigilat_por_whatsapp(origen: str, texto: str):
+    """Lo que hay que contestar si el mensaje era una confirmación de Vigilat («OK 12»), o `None` si no lo era. Una
+    falla acá no puede dejar sin respuesta a quien le pregunta a la IA."""
+    try:
+        if not os.path.exists(vigilante_estado.RUTA_DB):
+            return None
+        cfg, _problema = vigilat_config.leer()
+        return vigilat_motor.confirmar_por_respuesta(cfg, vigilat_estado.Estado(), origen, texto)
+    except Exception as exc:  # noqa: BLE001
+        _log_webhook(f"ERROR revisando una confirmación de Vigilat: {exc}")
+        return None
+
+
+def _contestar_whatsapp(destino: str, texto: str):
+    try:
+        whatsapp.enviar(texto, destino=destino)
+    except Exception as exc:  # noqa: BLE001
+        _log_webhook(f"ERROR mandando la respuesta por WhatsApp: {exc}")
+
+
 @app.post("/webhook/whatsapp")
 def webhook_whatsapp():
     from twilio.request_validator import RequestValidator
@@ -7243,6 +7270,11 @@ def webhook_whatsapp():
         return "", 403
     origen = (request.form.get("From") or "").replace("whatsapp:", "").strip()
     pregunta = (request.form.get("Body") or "").strip()
+    respuesta_vigilat = _confirmacion_vigilat_por_whatsapp(origen, pregunta)
+    if respuesta_vigilat:
+        _log_webhook(f"VIGILAT -- From={origen} -> {respuesta_vigilat!r}")
+        threading.Thread(target=_contestar_whatsapp, args=(origen, respuesta_vigilat), daemon=True).start()
+        return "", 204
     tambo = whatsapp_ia.tambo_autorizado(origen)
     if not tambo or not pregunta:
         _log_webhook(f"IGNORADO -- From={origen!r} autorizado={tambo is not None} "
@@ -7521,7 +7553,7 @@ def _html_alertas_puntuales(lineas: list) -> str:
 
 
 def _lineas_vigilante_retenidos(tambo: str, registrar: bool) -> list:
-    """Los avisos que el vigilante no mandó por pasarse del tope diario (ver `vigilante.pasada`), para decirlos en el
+    """Los avisos que Vigilat no mandó por pasarse del máximo del día (ver `vigilat_motor`), para decirlos en el
     próximo mensaje consolidado. Solo el tambo del vigilante. El ciclo real (`registrar=True`) los consume; «Probar»
     los muestra sin gastarlos. Si el vigilante nunca corrió, no existe su base y no se crea una solo por mirar."""
     if tambo != tambos.DEFAULT_TAMBO or not os.path.exists(vigilante_estado.RUTA_DB):
@@ -7533,7 +7565,7 @@ def _lineas_vigilante_retenidos(tambo: str, registrar: bool) -> list:
         return []
     if not lineas:
         return []
-    return [f"👁 El vigilante retuvo {len(lineas)} aviso(s) por pasar el tope diario:"] + [f"• {l}" for l in lineas]
+    return [f"👁 Vigilat retuvo {len(lineas)} aviso(s) por el máximo de mensajes del día:"] + [f"• {l}" for l in lineas]
 
 
 def _construir_mensaje_alertas(tambo: str, registrar: bool = False):
@@ -7648,14 +7680,14 @@ def _bucle_alertas_whatsapp():
 threading.Thread(target=_bucle_alertas_whatsapp, daemon=True).start()
 
 def iniciar_vigilante():
-    """Arranca el hilo del vigilante (avisa solo cuando un ordeño sale claramente peor que lo normal). Viene APAGADO:
-    no hace nada hasta que se lo enciende en ⚙ Configuración › 👁 Vigilante.
+    """Arranca el hilo de Vigilat (las reglas de aviso, ver `vigilat_motor.py`). Viene APAGADO: no hace nada hasta que
+    se lo enciende en ⚙ Configuración › 👁 Vigilat.
 
     NO se arranca al importar `app`, a diferencia del ciclo de alertas de arriba: lo llama `servidor.py` DESPUÉS de tomar
     el candado de instancia única. Otros procesos importan `app` (precalentar.py, los diagnósticos, las pruebas) y con el
     vigilante encendido cada uno tendría el suyo mandando avisos por los canales reales: «consultar, enviar, registrar»
     no es atómico entre procesos y el mismo aviso saldría dos veces."""
-    return vigilante.iniciar_hilo(tambos.DEFAULT_TAMBO, lambda texto: _enviar_a_canales_activos(texto))
+    return vigilat_motor.iniciar_hilo(tambos.DEFAULT_TAMBO, lambda texto: _enviar_a_canales_activos(texto))
 
 
 def iniciar_avisos_iot():
@@ -7752,62 +7784,259 @@ def api_alertas_probar_ciclo():
     return jsonify({"ok": True})
 
 
-# --- Vigilante: avisa solo cuando un ordeño sale claramente peor que lo normal -------------------------------
-@app.get("/api/vigilante/config")
-@auth.requiere_rol("admin")
-def api_vigilante_config():
-    return jsonify(vigilante_estado.config())
+# --- Vigilat: reglas de aviso, contactos, confirmación (ver vigilat_motor.py) ----------------------------------
+def _vigilat_generales() -> list:
+    """Los nombres de los canales generales que mandarían ahora (los de ⚙ Configuración › Alertas)."""
+    nombres = {"whatsapp": "WhatsApp", "telegram": "Telegram", "correo": "Correo"}
+    return [nombres[c] for c in _ids_de_canales_disponibles()]
 
 
-@app.post("/api/vigilante/config")
-@auth.requiere_rol("admin")
-def api_vigilante_config_set():
-    body = request.json or {}
-    desconocidos = [k for k in body if k not in vigilante_estado.DEFECTOS]
-    if not body or desconocidos:
-        return jsonify({"error": "Campo desconocido: " + ", ".join(desconocidos) if desconocidos
-                        else "Falta qué guardar."}), 400
-    try:
-        vigilante_estado.set_config(**body)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "config": vigilante_estado.config()})
+def _vigilat_salidas() -> list:
+    """Las salidas del gateway que `iot_lavado.py` maneja: las únicas que pueden hacer sonar una alarma."""
+    import iot_canales
+    import iot_lavado
+    en_uso = iot_lavado.actuadores_en_uso()
+    return [{"clave": c, "nombre": iot_canales.nombre(c)} for c in iot_canales.SALIDAS if c in en_uso]
 
 
-@app.get("/api/vigilante/estado")
-@auth.requiere_rol("admin")
-def api_vigilante_estado():
-    est = vigilante_estado.Estado(vigilante_estado.RUTA_DB)
+def _vigilat_estado_de_reglas(cfg: dict) -> dict:
+    if not os.path.exists(vigilante_estado.RUTA_DB):
+        return {"ultima_pasada": None, "reglas": {}}
+    est = vigilat_estado.Estado()
     ultima = est.ultima_pasada()
-    return jsonify({"estado_datos": est.estado_datos(),
-                    "avisos_hoy": est.avisos_del_dia(datetime.date.today()),
-                    "ultima_pasada": {"cuando": ultima[0].isoformat(), "resultado": ultima[1]} if ultima else None,
-                    "retenidos": est.retenidos()})
+    reglas = {}
+    for r in cfg["reglas"]:
+        m = est.leer_valor(f"vt:regla:{r['id']}") or {}
+        reglas[r["id"]] = {"ultima": m.get("ultima"), "resultado": m.get("resultado")}
+    return {"ultima_pasada": {"cuando": ultima[0].isoformat(), "resultado": ultima[1]} if ultima else None,
+            "reglas": reglas}
 
 
-@app.post("/api/vigilante/probar")
+@app.get("/api/vigilat/config")
 @auth.requiere_rol("admin")
-def api_vigilante_probar():
-    """Corre una pasada de verdad sobre los datos de ahora y devuelve el aviso que saldría, SIN gastar nada: no registra
-    avisos, no cuenta para el tope, no vacía los retenidos. Con `"enviar": true` además lo manda por los canales activos
-    (para comprobar que el aviso llega), igual sin registrar."""
+def api_vigilat_config():
+    cfg, problema = vigilat_config.leer()
+    tipos = {clave: {"nombre": t["nombre"], "descripcion": t["descripcion"], "modos": list(t["modos"]),
+                     "nueva": vigilat_config.regla_nueva(clave, "nueva"),
+                     "parametros": [{"clave": p[0], "texto": p[1], "min": p[2], "max": p[3], "defecto": p[4],
+                                     "entero": p[5]} for p in t["parametros"]]}
+             for clave, t in vigilat_config.TIPOS.items()}
+    try:
+        salidas = _vigilat_salidas()
+    except Exception:  # noqa: BLE001 - sin el módulo IoT la pantalla igual abre
+        salidas = []
+    return jsonify({"config": cfg, "problema": problema, "tipos": tipos,
+                    "canales": vigilat_acciones.disponibles(), "generales": _vigilat_generales(), "salidas": salidas,
+                    "tambo": tambos.nombre_de(tambos.DEFAULT_TAMBO), **_vigilat_estado_de_reglas(cfg)})
+
+
+@app.post("/api/vigilat/config")
+@auth.requiere_rol("admin")
+def api_vigilat_config_guardar():
+    try:
+        cfg = vigilat_config.guardar(request.get_json(silent=True))
+    except vigilat_config.ConfigError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except OSError as exc:
+        return jsonify({"error": f"No se pudo guardar ({type(exc).__name__})."}), 500
+    return jsonify({"ok": True, "config": cfg})
+
+
+@app.post("/api/vigilat/probar")
+@auth.requiere_rol("admin")
+def api_vigilat_probar():
+    """Qué diría ahora cada regla (o la de `regla`) y a quién se lo mandaría. No manda ni anota NADA. Con `config` prueba
+    lo que está en la pantalla aunque no se haya guardado."""
     body = request.get_json(silent=True) or {}
     try:
-        r = vigilante.pasada(tambos.DEFAULT_TAMBO, registrar=False, enviar=None)
+        cfg = vigilat_config.validar(body["config"]) if body.get("config") else vigilat_config.leer()[0]
+    except vigilat_config.ConfigError as exc:
+        return jsonify({"error": str(exc)}), 400
+    estado = vigilat_estado.Estado() if os.path.exists(vigilante_estado.RUTA_DB) else None
+    try:
+        reglas = vigilat_motor.probar(cfg, tambos.DEFAULT_TAMBO, regla_id=body.get("regla"), estado=estado,
+                                      generales_ok=bool(_vigilat_generales()))
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"No se pudo armar la prueba: {exc}"}), 500
-    if r["estado"] == "error":
-        return jsonify({"error": r.get("error") or "No se pudo leer DelPro."}), 502
-    enviar = bool(body.get("enviar"))
-    if enviar:
-        if not r["mensaje"]:
-            return jsonify({"error": "Ahora no hay nada para avisar, así que no se mandó nada."}), 400
+    return jsonify({"reglas": reglas})
+
+
+@app.post("/api/vigilat/probar_contacto")
+@auth.requiere_rol("admin")
+def api_vigilat_probar_contacto():
+    """Manda un mensaje de prueba a UNA persona, por cada forma de contacto que tenga tildada."""
+    persona = (request.get_json(silent=True) or {}).get("persona")
+    try:
+        rango = persona.get("rango") if isinstance(persona, dict) else None
+        p = vigilat_config._persona(persona, [rango])
+    except vigilat_config.ConfigError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not p["canales"]:
+        return jsonify({"error": f"{p['nombre']} no tiene ninguna forma de contacto tildada."}), 400
+    disponibles = vigilat_acciones.disponibles()
+    texto = f"✅ Prueba de Vigilat: {p['nombre']}, si leés esto, los avisos del tambo te van a llegar por acá."
+    resultados = []
+    for canal in p["canales"]:
+        if not disponibles.get(canal):
+            resultados.append({"canal": canal, "ok": False, "detalle": "no está configurado en este servidor"})
+            continue
         try:
-            _enviar_resumen_a_canales_activos(r["mensaje"], None)
-        except Exception as exc:  # noqa: BLE001
-            return jsonify({"error": str(exc)}), 502
-    return jsonify({"estado": r["estado"], "mensaje": r["mensaje"], "retenidos": r["retenidos"], "enviado": enviar,
-                    "hallazgos": [{"tipo": h["tipo"], "clave": h["clave"]} for h in r["hallazgos"]]})
+            vigilat_acciones.enviar(canal, p[canal], texto)
+            resultados.append({"canal": canal, "ok": True, "detalle": "enviado"})
+        except Exception as exc:  # noqa: BLE001 - el motivo va a la pantalla (los canales no incluyen credenciales)
+            resultados.append({"canal": canal, "ok": False, "detalle": str(exc)[:300]})
+    return jsonify({"resultados": resultados})
+
+
+@app.post("/api/vigilat/probar_alarma")
+@auth.requiere_rol("admin")
+def api_vigilat_probar_alarma():
+    salida = (request.get_json(silent=True) or {}).get("salida") or ""
+    if salida not in [s["clave"] for s in _vigilat_salidas()]:
+        return jsonify({"error": "Elegí una salida del gateway."}), 400
+    bien, detalle = vigilat_acciones.sonar_alarma(salida)
+    return jsonify({"ok": bien, "detalle": detalle})
+
+
+@app.post("/api/vigilat/probar_audio")
+@auth.requiere_rol("admin")
+def api_vigilat_probar_audio():
+    bien, detalle = vigilat_acciones.hablar("Atención. Esto es una prueba del audio de la sala.")
+    return jsonify({"ok": bien, "detalle": detalle})
+
+
+@app.get("/api/vigilat/telegram/chats")
+@auth.requiere_rol("admin")
+def api_vigilat_telegram_chats():
+    try:
+        return jsonify({"chats": telegram_bot.chats_recientes()})
+    except telegram_bot.TelegramError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+
+def _vigilat_rango_pedido():
+    hoy = datetime.date.today()
+    hasta = datetime.date.fromisoformat(request.args["hasta"]) if request.args.get("hasta") else hoy
+    desde = (datetime.date.fromisoformat(request.args["desde"]) if request.args.get("desde")
+             else hasta - datetime.timedelta(days=6))
+    return (desde, hasta) if desde <= hasta else (hasta, desde)
+
+
+def _vigilat_historial(desde, hasta, limite=500) -> list:
+    if not os.path.exists(vigilante_estado.RUTA_DB):
+        return []
+    return vigilat_estado.Estado().historial(desde, hasta, limite)
+
+
+def _vigilat_aviso_publico(a: dict) -> dict:
+    """Un aviso para la pantalla: sin las llaves de confirmación."""
+    salida = {k: a[k] for k in ("id", "creado", "regla_nombre", "prioridad", "texto", "estado", "nivel",
+                                "requiere_conf", "confirmado_por", "confirmado_en", "confirmado_via")}
+    salida["niveles"] = len(a["escalera"])
+    salida["envios"] = [{k: e[k] for k in ("persona", "canal", "nivel", "estado", "enviado_en", "error")}
+                        for e in a["envios"]]
+    salida["eventos"] = a["eventos"]
+    return salida
+
+
+@app.get("/api/vigilat/avisos")
+@auth.requiere_rol("admin")
+def api_vigilat_avisos():
+    try:
+        desde, hasta = _vigilat_rango_pedido()
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+    return jsonify({"desde": desde.isoformat(), "hasta": hasta.isoformat(),
+                    "avisos": [_vigilat_aviso_publico(a) for a in _vigilat_historial(desde, hasta)]})
+
+
+@app.get("/api/vigilat/avisos.csv")
+@auth.requiere_rol("admin")
+def api_vigilat_avisos_csv():
+    """La historia de los avisos para analizarla en una planilla: un renglón por aviso."""
+    try:
+        desde, hasta = _vigilat_rango_pedido()
+    except ValueError:
+        return jsonify({"error": "Fechas inválidas (se espera AAAA-MM-DD)."}), 400
+
+    def celda(v):
+        v = "" if v is None else str(v)
+        return "'" + v if v[:1] in ("=", "+", "-", "@") else v          # que Excel no lo tome por una fórmula
+
+    def personas(aviso, estados):
+        return ", ".join(f"{e['persona']} ({e['canal']})" for e in aviso["envios"] if e["estado"] in estados)
+
+    salida = io.StringIO()
+    w = csv.writer(salida, delimiter=";", lineterminator="\r\n")
+    w.writerow(["Aviso", "Fecha y hora", "Prioridad", "Regla", "Texto", "Estado", "Nivel alcanzado", "Enviado a",
+                "No enviado a", "Confirmado por", "Confirmado el", "Minutos hasta confirmar", "Historia"])
+    for a in reversed(_vigilat_historial(desde, hasta, limite=20000)):
+        minutos = ""
+        if a["confirmado_en"]:
+            demora = datetime.datetime.fromisoformat(a["confirmado_en"]) - datetime.datetime.fromisoformat(a["creado"])
+            minutos = round(demora.total_seconds() / 60)
+        w.writerow([celda(x) for x in (
+            a["id"], a["creado"].replace("T", " "), a["prioridad"], a["regla_nombre"], a["texto"], a["estado"],
+            a["nivel"], personas(a, ("enviado",)), personas(a, ("fallido", "incierto", "retenido", "vencido")),
+            a["confirmado_por"], (a["confirmado_en"] or "").replace("T", " "), minutos,
+            " | ".join(f"{e['cuando'][11:16]} {e['texto']}" for e in a["eventos"]))])
+    return send_file(io.BytesIO(salida.getvalue().encode("utf-8-sig")), as_attachment=True,
+                     download_name=f"vigilat_{desde.isoformat()}_{hasta.isoformat()}.csv", mimetype="text/csv")
+
+
+@app.get("/api/vigilat/avisos/recientes")
+@auth.requiere_rol("admin", "operario")
+def api_vigilat_avisos_recientes():
+    """Los avisos de ayer y hoy, y los que sigan sin confirmar: lo que se muestra en la Bitácora."""
+    if _tambo_del_request() != tambos.DEFAULT_TAMBO:
+        return jsonify({"avisos": []})
+    hoy = datetime.date.today()
+    ayer = (hoy - datetime.timedelta(days=1)).isoformat()
+    avisos = [a for a in _vigilat_historial(hoy - datetime.timedelta(days=7), hoy, limite=100)
+              if a["creado"][:10] >= ayer or a["estado"] in vigilat_estado.ABIERTOS]
+    return jsonify({"avisos": [{k: a[k] for k in ("id", "creado", "regla_nombre", "texto", "estado",
+                                                  "requiere_conf", "confirmado_por")} for a in avisos[:30]]})
+
+
+@app.post("/api/vigilat/avisos/<int:aviso_id>/confirmar")
+@auth.requiere_rol("admin", "operario")
+def api_vigilat_confirmar(aviso_id):
+    if not os.path.exists(vigilante_estado.RUTA_DB):
+        return jsonify({"error": "Ese aviso no existe."}), 404
+    if not vigilat_motor.confirmar(vigilat_estado.Estado(), aviso_id, auth.usuario_actual(), "desde LactIA"):
+        return jsonify({"error": "Ese aviso no está esperando confirmación."}), 409
+    return jsonify({"ok": True})
+
+
+VIGILAT_ENLACE_DIAS = 7
+_VIGILAT_LLAVE_RE = re.compile(r"[A-Za-z0-9_-]{16,64}")
+
+
+@app.route("/vigilat/c/<llave>", methods=["GET", "POST"])
+def vigilat_confirmar(llave):
+    """La página del enlace «Confirmá que lo viste». Pública (se abre desde el teléfono de quien recibió el aviso), pero
+    solo con la llave de ese envío. **Abrirla no confirma nada** —WhatsApp, Telegram y los antivirus del correo abren los
+    enlaces solos—: confirma el botón, que es un POST."""
+    estado = envio = None
+    if _VIGILAT_LLAVE_RE.fullmatch(llave) and os.path.exists(vigilante_estado.RUTA_DB):
+        estado = vigilat_estado.Estado()
+        envio = estado.envio_por_token(llave)
+    aviso = estado.aviso(envio["aviso_id"]) if envio else None
+    vencido = bool(aviso) and (datetime.datetime.now() - datetime.datetime.fromisoformat(aviso["creado"])
+                               > datetime.timedelta(days=VIGILAT_ENLACE_DIAS))
+    if not aviso or vencido:
+        return render_template("vigilat_confirmar.html", aviso=None, vencido=vencido), 410 if vencido else 404
+    if request.method == "POST":
+        vigilat_motor.confirmar(estado, aviso["id"], envio["persona"], "enlace")
+        return redirect(url_for("vigilat_confirmar", llave=llave))
+    creado = datetime.datetime.fromisoformat(aviso["creado"])
+    resp = make_response(render_template(
+        "vigilat_confirmar.html", aviso=aviso, persona=envio["persona"], vencido=False,
+        cuando=f"{veredicto_baja.fecha_larga(creado.date().isoformat())} {creado:%H:%M}",
+        confirmado_en=(aviso["confirmado_en"] or "").replace("T", " ")[11:16]))
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    return resp
 
 
 # --- Alimentación: conciliación de lotes con grupos --------------------------

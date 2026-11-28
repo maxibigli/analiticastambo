@@ -4002,7 +4002,7 @@
     <button class="lac-segment__item" data-tab="parametros" aria-pressed="false">🧬 Parámetros Reproductivos</button>
     <button class="lac-segment__item" data-tab="metas" aria-pressed="false">🎯 Calibración de Objetivos</button>
     <button class="lac-segment__item" data-tab="ia_whatsapp" aria-pressed="false">🤖 IA por WhatsApp</button>
-    <button class="lac-segment__item" data-tab="vigilante" aria-pressed="false">👁 Vigilante</button>
+    <button class="lac-segment__item" data-tab="vigilante" aria-pressed="false">👁 Vigilat</button>
     <button class="lac-segment__item" data-tab="iot_canales" aria-pressed="false">🔌 Entradas/Salidas</button>
     <button class="lac-segment__item" data-tab="lavado_auto" aria-pressed="false">🧼 Lavado Automático</button>
     <button class="lac-segment__item" data-tab="tv" aria-pressed="false">📺 Modo televisor</button>
@@ -4410,46 +4410,7 @@
     </div>
   </section>
 
-  <section class="card" id="config-vigilante-card" hidden>
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <h2 style="margin:0">👁 Vigilante</h2>
-      <span class="aviso">Avisa solo cuando un ordeño salió claramente peor que lo normal.</span>
-    </div>
-    <p class="explica" style="margin-top:10px">
-      Apenas termina cada ordeño lo compara con el mismo ordeño de los 7 días anteriores. Si salió claramente
-      peor (menos leche, vacas habituales que no pasaron, la primera comida del mixer atrasada) o si dejaron de
-      llegar datos, busca la causa y manda <b>un solo mensaje</b> por los canales de alerta que ya tenés activos.
-      Viene <b>apagado</b>: encendelo cuando hayas visto con «Probar» qué mandaría.
-      Nunca escribe en DelPro ni en el mixer: solo lee.
-    </p>
-    <div class="aviso" id="config-vigilante-estado" style="margin:8px 0"></div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:8px">
-      <label class="aviso" style="display:flex;align-items:center;gap:8px;grid-column:1/-1">
-        <input type="checkbox" id="vig-activo"> <b>Vigilante encendido</b>
-      </label>
-      <label class="aviso">Revisar cada (minutos)
-        <input type="number" id="vig-pasada" min="5" max="120" step="1" style="width:100%;padding:6px"></label>
-      <label class="aviso">Máximo de avisos por día
-        <input type="number" id="vig-tope" min="1" max="20" step="1" style="width:100%;padding:6px"></label>
-      <label class="aviso">Silencio desde
-        <input type="time" id="vig-silencio-desde" style="width:100%;padding:6px"></label>
-      <label class="aviso">Silencio hasta
-        <input type="time" id="vig-silencio-hasta" style="width:100%;padding:6px"></label>
-      <label class="aviso">Avisar «sin datos» tras (horas)
-        <input type="number" id="vig-sin-datos" min="1" max="24" step="0.5" style="width:100%;padding:6px"></label>
-    </div>
-    <span class="aviso" style="display:block;margin-top:8px">
-      En el horario silencioso no se manda nada: lo que pase queda esperando y sale cuando termina. Pasado el máximo
-      de avisos del día, los que sobran no se pierden: van como una línea en el próximo mensaje de las 08:00 / 20:00.
-    </span>
-    <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
-      <button id="vig-guardar" disabled>Guardar</button>
-      <button class="secundario" id="vig-probar">Probar (solo mirar)</button>
-      <button class="secundario" id="vig-probar-enviar">Probar y mandar por los canales</button>
-    </div>
-    <div class="aviso" id="vig-probar-estado" style="margin-top:10px"></div>
-    <pre id="vig-probar-mensaje" hidden style="white-space:pre-wrap;margin-top:8px;padding:10px;border:1px solid var(--lac-border, #444);border-radius:6px"></pre>
-  </section>
+  {% include '_vigilat.html' %}
 
   <section class="card" id="config-iot-canales-card" hidden>
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -16313,7 +16274,7 @@ async function cargarConfiguracion() {
     cargarCanalesAlertas();
     cargarHorarioAlertas();
     cargarWhatsappIa();
-    cargarVigilante();
+    cargarVigilat();
     cargarConexionIot();
     cargarCanalesGateway();
     cargarMapaModbus();
@@ -16346,7 +16307,7 @@ document.getElementById('config-tabs').addEventListener('click', ev => {
   document.getElementById('config-parametros-card').hidden = tab !== 'parametros';
   document.getElementById('config-metas-card').hidden = tab !== 'metas';
   document.getElementById('config-ia-whatsapp-card').hidden = tab !== 'ia_whatsapp';
-  document.getElementById('config-vigilante-card').hidden = tab !== 'vigilante';
+  document.getElementById('config-vigilat-card').hidden = tab !== 'vigilante';
   document.getElementById('config-iot-canales-card').hidden = tab !== 'iot_canales';
   document.getElementById('config-lavado-auto-card').hidden = tab !== 'lavado_auto';
   document.getElementById('config-tv-card').hidden = tab !== 'tv';
@@ -16486,97 +16447,6 @@ document.getElementById('cfg-cl-guardar').addEventListener('click', async () => 
 // de arriba, pero cada número queda atado a un tambo fijo (ver whatsapp_ia.py).
 let iaWaItems = [];
 let iaWaOriginal = '';
-
-// --- Vigilante: configuración, estado y «Probar» ----------------------------
-let vigOriginal = null;     // JSON de lo guardado, para saber si hay cambios
-
-function vigValores() {
-  return {
-    activo: document.getElementById('vig-activo').checked,
-    pasada_min: Number(document.getElementById('vig-pasada').value),
-    tope_dia: Number(document.getElementById('vig-tope').value),
-    silencio_desde: document.getElementById('vig-silencio-desde').value,
-    silencio_hasta: document.getElementById('vig-silencio-hasta').value,
-    sin_datos_horas: Number(document.getElementById('vig-sin-datos').value),
-  };
-}
-
-function vigPintarCambios() {
-  if (vigOriginal === null) return;
-  document.getElementById('vig-guardar').disabled = JSON.stringify(vigValores()) === vigOriginal;
-}
-
-async function cargarVigilante() {
-  const estado = document.getElementById('config-vigilante-estado');
-  try {
-    const c = await pedirJSON('/api/vigilante/config');
-    document.getElementById('vig-activo').checked = !!c.activo;
-    document.getElementById('vig-pasada').value = c.pasada_min;
-    document.getElementById('vig-tope').value = c.tope_dia;
-    document.getElementById('vig-silencio-desde').value = c.silencio_desde;
-    document.getElementById('vig-silencio-hasta').value = c.silencio_hasta;
-    document.getElementById('vig-sin-datos').value = c.sin_datos_horas;
-    vigOriginal = JSON.stringify(vigValores());
-    document.getElementById('vig-guardar').disabled = true;
-    const e = await pedirJSON('/api/vigilante/estado');
-    const partes = [c.activo ? 'Encendido.' : 'Apagado: no revisa ni avisa.'];
-    partes.push('Avisos mandados hoy: ' + e.avisos_hoy + ' de ' + c.tope_dia + '.');
-    if (e.ultima_pasada) {
-      partes.push('Última revisión: ' + e.ultima_pasada.cuando.replace('T', ' ').slice(0, 16)
-                  + ' (' + e.ultima_pasada.resultado + ').');
-    } else {
-      partes.push('Todavía no revisó nada.');
-    }
-    if (e.estado_datos === 'sin_datos') partes.push('Atención: los datos de ordeño están cortados.');
-    if (e.retenidos.length) partes.push(e.retenidos.length + ' aviso(s) retenido(s) por el tope, salen en el próximo mensaje de las 08:00 / 20:00.');
-    estado.textContent = partes.join(' ');
-  } catch (err) {
-    estado.textContent = 'Error: ' + err.message;
-  }
-}
-
-document.getElementById('config-vigilante-card').addEventListener('input', vigPintarCambios);
-
-document.getElementById('vig-guardar').addEventListener('click', async () => {
-  const estado = document.getElementById('config-vigilante-estado');
-  estado.textContent = 'Guardando…';
-  try {
-    await pedirJSON('/api/vigilante/config', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(vigValores()),
-    });
-    await cargarVigilante();
-  } catch (err) {
-    estado.textContent = 'No se guardó: ' + err.message;
-  }
-});
-
-async function vigProbar(enviar) {
-  const estado = document.getElementById('vig-probar-estado');
-  const caja = document.getElementById('vig-probar-mensaje');
-  if (enviar && !confirm('Se va a mandar el aviso de prueba por los canales activos (WhatsApp / Telegram / Email). ¿Seguir?')) return;
-  estado.textContent = 'Revisando los ordeños de DelPro… puede tardar un minuto.';
-  caja.hidden = true;
-  try {
-    const r = await pedirJSON('/api/vigilante/probar', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enviar }),
-    });
-    if (!r.mensaje) {
-      estado.textContent = 'Ahora mismo no habría nada para avisar: ningún ordeño salió claramente peor que lo normal y los datos están llegando.';
-      return;
-    }
-    estado.textContent = (enviar ? 'Mandado. Así quedó el aviso:' : 'Esto es lo que mandaría ahora (no se mandó ni se anotó nada):')
-      + (r.estado === 'silencio' ? ' (ahora es horario silencioso: por sí solo esperaría a que termine).' : '')
-      + (r.retenidos ? ' ' + r.retenidos + ' más quedaría(n) retenido(s) por el tope del día.' : '');
-    caja.textContent = r.mensaje;
-    caja.hidden = false;
-  } catch (err) {
-    estado.textContent = 'Error: ' + err.message;
-  }
-}
-document.getElementById('vig-probar').addEventListener('click', () => vigProbar(false));
-document.getElementById('vig-probar-enviar').addEventListener('click', () => vigProbar(true));
 
 async function cargarWhatsappIa() {
   const estado = document.getElementById('config-ia-whatsapp-estado');

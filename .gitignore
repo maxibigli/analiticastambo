@@ -134,6 +134,10 @@ ups_cola.db-shm
 vigilante.db
 vigilante_config.json
 retraso_ordenos.csv
+# Vigilat: reglas y la agenda de personas (nombres, teléfonos y correos: datos personales, nunca al repo) y su copia.
+vigilat_config.json
+vigilat_config.anterior.json
+vigilat_config.json.tmp
 
 # Cuaderno de trabajo del plan en ejecucion (superpowers).
 .superpowers/
