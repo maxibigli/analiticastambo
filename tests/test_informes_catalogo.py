@@ -12,6 +12,7 @@ import informes_motor as im
 from tests.test_informes_tanda3b import TODOS as TANDA_3B
 from tests.test_informes_tanda4 import SI_NO as SI_NO_TANDA_4, TODOS as TANDA_4
 from tests.test_informes_tanda5 import FINCA as FINCA_TANDA_5, SI_NO as SI_NO_TANDA_5, TODOS as TANDA_5
+from tests.test_informes_tanda6 import PRIMEROS_2MIN as TANDA_6
 
 TIPOS = {"num", "txt", "fecha"}
 
@@ -87,7 +88,7 @@ class TestCatalogo(unittest.TestCase):
                                # tanda 3a
                                "LatestSCCTestDate", "LatestFat", "LatestFatDate", "LatestProtein", "LatestMilkTestYield", "LatestMilkTestYieldDate", "AgeInDays", "Sex",
                                "DaysSinceLastGroupChange", "PreviousGroupNumber", "PrevCalvingDate", "LastBcsValue", "LastBcsDryOffValue", "LastBcsCalvingValue", "LastBcsValue190DaysPregnant", "LastPregnancyCheckDate"}
-                         | set(TANDA_3B) | set(TANDA_4) | set(TANDA_5))   # tanda 3b: los 28 campos de `test_informes_tanda3b`; tanda 4: los 87 de `test_informes_tanda4`; tanda 5: los 93 de `test_informes_tanda5`
+                         | set(TANDA_3B) | set(TANDA_4) | set(TANDA_5) | set(TANDA_6))   # tanda 3b: los 28 campos de `test_informes_tanda3b`; tanda 4: los 87; tanda 5: los 93; tanda 6: los 12 de los primeros 2 minutos
         for c in cat.CATALOGO.values():
             if not c.verificado:
                 self.assertTrue(c.nota, f"{c.id} sin verificar y sin nota que diga por qué")

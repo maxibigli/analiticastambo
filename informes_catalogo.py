@@ -224,6 +224,10 @@ _TRANSPONDER_NUMERO = "CAST(TRY_CAST(b.TransponderID AS bigint) AS nvarchar(20))
 # Los ordeños de un día se leen UNA vez (5.000 filas de `SessionMilkYield` de un día, no la tabla de 826.000) y se agregan por animal con todas las medidas que piden los campos «de ayer» y «de hoy»:
 # una consulta con muchas columnas del mismo día paga una sola lectura. Sin funciones de ventana ni agregados de texto (ver la nota de `_bloque_salud` sobre la memoria de este SQL).
 _NUMEROS = (1, 2, 3)            # el 1.º, el 2.º y el 3.º ordeño (o sesión) del día: los que usan los informes del tambo
+# La leche de los primeros 2 minutos de un ordeño (tanda 6), como la define DelPro (`DDMReportItem` 310 `YieldFirstTwoMinutes`; su procedimiento `ChiHtmlKPI` hace la misma cuenta): los flujos están en
+# kg/min y los tramos de la curva duran 15, 15, 30 y 60 segundos. Sin ningún tramo no hay dato; un tramo que falta cuenta 0.
+_PRIMEROS_2MIN = ("CASE WHEN c.Flow0To15 IS NULL AND c.Flow15To30 IS NULL AND c.Flow30To60 IS NULL AND c.Flow60To120 IS NULL THEN NULL "
+                  "ELSE ISNULL(c.Flow0To15, 0) * 0.25 + ISNULL(c.Flow15To30, 0) * 0.25 + ISNULL(c.Flow30To60, 0) * 0.5 + ISNULL(c.Flow60To120, 0) END")
 
 
 def _bloque_ordenos(id_: str, alias: str, dia: str) -> Bloque:
@@ -241,7 +245,9 @@ def _bloque_ordenos(id_: str, alias: str, dia: str) -> Bloque:
                     # tanda 5: el flujo en cada tramo del ordeño (0 a 15 s, 15 a 30, 30 a 60 y 60 a 120: así viene la curva resumida en CMSMilkYield), los segundos de flujo bajo y el puesto (MpcNumber)
                     f"MAX(CASE WHEN {con_leche} THEN c.Flow0To15 END) AS tr0{n}", f"MAX(CASE WHEN {con_leche} THEN c.Flow15To30 END) AS tr1{n}",
                     f"MAX(CASE WHEN {con_leche} THEN c.Flow30To60 END) AS tr2{n}", f"MAX(CASE WHEN {con_leche} THEN c.Flow60To120 END) AS tr3{n}",
-                    f"MAX(CASE WHEN {con_leche} THEN c.LowFlowDurationInSec END) AS bajo{n}", f"MAX(CASE WHEN {en} THEN mp.MpcNumber END) AS mpc{n}"]
+                    f"MAX(CASE WHEN {con_leche} THEN c.LowFlowDurationInSec END) AS bajo{n}", f"MAX(CASE WHEN {en} THEN mp.MpcNumber END) AS mpc{n}",
+                    # tanda 6: la leche de los primeros 2 minutos (DelPro no pide que el ordeño tenga leche) y su porcentaje del ordeño (ítem 285: solo con leche)
+                    f"MAX(CASE WHEN {en} THEN {_PRIMEROS_2MIN} END) AS p2{n}", f"MAX(CASE WHEN {con_leche} THEN ({_PRIMEROS_2MIN}) * 100.0 / s.TotalYield END) AS pp2{n}"]
     medidas += [f"SUM(CASE WHEN s.SessionNo = {k} AND s.TotalYield > 0 THEN s.TotalYield END) AS sesion{k}" for k in _NUMEROS]
     medidas += ["SUM(s.TotalYield) AS total", "SUM(CASE WHEN s.TotalYield > 0 THEN 1 ELSE 0 END) AS n",
                 # tanda 5: lo que mira de TODOS los ordeños con leche del día (el flujo promedio, y si alguno tuvo retirada forzada o `BlockOverride`)
@@ -647,12 +653,17 @@ _MEDIDAS_ORDENO = (
     ("bajo", "CMSLowMilkFlowYesterday", None, "Tiempo con flujo bajo", "num", "%", 1,
      "el porcentaje del ordeño que pasó con flujo bajo: los segundos de flujo bajo (CMSMilkYield.LowFlowDurationInSec) sobre la duración del ordeño, de un ordeño con leche"),
     ("mpc", None, "MpcNumberTodayMilkingNumber", "Puesto de ordeño", "num", "", 0, "el número del puesto de la sala donde se ordeñó (CMSMpcDevice.MpcNumber)"),
+    # Tanda 6: los primeros 2 minutos, de la fórmula de DelPro (ver `_PRIMEROS_2MIN`)
+    ("p2", "YieldFirst2MinYesterdayMilking", "YieldFirst2MinTodayMilking", "Leche en los primeros 2 min", "num", "kg", 2,
+     "los kg de leche de los primeros 2 minutos del ordeño, de los flujos de la curva (DelPro: 0-15 s × 0,25 + 15-30 s × 0,25 + 30-60 s × 0,5 + 60-120 s); el mayor, si hubo más de un ordeño"),
+    ("pp2", "YieldFirst2MinPercentageYesterdayMilking", "YieldFirst2MinPercentageTodayMilking", "Leche en los primeros 2 min, % del ordeño", "num", "%", 1,
+     "la leche de los primeros 2 minutos sobre la leche total del ordeño (DelPro: solo de un ordeño con leche); el mayor, si hubo más de un ordeño"),
 )
 
 
 def _campos_por_ordeno() -> list:
     """Cada medida de ordeño, de ayer y de hoy, para el 1.º, el 2.º y el 3.º ordeño de la vaca: 7 × 2 × 3 = 42 campos que salen de dos bloques (uno por día). Tanda 5: 4 flujos por tramo × 2 × 3, más
-    el flujo bajo (solo de ayer) y el puesto (solo de hoy): 24 + 3 + 3 campos más."""
+    el flujo bajo (solo de ayer) y el puesto (solo de hoy): 24 + 3 + 3 campos más. Tanda 6: la leche de los primeros 2 minutos y su porcentaje, × 2 × 3: 12 campos más."""
     campos = []
     for col, item_ayer, item_hoy, nombre, tipo, unidad, dec, que in _MEDIDAS_ORDENO:
         for ayer, item, bloque, alias, cat, dia in ((True, item_ayer, "ord_ayer", "oy", _ORD_AYER, "el día anterior a «Calcular al»"), (False, item_hoy, "ord_hoy", "oh", _ORD_HOY, "el día de «Calcular al»")):
@@ -783,9 +794,9 @@ CATALOGO.update({c.id: c for c in (
 # ====================================================================================================================================================================================
 # Tanda 5 (25/11/2026): los 75 campos que quedaban después de la tanda 4. Todos ⚠, como los de la 4: cada uno sale de la fórmula que DelPro guarda en `DDMReportItem.Expression` y de lo que DelPro hace en
 # sus funciones de la base (`dbo.GetMilkSlopeLastSevenDays`, `dbo.CowsToBeSortedToday`...), pero ninguno se comparó con un informe de DelPro. Ver `tests/test_informes_tanda5.py`.
-# NO se definen (la razón de cada uno está en CLAUDE.md, «Tanda 5»): `AvgDailyYieldDates` (las fechas son fijas dentro de la columna), `YieldFirst2Min*TodayMilking` (DelPro lo calcula de la curva de
-# flujo y no lo guarda), `InseminationDueAbortedOrNotPregnant` (depende de fórmulas de la finca y de banderas que no se guardan), `AllConcentrateFeedsConsYesterday*` (sin comederos en la base) y las cuatro
-# columnas que el cliente armó él mismo en DelPro (`Reloteo`, `BCS Racion`, `BCS Secado`, `BCS DEO Vc`: reglas «si… entonces…» propias, no campos de DelPro).
+# Lo que acá no es un campo del catálogo (CLAUDE.md, «Tanda 5» y «Tanda 6»): desde la tanda 6, `AvgDailyYieldDates` se trae como campo calculado «promedio de leche entre fechas», las columnas que el tambo
+# armó en DelPro (reglas «si… entonces…») como campos calculados «reglas» (`informes_reglas`) y `YieldFirst2Min*` son campos (`_PRIMEROS_2MIN`). Quedan sin definir `InseminationDueAbortedOrNotPregnant`
+# (dos marcas que DelPro no guarda) y `AllConcentrateFeedsConsYesterday*` (ninguna base tiene consumos).
 # ====================================================================================================================================================================================
 _FINCA = "Finca y rebaño"
 # El último ordeño con leche de las 24 horas anteriores a AHORA (reloj de la PC, como el `Now()` de DelPro) y si hubo una visita a la sala en ese período. Una lectura de los ordeños de los últimos

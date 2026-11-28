@@ -534,6 +534,13 @@ class TestPantallaEjecutada(unittest.TestCase):
         fallan = ["%s\n%s" % (n, r.get("error", "")) for n, r in self.resultados.items() if not r["ok"]]
         self.assertEqual(fallan, [])
 
+    def test_las_reglas_y_el_promedio_entre_fechas_en_la_pantalla(self):
+        """Tanda 6: se agrupan y filtran como texto las reglas, se conservan sus datos al guardar y cada tipo se edita en su propio cuadro."""
+        for nombre in ("unas reglas se tratan como un texto, se agrupan y viajan enteras al servidor", "un promedio conserva sus fechas y es un número en kg",
+                       "editar unas reglas las valida como reglas y muestra los resultados posibles", "crear un promedio de leche entre fechas le pone nombre y agrega la columna",
+                       "al editar un promedio, un nombre propio no se pisa al cambiar las fechas", "la cuenta de siempre sigue igual"):
+            self.pasa("calculados: " + nombre)
+
     def test_es_uno_de_sobre_un_campo_calculado_separa_con_punto_y_coma(self):
         """[regresion #1] y [pantalla #1]: antes viajaba UNA cadena («3; 4») y el servidor la rechazaba, o «0,5; 1» se partía en 0, 5 y 1."""
         self.pasa("lista: un campo calculado separa con la regla de los números")

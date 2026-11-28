@@ -74,6 +74,116 @@ caso('lista: al salir de «es uno de» en un campo entero queda el primer valor'
 });
 
 /* ---------------------------------------------------------------------------------------------------------------------------------------- */
+/* Campos calculados nuevos (tanda 6): reglas «si… entonces…» y promedio de leche entre fechas                                               */
+/* ---------------------------------------------------------------------------------------------------------------------------------------- */
+const REGLA = "Iif([SevenDayAverage] >= 40, 'alta', 'baja')";
+const CALC_REGLAS = {id: 'calc_1', etiqueta: 'Grupo por leche', tipo: 'reglas', formula: REGLA};
+const CALC_PROMEDIO = {id: 'calc_2', etiqueta: 'Leche prom. del 15/09/2026', tipo: 'promedio_leche', desde: '2026-09-15', hasta: '2026-09-15'};
+const conCalculados = (P, calculados, extra) => {
+  const d = P.t.nuevoDoc({nombre: 'Con calculados', def: Object.assign(P.t.defVacia(), {calculados: calculados.map(c => Object.assign({}, c)),
+    columnas: [{campo: 'Number'}].concat(calculados.map(c => ({campo: c.id})))}, extra || {})});
+  P.t.activar(d.id);
+  return d;
+};
+const abierto = P => P.$('#calc').open;
+const oculto = (P, s) => P.$(s).hidden;
+
+caso('calculados: unas reglas se tratan como un texto, se agrupan y viajan enteras al servidor', async () => {
+  const P = await cargar();
+  const d = conCalculados(P, [CALC_REGLAS], {condiciones: [{campo: 'calc_1', op: 'en', valor: 'alta, baja'}], agrupar_por: ['calc_1']});
+  P.t.normalizar(d);
+  assert.deepStrictEqual(plano(d.def.agrupar_por), ['calc_1']);                                  // se puede agrupar por ellas
+  assert.ok(P.$$('#groupbar option').some(o => o.getAttribute('value') === 'calc_1'));
+  assert.deepStrictEqual(plano(P.t.limpiaDef(d.def).calculados), [CALC_REGLAS]);                 // sin decimales ni unidad inventados
+  assert.deepStrictEqual(plano(P.t.limpiaDef(d.def).condiciones), [{campo: 'calc_1', op: 'en', valor: ['alta', 'baja']}]);
+  assert.ok(P.$$('#filters [data-chg="co"][data-i="0"] option').some(o => o.getAttribute('value') === 'contiene'));
+  P.click('#btn-run'); await P.flush();
+  assert.deepStrictEqual(P.api.de('POST', /\/ejecutar$/).pop().cuerpo.calculados, [CALC_REGLAS]);
+});
+
+caso('calculados: un promedio conserva sus fechas y es un número en kg', async () => {
+  const P = await cargar();
+  const d = conCalculados(P, [CALC_PROMEDIO]);
+  assert.deepStrictEqual(plano(P.t.limpiaDef(d.def).calculados), [CALC_PROMEDIO]);
+  const f = P.t.calcCampo(CALC_PROMEDIO);
+  assert.deepStrictEqual([f.tipo, f.unidad, f.decimales, f.agrupable, f.verificado], ['num', 'kg', 1, false, false]);
+  assert.deepStrictEqual(plano(P.t.limpiaDef(conCalculados(P, [Object.assign({decimales: 2}, CALC_PROMEDIO)]).def).calculados[0].decimales), 2);
+});
+
+caso('calculados: editar unas reglas las valida como reglas y muestra los resultados posibles', async () => {
+  const P = await cargar();
+  const d = conCalculados(P, [CALC_REGLAS]);
+  P.api.cuando('POST', /\/api\/informes\/formula$/, c => c.cuerpo.formula.indexOf('Nada') >= 0 ? P.error(400, {error: 'El campo «Nada» todavía no existe acá.'})
+    : {ok: true, campos: [{id: 'SevenDayAverage', etiqueta: 'Promedio producción diaria de leche 7 d.'}], verificado: true, resultados: ['alta', 'baja']});
+  P.click('#ftree [data-act="editcalc"][data-id="calc_1"]');
+  assert.ok(abierto(P));
+  assert.ok(P.texto('#calc-t').indexOf('Reglas') >= 0);
+  assert.deepStrictEqual([oculto(P, '#c-cuenta'), oculto(P, '#c-reglas'), oculto(P, '#c-fechas')], [true, false, true]);
+  assert.strictEqual(P.$('#c-texto').value, REGLA);
+  P.avanzar(500); await P.flush();
+  assert.deepStrictEqual(plano(P.api.de('POST', /\/formula$/).pop().cuerpo), {tipo: 'reglas', formula: REGLA});
+  assert.ok(P.texto('#c-estado').indexOf('alta, baja') >= 0, P.texto('#c-estado'));
+  P.$('#c-texto').value = REGLA.replace('Nada', '').replace('SevenDayAverage', 'Nada');
+  P.$('#c-texto').dispatchEvent(new (require('./mini_dom.js').Evento)('input', P.$('#c-texto')));
+  P.avanzar(500); await P.flush();
+  assert.ok(P.texto('#c-estado').indexOf('«Nada»') >= 0);
+  assert.strictEqual(P.$('#c-guardar').disabled, true);
+  const nueva = REGLA.replace('40', '45');
+  P.$('#c-texto').value = nueva;
+  P.$('#c-texto').dispatchEvent(new (require('./mini_dom.js').Evento)('input', P.$('#c-texto')));
+  P.avanzar(500); await P.flush();
+  P.click('#c-guardar');
+  assert.deepStrictEqual(plano(d.def.calculados), [{id: 'calc_1', etiqueta: 'Grupo por leche', tipo: 'reglas', formula: nueva}]);
+});
+
+caso('calculados: crear un promedio de leche entre fechas le pone nombre y agrega la columna', async () => {
+  const P = await cargar();
+  const d = P.t.nuevoDoc({nombre: 'Nuevo', def: P.t.defVacia()});
+  P.t.activar(d.id);
+  P.click('#ftree [data-act="nuevopromedio"]');
+  assert.deepStrictEqual([oculto(P, '#c-cuenta'), oculto(P, '#c-reglas'), oculto(P, '#c-fechas')], [true, true, false]);
+  assert.strictEqual(P.$('#c-guardar').disabled, true);
+  P.cambiar('#c-desde', '2026-09-16'); P.cambiar('#c-hasta', '2026-09-15');
+  assert.ok(P.texto('#c-estado').indexOf('posterior') >= 0);
+  assert.strictEqual(P.$('#c-guardar').disabled, true);
+  P.cambiar('#c-desde', '2026-09-15');
+  assert.strictEqual(P.$('#c-nombre').value, 'Leche prom. del 15/09/2026');
+  P.cambiar('#c-hasta', '2026-09-20');
+  assert.strictEqual(P.$('#c-nombre').value, 'Leche prom. 15/09/2026 a 20/09/2026');           // el nombre automático sigue a las fechas
+  P.click('#c-guardar');
+  assert.deepStrictEqual(plano(d.def.calculados), [{id: 'calc_1', etiqueta: 'Leche prom. 15/09/2026 a 20/09/2026', tipo: 'promedio_leche', desde: '2026-09-15', hasta: '2026-09-20'}]);
+  assert.deepStrictEqual(plano(d.def.columnas).pop(), {campo: 'calc_1'});
+  assert.strictEqual(P.api.de('POST', /\/formula$/).length, 0);                                    // no hay fórmula que validar
+});
+
+caso('calculados: al editar un promedio, un nombre propio no se pisa al cambiar las fechas', async () => {
+  const P = await cargar();
+  const d = conCalculados(P, [Object.assign({}, CALC_PROMEDIO, {etiqueta: 'La prueba de setiembre', decimales: 2})]);
+  P.click('#ftree [data-act="editcalc"][data-id="calc_2"]');
+  assert.deepStrictEqual([P.$('#c-desde').value, P.$('#c-hasta').value, P.$('#c-nombre').value], ['2026-09-15', '2026-09-15', 'La prueba de setiembre']);
+  P.cambiar('#c-desde', '2026-09-01');
+  assert.strictEqual(P.$('#c-nombre').value, 'La prueba de setiembre');
+  P.click('#c-guardar');
+  assert.deepStrictEqual(plano(d.def.calculados), [{id: 'calc_2', etiqueta: 'La prueba de setiembre', tipo: 'promedio_leche', desde: '2026-09-01', hasta: '2026-09-15', decimales: 2}]);
+});
+
+caso('calculados: la cuenta de siempre sigue igual', async () => {
+  const P = await cargar();
+  const d = P.t.nuevoDoc({nombre: 'Cuenta', def: P.t.defVacia()});
+  P.t.activar(d.id);
+  P.api.cuando('POST', /\/api\/informes\/formula$/, () => ({ok: true, campos: [{id: 'SevenDayAverage', etiqueta: 'Promedio 7 d.'}], verificado: true}));
+  P.click('#ftree [data-act="nuevocalc"]');
+  assert.deepStrictEqual([oculto(P, '#c-cuenta'), oculto(P, '#c-reglas'), oculto(P, '#c-fechas')], [false, true, true]);
+  P.cambiar('#c-nombre', 'Doble');
+  P.$('#c-formula').value = '[SevenDayAverage] * 2';
+  P.$('#c-formula').dispatchEvent(new (require('./mini_dom.js').Evento)('input', P.$('#c-formula')));
+  P.avanzar(500); await P.flush();
+  assert.deepStrictEqual(plano(P.api.de('POST', /\/formula$/).pop().cuerpo), {formula: '[SevenDayAverage] * 2'});
+  P.click('#c-guardar');
+  assert.deepStrictEqual(plano(d.def.calculados), [{id: 'calc_1', etiqueta: 'Doble', formula: '[SevenDayAverage] * 2', decimales: 2, unidad: ''}]);
+});
+
+/* ---------------------------------------------------------------------------------------------------------------------------------------- */
 /* Programar el envío                                                                                                                       */
 /* ---------------------------------------------------------------------------------------------------------------------------------------- */
 caso('programar: una respuesta tardía de «Guardar» no pinta ni escribe el cuadro de otro informe', async () => {

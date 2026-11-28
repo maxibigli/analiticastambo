@@ -123,6 +123,27 @@ class TestFormula(Base):
         self.assertEqual(self.admin.post("/api/informes/formula", data="x", content_type="text/plain").status_code, 400)
         self.assertEqual(self.post({}).status_code, 400)
 
+    def test_unas_reglas_si_entonces_dicen_campos_y_resultados(self):
+        regla = "Iif([<AnimalExtended>SevenDayAverage] >= 40, 'alta', [<AnimalExtended>ReproductionInfo.DaysToCalving] <= 45, 'cerca', 'baja')"
+        r = self.post({"tipo": "reglas", "formula": regla})
+        self.assertEqual(r.status_code, 200, r.get_json())
+        j = r.get_json()
+        self.assertEqual([c["id"] for c in j["campos"]], ["SevenDayAverage", "DaysToCalving"])
+        self.assertEqual(j["resultados"], ["alta", "cerca", "baja"])
+        self.assertFalse(j["verificado"])                                                          # los días para el parto no se compararon con DelPro
+        self.assertNotIn("CASE", r.get_data(as_text=True))                                         # el SQL no sale por la API
+
+    def test_unas_reglas_malas_son_un_400_con_el_motivo(self):
+        for f, motivo in (("Iif([Nada] > 1, 'a', 'b')", "Nada"), ("[SevenDayAverage] > 1", "Iif("), ("", "Faltan las reglas"), ("Iif([SevenDayAverage] > 1, 'x;y', 'b')", "no se pueden usar")):
+            r = self.post({"tipo": "reglas", "formula": f})
+            self.assertEqual(r.status_code, 400, f)
+            self.assertIn(motivo, r.get_json()["error"])
+
+    def test_sin_tipo_es_una_cuenta_como_siempre_y_un_tipo_raro_es_un_400(self):
+        self.assertEqual(self.post({"tipo": "cuenta", "formula": "[CurrentDIM] * 2"}).status_code, 200)
+        self.assertEqual(self.post({"tipo": "magia", "formula": "[CurrentDIM] * 2"}).status_code, 400)
+        self.assertEqual(self.post({"tipo": ["reglas"], "formula": "[CurrentDIM] * 2"}).status_code, 400)
+
 
 class TestEjecutar(Base):
     def post(self, cuerpo, cliente=None):

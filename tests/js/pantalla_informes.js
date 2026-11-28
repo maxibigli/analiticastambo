@@ -21,7 +21,8 @@ const HOY = Date.UTC(2026, 10, 24, 12, 0, 0);                    // mar 24/11/20
    Lo que no exista se deja pasar como undefined (así una prueba falla por su comportamiento y no por un nombre). */
 const EXPORTAR = ['PG', 'DP', 'IA', 'CAMPOS', 'ENVIOS', 'LISTA', 'nuevoDoc', 'activar', 'docAct', 'abrirProg', 'guardarProg', 'probarProg', 'cargarRegistroProg',
   'traerDeDelpro', 'abrirDelpro', 'renderHead', 'renderFilters', 'renderImportado', 'renderProg', 'renderEnvio', 'limpiaDef', 'listaDe', 'condLimpia', 'tipoDe',
-  'defVacia', 'foto', 'sucio', 'toast', 'ejecutar', 'abrirInforme', 'guardar', 'avisoAlGuardar', 'renderList', 'abrirComoNuevo', 'origenParaGuardar', 'refrescarLista', 'refrescarEnvios', 'cargarDelpro', 'renderDelpro', 'cerrar', 'aplicarTema', 'temaActual', 'temaDeLaApp', 'imprimir', 'prepararImpresion'];
+  'defVacia', 'foto', 'sucio', 'toast', 'ejecutar', 'abrirInforme', 'guardar', 'avisoAlGuardar', 'renderList', 'abrirComoNuevo', 'origenParaGuardar', 'refrescarLista', 'refrescarEnvios', 'cargarDelpro', 'renderDelpro', 'cerrar', 'aplicarTema', 'temaActual', 'temaDeLaApp', 'imprimir', 'prepararImpresion',
+  'normalizar', 'calcCampo'];
 
 const CAMPOS_DE_EJEMPLO = {
   categorias: [
@@ -74,7 +75,8 @@ function manejadoresBase() {
 async function cargar(opciones) {
   opciones = opciones || {};
   /* INFORMES_HTML = otra plantilla (una copia con un cambio a propósito): sirve para comprobar que las pruebas de verdad detectan el error que dicen detectar. */
-  const html = fs.readFileSync(process.env.INFORMES_HTML || path.join(RAIZ, 'templates', 'informes.html'), 'utf8');
+  /* Con `core.autocrlf=true`, un checkout o un `pull` en Windows deja la plantilla con CRLF: se lee igual que con LF (acá se busca texto con saltos de línea). */
+  const html = fs.readFileSync(process.env.INFORMES_HTML || path.join(RAIZ, 'templates', 'informes.html'), 'utf8').replace(/\r\n/g, '\n');
   const cuerpo = html.slice(html.indexOf('<body>') + 6, html.indexOf('<script src='));
   const ini = html.indexOf('<script>\n(function(){') + '<script>\n'.length;
   let codigo = html.slice(ini, html.indexOf('</script>', ini))

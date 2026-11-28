@@ -29,6 +29,12 @@ import time
 
 import informes_catalogo as cat
 import informes_formula
+import informes_reglas
+
+# Los tipos de campo calculado: una cuenta entre campos (`informes_formula`; sin «tipo» es esto), las reglas «si… entonces…» de una columna del tambo (`informes_reglas`) y el promedio de la leche de cada animal
+# entre dos fechas (el `AvgDailyYieldDates` de DelPro).
+TIPOS_CALCULADO = ("cuenta", "reglas", "promedio_leche")
+PROMEDIO_DIAS_MAX = 1100     # unos 3 años: más es leer la historia entera por cada informe
 
 LIMITE_DEFECTO = 2000
 LIMITE_MAX = 5000            # el mismo tope que `db.MAX_ROWS`
@@ -156,11 +162,60 @@ def _fecha_ref(hoy) -> str:
     return f"CONVERT(date, '{hoy}', 23)"
 
 
-def _calculados(defn, campos) -> dict:
-    """Los campos calculados del informe como `Campo` (tipo num), con la fórmula ya traducida a SQL.
+def _de_reglas(id_, et, cd, campos):
+    """Un campo calculado de reglas «si… entonces…»: un texto (se agrupa, se ordena, se cuenta y se filtra como cualquier campo de texto)."""
+    try:
+        sql, usados, resultados = informes_reglas.traducir(cd.get("formula"), campos)
+    except informes_reglas.ReglasError as e:
+        raise InformeError(f"Campo calculado «{et}»: {e}") from None
+    si_no = bool(resultados) and set(resultados) <= set(cat.SI_NO)
+    return cat.Campo(id_, et, "Calculados", "txt", sql, verificado=all(campos[u].verificado for u in usados), nota="reglas", agrupable=True,
+                     bloques=_bloques_juntos(campos, usados), valores=cat.SI_NO if si_no else ())
 
-    Una fórmula solo puede nombrar campos NUMÉRICOS DEL CATÁLOGO: ni otro campo calculado (no hay ciclos que resolver) ni texto."""
+
+def _bloques_juntos(campos, usados) -> tuple:
+    bloques = []
+    for u in usados:
+        for b in _bloques_de(campos[u]):
+            if b not in bloques:
+                bloques.append(b)
+    return tuple(bloques)
+
+
+def _dia_de_calculado(valor, et) -> datetime.date:
+    if isinstance(valor, str) and _FECHA.match(valor):
+        try:
+            return datetime.date.fromisoformat(valor)
+        except ValueError:
+            pass
+    raise InformeError(f"«{et}»: «desde» y «hasta» tienen que ser una fecha AAAA-MM-DD.")
+
+
+def _promedio_leche(id_, et, cd) -> tuple:
+    """El promedio de la leche diaria de cada animal entre dos fechas (inclusive): (Campo, el bloque que lo lee). Como el `AvgDailyYieldDates` de DelPro: los días con leche (`TotalYield > 0`),
+    sin pedir que el dato esté marcado como válido. Cada campo tiene su propio bloque (sus fechas)."""
+    desde, hasta = _dia_de_calculado(cd.get("desde"), et), _dia_de_calculado(cd.get("hasta"), et)
+    if desde > hasta:
+        raise InformeError(f"«{et}»: la fecha «desde» no puede ser posterior a «hasta».")
+    if (hasta - desde).days + 1 > PROMEDIO_DIAS_MAX:
+        raise InformeError(f"«{et}»: el período no puede pasar de 3 años.")
+    dec = cd.get("decimales", 1)
+    if isinstance(dec, bool) or not isinstance(dec, int) or not 0 <= dec <= 6:
+        raise InformeError(f"Los decimales de «{et}» tienen que ser un número entre 0 y 6.")
+    alias = f"{id_}_l"                       # `id_` ya pasó `_ID_CALCULADO`: solo letras, números y «_»
+    bloque = cat.Bloque(f"{id_}_leche", f"LEFT JOIN (SELECT d.BasicAnimal AS animal, AVG(d.TotalYield) AS prom FROM AnimalDaily d WHERE d.GCRecord IS NULL "
+                                        f"AND d.Date >= CONVERT(date, '{desde.isoformat()}', 23) AND d.Date < DATEADD(day, 1, CONVERT(date, '{hasta.isoformat()}', 23)) AND d.TotalYield > 0 "
+                                        f"GROUP BY d.BasicAnimal) {alias} ON {alias}.animal = b.OID")
+    campo = cat.Campo(id_, et, "Calculados", "num", f"{alias}.prom", bloque=bloque.id, unidad="kg", decimales=dec, verificado=False, nota="promedio de leche entre fechas")
+    return campo, bloque
+
+
+def _calculados(defn, campos) -> tuple:
+    """Los campos calculados del informe como `Campo`, con su SQL ya armado, y los bloques propios que necesitan: ({id: Campo}, {id de bloque: Bloque}).
+
+    Una cuenta solo puede nombrar campos NUMÉRICOS DEL CATÁLOGO y unas reglas, campos del catálogo: ni uno ni otro otro campo calculado (no hay ciclos que resolver)."""
     out: dict = {}
+    bloques_propios: dict = {}
     for cd in _como_lista(defn.get("calculados", []), "calculados", CALCULADOS_MAX):
         if not isinstance(cd, dict):
             raise InformeError("Cada campo calculado necesita su identificador, nombre y fórmula.")
@@ -171,6 +226,16 @@ def _calculados(defn, campos) -> dict:
         if not isinstance(et, str) or not et.strip() or len(et.strip()) > ETIQUETA_MAX or any(ord(c) < 32 for c in et):
             raise InformeError(f"El nombre de un campo calculado tiene que tener entre 1 y {ETIQUETA_MAX} letras.")
         et = re.sub(r"\s+", " ", et).strip()
+        tipo = cd.get("tipo", "cuenta")
+        if tipo not in TIPOS_CALCULADO:
+            raise InformeError(f"El tipo del campo calculado «{et}» no existe.")
+        if tipo == "reglas":
+            out[id_] = _de_reglas(id_, et, cd, campos)
+            continue
+        if tipo == "promedio_leche":
+            out[id_], bloque = _promedio_leche(id_, et, cd)
+            bloques_propios[bloque.id] = bloque
+            continue
         dec = cd.get("decimales", 2)
         if isinstance(dec, bool) or not isinstance(dec, int) or not 0 <= dec <= 6:
             raise InformeError(f"Los decimales de «{et}» tienen que ser un número entre 0 y 6.")
@@ -181,14 +246,9 @@ def _calculados(defn, campos) -> dict:
             sql, usados = informes_formula.traducir(cd.get("formula"), campos)
         except informes_formula.FormulaError as e:
             raise InformeError(f"Campo calculado «{et}»: {e}") from None
-        bloques = []
-        for u in usados:
-            for b in _bloques_de(campos[u]):
-                if b not in bloques:
-                    bloques.append(b)
         out[id_] = cat.Campo(id_, et, "Calculados", "num", sql, unidad=unidad, decimales=dec,
-                             verificado=all(campos[u].verificado for u in usados), nota="calculado", bloques=tuple(bloques))
-    return out
+                             verificado=all(campos[u].verificado for u in usados), nota="calculado", bloques=_bloques_juntos(campos, usados))
+    return out, bloques_propios
 
 
 def _sql_resumen(f, kind, H) -> str:
@@ -213,8 +273,10 @@ def _contexto(defn, campos, bloques, hoy) -> tuple:
     todos.update(cat.BLOQUES if bloques is None else bloques)
     if not isinstance(defn, dict):
         raise InformeError("La definición del informe no es válida.")
+    calculados, bloques_propios = _calculados(defn, base)
+    todos.update(bloques_propios)
     todos_los_campos = dict(base)
-    todos_los_campos.update(_calculados(defn, base))
+    todos_los_campos.update(calculados)
     return H, todos, base, todos_los_campos
 
 
@@ -406,7 +468,7 @@ def describir_condiciones(defn, campos=None, con_dia=False, con_limite=False) ->
     etiquetas = {k: (f.etiqueta, f.tipo) for k, f in campos.items()}
     for cd in defn.get("calculados") or []:
         if isinstance(cd, dict) and isinstance(cd.get("id"), str) and isinstance(cd.get("etiqueta"), str):
-            etiquetas[cd["id"]] = (cd["etiqueta"][:ETIQUETA_MAX], "num")
+            etiquetas[cd["id"]] = (cd["etiqueta"][:ETIQUETA_MAX], "txt" if cd.get("tipo") == "reglas" else "num")
     out = []
     for cd in defn.get("condiciones") or []:
         if not isinstance(cd, dict) or cd.get("campo") not in etiquetas:

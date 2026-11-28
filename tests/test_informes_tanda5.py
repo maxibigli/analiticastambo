@@ -37,12 +37,12 @@ SI_NO = ("ForcedRetractYesterdayAnyMilking", "ForcedRetractTodayAnyMilking", "Ov
          "CMSSort_Iso", "CMSSortTodayOrLater", "SortToday", "IsForeverForSort_1", "IsForeverForSort_2")
 # Los que dependen del reloj de la PC (el `Now()` de DelPro): usan GETDATE()
 CON_RELOJ = ("DumpMilkDaysRemaining", "MilkingsLast24Hrs", "MilkingsPrev24Hrs", "MilkYieldLast24Hrs", "CMSLowYieldLastMilking", "IdTimeLastMilking", "YieldInLastVisit", "CMSDoNotMilk", "CMSDontMilkForever")
-# Los 10 campos de DelPro que se miraron y NO se definieron, con la razón (la misma que el cuadro de CLAUDE.md)
-NO_SE_DEFINEN = {"AvgDailyYieldDates": "las fechas son fijas dentro de la columna",
-                 "YieldFirst2MinTodayMilking": "DelPro lo calcula de la curva de flujo y no lo guarda", "YieldFirst2MinPercentageTodayMilking": "ídem",
+# Los campos de DelPro que se miraron y NO son campos del catálogo, con la razón (la misma que el cuadro de CLAUDE.md). Desde la tanda 6, la leche de los primeros 2 minutos sí está en el catálogo; el
+# promedio entre fechas y las cuatro columnas del cliente se traen como campos CALCULADOS (`promedio_leche` y `reglas`), no como campos del catálogo.
+NO_SE_DEFINEN = {"AvgDailyYieldDates": "las fechas son de cada columna: es un campo calculado «promedio de leche entre fechas»",
                  "InseminationDueAbortedOrNotPregnant": "depende de fórmulas de la finca y de banderas que no se guardan",
                  "AllConcentrateFeedsConsYesterday": "sin comederos en la base", "AllConcentrateFeedsConsYesterdayPerc": "sin comederos en la base",
-                 "Reloteo": "columna propia del cliente", "BCS Racion": "columna propia del cliente", "BCS Secado": "columna propia del cliente", "BCS DEO Vc": "columna propia del cliente"}
+                 "Reloteo": "columna propia del cliente: reglas calculadas", "BCS Racion": "ídem", "BCS Secado": "ídem", "BCS DEO Vc": "ídem"}
 
 CLASES_5 = {**CLASES, 50: "DeLaval.DDM.CommonApp.Module.BasicFeatures.Reproduction.AnimalReproductionInfo", 54: "DeLaval.DDM.CommonApp.ExtendedFeatures.AnimalAdmin.Farm",
             55: "DeLaval.DDM.CommonApp.ExtendedFeatures.AnimalAdmin.Herd"}
@@ -81,7 +81,7 @@ class TestElCatalogo(unittest.TestCase):
             self.assertNotIn(nombre, cat.CATALOGO, nombre)
             self.assertNotIn(nombre, items, nombre)
             self.assertTrue(razon)
-        self.assertEqual(len(NO_SE_DEFINEN), 10)
+        self.assertEqual(len(NO_SE_DEFINEN), 8)
 
     def test_las_variantes_dicen_a_que_campo_de_delpro_y_a_que_parametro_corresponden(self):
         esperado = {"LactationNumber": POR_LACTANCIA, "RuleIndex": ("IsForeverForSort_1", "IsForeverForSort_2", "StartTimeForSort_1", "StartTimeForSort_2"),

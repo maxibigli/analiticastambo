@@ -87,7 +87,8 @@ CONSULTAS = {
                  "CASE WHEN r.FormatRule IS NULL OR DATALENGTH(r.FormatRule) = 0 THEN 0 ELSE 1 END AS ConColores "      # si tiene reglas de color, no el XML de las reglas
                  "FROM DDMReport r LEFT JOIN XPObjectType x ON x.OID = r.ObjectType WHERE r.GCRecord IS NULL"),
     "columnas": ("SELECT c.OID, c.Report, c.[Index], it.Name AS item, it.ReportClass AS ClaseItem, c.GroupIndex, c.SortDirection, c.SortIndex, c.SummaryType, "
-                 "c.GroupSummaryType, c.SummaryTypes, c.FilterString "
+                 "c.GroupSummaryType, c.SummaryTypes, c.FilterString, "
+                 "CASE WHEN it.IsUserDefined = 1 THEN it.Expression END AS FormulaPropia "         # la fórmula SOLO de un campo que armó el tambo («si… entonces…»): ver `_columnas_calculadas`
                  "FROM DDMReportColumn c JOIN DDMReportItemInstance ii ON ii.OID = c.OID AND ii.GCRecord IS NULL "
                  "JOIN DDMReportItem it ON it.OID = ii.ReportItem AND it.GCRecord IS NULL "
                  "JOIN DDMReport r ON r.OID = c.Report AND r.GCRecord IS NULL"),
@@ -143,8 +144,8 @@ _HORA_EN_FECHA = re.compile(r"[0-9]{1,2}:[0-9]{2}")
 _ID_COLUMNA = re.compile(r"^(UN-)?C\d+$")
 
 
-def _tokenizar(texto: str) -> list:
-    if len(texto) > TEXTO_FILTRO_MAX:
+def _tokenizar(texto: str, maximo: int = TEXTO_FILTRO_MAX) -> list:
+    if len(texto) > maximo:
         raise CriterioError("el filtro es demasiado largo")
     out, pos = [], 0
     while pos < len(texto):
@@ -190,9 +191,9 @@ def _fecha_de(texto: str):
 class _Lector:
     """Lee el lenguaje de criterios de DevExpress (el que usa DelPro para sus filtros): un árbol, sin evaluar nada."""
 
-    def __init__(self, texto):
+    def __init__(self, texto, maximo=TEXTO_FILTRO_MAX):
         self.texto = texto
-        self.tok = _tokenizar(texto)
+        self.tok = _tokenizar(texto, maximo)
         self.i = 0
         self.nivel = 0
         self.operaciones = 0                                    # las cuentas de TODO el filtro (no de cada paréntesis): ver `suma`
@@ -384,12 +385,13 @@ class _Lector:
         raise CriterioError(f"no se entiende «{self.texto[ini:fin]}»")
 
 
-def analizar(texto) -> dict:
-    """El texto de un filtro de DelPro como árbol. `CriterioError` si no es algo que este traductor entienda."""
+def analizar(texto, maximo=TEXTO_FILTRO_MAX) -> dict:
+    """El texto de un filtro de DelPro como árbol. `CriterioError` si no es algo que este traductor entienda. `maximo`: el largo que se acepta (las reglas «si… entonces…» de un campo del tambo son
+    más largas que un filtro: ver `informes_reglas`)."""
     if not isinstance(texto, str):
         raise CriterioError("el filtro no es un texto")
     try:
-        return _Lector(texto).leer()
+        return _Lector(texto, maximo).leer()
     except CriterioError:
         raise
     except (RecursionError, OverflowError, ValueError):
@@ -693,12 +695,13 @@ def _traducir_termino(n, resolver, catalogo):
     raise _NoTraducible(motivos.get(t, "No se entiende."))
 
 
-def _invalida(condicion, catalogo):
+def _invalida(condicion, catalogo, bloques=None):
     """Una condición ya armada, probada con el compilador de informes Y con la validación de solo lectura de la app: el motivo si no la acepta, o None.
-    Lo que viene de DelPro es un dato: un valor con `;`, `--`, `/*` o una palabra como «Backup» (que `validate_sql` rechaza hasta dentro de un texto) no llega a una consulta."""
+    Lo que viene de DelPro es un dato: un valor con `;`, `--`, `/*` o una palabra como «Backup» (que `validate_sql` rechaza hasta dentro de un texto) no llega a una consulta. `bloques`: los del
+    catálogo más los propios de los campos calculados."""
     import db
     try:
-        c = informes_motor.compilar({"columnas": [{"campo": condicion["campo"]}], "condiciones": [condicion]}, campos=catalogo, herd=1)
+        c = informes_motor.compilar({"columnas": [{"campo": condicion["campo"]}], "condiciones": [condicion]}, campos=catalogo, bloques=bloques, herd=1)
         db.validate_sql(c["sql"])
     except informes_motor.InformeError as e:
         return str(e)
@@ -791,7 +794,7 @@ def _texto_de_termino(nodo: dict, fuente: str, nombre_de) -> str:
         return _corto(fuente[nodo["ini"]:nodo["fin"]], 200)
 
 
-def condiciones_de(texto, resolver, catalogo, maximo, previas=(), en_memoria=False):
+def condiciones_de(texto, resolver, catalogo, maximo, previas=(), en_memoria=False, bloques=None):
     """El texto de un filtro de DelPro -> (condiciones de LactIA, lo que NO se pudo traer).
 
     Se trae una conjunción («y») de comparaciones simples sobre campos del catálogo, un «es uno de», un «entre» (dos condiciones) o un rango de
@@ -824,7 +827,7 @@ def condiciones_de(texto, resolver, catalogo, maximo, previas=(), en_memoria=Fal
         try:
             nuevas, exige, nulos = _traducir_termino(nodo, resolver, catalogo)
             for c in nuevas:
-                motivo = _invalida(c, catalogo)
+                motivo = _invalida(c, catalogo, bloques)
                 if motivo:
                     raise _NoTraducible(motivo)
         except _NoTraducible as e:
@@ -1081,6 +1084,9 @@ def _columnas_con_su_campo(datos, oid, catalogo) -> list:
     clases = datos.get("clases") or {}
     salida = []
     for c in cols:
+        if c.get("FormulaPropia"):                # una columna que armó el tambo se calcula con SU fórmula, se llame como se llame (`_columnas_calculadas`)
+            salida.append(c)
+            continue
         # Un campo de DelPro que es otro campo del catálogo con otro nombre (la clase del ítem lo distingue de un homónimo): `ALIAS_DE_ITEMS`.
         alias = ALIAS_DE_ITEMS.get((c["item"], clases.get(c.get("ClaseItem"))))
         if alias in catalogo:
@@ -1092,6 +1098,107 @@ def _columnas_con_su_campo(datos, oid, catalogo) -> list:
                 c = dict(c, item=id_)
         salida.append(c)
     return salida
+
+
+# ---- los campos calculados que se arman al traer un informe (tanda 6): las columnas propias del tambo («si… entonces…») y el promedio de leche entre fechas (`AvgDailyYieldDates`)
+_CAMPO_PROMEDIO = "AvgDailyYieldDates"
+_TICKS_POR_DIA = 864_000_000_000        # un día en «ticks» de .NET (100 ns): así guarda DelPro la fecha de un parámetro de columna
+_PREFIJO_CALCULADO = re.compile(r"^Campo calculado «[^»]*»: ")
+
+
+def _fecha_de_ticks(texto):
+    """La fecha (AAAA-MM-DD) de un parámetro de fecha de una columna de DelPro, o None si no es un día entero que exista."""
+    s = str(texto or "").strip()
+    if not s.isascii() or not s.isdigit() or len(s) > 19:
+        return None
+    dias, resto = divmod(int(s), _TICKS_POR_DIA)
+    if resto:
+        return None
+    try:
+        return (datetime.date(1, 1, 1) + datetime.timedelta(days=dias)).isoformat()
+    except OverflowError:
+        return None
+
+
+def _fecha_corta(iso: str) -> str:
+    return f"{iso[8:10]}/{iso[5:7]}/{iso[:4]}"
+
+
+def _calculado_de_columna(c, parametros):
+    """El campo calculado que puede reemplazar a una columna de DelPro que el catálogo no tiene: (clave, definición sin «id», None), o (None, None, motivo) si no se puede, o (None, None, None)
+    si no es de las que se calculan."""
+    if c["item"] == _CAMPO_PROMEDIO:
+        p = parametros.get(c.get("OID")) or {}
+        desde, hasta = _fecha_de_ticks(p.get("FromDate")), _fecha_de_ticks(p.get("ToDate"))
+        if desde is None or hasta is None or desde > hasta:
+            return None, None, "No se pudieron leer las fechas «desde» y «hasta» de esa columna."
+        nombre = f"Leche prom. del {_fecha_corta(desde)}" if desde == hasta else f"Leche prom. {_fecha_corta(desde)} a {_fecha_corta(hasta)}"
+        return ("promedio_leche", desde, hasta), {"etiqueta": nombre, "tipo": "promedio_leche", "desde": desde, "hasta": hasta}, None
+    formula = c.get("FormulaPropia")
+    if formula:
+        return ("reglas", formula), {"etiqueta": c["item"], "tipo": "reglas", "formula": formula}, None
+    return None, None, None
+
+
+def _nombre_libre(nombre, usados) -> str:
+    """Un nombre de campo calculado que entre en el compilador y no repita otro (dos columnas distintas de DelPro pueden llamarse igual)."""
+    base = _limpio(nombre, informes_motor.ETIQUETA_MAX) or "Columna del tambo"
+    candidato, n = base, 1
+    while candidato.casefold() in usados:
+        n += 1
+        candidato = f"{base[:informes_motor.ETIQUETA_MAX - 4].rstrip()} ({n})"
+    usados.add(candidato.casefold())
+    return candidato
+
+
+def _columnas_calculadas(cols, parametros, catalogo):
+    """Las columnas que armó el tambo, y las que el catálogo no tiene pero se pueden calcular, pasan a ser campos calculados del informe, y el resto de la traducción (grupos, orden, resúmenes,
+    filtros) las trata como a cualquier campo: (columnas, catálogo con esos campos, sus bloques, sus definiciones, {campo de DelPro: motivo} de las que no se pudieron)."""
+    calculados, por_clave, motivos, nombres, salida = [], {}, {}, set(), []
+    for c in cols:
+        propia = bool(c.get("FormulaPropia"))
+        if propia or c["item"] not in catalogo:
+            clave, definicion, motivo = _calculado_de_columna(c, parametros)
+            if clave is not None and clave not in por_clave:
+                if len(calculados) >= informes_motor.CALCULADOS_MAX:
+                    motivo = f"Un informe admite hasta {informes_motor.CALCULADOS_MAX} campos calculados."
+                else:
+                    definicion = dict({"id": f"calc_{len(calculados) + 1}"}, **definicion)
+                    definicion["etiqueta"] = _nombre_libre(definicion["etiqueta"], nombres)
+                    try:
+                        informes_motor.compilar({"columnas": [{"campo": definicion["id"]}], "calculados": [definicion]}, campos=catalogo, herd=1)
+                    except informes_motor.InformeError as e:
+                        motivo = _PREFIJO_CALCULADO.sub("", str(e))
+                    else:
+                        calculados.append(definicion)
+                        por_clave[clave] = definicion["id"]
+            if clave in por_clave:
+                c = dict(c, item=por_clave[clave])
+            else:
+                if propia and c["item"] in catalogo:                  # se llama como un campo de acá pero es otro dato: queda entre los que faltan
+                    c = dict(c, item=f"{c['item']} (del tambo)")
+                if motivo:
+                    motivos.setdefault(c["item"], motivo)
+        salida.append(c)
+    if not calculados:
+        return salida, catalogo, {}, calculados, motivos
+    propios, bloques = informes_motor._calculados({"calculados": calculados}, catalogo)
+    return salida, {**catalogo, **propios}, bloques, calculados, motivos
+
+
+def _avisos_de_calculados(calculados, usados) -> list:
+    """Lo que hay que saber de los campos calculados que se armaron (son datos, no cambian qué animales salen)."""
+    avisos = []
+    reglas = [c["etiqueta"] for c in calculados if c["tipo"] == "reglas" and c["id"] in usados]
+    if reglas:
+        una = len(reglas) == 1
+        avisos.append(_dif("columna", "info", f"{'La columna' if una else 'Las columnas'} {_lista([f'«{n}»' for n in reglas])} {'se calcula' if una else 'se calculan'} con las reglas "
+                                              f"«si… entonces…» que {'tiene' if una else 'tienen'} en DelPro, copiadas al traer el informe. Si cambian en DelPro, hay que volver a traerlo."))
+    for c in calculados:
+        if c["tipo"] == "promedio_leche" and c["id"] in usados:
+            avisos.append(_dif("columna", "info", f"«{c['etiqueta']}»: promedio de la leche de cada animal entre las fechas que tenía la columna en DelPro ({_fecha_corta(c['desde'])} a "
+                                                  f"{_fecha_corta(c['hasta'])}); las fechas se cambian editando el campo."))
+    return avisos
 
 
 def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
@@ -1120,7 +1227,9 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
         salida.update(estado="no_disponible", motivo="Es un informe de otro tambo de esta base de datos (otro rebaño).")
         return salida
 
+    base = catalogo                        # sin los campos calculados que se arman acá: es contra el que compila la definición final
     cols = _columnas_con_su_campo(datos, oid, catalogo)
+    cols, catalogo, bloques_propios, calculados, motivos = _columnas_calculadas(cols, datos.get("parametros") or {}, base)
     faltan, difs = [], []
 
     def falta(nombre_campo):
@@ -1145,6 +1254,8 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
         n = len(sin_campo)
         difs.append(_dif("columna", "columnas", (f"No se trajo 1 columna porque ese campo todavía no existe acá: {_lista_de_campos(sin_campo)}." if n == 1 else
                                                   f"No se trajeron {n} columnas porque esos campos todavía no existen acá: {_lista_de_campos(sin_campo)}.")))
+    for item, motivo in motivos.items():
+        difs.append(_dif("columna", "columnas", f"La columna «{_nombre_de_campo(item)}» de DelPro no se pudo calcular: {motivo}"))
     if de_mas:
         difs.append(_dif("columna", "columnas", f"Un informe admite hasta {informes_motor.COLUMNAS_MAX} columnas: no se trajeron {_lista_de_campos(de_mas)}."))
     salida["columnas"]["traidas"] = len(elegidas)
@@ -1229,8 +1340,9 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
             del_reloj = _terminos_si_mira_el_reloj(sf["texto"], resolver_por_nombre(catalogo))
         if not del_reloj:                                                       # uno que mira el reloj se ignora entero (y se avisa, abajo)
             fuentes.append((f"El filtro «{nombre_filtro}» de DelPro", sf["texto"], resolver_por_nombre(catalogo), False))
+    bloques = {**informes_catalogo.BLOQUES, **bloques_propios} if bloques_propios else None
     for origen, texto, resolver, en_memoria in fuentes:
-        cs, pend = condiciones_de(texto, resolver, catalogo, maximo, previas=condiciones, en_memoria=en_memoria)
+        cs, pend = condiciones_de(texto, resolver, catalogo, maximo, previas=condiciones, en_memoria=en_memoria, bloques=bloques)
         condiciones += cs
         if pend:
             difs.append(_aviso_de_filtro(origen, pend))
@@ -1260,8 +1372,12 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
         definicion["condiciones"] = condiciones
     if orden:
         definicion["orden"] = orden
+    en_uso = {c["campo"] for c in columnas_def} | set(agrupar) | {c["campo"] for c in condiciones}
+    if any(c["id"] in en_uso for c in calculados):
+        definicion["calculados"] = [c for c in calculados if c["id"] in en_uso]
+        difs += _avisos_de_calculados(calculados, en_uso)
     try:
-        informes_motor.compilar(definicion, campos=catalogo, herd=1)
+        informes_motor.compilar(definicion, campos=base, herd=1)
     except informes_motor.InformeError as e:            # no debería pasar: cada pieza se validó. Si pasa, no se ofrece un informe que no corre.
         salida.update(estado="no_disponible", diferencias=difs, motivo=f"No se pudo armar el informe: {e}")
         return salida

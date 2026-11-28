@@ -198,6 +198,8 @@ dialog::backdrop{background:var(--backdrop)}
 .dlg h2{font-size:16px}
 .dlg label{display:grid;gap:5px;font-size:12px;color:var(--muted)}
 .dlg .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.dlg .calcsec{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.dlg #c-texto{min-height:150px}
 .dlg textarea.in{height:auto;min-height:62px;padding:8px 10px;resize:vertical;font-family:ui-monospace,Consolas,monospace;font-size:13px}
 .dlg .read{font-size:12.5px;color:var(--muted);background:var(--sunken);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-height:34px;overflow-wrap:anywhere}
 .dlg .okline{font-size:12.5px;min-height:20px;overflow-wrap:anywhere}
@@ -509,15 +511,24 @@ dialog::backdrop{background:var(--backdrop)}
 <dialog id="calc" aria-labelledby="calc-t">
   <div class="dlg">
     <h2 id="calc-t">Nuevo campo calculado</h2>
-    <p class="muted" style="margin:0;font-size:12.5px">Una cuenta entre campos de cada animal, por ejemplo la producción sobre los días en ordeño. Después se usa como cualquier otro campo: columna, condición, orden, resumen.</p>
+    <p class="muted" id="c-ayuda" style="margin:0;font-size:12.5px"></p>
     <label>Nombre del campo<input class="in" id="c-nombre" maxlength="40" autocomplete="off" placeholder="Ej.: Kg por día de ordeño"></label>
-    <label>Fórmula<textarea class="in" id="c-formula" maxlength="300" rows="2" spellcheck="false" autocomplete="off" placeholder="[SevenDayAverage] / [CurrentDIM]"></textarea></label>
-    <div class="row2">
-      <label>Insertar un campo en la fórmula<select class="in" id="c-ins"></select></label>
+    <div class="calcsec" id="c-cuenta">
+      <label>Fórmula<textarea class="in" id="c-formula" maxlength="300" rows="2" spellcheck="false" autocomplete="off" placeholder="[SevenDayAverage] / [CurrentDIM]"></textarea></label>
       <div class="row2">
-        <label>Decimales<input class="in" id="c-dec" type="number" min="0" max="6" value="2"></label>
-        <label>Unidad (opcional)<input class="in" id="c-unidad" maxlength="12" autocomplete="off" placeholder="kg"></label>
+        <label>Insertar un campo en la fórmula<select class="in" id="c-ins"></select></label>
+        <div class="row2">
+          <label>Decimales<input class="in" id="c-dec" type="number" min="0" max="6" value="2"></label>
+          <label>Unidad (opcional)<input class="in" id="c-unidad" maxlength="12" autocomplete="off" placeholder="kg"></label>
+        </div>
       </div>
+    </div>
+    <div class="calcsec" id="c-reglas" hidden>
+      <label>Reglas, como en DelPro: Iif(condición, resultado, …, resultado si no se cumple ninguna)<textarea class="in" id="c-texto" maxlength="8000" rows="8" spellcheck="false" autocomplete="off" placeholder="Iif([SevenDayAverage] >= 40, 'Alta', 'Resto')"></textarea></label>
+    </div>
+    <div class="row2" id="c-fechas" hidden>
+      <label>Desde<input class="in" type="date" id="c-desde"></label>
+      <label>Hasta<input class="in" type="date" id="c-hasta"></label>
     </div>
     <div class="read" id="c-lee" aria-live="polite"></div>
     <div class="okline" id="c-estado" role="status" aria-live="polite"></div>
@@ -581,8 +592,25 @@ const RES_CORTO = {sum: 'Suma', avg: 'Prom.', min: 'Mín.', max: 'Máx.', count:
 const CALC_MAX = 10;
 const SIN_DATO = '(sin dato)';
 
-/* Un campo calculado se parece a uno del catálogo, para pintarlo igual en el árbol, las condiciones y las columnas. */
-function calcCampo(c) { return {id: c.id, etiqueta: c.etiqueta, tipo: 'num', unidad: c.unidad || '', decimales: c.decimales == null ? 2 : c.decimales, verificado: true, calculado: true, agrupable: false}; }
+/* Un campo calculado se parece a uno del catálogo, para pintarlo igual en el árbol, las condiciones y las columnas. Hay tres: una cuenta (un número), unas reglas «si… entonces…» (un texto, por el que se
+   puede agrupar) y el promedio de leche entre dos fechas (kg). */
+function calcCampo(c) {
+  const f = {id: c.id, etiqueta: c.etiqueta, calculado: true, unidad: '', decimales: 0, verificado: true, agrupable: false};
+  if (c.tipo === 'reglas') return Object.assign(f, {tipo: 'txt', agrupable: true, verificado: reglasVerificadas(c.formula)});
+  if (c.tipo === 'promedio_leche') return Object.assign(f, {tipo: 'num', unidad: 'kg', decimales: c.decimales == null ? 1 : c.decimales, verificado: false});
+  return Object.assign(f, {tipo: 'num', unidad: c.unidad || '', decimales: c.decimales == null ? 2 : c.decimales});
+}
+/* Unas reglas están comparadas con DelPro solo si todos los campos que miran lo están (para el ⚠ del árbol; el servidor lo vuelve a decir en cada columna). */
+function reglasVerificadas(formula) {
+  const ids = Array.from(String(formula || '').matchAll(/\[(?:<[A-Za-z]+>)?(?:ReproductionInfo\.)?([A-Za-z0-9_]+)\]/g), m => m[1]);
+  return ids.length > 0 && ids.every(id => CAMPOS[id] && CAMPOS[id].verificado);
+}
+/* Lo que se le manda al servidor de cada campo calculado: solo los datos de su tipo. */
+function calcLimpio(c) {
+  if (c.tipo === 'reglas') return {id: c.id, etiqueta: c.etiqueta, tipo: 'reglas', formula: c.formula};
+  if (c.tipo === 'promedio_leche') return Object.assign({id: c.id, etiqueta: c.etiqueta, tipo: 'promedio_leche', desde: c.desde, hasta: c.hasta}, c.decimales == null ? {} : {decimales: c.decimales});
+  return {id: c.id, etiqueta: c.etiqueta, formula: c.formula, decimales: c.decimales, unidad: c.unidad || ''};
+}
 function campoDe(d, id) { if (CAMPOS[id]) return CAMPOS[id]; const c = (d.def.calculados || []).filter(x => x.id === id)[0]; return c ? calcCampo(c) : null; }
 function camposDe(d) { return Object.keys(CAMPOS).map(k => CAMPOS[k]).concat((d.def.calculados || []).map(calcCampo)); }
 /* La clave de un grupo se compara como la compara SQL Server al agrupar: sin distinguir mayúsculas ni espacios al final. */
@@ -600,10 +628,11 @@ function listaDe(v, tipo, entero) {
   return (tipo === 'num' ? t.split(entero ? /\s*[;,]\s*/ : /\s*;\s*|,\s+/) : t.split(',')).map(s => s.trim()).filter(s => s !== '');
 }
 const tipoDe = id => (CAMPOS[id] || {}).tipo;
-/* Cómo se separa la lista de un campo. Los calculados (calc_N) no están en el catálogo: son siempre numéricos, y sus decimales son solo de cómo se ven (el valor puede traer
+/* Cómo se separa la lista de un campo. Los calculados (calc_N) no están en el catálogo: unas reglas son un texto; los demás, números cuyos decimales son solo de cómo se ven (el valor puede traer
    fracciones), así que nunca cuentan como enteros. Un campo que no se conoce se trata como texto. */
 function formaDe(id, df) {
-  if (((df && df.calculados) || []).some(x => x.id === id)) return {tipo: 'num', entero: false};
+  const c = ((df && df.calculados) || []).filter(x => x.id === id)[0];
+  if (c) return {tipo: calcCampo(c).tipo, entero: false};
   const f = CAMPOS[id];
   return f ? {tipo: f.tipo, entero: f.tipo === 'num' && f.decimales === 0} : {tipo: undefined, entero: false};
 }
@@ -616,7 +645,7 @@ function limpiaDef(d) {
   const out = {columnas: d.columnas.map(c => c.resumen ? {campo: c.campo, resumen: c.resumen} : {campo: c.campo}), incluir_descartados: !!d.incluir_descartados};
   out.condiciones = d.condiciones.map(c => condLimpia(c, d)).filter(Boolean);       // `d` lleva los calculados: sin ellos «3; 4» sobre un calculado viajaba como UN valor
   if (d.orden && d.columnas.some(c => c.campo === d.orden.campo)) out.orden = {campo: d.orden.campo, dir: d.orden.dir};
-  if (d.calculados && d.calculados.length) out.calculados = d.calculados.map(c => ({id: c.id, etiqueta: c.etiqueta, formula: c.formula, decimales: c.decimales, unidad: c.unidad || ''}));
+  if (d.calculados && d.calculados.length) out.calculados = d.calculados.map(calcLimpio);
   if (d.agrupar_por && d.agrupar_por.length) out.agrupar_por = d.agrupar_por.slice();
   if (d.detalle === false) out.detalle = false;
   if (Number.isInteger(d.limite) && d.limite > 0) out.limite = d.limite;        // «las 10 vacas que más producen»: el límite viaja con el informe (Actualizar, Guardar, Excel y envío programado)
@@ -631,7 +660,7 @@ function normalizar(d) {
     const f = campoDe(d, c.campo);
     if (!f || (RES_TIPO[f.tipo] || []).indexOf(c.resumen) < 0) delete c.resumen;
   });
-  df.agrupar_por = (df.agrupar_por || []).filter((id, i, a) => CAMPOS[id] && CAMPOS[id].agrupable && a.indexOf(id) === i).slice(0, 2);
+  df.agrupar_por = (df.agrupar_por || []).filter((id, i, a) => { const f = campoDe(d, id); return f && f.agrupable && a.indexOf(id) === i; }).slice(0, 2);
   if (!df.agrupar_por.length && !df.columnas.some(c => c.resumen)) df.detalle = true;
 }
 const foto = d => JSON.stringify([d.nombre, d.def, d.grafico]);
@@ -763,7 +792,8 @@ function renderFields() {
   if (!q || calc.length) {
     const lleno = (d.def.calculados || []).length >= CALC_MAX;
     h += seccionCampos('Calculados', calc.length, q ? true : openCats['Calculados'] !== false,
-      '<button class="btn sm newcalc" data-act="nuevocalc"' + (lleno ? ' disabled title="Hasta ' + CALC_MAX + ' campos calculados por informe"' : '') + '>ƒ Nuevo campo calculado</button><ul>' + calc.map(f => filaCampo(f, usados)).join('') + '</ul>');
+      '<button class="btn sm newcalc" data-act="nuevocalc"' + (lleno ? ' disabled title="Hasta ' + CALC_MAX + ' campos calculados por informe"' : '') + '>ƒ Nuevo campo calculado</button>' +
+      '<button class="btn sm newcalc" data-act="nuevopromedio"' + (lleno ? ' disabled title="Hasta ' + CALC_MAX + ' campos calculados por informe"' : '') + '>ƒ Leche promedio entre fechas</button><ul>' + calc.map(f => filaCampo(f, usados)).join('') + '</ul>');
   }
   $('#ftree').innerHTML = h || '<div class="empty">Ningún elemento coincide.</div>';
   $('#fcount').textContent = d.def.columnas.length + ' en el informe';
@@ -1040,8 +1070,17 @@ function alternarCampo(id) {
 }
 
 /* ---------- campo calculado ---------- */
-let calcEd = {id: null, ok: false}, calcSeq = 0, calcTimer = 0;
+/* `tipo`: 'cuenta', 'reglas' o 'promedio_leche'; `auto`: el nombre que se puso solo al promedio (si el usuario no lo cambió, sigue a las fechas). */
+let calcEd = {id: null, ok: false, tipo: 'cuenta', auto: ''}, calcSeq = 0, calcTimer = 0;
+const TITULO_CALC = {cuenta: ['Nuevo campo calculado', 'Editar campo calculado'], reglas: ['Reglas «si… entonces…»', 'Reglas «si… entonces…»'],
+  promedio_leche: ['Promedio de leche entre fechas', 'Promedio de leche entre fechas']};
+const AYUDA_CALC = {cuenta: 'Una cuenta entre campos de cada animal, por ejemplo la producción sobre los días en ordeño. Después se usa como cualquier otro campo: columna, condición, orden, resumen.',
+  reglas: 'Como una columna «si… entonces…» de DelPro: a cada animal le toca el resultado de la primera condición que cumple. Se puede filtrar, ordenar y agrupar por ese texto.',
+  promedio_leche: 'Para cada animal, el promedio de su leche diaria entre las dos fechas (solo los días con leche).'};
 const leer = f => f.replace(/\[([A-Za-z][A-Za-z0-9_]{0,60})\]/g, (m, id) => CAMPOS[id] ? '«' + CAMPOS[id].etiqueta + '»' : m);
+const SIN_COMPARAR_CALC = '⚠ Incluye un campo que todavía no se comparó con DelPro: el resultado puede diferir.';
+/* El mismo nombre que le pone el importador al promedio entre fechas. */
+const nombrePromedio = (a, b) => a === b ? 'Leche prom. del ' + fmtFecha(a) : 'Leche prom. ' + fmtFecha(a) + ' a ' + fmtFecha(b);
 function botonCalc() { $('#c-guardar').disabled = !(calcEd.ok && $('#c-nombre').value.trim()); }
 function estadoCalc(clase, ok, texto) {
   const e = $('#c-estado');
@@ -1062,24 +1101,66 @@ function validarFormula(ya) {
     try {
       const j = await post('/api/informes/formula', {formula: f});
       if (mi !== calcSeq) return;
-      estadoCalc('ok', true, '✓ Usa ' + j.campos.map(c => c.etiqueta).join(', ') + (j.verificado ? '.' : '. ⚠ Incluye un campo que todavía no se comparó con DelPro: el resultado puede diferir.'));
+      estadoCalc('ok', true, '✓ Usa ' + j.campos.map(c => c.etiqueta).join(', ') + (j.verificado ? '.' : '. ' + SIN_COMPARAR_CALC));
     } catch (e) { if (mi === calcSeq) estadoCalc('bad', false, e.message); }
   }, ya ? 0 : 350);
 }
-function abrirCalc(id) {
+/* Lo mismo para unas reglas: el servidor dice qué campos miran y qué resultados pueden dar. */
+function validarReglas(ya) {
+  clearTimeout(calcTimer);
+  const f = $('#c-texto').value;
+  $('#c-lee').textContent = 'Los campos van entre corchetes y los textos entre comillas simples; las condiciones se unen con And, Or y Not.';
+  if (!f.trim()) { estadoCalc('', false, ''); return; }
+  calcEd.ok = false; botonCalc();
+  const mi = ++calcSeq;
+  calcTimer = setTimeout(async () => {
+    try {
+      const j = await post('/api/informes/formula', {tipo: 'reglas', formula: f});
+      if (mi !== calcSeq) return;
+      estadoCalc('ok', true, '✓ Mira ' + j.campos.map(c => c.etiqueta).join(', ') + '. Resultados posibles: ' + j.resultados.map(r => r === '' ? '(vacío)' : r).join(', ') + '.' + (j.verificado ? '' : ' ' + SIN_COMPARAR_CALC));
+    } catch (e) { if (mi === calcSeq) estadoCalc('bad', false, e.message); }
+  }, ya ? 0 : 350);
+}
+/* El promedio entre fechas no necesita al servidor para validarse. El nombre se pone solo mientras el usuario no escriba uno. */
+function validarFechas() {
+  const a = $('#c-desde').value, b = $('#c-hasta').value, bien = !!a && !!b && a <= b;
+  $('#c-lee').textContent = 'Los días sin leche no cuentan en el promedio.';
+  if (bien) {
+    const auto = nombrePromedio(a, b), actual = $('#c-nombre').value.trim();
+    if (!actual || actual === calcEd.auto) $('#c-nombre').value = auto;
+    calcEd.auto = auto;
+    estadoCalc('ok', true, '✓ Del ' + fmtFecha(a, true) + ' al ' + fmtFecha(b, true) + '. ⚠ Todavía no se comparó con DelPro.');
+  } else estadoCalc(a && b ? 'bad' : '', false, a && b ? 'La fecha «desde» no puede ser posterior a «hasta».' : 'Elegí las dos fechas.');
+}
+function abrirCalc(id, tipo) {
   const d = docAct(), ex = id ? (d.def.calculados || []).filter(c => c.id === id)[0] : null;
-  calcEd = {id: ex ? ex.id : null, ok: false};
-  $('#calc-t').textContent = ex ? 'Editar campo calculado' : 'Nuevo campo calculado';
+  const t = ex ? (ex.tipo || 'cuenta') : (tipo || 'cuenta');
+  clearTimeout(calcTimer); calcSeq++;
+  calcEd = {id: ex ? ex.id : null, ok: false, tipo: t, auto: ex && t === 'promedio_leche' ? nombrePromedio(ex.desde, ex.hasta) : ''};
+  $('#calc-t').textContent = TITULO_CALC[t][ex ? 1 : 0];
+  $('#c-ayuda').textContent = AYUDA_CALC[t];
+  $('#c-cuenta').hidden = t !== 'cuenta';
+  $('#c-reglas').hidden = t !== 'reglas';
+  $('#c-fechas').hidden = t !== 'promedio_leche';
   $('#c-nombre').value = ex ? ex.etiqueta : '';
-  $('#c-formula').value = ex ? ex.formula : '';
-  $('#c-dec').value = ex && ex.decimales != null ? ex.decimales : 2;
-  $('#c-unidad').value = ex ? (ex.unidad || '') : '';
   $('#c-borrar').hidden = !ex;
-  $('#c-ins').innerHTML = opt('', 'Elegí un campo…') + CATS.map(c => {
-    const num = c.campos.filter(f => f.tipo === 'num');
-    return num.length ? '<optgroup label="' + esc(c.nombre) + '">' + num.map(f => opt(f.id, f.etiqueta + (f.unidad ? ' (' + f.unidad + ')' : ''))).join('') + '</optgroup>' : '';
-  }).join('');
-  validarFormula(true);
+  if (t === 'cuenta') {
+    $('#c-formula').value = ex ? ex.formula : '';
+    $('#c-dec').value = ex && ex.decimales != null ? ex.decimales : 2;
+    $('#c-unidad').value = ex ? (ex.unidad || '') : '';
+    $('#c-ins').innerHTML = opt('', 'Elegí un campo…') + CATS.map(c => {
+      const num = c.campos.filter(f => f.tipo === 'num');
+      return num.length ? '<optgroup label="' + esc(c.nombre) + '">' + num.map(f => opt(f.id, f.etiqueta + (f.unidad ? ' (' + f.unidad + ')' : ''))).join('') + '</optgroup>' : '';
+    }).join('');
+    validarFormula(true);
+  } else if (t === 'reglas') {
+    $('#c-texto').value = ex ? ex.formula : '';
+    validarReglas(true);
+  } else {
+    $('#c-desde').value = ex ? ex.desde : '';
+    $('#c-hasta').value = ex ? ex.hasta : '';
+    validarFechas();
+  }
   $('#calc').showModal();
   $('#c-nombre').focus();
 }
@@ -1091,17 +1172,25 @@ function idLibre(d) {
   return 'calc_' + n;
 }
 function guardarCalc() {
-  const d = docAct(), nombre = $('#c-nombre').value.trim().replace(/\s+/g, ' '), formula = $('#c-formula').value.trim(), unidad = $('#c-unidad').value.trim();
-  const dec = Math.max(0, Math.min(6, parseInt($('#c-dec').value, 10) || 0));
+  const d = docAct(), nombre = $('#c-nombre').value.trim().replace(/\s+/g, ' '), t = calcEd.tipo;
   if (!nombre || !calcEd.ok) return;
-  const aviso = t => { const e = $('#c-estado'); e.className = 'okline bad'; e.textContent = t; };
-  if (!/^[A-Za-z0-9%\/·. ºª-]{0,12}$/.test(unidad)) { aviso('La unidad admite letras, números y % / · . º ª - (hasta 12 caracteres).'); return; }
+  const aviso = m => { const e = $('#c-estado'); e.className = 'okline bad'; e.textContent = m; };
+  const anterior = calcEd.id ? d.def.calculados.filter(x => x.id === calcEd.id)[0] : null;
+  let datos;
+  if (t === 'reglas') datos = {etiqueta: nombre, tipo: 'reglas', formula: $('#c-texto').value.trim()};
+  else if (t === 'promedio_leche') datos = Object.assign({etiqueta: nombre, tipo: 'promedio_leche', desde: $('#c-desde').value, hasta: $('#c-hasta').value},
+    anterior && anterior.decimales != null ? {decimales: anterior.decimales} : {});
+  else {
+    const unidad = $('#c-unidad').value.trim(), dec = Math.max(0, Math.min(6, parseInt($('#c-dec').value, 10) || 0));
+    if (!/^[A-Za-z0-9%\/·. ºª-]{0,12}$/.test(unidad)) { aviso('La unidad admite letras, números y % / · . º ª - (hasta 12 caracteres).'); return; }
+    datos = {etiqueta: nombre, formula: $('#c-formula').value.trim(), decimales: dec, unidad};
+  }
   if (camposDe(d).some(f => f.id !== calcEd.id && f.etiqueta.toLowerCase() === nombre.toLowerCase())) { aviso('Ya hay un campo con ese nombre: elegí otro para no confundirlos.'); return; }
-  if (calcEd.id) Object.assign(d.def.calculados.filter(x => x.id === calcEd.id)[0], {etiqueta: nombre, formula, decimales: dec, unidad});
+  if (anterior) d.def.calculados[d.def.calculados.indexOf(anterior)] = Object.assign({id: anterior.id}, datos);
   else {
     if (d.def.calculados.length >= CALC_MAX) { aviso('Hasta ' + CALC_MAX + ' campos calculados por informe.'); return; }
     const id = idLibre(d);
-    d.def.calculados.push({id, etiqueta: nombre, formula, decimales: dec, unidad});
+    d.def.calculados.push(Object.assign({id}, datos));
     d.def.columnas.push({campo: id});
   }
   $('#calc').close();
@@ -1752,6 +1841,7 @@ document.addEventListener('click', e => {
     catch (e) { toast('No se pudo quitar el aviso: ' + e.message); }
   });
   else if (a === 'nuevocalc') abrirCalc(null);
+  else if (a === 'nuevopromedio') abrirCalc(null, 'promedio_leche');
   else if (a === 'editcalc') abrirCalc(b.dataset.id);
   else if (a === 'plegar') { const k = b.dataset.k; if (d.plegados[k]) delete d.plegados[k]; else d.plegados[k] = true; renderResultado(); }
   else if (a === 'imprimir') imprimir();
@@ -1859,6 +1949,8 @@ $('#btn-guardar').addEventListener('click', () => una('guardar', () => guardar(d
 $('#btn-copia').addEventListener('click', () => una('guardar', () => guardar(docAct(), true)));
 $('#btn-dock').addEventListener('click', () => { $('#work').classList.toggle('nodock'); $('#shell').classList.toggle('showf'); });
 $('#c-formula').addEventListener('input', () => validarFormula());
+$('#c-texto').addEventListener('input', () => validarReglas());
+['#c-desde', '#c-hasta'].forEach(s => { $(s).addEventListener('input', validarFechas); $(s).addEventListener('change', validarFechas); });
 $('#c-nombre').addEventListener('input', botonCalc);
 $('#c-ins').addEventListener('change', e => {
   const id = e.target.value;

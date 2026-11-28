@@ -105,6 +105,7 @@ import informes_formula
 import informes_guardados
 import informes_lenguaje
 import informes_motor
+import informes_reglas
 import informes_serie
 import telegram_bot
 import whatsapp
@@ -6833,18 +6834,25 @@ def api_informes_ejecutar():
 @app.post("/api/informes/formula")
 @auth.requiere_rol("admin")
 def api_informes_formula():
-    """Dice si una fórmula de campo calculado es válida (y qué campos usa) sin tocar la base: la pantalla lo llama mientras se
-    escribe. Nunca devuelve el SQL."""
+    """Dice si una fórmula de campo calculado —una cuenta, o unas reglas «si… entonces…» (`tipo` «reglas»)— es válida y qué campos usa, sin tocar la base: la pantalla lo llama mientras se
+    escribe. De las reglas devuelve además los resultados posibles. Nunca devuelve el SQL."""
     cuerpo = _cuerpo_json_o_400()
     if cuerpo is None:
         return jsonify({"error": "La fórmula tiene que enviarse como JSON."}), 400
     catalogo = informes_catalogo.CATALOGO
+    tipo = cuerpo.get("tipo", "cuenta")
+    respuesta = {"ok": True}
     try:
-        _, usados = informes_formula.traducir(cuerpo.get("formula"), catalogo)
-    except informes_formula.FormulaError as exc:
+        if tipo == "reglas":
+            _, usados, respuesta["resultados"] = informes_reglas.traducir(cuerpo.get("formula"), catalogo)
+        elif tipo == "cuenta":
+            _, usados = informes_formula.traducir(cuerpo.get("formula"), catalogo)
+        else:
+            return jsonify({"error": "Ese tipo de campo calculado no existe."}), 400
+    except (informes_formula.FormulaError, informes_reglas.ReglasError) as exc:
         return jsonify({"error": str(exc)}), 400
-    return jsonify({"ok": True, "campos": [{"id": u, "etiqueta": catalogo[u].etiqueta} for u in usados],
-                    "verificado": all(catalogo[u].verificado for u in usados)})
+    respuesta.update(campos=[{"id": u, "etiqueta": catalogo[u].etiqueta} for u in usados], verificado=all(catalogo[u].verificado for u in usados))
+    return jsonify(respuesta)
 
 
 @app.post("/api/informes/serie")
