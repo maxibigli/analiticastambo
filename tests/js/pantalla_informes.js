@@ -35,7 +35,7 @@ const CAMPOS_DE_EJEMPLO = {
     {nombre: 'Estado', campos: [
       {id: 'InMilk', etiqueta: 'En ordeño', tipo: 'txt', unidad: '', decimales: 0, verificado: false, agrupable: true, aviso: '', valores: ['No', 'Sí']},
       {id: 'CurrentReproductionStatus', etiqueta: 'Estado de la reproducción', tipo: 'txt', unidad: '', decimales: 0, verificado: false, agrupable: true, aviso: '',
-       valores: ['Abierta', 'Inseminada', 'Preñada', 'Seca']}]},
+       valores: ['Ternera', 'Vaquillona', 'Fresca', 'Inseminada', 'Abierta', 'Preñada', 'Seca', 'Dada de baja']}]},
     {nombre: 'Ordeño', campos: [
       {id: 'SevenDayAverage', etiqueta: 'Promedio producción diaria de leche 7 d.', tipo: 'num', unidad: 'kg', decimales: 1, verificado: true, agrupable: false, aviso: ''}]},
   ],

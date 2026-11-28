@@ -508,8 +508,18 @@ caso('lista cerrada: el estado de la reproducción arranca en su primer valor', 
   const P = await cargar();
   const d = conCondicion(P, {campo: 'CurrentDIM', op: '>=', valor: '100'});
   P.cambiar('#filters [data-chg="ck"][data-i="0"]', 'CurrentReproductionStatus');
-  assert.deepStrictEqual([d.def.condiciones[0].op, d.def.condiciones[0].valor], ['es', 'Abierta']);
-  assert.deepStrictEqual(opcionesDe(P, '#filters select[data-chg="cv"][data-i="0"]'), ['Abierta', 'Inseminada', 'Preñada', 'Seca']);
+  assert.deepStrictEqual([d.def.condiciones[0].op, d.def.condiciones[0].valor], ['es', 'Ternera']);
+  assert.deepStrictEqual(opcionesDe(P, '#filters select[data-chg="cv"][data-i="0"]'), ['Ternera', 'Vaquillona', 'Fresca', 'Inseminada', 'Abierta', 'Preñada', 'Seca', 'Dada de baja']);
+});
+
+caso('estado de la reproducción: cada animal lleva el color de su estado, y «Dada de baja» sin espacios en la clase', async () => {
+  const P = await cargar();
+  const col = {id: 'CurrentReproductionStatus', alias: 'c0', etiqueta: 'Estado de la reproducción', tipo: 'txt', unidad: '', decimales: 0, resumen: 'none', verificado: false, calculado: false};
+  P.api.cuando('POST', /^\/api\/informes\/ejecutar$/, () => Object.assign({}, P.RESULTADO_VACIO, {columnas: [col], filas: [['Dada de baja'], ['Fresca'], [null]], claves_filas: null}));
+  const d = P.t.nuevoDoc({nombre: 'Estados', def: Object.assign(P.t.defVacia(), {columnas: [{campo: 'CurrentReproductionStatus'}]})});
+  P.t.activar(d.id);
+  P.click('#btn-run'); await P.flush();
+  assert.deepStrictEqual(Array.from(P.$$('span.st'), e => e.attrs.class), ['st st-Dada-de-baja', 'st st-Fresca']);
 });
 
 caso('lista cerrada: una condición vieja con un valor que no está en la lista se corrige al mostrarla', async () => {
@@ -527,7 +537,7 @@ caso('lista cerrada: «contiene» y «es uno de» siguen siendo texto libre; vol
   assert.ok(P.$('#filters input[data-chg="cv"]'));
   P.cambiar('#filters [data-chg="co"][data-i="0"]', 'es');
   assert.ok(P.$('#filters select[data-chg="cv"][data-i="0"]'));
-  assert.ok(['Abierta', 'Inseminada', 'Preñada', 'Seca'].indexOf(d.def.condiciones[0].valor) >= 0, d.def.condiciones[0].valor);
+  assert.ok(['Ternera', 'Vaquillona', 'Fresca', 'Inseminada', 'Abierta', 'Preñada', 'Seca', 'Dada de baja'].indexOf(d.def.condiciones[0].valor) >= 0, d.def.condiciones[0].valor);
 });
 
 caso('lista cerrada: un campo de texto común sigue siendo un campo de texto', async () => {

@@ -481,13 +481,14 @@ class TestIncluirAnimalesDescartados(unittest.TestCase):
 
 
 class TestUnCampoDeTextoCerrado(unittest.TestCase):
-    """[importador #3] «Estado de la reproducción» (Abierta, Inseminada, Preñada, Seca) tiene valores cerrados. Un filtro de DelPro con un código (1) o un
-    nombre en inglés (Open) no lo entiende nadie acá: se traía tal cual y el informe «completo» no devolvía ningún animal."""
+    """[importador #3] «Estado de la reproducción» tiene valores cerrados. Un filtro de DelPro con un código o un nombre en inglés que no se conoce no lo
+    entiende nadie acá: se traía tal cual y el informe «completo» no devolvía ningún animal. Los códigos y nombres de DelPro que sí se conocen se traducen
+    desde el 27/11/2026 (tests/test_informes_estado_repro.py)."""
 
     MOTIVO = "Compara con un código de DelPro que acá no existe."
 
     def test_un_valor_que_no_es_de_la_lista_no_se_trae(self):
-        for v in ("1", "Open", "Pregnant", ""):
+        for v in ("9", "Calf", "Gestante", ""):
             cs, pend = cond_nombre(f"[CurrentReproductionStatus] = '{v}'")
             self.assertEqual((cs, len(pend)), ([], 1), v)
             self.assertEqual(pend[0]["motivo"], self.MOTIVO, v)
@@ -504,7 +505,7 @@ class TestUnCampoDeTextoCerrado(unittest.TestCase):
             self.assertEqual(pend, [], escrito)
 
     def test_en_una_lista_un_solo_valor_malo_deja_afuera_a_toda_la_lista(self):
-        cs, pend = cond_nombre("[CurrentReproductionStatus] In ('Abierta', 'Open')")
+        cs, pend = cond_nombre("[CurrentReproductionStatus] In ('Abierta', 'Calf')")
         self.assertEqual((cs, len(pend)), ([], 1))
         self.assertEqual(pend[0]["motivo"], self.MOTIVO)
 
@@ -526,7 +527,7 @@ class TestUnCampoDeTextoCerrado(unittest.TestCase):
 
     def test_en_un_informe_queda_dicho_y_el_informe_es_parcial(self):
         cols = [columna(11, 1, 1, "Number"), columna(12, 1, 2, "CurrentReproductionStatus")]
-        r = tr([informe(1, CustomFilter="[C12] = 'Open'")], cols)
+        r = tr([informe(1, CustomFilter="[C12] = 'Calf'")], cols)
         self.assertEqual(r["estado"], "parcial")
         self.assertNotIn("condiciones", r["definicion"])
         self.assertIn(self.MOTIVO, " ".join(" ".join(d.get("detalle", [])) for d in diferencias(r, "filtro")))

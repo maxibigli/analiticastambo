@@ -213,7 +213,7 @@ class TestLosValoresPosiblesDeUnTexto(Base):
         r, c = self.armar(respuesta(mala), respuesta(buena), frase="vacas preñadas")
         self.assertTrue(r["ok"])
         self.assertEqual(len(c.llamadas), 2)
-        self.assertIn("Abierta, Inseminada, Preñada, Seca", c.llamadas[1]["messages"][2]["content"])
+        self.assertIn("Ternera, Vaquillona, Fresca, Inseminada, Abierta, Preñada, Seca, Dada de baja", c.llamadas[1]["messages"][2]["content"])
 
     def test_se_acepta_con_otras_mayusculas_y_queda_con_las_del_catalogo(self):
         r, _ = self.armar(respuesta(con(condiciones=[cond("CurrentReproductionStatus", "es", "preñada")])), frase="vacas preñadas")
@@ -686,7 +686,7 @@ class TestIa9ValidacionDeValores(Base):
             self.assertTrue(r["ok"], malo)
             self.assertEqual(len(c.llamadas), 2, malo)
             texto = c.llamadas[1]["messages"][2]["content"]
-            self.assertIn("Abierta, Inseminada, Preñada, Seca", texto, malo)
+            self.assertIn("Ternera, Vaquillona, Fresca, Inseminada, Abierta, Preñada, Seca, Dada de baja", texto, malo)
 
     def test_contiene_con_parte_de_un_valor_sirve_sin_tildes_ni_mayusculas(self):
         for texto in ("ñad", "PREÑ", "pren", "Pre", "preñada", "seca", " sec ", "NSEM", "bier"):

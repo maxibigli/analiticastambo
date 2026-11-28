@@ -97,7 +97,7 @@ la misma base), se comparó contra lo que DelPro mismo guarda y sus funciones:
 | Promedio 7 días (`SevenDayAverage`) | `AnimalDaily.AvgYieldPrev7d` | 1615 de 1615 |
 | Días al pico, lactancia anterior | `dbo.GetDaysToPeakInLactation` | 40 de 40 (solo hay datos desde dic-2025) |
 | Fecha del último parto (`LastCalvingDate`) | último `EventCalving` contra `LastLactationChangeDate` | 3405 de 3490: ~2 % difieren; se usa el evento, como la definición de DelPro |
-| Estado de la reproducción | por los bits de `AnimalReproductionInfo` | **sin verificar**: los códigos de `BreedingState` 1, 3 y 5 no tienen nombre en la base |
+| Estado de la reproducción | `ReproductionInfo.BreedingState`, la fórmula de DelPro (desde el 27/11/2026; antes se deducía de los bits) | **sin verificar** contra un informe de DelPro; los nombres de los códigos 1 y 8 no se vieron escritos en la base (ver CLAUDE.md) |
 | Pico de la última lactación | `AnimalLactationSummary.PeakYield` | **sin verificar**: la función de DelPro no existe en esta base |
 
 Esto prueba que el SQL calcula lo que DelPro **guarda**, no que el informe sea igual al de la pantalla de DelPro: eso sigue

@@ -104,6 +104,16 @@ def _si_no(condicion: str) -> str:
     return f"CASE WHEN {condicion} THEN 'Sí' ELSE 'No' END"
 
 
+# El estado de la reproducción como lo muestra DelPro: su campo `CurrentReproductionStatus` es `ReproductionInfo.BreedingState` (`DDMReportItem.Expression`), un código que DelPro mismo mantiene. No se deduce de
+# los bits (IsPregnant, IsInseminated...): una ternera, una vaquillona y una fresca tienen los tres en 0 y salían todas como «Abierta». (código, nombre acá, nombre en la enumeración `ReproductionStatus` de
+# DelPro; vacío = no se vio escrito en la base). La evidencia de cada código está en la nota del campo y en CLAUDE.md.
+_ESTADOS_REPRO = ((1, "Ternera", ""), (2, "Vaquillona", "Heifer"), (3, "Fresca", "Fresh"), (4, "Inseminada", "Bred"), (5, "Abierta", "Open"), (6, "Preñada", "Pregnant"), (7, "Seca", "Dry"),
+                  (8, "Dada de baja", ""))
+_ESTADO_REPRO = "CASE r.BreedingState " + " ".join(f"WHEN {codigo} THEN '{nombre}'" for codigo, nombre, _ in _ESTADOS_REPRO) + " END"
+# Los filtros de DelPro escriben el código («'1'») o el nombre de la enumeración («'Fresh'», «##Enum#...ReproductionStatus,Open#»)
+_EQUIVALE_ESTADO_REPRO = tuple((str(codigo), nombre) for codigo, nombre, _ in _ESTADOS_REPRO) + tuple((delpro, nombre) for _, nombre, delpro in _ESTADOS_REPRO if delpro)
+
+
 # El parto esperado: la inseminación efectiva más los días de gestación del tambo, solo de una vaca preñada y con una inseminación posterior a su último parto (una anterior es un dato
 # viejo que quedó colgado). Es lo mismo que hacen «Partos y secados» y la proyección (`partos_secados.py`, `proyeccion.py`).
 _PRENEZ_VIGENTE = "r.IsPregnant = 1 AND ee.DateAndTime IS NOT NULL AND (r.LastLactationChangeDate IS NULL OR ee.DateAndTime > r.LastLactationChangeDate)"
@@ -416,11 +426,12 @@ CATALOGO = {c.id: c for c in (
                "de DelPro pero no se pudo comparar con un dato suyo (el historial casi no trae el fin de la lactancia); falta compararlo con un informe de DelPro"),
     Campo("LastCalvingDate", "Fecha del último parto", _REP, "fecha", "pa.DateAndTime", bloque="parto",
           nota="el último parto del índice de DelPro (coincide con el máximo de los EventCalving en 1.772 de 1.772 animales); difiere de AnimalReproductionInfo.LastLactationChangeDate en ~2% de los animales"),
-    Campo("CurrentReproductionStatus", "Estado de la reproducción", _REP, "txt",
-          "CASE WHEN r.IsDryingOff = 1 THEN 'Seca' WHEN r.IsPregnant = 1 THEN 'Preñada' "
-          "WHEN r.IsInseminated = 1 THEN 'Inseminada' WHEN r.Animal IS NULL THEN NULL ELSE 'Abierta' END",
-          bloque="repro", verificado=False, agrupable=True, valores=("Abierta", "Inseminada", "Preñada", "Seca"),
-          nota="por los bits de AnimalReproductionInfo; los códigos de BreedingState 1, 3 y 5 no tienen nombre en la base"),
+    Campo("CurrentReproductionStatus", "Estado de la reproducción", _REP, "txt", _ESTADO_REPRO, bloque="repro", verificado=False, agrupable=True,
+          valores=tuple(nombre for _, nombre, _ in _ESTADOS_REPRO), equivale=_EQUIVALE_ESTADO_REPRO,
+          nota="el código que DelPro guarda en la reproducción (ReproductionInfo.BreedingState, la fórmula del campo en DelPro). Coincide con los datos al 20/11/2026: las 179 con código 1 tienen de 2 a 58 "
+               "días de edad y las 2.095 con código 2, 61 o más (el período de ternero del tambo es de 60); las 315 frescas parieron hace 53 días o menos (la espera voluntaria) y las vacas abiertas, hace 54 o "
+               "más; y con los eventos desde el 01/06/2026 (después de un parto queda fresca, con un diagnóstico negativo abierta y con uno positivo preñada). Los nombres «Ternera» (código 1) y «Dada de baja» "
+               "(código 8: las que salieron) no se vieron escritos en DelPro: falta confirmarlos, y comparar el campo con un informe de DelPro. Las dadas de baja solo aparecen con «Incluir animales descartados»"),
     Campo("SevenDayAverage", "Promedio producción diaria de leche 7 d.", _ORD, "num", "p7.prom7", bloque="prom7",
           unidad="kg", decimales=1,
           nota="1615 de 1615 coinciden con AnimalDaily.AvgYieldPrev7d de DelPro (30/07/2026)"),

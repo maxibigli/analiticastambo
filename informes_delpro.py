@@ -61,6 +61,8 @@ ALIAS_DE_RUTAS.update({"ReproductionInfo." + n: n for n in ("IsPregnant", "IsDry
                                                               "LastInseminationNumber", "LastInseminationSemen", "InseminatedByUser")})
 # `CurrentDIM` y `CurrentDSLC` de DelPro SON `ReproductionInfo.DIM` y `ReproductionInfo.DSLC` (sus fórmulas dicen eso): el mismo dato con otro nombre.
 ALIAS_DE_RUTAS.update({"ReproductionInfo.DIM": "CurrentDIM", "ReproductionInfo.DSLC": "CurrentDSLC"})
+# La fórmula de DelPro del campo `CurrentReproductionStatus` ES `ReproductionInfo.BreedingState`: sus filtros lo escriben de las dos maneras
+ALIAS_DE_RUTAS["ReproductionInfo.BreedingState"] = "CurrentReproductionStatus"
 # Un campo de DelPro que es EXACTAMENTE otro campo del catálogo pero con OTRO nombre: (nombre del ítem, clase del ítem) -> id del catálogo. La clase hace falta porque el nombre solo no alcanza
 # (`Name` existe en varias clases, `DIM` también: el de un control lechero es otra cosa). Cada uno se comprobó con la fórmula que DelPro guarda en `DDMReportItem.Expression`:
 #   DIM de la reproducción         -> la misma fórmula que `CurrentDIM` (`CurrentDIM = ReproductionInfo.DIM`)
@@ -577,9 +579,10 @@ def _sin_tildes(texto) -> str:
 
 
 def _de_la_lista(campo, texto, parcial=False):
-    """Un campo de texto CERRADO (`Campo.valores`: el estado de la reproducción) solo puede valer lo que dice su lista. Un código de DelPro («1»), un nombre en
-    inglés («Open») o cualquier otra cosa no es ninguno de esos: traerlo tal cual daba un informe «completo» que no devuelve ningún animal. Se devuelve el valor
-    con el nombre de la lista (sin tildes ni mayúsculas se reconoce igual). `parcial`: para «contiene», que alcanza con un pedazo de alguno."""
+    """Un campo de texto CERRADO (`Campo.valores`: el estado de la reproducción) solo puede valer lo que dice su lista. Un código de DelPro («1») o un nombre en
+    inglés («Open») se traducen solo si están en `Campo.equivale`; cualquier otra cosa no es ninguno de esos: traerlo tal cual daba un informe «completo» que no
+    devuelve ningún animal. Se devuelve el valor con el nombre de la lista (sin tildes ni mayúsculas se reconoce igual). `parcial`: para «contiene», que alcanza
+    con un pedazo de alguno."""
     if not campo.valores:
         return texto
     buscado = _sin_tildes(texto)
@@ -613,6 +616,10 @@ def _valor_de(campo, lit, parcial=False):
         if k != "bool":
             raise _NoTraducible(f"«{campo.etiqueta}» se compara con verdadero o falso.")
         return "Sí" if lit["v"] else "No"
+    if k == "enum" and campo.tipo == "txt" and not parcial:                          # «##Enum#...ReproductionStatus,Open#»: el nombre de la enumeración, solo si el campo lo tiene en `equivale`
+        for clave, valor in campo.equivale:
+            if _sin_tildes(clave) == _sin_tildes(lit["v"]):
+                return valor
     if k in ("null", "bool", "enum"):
         raise _NoTraducible("Compara con un estado o un valor especial de DelPro que acá no se puede traer.")
     if campo.tipo == "num" and k == "num":

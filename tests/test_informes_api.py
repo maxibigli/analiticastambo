@@ -85,7 +85,7 @@ class TestCampos(Base):
         j = self.admin.get("/api/informes/campos").get_json()
         por_id = {c["id"]: c for cat in j["categorias"] for c in cat["campos"]}
         self.assertEqual(por_id["InMilk"]["valores"], ["No", "Sí"])
-        self.assertEqual(por_id["CurrentReproductionStatus"]["valores"], ["Abierta", "Inseminada", "Preñada", "Seca"])
+        self.assertEqual(por_id["CurrentReproductionStatus"]["valores"], ["Ternera", "Vaquillona", "Fresca", "Inseminada", "Abierta", "Preñada", "Seca", "Dada de baja"])
         for id_ in ("Number", "CurrentDIM", "LastCalvingDate", "DaysToCalving"):                    # los demás no traen la clave: nada de listas vacías por todos lados
             self.assertNotIn("valores", por_id[id_], id_)
 

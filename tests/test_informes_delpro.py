@@ -269,7 +269,8 @@ class TestCondiciones(unittest.TestCase):
             self.assertEqual((cs, len(pend)), ([], 1), t)
 
     def test_enumeraciones_booleanos_y_nulos_no_se_traen(self):
-        for t in ("[CurrentReproductionStatus] = ##Enum#DeLaval.X.ReproductionStatus,Open#", "[CurrentDIM] = True", "[CurrentDIM] = Null"):
+        # (los estados de la reproducción que sí se conocen se traducen desde el 27/11/2026: tests/test_informes_estado_repro.py)
+        for t in ("[CurrentReproductionStatus] = ##Enum#DeLaval.X.ReproductionStatus,Culled#", "[CurrentDIM] = True", "[CurrentDIM] = Null"):
             cs, pend = cond(t)
             self.assertEqual((cs, len(pend)), ([], 1), t)
 
