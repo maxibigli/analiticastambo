@@ -10,6 +10,7 @@ import unittest
 
 import db
 import informes_motor as im
+import rebano
 from informes_catalogo import Bloque, Campo
 
 CAT = {
@@ -76,7 +77,7 @@ class TestCompilar(unittest.TestCase):
         self.assertNotIn("AbstractGroup", comp()["sql"])
         self.assertIn("AbstractGroup ag", comp(columnas=[{"campo": "GroupName"}])["sql"])
 
-    def test_descartados_usan_el_filtro_historico(self):
+    def test_descartados_ubican_a_los_que_se_fueron(self):
         self.assertIn("AnimalDaily d_tb", comp(incluir_descartados=True)["sql"])
         self.assertNotIn("AnimalDaily d_tb", comp()["sql"])
 
@@ -349,11 +350,11 @@ class TestResumenesPorColumna(unittest.TestCase):
         self.assertIn(" ord ON ord.animal = b.OID", res)
         self.assertNotIn(" rep ON ", res)                         # «Parto» no tiene resumen: el resumen no lo necesita
         self.assertIn(" rep ON ", det)
-        for pieza in ("b.GCRecord IS NULL", "b.Number > 0", "ord.dim >= 0", "AnimalDaily d_tb"):
+        for pieza in ("b.GCRecord IS NULL", "b.Number > 0", "ord.dim >= 0", rebano.filtro_del_animal("b.OID", 1)):
             self.assertIn(pieza, res)
             self.assertIn(pieza, det)
-        self.assertNotIn("TOP", res)
-        self.assertNotIn("ORDER BY", res)
+        self.assertNotIn("TOP (", res)                              # ni tope ni orden propios (el de «incluir descartados» va adentro de su subconsulta)
+        self.assertNotIn("\nORDER BY", res)
 
     def test_pasa_la_validacion_de_solo_lectura(self):
         r = self.c([{"campo": "P24", "resumen": "avg"}, {"campo": "Parto", "resumen": "max"}, {"campo": "Number", "resumen": "count"}],
@@ -627,7 +628,7 @@ class TestPoblacion(unittest.TestCase):
         self.assertIn(" ord ON ord.animal = b.OID", sql)
         self.assertIn("* CAST(2 AS float)", sql)
 
-    def test_los_descartados_usan_el_historial(self):
+    def test_los_descartados_ubican_a_los_que_se_fueron(self):
         self.assertIn("AnimalDaily d_tb", self.pob(incluir_descartados=True))
         self.assertNotIn("AnimalDaily d_tb", self.pob())
 
@@ -838,31 +839,28 @@ class TestDescribirConElLimite(unittest.TestCase):
         self.assertIn("Incluye animales descartados", r)
 
 
-class TestDescartadosSonUnaUnion(unittest.TestCase):
-    """«Incluir descartados» AGREGA a los que ya salieron: nunca saca a los de hoy. `filtro_historico` solo ve a quien alguna vez ordeñó (tuvo un
-    registro diario), así que una novilla de hoy sin ordeños quedaría afuera si el historial reemplazara al filtro de hoy."""
+class TestDescartadosSonLosDelTambo(unittest.TestCase):
+    """«Incluir descartados» suma SOLO a los del tambo que se fueron (`rebano.filtro_del_animal`: el rodeo de hoy o, sin rodeo, el del último registro diario) y nunca saca a los de hoy. Hasta el
+    27/11/2026 se unía `filtro_historico` («alguna vez tuvo un registro en el rebaño»), que sumaba animales vivos de otros rebaños. Quiénes entran se prueba en `test_informes_descartados`."""
 
-    def test_con_la_opcion_son_los_de_hoy_o_los_historicos(self):
+    def test_con_la_opcion_es_el_filtro_que_ubica_a_los_que_se_fueron(self):
         sql = comp(incluir_descartados=True)["sql"]
-        self.assertIn("b.[Group]", sql)                                                 # los animales de hoy
-        self.assertIn("AnimalDaily d_tb", sql)                                          # y los que ya salieron
-        self.assertIn(" OR EXISTS (SELECT 1 FROM AnimalDaily d_tb", sql)
+        self.assertIn(rebano.filtro_del_animal("b.OID", 1), sql)
+        self.assertNotIn(" OR EXISTS (SELECT 1 FROM AnimalDaily d_tb", sql)
         db.validate_sql(sql)
 
     def test_sin_la_opcion_son_solo_los_de_hoy(self):
         sql = comp()["sql"]
-        self.assertIn("b.[Group]", sql)
+        self.assertIn(rebano.filtro("b", 1), sql)
         self.assertNotIn("AnimalDaily d_tb", sql)
 
-    def test_la_union_va_entre_parentesis_y_no_se_come_las_otras_condiciones(self):
+    def test_no_se_come_las_otras_condiciones(self):
         sql = comp(incluir_descartados=True, condiciones=[{"campo": "Dim", "op": ">=", "valor": 0}])["sql"]
-        donde = sql.split("WHERE", 1)[1].split("ORDER BY", 1)[0]
-        self.assertIn("AND (EXISTS (SELECT 1 FROM AnimalGroup g_tb", donde)
-        self.assertTrue(donde.rstrip().endswith("))"), donde)                           # el último paréntesis cierra la unión
+        self.assertIn("ord.dim >= 0\n  AND " + rebano.filtro_del_animal("b.OID", 1), sql)
 
     def test_el_grafico_sigue_a_la_misma_poblacion(self):
         pob = im.poblacion_sql({"columnas": [{"campo": "Number"}], "incluir_descartados": True}, CAT, BLOQUES, herd=1)
-        self.assertIn(" OR EXISTS (SELECT 1 FROM AnimalDaily d_tb", pob)
+        self.assertIn(rebano.filtro_del_animal("b.OID", 1), pob)
 
 
 if __name__ == "__main__":

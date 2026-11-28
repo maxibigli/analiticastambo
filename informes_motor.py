@@ -249,9 +249,9 @@ def _donde(defn, campos, H, herd) -> tuple:
         raise InformeError("«incluir_descartados» tiene que ser verdadero o falso.")
     h = None if herd is _AUTO else herd
     if incluir:
-        # Los de hoy MÁS los que ya salieron: `filtro_historico` solo ve a quien alguna vez tuvo un registro diario (una vaca que ordeñó), así que
-        # sin sumarle `filtro` se perderían los animales actuales que nunca ordeñaron (recría, crianza) y marcar la opción mostraría MENOS animales.
-        where.append(f"({rebano.filtro('b', h)} OR {rebano.filtro_historico('b', h)})")
+        # Los de hoy MÁS los que ya se fueron DE ESTE tambo: `filtro_del_animal` toma el rodeo de hoy y, a quien ya no tiene, el de su último registro diario (un conjunto `b.OID IN (...)`,
+        # no una condición por fila). Hasta el 27/11/2026 se unía `filtro_historico` («alguna vez tuvo un registro en el rebaño»), que sumaba animales vivos que hoy están en otros rebaños.
+        where.append(rebano.filtro_del_animal("b.OID", h))
     else:
         where.append(rebano.filtro("b", h))
     return where, bloques_cond

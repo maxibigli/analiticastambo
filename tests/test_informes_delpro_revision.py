@@ -447,8 +447,8 @@ class TestElResumenDeGrupoSinGrupos(unittest.TestCase):
 
 
 class TestIncluirAnimalesDescartados(unittest.TestCase):
-    """[importador #2] En DelPro el tilde incluye también a los animales que ya salieron (terneros y recría incluidos); acá solo ve a los que alguna vez
-    ordeñaron (`rebano.filtro_historico`). Se trae igual, pero se dice: puede salir MENOS gente, y el informe es «parcial»."""
+    """[importador #2] En DelPro el tilde incluye también a los animales que ya salieron; acá son los de este tambo que se fueron, ubicados por su último rodeo (`rebano.filtro_del_animal`). Se trae igual,
+    pero como no se comparó con DelPro que sean los mismos, se dice y el informe es «parcial». (Hasta el 27/11/2026 el aviso decía «solo los que alguna vez ordeñaron», que no era cierto.)"""
 
     def test_se_avisa_como_alcance_de_contenido_y_el_informe_queda_parcial(self):
         r = tr([informe(1, IncludeCulledAndExitedAnimals=True)], columnas_de(1, ["Number"]))
@@ -458,8 +458,9 @@ class TestIncluirAnimalesDescartados(unittest.TestCase):
         self.assertEqual(d[0]["gravedad"], "contenido")
         self.assertEqual(r["estado"], "parcial")
         self.assertIn("ya salieron", d[0]["texto"])
-        self.assertIn("alguna vez ordeñaron", d[0]["texto"])
-        self.assertIn("menos", d[0]["texto"])
+        self.assertIn("último rodeo", d[0]["texto"])
+        self.assertIn("No se comparó con DelPro", d[0]["texto"])
+        self.assertNotIn("ordeñaron", d[0]["texto"])
 
     def test_sin_el_tilde_no_se_dice_nada(self):
         for valor in (False, None, 0):
@@ -472,7 +473,7 @@ class TestIncluirAnimalesDescartados(unittest.TestCase):
         self.assertEqual(sorted(d["gravedad"] for d in diferencias(r, "alcance")), ["contenido", "info"])
 
     def test_la_lista_no_lo_confunde_con_un_filtro_sin_traer(self):
-        """`filtro_sin_traer` dice «puede mostrar MÁS animales»; los descartados son lo contrario y no son un filtro."""
+        """`filtro_sin_traer` dice «puede mostrar MÁS animales»; los descartados no son un filtro (pueden diferir en cualquier sentido)."""
         d = datos([informe(1, "Con el tilde", IncludeCulledAndExitedAnimals=True), informe(2, "Con un filtro", ServerFilter=7)],
                   columnas_de(1, ["Number"], 10) + columnas_de(2, ["Number"], 20), [filtro(7, "F", "[<AnimalExtended>DaysDry] = True")])
         por = {i["oid"]: i for i in dl.listar(d)["informes"]}

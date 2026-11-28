@@ -1246,10 +1246,10 @@ def traducir_informe(datos, oid, catalogo=None, rebanos=None) -> dict:
         difs.append(_dif("alcance", "info", "En DelPro este informe mira todos los rebaños de la base de datos (también los animales de otros tambos). "
                          "Acá solo salen los animales de este tambo, así que los totales pueden ser menores que los de DelPro."))
     if fila.get("IncludeCulledAndExitedAnimals"):
-        # Acá «incluir descartados» suma a los animales que alguna vez ordeñaron (`rebano.filtro_historico` mira `AnimalDaily`): las terneras y la recría que ya
-        # salieron sin haber ordeñado nunca no están. Es un cambio de QUÉ animales aparecen (menos, a diferencia de un filtro sin traer), así que es «contenido».
-        difs.append(_dif("alcance", "contenido", "En DelPro este informe incluía también los animales descartados y los que ya salieron del tambo (terneras y recría "
-                         "incluidas); acá solo se suman los que alguna vez ordeñaron, así que pueden salir menos animales."))
+        # Acá «incluir descartados» suma a los que se fueron de ESTE tambo (`rebano.filtro_del_animal`: sin rodeo, el de su último registro diario; en las copias del 20/11/2026 todos los salidos con número
+        # tienen alguno, terneras y recría incluidas). No se comparó con DelPro cuáles pone él, y cambia QUÉ animales aparecen: sigue siendo «contenido».
+        difs.append(_dif("alcance", "contenido", "En DelPro este informe incluía también los animales descartados y los que ya salieron del tambo; acá se suman los que se fueron de este tambo "
+                         "(se los ubica por su último rodeo). No se comparó con DelPro que sean los mismos."))
     if fila.get("ConColores"):
         difs.append(_dif("formato", "presentacion", "En DelPro este informe pintaba celdas con reglas de color; acá no se traen."))
 
@@ -1299,7 +1299,7 @@ def listar(datos, solo_tambo=False, catalogo=None, rebanos=None) -> dict:
             faltantes[f] = faltantes.get(f, 0) + 1
         items.append({"oid": oid, "nombre": t["nombre"], "carpeta": t["carpeta"], "nivel": t["nivel"], "del_tambo": t["del_tambo"],
                       "estado": t["estado"], "motivo": t.get("motivo", ""), "columnas": t["columnas"], "descripcion": t["descripcion"],
-                      # «filtro sin traer: puede mostrar MÁS animales»: solo un filtro. Lo de los animales descartados también es «contenido» pero muestra MENOS.
+                      # «filtro sin traer: puede mostrar MÁS animales»: solo un filtro. Lo de los animales descartados también es «contenido», pero no es un filtro (puede diferir en cualquier sentido).
                       "filtro_sin_traer": any(d["tipo"] == "filtro" and d["gravedad"] == "contenido" for d in t["diferencias"]), "n_diferencias": len(t["diferencias"]),
                       # lo que le falta al catálogo para ESTE informe: con eso la pantalla calcula qué le falta a los que se eligieron
                       "faltan": list(t["faltan"])})
